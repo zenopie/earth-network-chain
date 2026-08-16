@@ -31,8 +31,10 @@ FROM --platform=linux/amd64 golang:1.25-bookworm
 # `ignite version` at the end is a build-time smoke check — without it a wrong
 # URL or a changed archive layout only surfaces on the node at first boot.
 ARG IGNITE_VERSION=29.10.1
+# clang/python3/binutils are for the Barretenberg verifier lib built below, not
+# for Ignite.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl ca-certificates jq \
+        git curl ca-certificates jq clang python3 binutils \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL "https://github.com/ignite/cli/releases/download/v${IGNITE_VERSION}/ignite_${IGNITE_VERSION}_linux_amd64.tar.gz" \
         | tar -xz -C /usr/local/bin ignite \
@@ -40,12 +42,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 COPY go.mod go.sum ./
+# go.mod replaces github.com/burnt-labs/barretenberg-go with ./third_party, so
+# resolution needs that module's go.mod present before the rest of the tree is
+# copied — otherwise this layer fails with "no such file or directory" on it.
+# Only the go.mod is copied, so the layer still caches on dependency changes
+# rather than on every source edit.
+COPY third_party/barretenberg-go/go.mod third_party/barretenberg-go/
 # Warm the module cache so first boot is not also a cold dependency download.
 RUN go mod download
 
 COPY . .
+
+# Build the native UltraHonk verifier lib for this platform.
+#
+# Only lib/darwin_arm64 is checked into the repo, for local development; the
+# Linux libs are produced by .github/workflows/verifier-libs.yml and attached to
+# a release. Building it here instead keeps the image self-contained — otherwise
+# an image could only be built after a release that carries the matching lib.
+#
+# This is not a Barretenberg compile: the script downloads Aztec's prebuilt
+# libbb-external.a at the tag pinned in checksums.json, compiles the C++ shim,
+# and merges the two archives.
+RUN cd third_party/barretenberg-go \
+    && ./scripts/build-wrapper.sh --platform linux_amd64
+
 # Prove the tree builds at image-build time rather than discovering it on a node.
-RUN go build -o /usr/local/bin/earthd ./cmd/earthd
+RUN CGO_ENABLED=1 go build -o /usr/local/bin/earthd ./cmd/earthd
+
+# The verifier is CGo, so make sure the binary actually links and runs rather
+# than only that it compiled.
+RUN earthd version
 
 COPY deploy/secretvm/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
