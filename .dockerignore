@@ -1,0 +1,8 @@
+# Keep the build context lean. The image builds from source and initialises
+# genesis at first boot, so none of this is needed inside it.
+.git
+.github
+build
+docs/static
+*.md
+!readme.md
