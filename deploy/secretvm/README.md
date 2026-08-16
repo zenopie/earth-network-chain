@@ -32,21 +32,32 @@ one, with a new genesis and new keys, and every address the apps knew about stop
 existing. The entrypoint decides which case it is purely by whether
 `/data/config/genesis.json` is there.
 
-## Why the image is large
+## Genesis
 
-It carries the Go toolchain, Ignite and the source tree, and builds genesis on
-first boot rather than at build time.
+`deploy/genesis.json` is generated once with `ignite chain init` and committed.
+It carries everything `config.yml` describes — the 539 CSCAs, the seven register
+verifying keys, the seeded ANML/ERTH pool, the governance parameters — with two
+things removed:
 
-`config.yml` is the source of truth for genesis: 539 CSCAs, seven register
-verifying keys, the seeded ANML/ERTH pool, the governance parameters. Baking a
-genesis into the image would mean baking the validator's consensus key with it —
-the gentx is bound to that key — which puts a signing key in a public image.
-Reassembling the same state in the entrypoint instead would mean hand-splicing
-bank balances and supply totals, which is the category of change that has broken
-a running chain here before while passing every test.
+- **the gentx**, because it is bound to a consensus key, and shipping that key in
+  a public image would let anyone sign as the validator
+- **the dev accounts**, because their keys only ever existed on the machine that
+  ran `ignite chain init`, so keeping them means genesis funds nobody can spend
 
-Fresh keys per deployment, no secrets in the image, genesis produced by the same
-path used locally. For a devnet that is the cheaper trade.
+The entrypoint fills both back in with stock `earthd` commands —
+`add-genesis-account`, `gentx`, `collect-gentxs` — against a validator key
+created on the node. `add-genesis-account` updates auth, bank balances and supply
+together, which is why the account is added with the tool rather than by editing
+the file.
+
+Regenerate it after any change to `config.yml`:
+
+    ignite chain init --home /tmp/gen --skip-proto
+    # then strip gen_txs, the dev accounts, and recompute bank supply
+
+An earlier version ran `ignite chain init` inside the container instead. It
+cannot work: init removes and recreates the home directory, and `/data` is a
+mount point, so it fails with `Unlinkat //data: device or resource busy`.
 
 ## After the first boot
 
