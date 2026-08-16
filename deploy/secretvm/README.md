@@ -50,6 +50,11 @@ created on the node. `add-genesis-account` updates auth, bank balances and suppl
 together, which is why the account is added with the tool rather than by editing
 the file.
 
+Two accounts are seeded with 100k ERTH each so a fresh deployment is testable
+without hunting for the validator's mnemonic: the development handset, and the
+ads-for-gas hot wallet. Both are devnet keys with no value; drop them from
+`deploy/genesis.json` for anything real.
+
 Regenerate it after any change to `config.yml`:
 
     ignite chain init --home /tmp/gen --skip-proto
