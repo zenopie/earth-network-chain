@@ -42,7 +42,9 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 ENV EARTH_HOME=/data
 VOLUME ["/data"]
 
-# LCD / RPC / gRPC / p2p
-EXPOSE 1317 26657 9090 26656
+# LCD and RPC are what the compose publishes. gRPC (9090) and p2p (26656) are
+# listening too — the entrypoint binds them — but nothing reaches for them: the
+# backend and both wallet apps speak REST, and a single validator has no peers.
+EXPOSE 1317 26657
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

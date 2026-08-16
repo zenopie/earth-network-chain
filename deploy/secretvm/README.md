@@ -1,8 +1,13 @@
 # SecretVM deployment — single-validator earth node
 
-Mirrors `earth-network-backend`: push a `v*.*.*` tag, CI builds the image, pushes
-it to `ghcr.io/zenopie/earth-network-chain` and rewrites
-`docker-compose-secretvm.yaml` with the pinned digest.
+Mirrors `earth-network-backend`: pushing a `v*.*.*` tag has CI build the image,
+push it to `ghcr.io/zenopie/earth-network-chain` and rewrite
+`docker-compose-secretvm.yaml` with the pinned digest. Tags only — a plain push
+to `master` builds nothing.
+
+**`docker-compose-secretvm.yaml` is generated**, so edit the heredoc in the
+workflow rather than the file — anything written directly into it is overwritten
+by the next build.
 
     Dockerfile                              builds earthd, carries Ignite + source
     deploy/secretvm/entrypoint.sh           first-boot genesis, then earthd start
@@ -13,8 +18,11 @@ it to `ghcr.io/zenopie/earth-network-chain` and rewrites
 
     1317   LCD    the wallet apps and the ads-for-gas backend
     26657  RPC    the explorer's block-range queries
-    9090   gRPC
-    26656  p2p    only needed if a second node ever joins
+
+Both are published with explicit host mappings so the addresses are predictable —
+`EARTH_NODE_URL` and the apps need to point somewhere fixed. gRPC (9090) and p2p
+(26656) are bound inside the container but not published: everything here speaks
+REST, and a single validator has no peers to gossip with.
 
 ## The volume is not optional
 
