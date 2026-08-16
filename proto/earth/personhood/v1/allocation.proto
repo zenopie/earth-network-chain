@@ -1,0 +1,70 @@
+syntax = "proto3";
+package earth.personhood.v1;
+
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/personhood/types";
+
+// DemocraticKind identifies how a democratic allocation option delivers its ERTH.
+enum DemocraticKind {
+  option (gogoproto.goproto_enum_prefix) = false;
+
+  DEMOCRATIC_KIND_UNSPECIFIED = 0;
+  // DEMOCRATIC_KIND_INTEGRATED resolves automatically via a protocol handler
+  // (e.g. "registration_rewards", paid out on each registration). Gov-permissioned to add.
+  DEMOCRATIC_KIND_INTEGRATED = 1;
+  // DEMOCRATIC_KIND_ADDRESS accrues ERTH claimable by a fixed recipient.
+  // Permissionless to add (guarded by an address-option fee).
+  DEMOCRATIC_KIND_ADDRESS = 2;
+}
+
+// DemocraticOption is a destination that registered humans direct the democratic
+// emission stream to, one-human-one-vote.
+message DemocraticOption {
+  uint64 id = 1;
+  string description = 2;
+  DemocraticKind kind = 3;
+  string recipient = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // handler selects the per-block behaviour for INTEGRATED options (e.g.
+  // "registration_rewards"); empty for ADDRESS options.
+  string handler = 8;
+  // claimer optionally restricts who may trigger a claim on an ADDRESS option.
+  // Empty (the default) means anyone may trigger it. Either way the payout goes
+  // to `recipient` — a claimer only spends the gas.
+  string claimer = 9 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string amount_allocated = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string last_reward_index = 6 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string accumulated = 7 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+
+// DemocraticWeight is one entry of a voter's democratic split.
+message DemocraticWeight {
+  uint64 option_id = 1;
+  // percent is 0-100; a voter's weights must sum to 100.
+  uint64 percent = 2;
+}
+
+// DemocraticVoter records a registered human's democratic split. Each voter
+// carries an equal, fixed total weight (one-human-one-vote).
+message DemocraticVoter {
+  repeated DemocraticWeight percentages = 1 [(gogoproto.nullable) = false];
+  // epoch is the allocation epoch this split was cast in. A governance reset
+  // bumps the module's epoch and zeroes the aggregates in one cheap operation
+  // rather than rewriting every voter row; a record from an older epoch is
+  // treated as having no live contribution, so re-voting starts from zero
+  // instead of subtracting weight that has already been cleared.
+  uint64 epoch = 2;
+}

@@ -1,0 +1,77 @@
+package types
+
+import "cosmossdk.io/collections"
+
+const (
+	// ModuleName defines the module name
+	ModuleName = "earth"
+
+	// StoreKey defines the primary module store key
+	StoreKey = ModuleName
+
+	// GovModuleName duplicates the gov module's name to avoid a dependency with x/gov.
+	// It should be synced with the gov module's name if it is ever changed.
+	// See: https://github.com/cosmos/cosmos-sdk/blob/v0.52.0-beta.2/x/gov/types/keys.go#L9
+	GovModuleName = "gov"
+)
+
+// The four pillars, and the whole of ERTH issuance.
+//
+// Each pillar emits a fixed 1 ERTH/sec, so the chain issues exactly 4 ERTH/sec
+// forever. Because the rate is constant while the supply it adds to grows, the
+// inflation *rate* decays on its own — roughly 5% in year one against the 2.52B
+// genesis pool, falling toward 2.5% by year twenty. There is no schedule to
+// maintain and no halving to get wrong.
+//
+// Two pillars are weighted by personhood and two by capital; two pay individuals
+// and two pay collectively-chosen options:
+//
+//	individual         (human,   individual)  x/personhood  ANML buyback-and-burn
+//	collective human   (human,   collective)  x/personhood  democratic allocation
+//	investor           (capital, individual)  x/earth      compounded into bonded stake
+//	collective capital (capital, collective)  x/deflation  stake-weighted allocation
+//
+// The rates live here rather than in each pillar so this file is the single
+// answer to "how much ERTH exists and where does it go". The pillar modules
+// import these; nothing here imports them.
+const (
+	// EmissionPerSecondPerPillar is one pillar's rate in uerth (1 ERTH/sec).
+	EmissionPerSecondPerPillar = 1_000_000
+
+	// Pillars is how many streams emit at that rate.
+	Pillars = 4
+
+	// TotalEmissionPerSecond is the chain's entire issuance rate, in uerth.
+	TotalEmissionPerSecond = EmissionPerSecondPerPillar * Pillars
+)
+
+// ParamsKey is the prefix to retrieve all Params
+var ParamsKey = collections.NewPrefix("p_earth")
+
+// Tokenomics state. This module owns the creation and destruction of ERTH: the
+// investor pillar's emission into bonded stake, the commission withheld from it,
+// and the burning of gas fees.
+var (
+	// LastMintTimeKey is the block time (unix nanoseconds) of the previous
+	// emission, used to prorate the fixed per-second rate across variable block
+	// times.
+	LastMintTimeKey = collections.NewPrefix("last_mint_time")
+
+	// StakeCompoundIndexKey is the cumulative growth factor of bonded stake from
+	// auto-compounding (Int, scaled by 1e18, starting at 1e18 = 1.0).
+	//
+	// Compounding grows every delegator's stake with no delegation event to
+	// observe, so anything that stores a stake figure goes stale. Consumers
+	// normalize by this index to keep every record on the same units — without it
+	// the allocation stream hands free voting weight to whoever touches a
+	// delegation first.
+	StakeCompoundIndexKey = collections.NewPrefix("stake_compound_index")
+
+	// AccruedCommissionKey is per-validator commission withheld from the emission
+	// and awaiting compounding (valoper bytes -> Int).
+	//
+	// Commission must be withheld at mint time: once the remainder is added to a
+	// validator's pot share-free it belongs to the delegators proportionally, and
+	// there is nothing left to reclaim.
+	AccruedCommissionKey = collections.NewPrefix("accrued_commission")
+)

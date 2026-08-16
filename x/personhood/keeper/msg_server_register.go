@@ -1,0 +1,147 @@
+package keeper
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"errors"
+
+	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+
+	"github.com/earth-network/earth/x/personhood/types"
+)
+
+// Register verifies a proof-of-personhood proof, dedups on its nullifier, records
+// the registration, mints 1 ANML, and pays the registration reward from
+// democratic option #1 (50% registree / 50% referrer).
+func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
+	creatorBz, err := k.addressCodec.StringToBytes(msg.Creator)
+	if err != nil {
+		return nil, errorsmod.Wrap(err, "invalid creator address")
+	}
+	creator := sdk.AccAddress(creatorBz)
+
+	nullifier, dsc, err := k.verifyRegistrationProof(ctx, msg.Proof, msg.PublicSignals, msg.SignatureAlgorithm, msg.DscDer)
+	if err != nil {
+		return nil, err
+	}
+
+	// Settle the democratic stream up front: clearing a lapsed registration below
+	// retires its vote weight, and that has to be credited against a current
+	// index. Doing it once here also covers payRegistrationReward at the end.
+	if err := k.advanceDemIndex(ctx); err != nil {
+		return nil, err
+	}
+
+	// Reject / clear an existing registration for this wallet.
+	if reg, ok, err := k.getRegistrationByAddr(ctx, creator); err != nil {
+		return nil, err
+	} else if ok {
+		expired, err := k.isExpired(ctx, reg)
+		if err != nil {
+			return nil, err
+		}
+		if !expired {
+			return nil, errorsmod.Wrap(types.ErrAlreadyReg, "wallet already registered")
+		}
+		if err := k.removeRegistration(ctx, reg); err != nil {
+			return nil, err
+		}
+	}
+
+	// Reject / clear an existing registration for this person (nullifier).
+	if reg, err := k.Registrations.Get(ctx, nullifier); err == nil {
+		expired, err := k.isExpired(ctx, reg)
+		if err != nil {
+			return nil, err
+		}
+		if !expired {
+			return nil, errorsmod.Wrapf(types.ErrAlreadyReg, "nullifier %s", hex.EncodeToString(nullifier))
+		}
+		if err := k.removeRegistration(ctx, reg); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
+
+	// Resolve the (optional) referrer: must be a distinct, currently-registered human.
+	var referrer sdk.AccAddress
+	if msg.Affiliate != "" {
+		affBz, err := k.addressCodec.StringToBytes(msg.Affiliate)
+		if err != nil {
+			return nil, errorsmod.Wrap(types.ErrInvalidAffiliate, "invalid affiliate address")
+		}
+		if bytes.Equal(affBz, creatorBz) {
+			return nil, errorsmod.Wrap(types.ErrInvalidAffiliate, "self-referral")
+		}
+		if _, err := k.requireValidHuman(ctx, sdk.AccAddress(affBz)); err != nil {
+			return nil, errorsmod.Wrap(types.ErrInvalidAffiliate, "affiliate is not a registered human")
+		}
+		referrer = sdk.AccAddress(affBz)
+	}
+
+	// Record the registration.
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	reg := types.Registration{
+		Nullifier:     nullifier,
+		Address:       msg.Creator,
+		RegisteredAt:  now,
+		LastAnmlClaim: (now / 86400) * 86400,
+		DscKey:        dsc.key,
+		Country:       dsc.country,
+	}
+	if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
+		return nil, err
+	}
+	if err := k.RegByAddr.Set(ctx, creatorBz, nullifier); err != nil {
+		return nil, err
+	}
+	if err := k.RegByRegisteredAt.Set(ctx, collections.Join(now, nullifier)); err != nil {
+		return nil, err
+	}
+	count, err := k.getRegCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.RegCount.Set(ctx, count+1); err != nil {
+		return nil, err
+	}
+	// Tally by Document Signer and issuing country. Recorded at registration
+	// time because the certificate is only in hand here — nothing later can
+	// recover which signer produced a given nullifier.
+	if err := bumpCount(ctx, k.RegCountByDsc, dsc.key); err != nil {
+		return nil, err
+	}
+	if err := bumpCount(ctx, k.RegCountByCountry, dsc.country); err != nil {
+		return nil, err
+	}
+
+	// Mint 1 ANML to the new human.
+	anml := sdk.NewCoins(sdk.NewInt64Coin(types.AnmlDenom, types.OneAnml))
+	if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, anml); err != nil {
+		return nil, err
+	}
+	if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, creator, anml); err != nil {
+		return nil, err
+	}
+
+	// Pay the registration reward from democratic option #1.
+	reward, err := k.payRegistrationReward(ctx, creator, referrer)
+	if err != nil {
+		return nil, err
+	}
+
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
+		sdk.NewEvent(
+			"register",
+			sdk.NewAttribute("address", msg.Creator),
+			sdk.NewAttribute("nullifier", hex.EncodeToString(nullifier)),
+			sdk.NewAttribute("reward", reward.String()),
+		),
+	)
+
+	return &types.MsgRegisterResponse{Reward: reward}, nil
+}

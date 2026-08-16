@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package earth.dex.v1;
+
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/dex/types";
+
+// LpUnbonding is an in-flight liquidity withdrawal.
+//
+// The shares are escrowed on the module account rather than burned, so they stay
+// part of the outstanding supply for the whole unbonding period and the pool
+// keeps trading on the liquidity behind them — otherwise the wait would cost the
+// provider time without buying the pool any depth.
+//
+// Because that liquidity is still working, the position keeps everything it
+// would have earned by staying: LP rewards, swap fees, and full exposure to the
+// pool. The price of leaving is time value alone — the capital is locked and at
+// risk for the unbonding period. The payout is therefore priced at maturity
+// rather than when unbonding began.
+message LpUnbonding {
+  // address is the provider the matured liquidity is swept to.
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  uint64 pool_id = 2;
+
+  // shares is the escrowed LP share coin awaiting maturity.
+  cosmos.base.v1beta1.Coin shares = 3 [(gogoproto.nullable) = false];
+
+  // completion_time is the unix timestamp (seconds) at which the sweep may pay
+  // this entry out.
+  int64 completion_time = 4;
+}

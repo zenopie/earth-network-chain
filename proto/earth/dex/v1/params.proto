@@ -1,0 +1,28 @@
+syntax = "proto3";
+package earth.dex.v1;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/dex/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "earth/x/dex/Params";
+  option (gogoproto.equal) = true;
+
+  // swap_fee is the swap fee as a percentage (points of percent): "0.3" means a
+  // 0.3% fee. It is charged in ERTH on every hop; half stays in the pool for the
+  // liquidity providers and half is burned.
+  string swap_fee = 1 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false
+  ];
+
+  // lp_unbonding_seconds is how long a liquidity withdrawal waits before it is
+  // swept to the provider's wallet. Liquidity keeps working for the pool for the
+  // whole period, so this is what makes depth sticky rather than flight-prone.
+  uint64 lp_unbonding_seconds = 2;
+}

@@ -1,0 +1,73 @@
+syntax = "proto3";
+package earth.earth.v1;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/earth/v1/params.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/earth/types";
+
+// Msg defines the Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // UpdateParams defines a (governance) operation for updating the module
+  // parameters. The authority defaults to the x/gov module account.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+
+  // CompoundCommission moves a validator's withheld commission into their own
+  // self-delegation. It is the only exit commission has, so realising it means
+  // unbonding like any other stake.
+  rpc CompoundCommission(MsgCompoundCommission) returns (MsgCompoundCommissionResponse);
+}
+
+// MsgUpdateParams is the Msg/UpdateParams request type.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "earth/x/earth/MsgUpdateParams";
+
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // params defines the module parameters to update.
+  //
+  // NOTE: All parameters must be supplied.
+  Params params = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateParamsResponse defines the response structure for executing a
+// MsgUpdateParams message.
+message MsgUpdateParamsResponse {}
+
+// MsgCompoundCommission converts a validator's withheld commission into stake in
+// their own validator.
+//
+// The emission is added to a validator's pot without issuing shares, which pays
+// an operator nothing beyond growth on their own stake, so commission is
+// withheld at mint time and parked on the module account. This is its only exit,
+// and deliberately not a withdrawal: paying it out liquid would let capital
+// route through a 100%-commission validator and turn staking yield back into
+// something claimable on demand.
+//
+// The signer is the validator operator, whose account address shares the bytes
+// of validator_address, so nobody else can move it.
+message MsgCompoundCommission {
+  option (cosmos.msg.v1.signer) = "validator_address";
+  option (amino.name) = "earth/x/earth/MsgCompoundCommission";
+
+  string validator_address = 1 [(cosmos_proto.scalar) = "cosmos.ValidatorAddressString"];
+}
+
+// MsgCompoundCommissionResponse reports what was compounded.
+message MsgCompoundCommissionResponse {
+  string amount = 1 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}

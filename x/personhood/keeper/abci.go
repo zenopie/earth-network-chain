@@ -1,0 +1,142 @@
+package keeper
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"cosmossdk.io/collections"
+	"cosmossdk.io/math"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+
+	"github.com/earth-network/earth/x/personhood/types"
+)
+
+// BeginBlocker settles the democratic allocation stream and runs the ANML
+// buyback-and-burn (1 ERTH/sec each).
+func (k Keeper) BeginBlocker(ctx context.Context) error {
+	// Retire lapsed registrations before settling, so this block's emission is
+	// already split across live humans only.
+	if err := k.sweepExpiredRegistrations(ctx); err != nil {
+		return err
+	}
+
+	// Democratic allocation upkeep: advance index and settle every option.
+	if err := k.advanceDemIndex(ctx); err != nil {
+		return err
+	}
+	rewardIndex, err := k.demRewardIndex(ctx)
+	if err != nil {
+		return err
+	}
+	// Only INTEGRATED options are settled + resolved every block; ADDRESS options
+	// settle lazily (on claim / vote change).
+	var ids []uint64
+	if err := k.DemIntegratedOptions.Walk(ctx, nil, func(id uint64) (bool, error) {
+		ids = append(ids, id)
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		opt, err := k.DemOptions.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		settleOption(&opt, rewardIndex)
+		if handler, ok := k.integratedHandlers[opt.Handler]; ok && opt.Accumulated.IsPositive() {
+			resolved, err := handler(ctx, opt.Accumulated)
+			if err != nil {
+				return err
+			}
+			opt.Accumulated = opt.Accumulated.Sub(resolved)
+		}
+		if err := k.DemOptions.Set(ctx, id, opt); err != nil {
+			return err
+		}
+	}
+
+	return k.buybackAndBurn(ctx)
+}
+
+func (k Keeper) getLastBuyback(ctx context.Context) (int64, error) {
+	v, err := k.LastBuyback.Get(ctx)
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return v, nil
+}
+
+func (k Keeper) moduleAddress() sdk.AccAddress {
+	return authtypes.NewModuleAddress(types.ModuleName)
+}
+
+// buybackAndBurn mints ERTH prorated by block time (1 ERTH/sec), swaps it for
+// ANML on the dex, and burns the ANML. The mint→swap→burn is done atomically in
+// a cache context so a missing pool or a rounding failure can never halt the
+// block or leak funds.
+func (k Keeper) buybackAndBurn(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	now := sdkCtx.BlockTime().UnixNano()
+
+	last, err := k.getLastBuyback(ctx)
+	if err != nil {
+		return err
+	}
+	// Always advance the clock; skipped emission is simply not minted.
+	if err := k.LastBuyback.Set(ctx, now); err != nil {
+		return err
+	}
+	if last == 0 || now <= last {
+		return nil
+	}
+
+	amount := math.NewInt(types.EmissionPerSecond).MulRaw(now - last).QuoRaw(int64(time.Second))
+	if !amount.IsPositive() {
+		return nil
+	}
+
+	has, err := k.dexKeeper.HasPoolForToken(ctx, types.AnmlDenom)
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil // no ANML pool yet — carry nothing, wait for one
+	}
+	erth, err := k.erthDenom(ctx)
+	if err != nil {
+		return err
+	}
+	if erth == types.AnmlDenom {
+		return nil
+	}
+
+	cacheCtx, write := sdkCtx.CacheContext()
+	erthIn := sdk.NewCoin(erth, amount)
+	if err := k.bankKeeper.MintCoins(cacheCtx, types.ModuleName, sdk.NewCoins(erthIn)); err != nil {
+		return nil // discard
+	}
+	out, err := k.dexKeeper.SwapExactIn(cacheCtx, k.moduleAddress(), erthIn, types.AnmlDenom, math.ZeroInt())
+	if err != nil {
+		return nil // discard: no write
+	}
+	if out.Amount.IsPositive() {
+		if err := k.bankKeeper.BurnCoins(cacheCtx, types.ModuleName, sdk.NewCoins(out)); err != nil {
+			return nil // discard
+		}
+	}
+	write()
+
+	sdkCtx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"anml_buyback_burn",
+			sdk.NewAttribute("erth_spent", erthIn.String()),
+			sdk.NewAttribute("anml_burned", out.String()),
+		),
+	)
+	return nil
+}

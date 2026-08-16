@@ -1,0 +1,11 @@
+release/
+.idea/
+.vscode/
+.DS_Store
+*.dot
+*.log
+*.ign
+.earth/
+vue/node_modules/
+release/
+*.log

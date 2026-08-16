@@ -1,0 +1,73 @@
+syntax = "proto3";
+package earth.personhood.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/personhood/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "earth/x/personhood/Params";
+  option (gogoproto.equal) = true;
+  // REQUIRED because of the verifying_keys map below. Without it gogoproto
+  // marshals map entries in Go's randomised iteration order, so each validator
+  // serialises Params to different bytes, writes a different value to state and
+  // computes a different AppHash — the chain halts with a consensus failure the
+  // moment more than one key is configured. Invisible on a single node.
+  option (gogoproto.stable_marshaler) = true;
+
+  // verifying_keys maps a passport document/circuit id to the Barretenberg
+  // UltraHonk (bb v5.0.0) verifying-key blob for that register circuit. The prover
+  // (phone) picks the circuit matching its passport; the chain selects the key by
+  // the same id. Governance manages the set. Empty disables registration until
+  // keys are configured.
+  map<string, bytes> verifying_keys = 1;
+
+  // Reserved: dsc_root pinned a certificate-registry Merkle root back when the
+  // signing DSC was hidden behind a membership proof. The DSC is now a public
+  // input verified directly against the CSCA trust store, so there is no root.
+  reserved 2;
+  reserved "dsc_root";
+
+  // registration_validity_seconds is how long a registration stays valid before
+  // it must be renewed.
+  uint64 registration_validity_seconds = 3;
+
+  // nullifier_index is the public-input position of the nullifier
+  // (zkPassport's scoped_nullifier) in the register circuit's public inputs.
+  uint32 nullifier_index = 4;
+
+  // dsc_key_index is the public-input position of the DSC commitment —
+  // Poseidon2 over the Document Signer's canonical public key. The chain
+  // recomputes it from the certificate in MsgRegister and requires equality,
+  // which is what binds the proof to a specific, CSCA-verified signer.
+  uint32 dsc_key_index = 5;
+
+  // current_date_index is the public-input position of the prover-supplied
+  // current_date (YYMMDD) in the register circuit's public inputs. The circuit
+  // proves the passport expiry >= current_date; the chain pins current_date to
+  // block time (see current_date_max_skew_seconds) so an expired passport
+  // cannot be registered by backdating current_date.
+  uint32 current_date_index = 6;
+
+  // current_date_max_skew_seconds bounds how far the proof's current_date may
+  // differ from the block time.
+  //
+  // Zero is rejected by Params.Validate and disables registration outright. It
+  // is not "no tolerance": the skew comparison is the only thing tying the
+  // prover-supplied current_date to real time, so skipping it lets any expired
+  // passport prove out against a backdated date.
+  uint64 current_date_max_skew_seconds = 7;
+
+  // address_option_fee is the ERTH (uerth) burned to add an ADDRESS democratic
+  // option (permissionless).
+  uint64 address_option_fee = 8;
+
+  // expiry_sweep_limit caps how many lapsed registrations BeginBlocker retires
+  // per block, bounding the work a cohort that all registered together can land
+  // on a single block. Exceeding it is safe — the backlog drains over following
+  // blocks and emits registration_sweep_capped — so this is the dial to raise if
+  // that event persists. Zero falls back to the compiled-in default.
+  uint64 expiry_sweep_limit = 9;
+}

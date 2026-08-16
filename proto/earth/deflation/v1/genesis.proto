@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package earth.deflation.v1;
+
+import "amino/amino.proto";
+import "earth/deflation/v1/params.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/deflation/types";
+
+// GenesisState defines the deflation module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}

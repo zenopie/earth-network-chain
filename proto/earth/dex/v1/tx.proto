@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package earth.dex.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/dex/v1/params.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/dex/types";
+
+// Msg defines the Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // UpdateParams defines a (governance) operation for updating the module
+  // parameters. The authority defaults to the x/gov module account.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+
+  // CreatePool defines the CreatePool RPC.
+  rpc CreatePool(MsgCreatePool) returns (MsgCreatePoolResponse);
+
+  // AddLiquidity defines the AddLiquidity RPC.
+  rpc AddLiquidity(MsgAddLiquidity) returns (MsgAddLiquidityResponse);
+
+  // RemoveLiquidity begins a liquidity withdrawal. It does not pay out: the
+  // shares are escrowed for the unbonding period and then swept to the
+  // provider's wallet automatically, with no second transaction.
+  rpc RemoveLiquidity(MsgRemoveLiquidity) returns (MsgRemoveLiquidityResponse);
+
+  // Swap defines the Swap RPC.
+  rpc Swap(MsgSwap) returns (MsgSwapResponse);
+}
+// MsgUpdateParams is the Msg/UpdateParams request type.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "earth/x/dex/MsgUpdateParams";
+
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // params defines the module parameters to update.
+
+  // NOTE: All parameters must be supplied.
+  Params params = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateParamsResponse defines the response structure for executing a
+// MsgUpdateParams message.
+message MsgUpdateParamsResponse {}
+
+// MsgCreatePool defines the MsgCreatePool message.
+message MsgCreatePool {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  cosmos.base.v1beta1.Coin amount_a = 2 [(gogoproto.nullable) = false];
+  cosmos.base.v1beta1.Coin amount_b = 3 [(gogoproto.nullable) = false];
+}
+
+// MsgCreatePoolResponse defines the MsgCreatePoolResponse message.
+message MsgCreatePoolResponse {
+  uint64 pool_id = 1;
+}
+
+// MsgAddLiquidity defines the MsgAddLiquidity message.
+message MsgAddLiquidity {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 pool_id = 2;
+  cosmos.base.v1beta1.Coin amount_a = 3 [(gogoproto.nullable) = false];
+  cosmos.base.v1beta1.Coin amount_b = 4 [(gogoproto.nullable) = false];
+}
+
+// MsgAddLiquidityResponse defines the MsgAddLiquidityResponse message.
+message MsgAddLiquidityResponse {
+  cosmos.base.v1beta1.Coin shares = 1 [(gogoproto.nullable) = false];
+}
+
+// MsgRemoveLiquidity defines the MsgRemoveLiquidity message.
+message MsgRemoveLiquidity {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 pool_id = 2;
+
+  // shares is the amount of LP shares to burn.
+  cosmos.base.v1beta1.Coin shares = 3 [(gogoproto.nullable) = false];
+}
+
+// MsgRemoveLiquidityResponse defines the MsgRemoveLiquidityResponse message.
+//
+// No amounts are returned: the payout is priced when the unbonding matures, not
+// when it starts, because the shares keep earning and stay exposed to the pool
+// in the meantime.
+message MsgRemoveLiquidityResponse {
+  // completion_time is the unix timestamp (seconds) at which the liquidity is
+  // swept to the provider's wallet.
+  int64 completion_time = 1;
+}
+
+// MsgSwap swaps token_in for denom_out. The dex routes through the ERTH hub, so
+// a token->token swap is executed as two hops (token_in->ERTH->denom_out).
+message MsgSwap {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  cosmos.base.v1beta1.Coin token_in = 2 [(gogoproto.nullable) = false];
+  string denom_out = 3;
+  string min_amount_out = 4;
+}
+
+// MsgSwapResponse defines the MsgSwapResponse message.
+message MsgSwapResponse {
+  cosmos.base.v1beta1.Coin token_out = 1 [(gogoproto.nullable) = false];
+}

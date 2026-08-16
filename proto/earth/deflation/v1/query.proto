@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package earth.deflation.v1;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/deflation/v1/allocation.proto";
+import "earth/deflation/v1/params.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+
+option go_package = "github.com/earth-network/earth/x/deflation/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // Parameters queries the parameters of the module.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/earth-network/earth/deflation/v1/params";
+  }
+
+  // AllocationOption queries a single allocation option by id.
+  rpc AllocationOption(QueryAllocationOptionRequest) returns (QueryAllocationOptionResponse) {
+    option (google.api.http).get = "/earth-network/earth/deflation/v1/allocation_option/{id}";
+  }
+
+  // AllocationOptions queries all allocation options.
+  rpc AllocationOptions(QueryAllocationOptionsRequest) returns (QueryAllocationOptionsResponse) {
+    option (google.api.http).get = "/earth-network/earth/deflation/v1/allocation_options";
+  }
+
+  // Voter queries a staker's allocation split.
+  rpc Voter(QueryVoterRequest) returns (QueryVoterResponse) {
+    option (google.api.http).get = "/earth-network/earth/deflation/v1/voter/{address}";
+  }
+}
+
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  // params holds all the parameters of this module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryAllocationOptionRequest requests a single allocation option.
+message QueryAllocationOptionRequest {
+  uint64 id = 1;
+}
+
+// QueryAllocationOptionResponse returns a single allocation option.
+message QueryAllocationOptionResponse {
+  AllocationOption option = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryAllocationOptionsRequest requests all allocation options.
+message QueryAllocationOptionsRequest {}
+
+// QueryAllocationOptionsResponse returns all allocation options.
+message QueryAllocationOptionsResponse {
+  repeated AllocationOption options = 1 [(gogoproto.nullable) = false];
+  // reward_index is the current global allocation reward index.
+  string reward_index = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // total_weight is the total stake weight currently allocating.
+  string total_weight = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+
+// QueryVoterRequest requests a voter's allocation split.
+message QueryVoterRequest {
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// QueryVoterResponse returns a voter's allocation split.
+message QueryVoterResponse {
+  Voter voter = 1 [(gogoproto.nullable) = false];
+}

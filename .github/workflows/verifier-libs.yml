@@ -1,0 +1,46 @@
+# Builds the native Barretenberg UltraHonk verifier lib (libbarretenberg.a)
+# for the platforms validators run on, pinned to bb v5.0.0 (see
+# third_party/barretenberg-go/checksums.json). The chain's CGo verifier
+# (zk/ultrahonk) links this. Only darwin_arm64 is checked in for dev;
+# Linux libs are produced here and attached to the release.
+name: verifier-libs
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux_amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux_arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y clang git curl python3
+
+      - name: Build libbarretenberg.a (${{ matrix.platform }}, bb v5.0.0)
+        working-directory: third_party/barretenberg-go
+        run: ./scripts/build-wrapper.sh --platform ${{ matrix.platform }}
+
+      - name: Verify the Go verifier against the oracle
+        run: CGO_ENABLED=1 go test ./zk/ultrahonk/ -run TestVerifyOracle -count=1 -v
+
+      - name: Upload lib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libbarretenberg-${{ matrix.platform }}
+          path: third_party/barretenberg-go/lib/${{ matrix.platform }}/libbarretenberg.a
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: third_party/barretenberg-go/lib/${{ matrix.platform }}/libbarretenberg.a

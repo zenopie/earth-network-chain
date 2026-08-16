@@ -1,0 +1,18 @@
+syntax = "proto3";
+package earth.pki.v1;
+
+option go_package = "github.com/earth-network/earth/x/pki/types";
+
+// Csca is a trusted Country Signing Certificate Authority certificate. Governance
+// manages the set; DSCs are verified against these natively on-chain.
+message Csca {
+  // certificate_der is the full X.509 DER (re-parsed to verify child signatures).
+  bytes certificate_der = 1;
+  // subject_key_id is the CSCA's SubjectKeyIdentifier (may be empty).
+  bytes subject_key_id = 2;
+  // subject_dn is the raw subject Distinguished Name (for issuer matching).
+  bytes subject_dn = 3;
+  // not_after is the CSCA expiry (unix seconds).
+  int64 not_after = 4;
+}
+

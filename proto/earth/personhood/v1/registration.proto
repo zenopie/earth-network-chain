@@ -1,0 +1,26 @@
+syntax = "proto3";
+package earth.personhood.v1;
+
+import "cosmos_proto/cosmos.proto";
+
+option go_package = "github.com/earth-network/earth/x/personhood/types";
+
+// Registration is a proof-of-personhood record: one unique human, deduped by the
+// zk nullifier, bound to a wallet address.
+message Registration {
+  // nullifier is the unique per-person value output by the registration proof.
+  bytes nullifier = 1;
+  // address is the registered wallet.
+  string address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // registered_at is the unix time (seconds) of registration.
+  int64 registered_at = 3;
+  // last_anml_claim is the unix time (seconds, UTC midnight) of the last ANML claim.
+  int64 last_anml_claim = 4;
+  // dsc_key is the Poseidon2 commitment to the Document Signer that produced the
+  // registration proof — the same value the circuit exposed publicly. Recording
+  // it is what makes a compromised signer's registrations enumerable.
+  bytes dsc_key = 5;
+  // country is the DSC's ISO 3166-1 alpha-2 issuing country, or "" when the
+  // certificate carries no country attribute.
+  string country = 6;
+}

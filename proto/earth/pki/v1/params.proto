@@ -1,0 +1,19 @@
+syntax = "proto3";
+package earth.pki.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/pki/types";
+
+// Params defines the parameters for the passport-PKI module.
+message Params {
+  option (amino.name) = "earth/x/pki/Params";
+  option (gogoproto.equal) = true;
+
+  // Reserved: tree_depth and root_history_size configured the DSC-registry
+  // Merkle tree, which registration no longer uses — the Document Signer is a
+  // public circuit output verified directly against the CSCA trust store.
+  reserved 1, 2;
+  reserved "tree_depth", "root_history_size";
+}

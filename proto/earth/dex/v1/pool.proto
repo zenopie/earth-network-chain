@@ -1,0 +1,29 @@
+syntax = "proto3";
+package earth.dex.v1;
+
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/dex/types";
+
+// Pool defines a spoke-and-wheel liquidity pool that always pairs the hub asset
+// (the staking coin, ERTH) with a single spoke token.
+message Pool {
+  uint64 pool_id = 1;
+  // reserve_erth is the hub-side reserve, denominated in the staking coin.
+  cosmos.base.v1beta1.Coin reserve_erth = 2 [(gogoproto.nullable) = false];
+  // reserve_token is the spoke-side reserve.
+  cosmos.base.v1beta1.Coin reserve_token = 3 [(gogoproto.nullable) = false];
+  // volume is the pool's decaying ERTH-denominated swap volume, used to weight
+  // LP reward distribution. It decays exponentially per day (~7-day half-life
+  // window), so recent trading dominates.
+  string volume = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // last_volume_day is the day index (block time / 86400) at which `volume` was
+  // last decayed/updated.
+  uint64 last_volume_day = 5;
+}

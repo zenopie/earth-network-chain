@@ -1,0 +1,117 @@
+package keeper
+
+import (
+	"context"
+	"fmt"
+
+	"cosmossdk.io/collections"
+	"cosmossdk.io/core/address"
+	corestore "cosmossdk.io/core/store"
+	"cosmossdk.io/math"
+	"github.com/cosmos/cosmos-sdk/codec"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+
+	"github.com/earth-network/earth/x/dex/types"
+)
+
+type Keeper struct {
+	storeService corestore.KVStoreService
+	cdc          codec.Codec
+	addressCodec address.Codec
+	// Address capable of executing a MsgUpdateParams message.
+	// Typically, this should be the x/gov module account.
+	authority []byte
+
+	Schema collections.Schema
+	Params collections.Item[types.Params]
+
+	bankKeeper    types.BankKeeper
+	stakingKeeper types.StakingKeeper
+	Pool          collections.Map[uint64, types.Pool]
+	PoolSeq       collections.Sequence
+	// PoolByToken indexes the spoke token denom to its pool id (one pool per token).
+	PoolByToken collections.Map[string, uint64]
+
+	// Lazy LP reward accounting — see lp_rewards.go.
+	LpRewardIndex collections.Item[math.Int]
+	LpTotalVolume collections.Item[math.Int]
+	PoolLpIndex   collections.Map[uint64, math.Int]
+
+	// In-flight liquidity withdrawals, keyed (completion_time, pool_id, address)
+	// so the maturity sweep can walk them in due order — see lp_unbonding.go.
+	LpUnbondings collections.Map[collections.Triple[int64, uint64, []byte], types.LpUnbonding]
+}
+
+func NewKeeper(
+	storeService corestore.KVStoreService,
+	cdc codec.Codec,
+	addressCodec address.Codec,
+	authority []byte,
+
+	bankKeeper types.BankKeeper,
+	stakingKeeper types.StakingKeeper,
+) Keeper {
+	if _, err := addressCodec.BytesToString(authority); err != nil {
+		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
+	}
+
+	sb := collections.NewSchemaBuilder(storeService)
+
+	k := Keeper{
+		storeService:  storeService,
+		cdc:           cdc,
+		addressCodec:  addressCodec,
+		authority:     authority,
+		bankKeeper:    bankKeeper,
+		stakingKeeper: stakingKeeper,
+
+		Params:       collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+		Pool:         collections.NewMap(sb, types.PoolKey, "pool", collections.Uint64Key, codec.CollValue[types.Pool](cdc)),
+		PoolSeq:      collections.NewSequence(sb, types.PoolSeqKey, "pool_seq"),
+		PoolByToken:  collections.NewMap(sb, types.PoolByTokenKey, "pool_by_token", collections.StringKey, collections.Uint64Value),
+
+		LpRewardIndex: collections.NewItem(sb, types.LpRewardIndexKey, "lp_reward_index", sdk.IntValue),
+		LpTotalVolume: collections.NewItem(sb, types.LpTotalVolumeKey, "lp_total_volume", sdk.IntValue),
+		PoolLpIndex:   collections.NewMap(sb, types.PoolLpIndexKey, "pool_lp_index", collections.Uint64Key, sdk.IntValue),
+
+		LpUnbondings: collections.NewMap(
+			sb, types.LpUnbondingKey, "lp_unbondings",
+			collections.TripleKeyCodec(collections.Int64Key, collections.Uint64Key, collections.BytesKey),
+			codec.CollValue[types.LpUnbonding](cdc),
+		),
+	}
+
+	schema, err := sb.Build()
+	if err != nil {
+		panic(err)
+	}
+	k.Schema = schema
+
+	return k
+}
+
+// GetAuthority returns the module's authority.
+func (k Keeper) GetAuthority() []byte {
+	return k.authority
+}
+
+// HubDenom returns the hub asset denom (the staking coin, ERTH) that every pool
+// pairs against.
+func (k Keeper) HubDenom(ctx context.Context) (string, error) {
+	return k.stakingKeeper.BondDenom(ctx)
+}
+
+// HasPoolForToken reports whether a pool exists for the given spoke token denom.
+func (k Keeper) HasPoolForToken(ctx context.Context, tokenDenom string) (bool, error) {
+	return k.PoolByToken.Has(ctx, tokenDenom)
+}
+
+// PoolForToken returns the pool paired with the given spoke token denom.
+func (k Keeper) PoolForToken(ctx context.Context, tokenDenom string) (types.Pool, error) {
+	poolID, err := k.PoolByToken.Get(ctx, tokenDenom)
+	if err != nil {
+		return types.Pool{}, err
+	}
+	return k.Pool.Get(ctx, poolID)
+}
+
