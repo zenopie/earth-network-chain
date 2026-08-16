@@ -16,14 +16,27 @@
 # by the same path used locally. The cost is a large image, which for a devnet is
 # the cheaper mistake.
 
-FROM golang:1.25-bookworm
+# Pinned to amd64 to match the Ignite tarball fetched below — and SecretVM's TDX
+# hosts are amd64 anyway. Without the pin an arm64 builder would install an
+# x86 ignite binary into an arm image.
+FROM --platform=linux/amd64 golang:1.25-bookworm
 
 # Ignite needs Go >= 1.25.10 on PATH; the base image supplies it.
-ARG IGNITE_VERSION=v29.10.1
+#
+# Installed from the GitHub release tarball rather than get.ignite.com: that
+# installer answers with an HTML page, which bash then tries to execute
+# ("syntax error near unexpected token `newline'"). The version has no leading
+# "v" in the asset name but does in the tag.
+#
+# `ignite version` at the end is a build-time smoke check — without it a wrong
+# URL or a changed archive layout only surfaces on the node at first boot.
+ARG IGNITE_VERSION=29.10.1
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates jq \
     && rm -rf /var/lib/apt/lists/* \
-    && curl -sSL https://get.ignite.com/cli@${IGNITE_VERSION}! | bash
+    && curl -fsSL "https://github.com/ignite/cli/releases/download/v${IGNITE_VERSION}/ignite_${IGNITE_VERSION}_linux_amd64.tar.gz" \
+        | tar -xz -C /usr/local/bin ignite \
+    && ignite version
 
 WORKDIR /src
 COPY go.mod go.sum ./
