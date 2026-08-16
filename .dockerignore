@@ -1,8 +1,9 @@
 # Keep the build context lean. The image builds from source and initialises
 # genesis at first boot, so none of this is needed inside it.
+#
+# Note what is NOT excluded: docs/static is embedded by docs/docs.go with
+# //go:embed, so excluding it breaks the build with "pattern static: no matching
+# files found". third_party carries the verifier sources and checksums.
 .git
 .github
 build
-docs/static
-*.md
-!readme.md
