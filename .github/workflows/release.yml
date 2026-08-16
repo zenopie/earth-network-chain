@@ -12,7 +12,13 @@
 #
 # The workflow will not run if there is no tag pushed with a "v" prefix and no change pushed to your
 # default branch.
-on: push
+#
+# Disabled: this fired on every push and published "latest" prerelease binaries
+# nobody is consuming. Left in place rather than deleted because the Ignite
+# release tooling it wraps is worth having if the binaries are ever distributed.
+# To re-enable, restore `on: push` — and note that bare `push` means every
+# branch, not just the default one.
+on: workflow_dispatch
 
 jobs:
   might_release:
