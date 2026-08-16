@@ -17,13 +17,6 @@
           "address": "earth1c9pthe4a5ngylhm5mjem6y5tt0sz65yqdngthx",
           "pub_key": null,
           "sequence": "0"
-        },
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "account_number": "1",
-          "address": "earth1ey2ej9jlkwzr0r3q7kky6mku3myj7cdc82xcga",
-          "pub_key": null,
-          "sequence": "0"
         }
       ],
       "params": {
@@ -64,15 +57,6 @@
               "denom": "uerth"
             }
           ]
-        },
-        {
-          "address": "earth1ey2ej9jlkwzr0r3q7kky6mku3myj7cdc82xcga",
-          "coins": [
-            {
-              "amount": "100000000000",
-              "denom": "uerth"
-            }
-          ]
         }
       ],
       "denom_metadata": [],
@@ -91,7 +75,7 @@
           "denom": "uanml"
         },
         {
-          "amount": "2523080000000000",
+          "amount": "2522980000000000",
           "denom": "uerth"
         }
       ]
