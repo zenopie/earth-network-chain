@@ -9,20 +9,15 @@ import (
 	corestore "cosmossdk.io/core/store"
 	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
 )
-
-// IntegratedHandler resolves an INTEGRATED democratic option accrued ERTH each
-// block; returns the amount resolved.
-type IntegratedHandler func(ctx context.Context, accrued math.Int) (resolved math.Int, err error)
 
 type Keeper struct {
 	storeService corestore.KVStoreService
 	cdc          codec.Codec
 	addressCodec address.Codec
-	// authority is the address that can execute MsgUpdateParams / MsgAddIntegratedOption.
+	// authority is the address that can execute MsgUpdateParams.
 	authority []byte
 
 	Schema collections.Schema
@@ -30,6 +25,10 @@ type Keeper struct {
 
 	bankKeeper types.BankKeeper
 	dexKeeper  types.DexKeeper
+	// allocationKeeper owns the human emission stream. This module supplies that
+	// stream's weight source and draws its registration-reward pool down; it
+	// stores none of the stream's state itself.
+	allocationKeeper types.AllocationKeeper
 
 	// registration (proof-of-personhood)
 	Registrations collections.Map[[]byte, types.Registration] // nullifier -> Registration
@@ -44,20 +43,8 @@ type Keeper struct {
 	// can retire the lapsed ones without walking the whole set.
 	RegByRegisteredAt collections.KeySet[collections.Pair[int64, []byte]]
 
-	// democratic allocation stream (one-human-one-vote)
-	DemOptions     collections.Map[uint64, types.DemocraticOption]
-	DemSeq         collections.Sequence
-	DemVoters      collections.Map[[]byte, types.DemocraticVoter]
-	DemRewardIndex collections.Item[math.Int]
-	DemTotalWeight collections.Item[math.Int]
-	DemLastUpkeep  collections.Item[int64]
-	// DemEpoch is bumped by a governance reset to retire every vote at once.
-	DemEpoch collections.Item[uint64]
-
 	// buyback-and-burn clock
-	LastBuyback          collections.Item[int64]
-	DemIntegratedOptions collections.KeySet[uint64]
-	integratedHandlers   map[string]IntegratedHandler
+	LastBuyback collections.Item[int64]
 
 	// pkiKeeper binds registration proofs to the live DSC-registry root history
 	// (Option C). Optional: nil falls back to the static params.DscRoot check.
@@ -73,6 +60,7 @@ func NewKeeper(
 	bankKeeper types.BankKeeper,
 	dexKeeper types.DexKeeper,
 	pkiKeeper types.PkiKeeper,
+	allocationKeeper types.AllocationKeeper,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -81,13 +69,14 @@ func NewKeeper(
 	sb := collections.NewSchemaBuilder(storeService)
 
 	k := Keeper{
-		storeService: storeService,
-		cdc:          cdc,
-		addressCodec: addressCodec,
-		authority:    authority,
-		bankKeeper:   bankKeeper,
-		dexKeeper:    dexKeeper,
-		pkiKeeper:    pkiKeeper,
+		storeService:     storeService,
+		cdc:              cdc,
+		addressCodec:     addressCodec,
+		authority:        authority,
+		bankKeeper:       bankKeeper,
+		dexKeeper:        dexKeeper,
+		pkiKeeper:        pkiKeeper,
+		allocationKeeper: allocationKeeper,
 
 		Params:            collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		Registrations:     collections.NewMap(sb, types.RegistrationsKey, "registrations", collections.BytesKey, codec.CollValue[types.Registration](cdc)),
@@ -98,15 +87,7 @@ func NewKeeper(
 		RegByRegisteredAt: collections.NewKeySet(sb, types.RegByRegisteredAtKey, "reg_by_registered_at",
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
 
-		DemOptions:           collections.NewMap(sb, types.DemOptionsKey, "dem_options", collections.Uint64Key, codec.CollValue[types.DemocraticOption](cdc)),
-		DemSeq:               collections.NewSequence(sb, types.DemSeqKey, "dem_seq"),
-		DemVoters:            collections.NewMap(sb, types.DemVotersKey, "dem_voters", collections.BytesKey, codec.CollValue[types.DemocraticVoter](cdc)),
-		DemRewardIndex:       collections.NewItem(sb, types.DemRewardIndexKey, "dem_reward_index", sdk.IntValue),
-		DemTotalWeight:       collections.NewItem(sb, types.DemTotalWeightKey, "dem_total_weight", sdk.IntValue),
-		DemLastUpkeep:        collections.NewItem(sb, types.DemLastUpkeepKey, "dem_last_upkeep", collections.Int64Value),
-		DemEpoch:             collections.NewItem(sb, types.DemEpochKey, "dem_epoch", collections.Uint64Value),
-		LastBuyback:          collections.NewItem(sb, types.LastBuybackKey, "last_buyback", collections.Int64Value),
-		DemIntegratedOptions: collections.NewKeySet(sb, types.DemIntegratedOptionsKey, "dem_integrated_options", collections.Uint64Key),
+		LastBuyback: collections.NewItem(sb, types.LastBuybackKey, "last_buyback", collections.Int64Value),
 	}
 
 	schema, err := sb.Build()
@@ -115,19 +96,32 @@ func NewKeeper(
 	}
 	k.Schema = schema
 
-	// Compiled-in integrated handlers (gov may only add INTEGRATED options whose
-	// handler is registered here).
-	k.integratedHandlers = map[string]IntegratedHandler{
-		types.HandlerRegistrationRewards: func(context.Context, math.Int) (math.Int, error) {
-			// Pool accrues each block; paid out on registration (payRegistrationReward).
-			return math.ZeroInt(), nil
-		},
-	}
-
 	return k
 }
 
 // GetAuthority returns the module's authority.
 func (k Keeper) GetAuthority() []byte {
 	return k.authority
+}
+
+// Weight implements the human stream's allocation weight source: every live
+// registration carries the same fixed weight, and anything else carries none.
+// That equality is the whole of one-human-one-vote — there is no scaling knob
+// here on purpose.
+func (k Keeper) Weight(ctx context.Context, addr []byte) (math.Int, error) {
+	reg, ok, err := k.getRegistrationByAddr(ctx, addr)
+	if err != nil {
+		return math.Int{}, err
+	}
+	if !ok {
+		return math.ZeroInt(), nil
+	}
+	expired, err := k.isExpired(ctx, reg)
+	if err != nil {
+		return math.Int{}, err
+	}
+	if expired {
+		return math.ZeroInt(), nil
+	}
+	return math.NewInt(types.VoterWeight), nil
 }

@@ -13,48 +13,15 @@ import (
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
-// BeginBlocker settles the democratic allocation stream and runs the ANML
-// buyback-and-burn (1 ERTH/sec each).
+// BeginBlocker retires lapsed registrations and runs the ANML
+// buyback-and-burn (1 ERTH/sec).
+//
+// It must run before x/allocation's BeginBlocker: the sweep returns a lapsed
+// human's vote weight to the human stream, and doing that first is what makes
+// this block's emission split across live humans only.
 func (k Keeper) BeginBlocker(ctx context.Context) error {
-	// Retire lapsed registrations before settling, so this block's emission is
-	// already split across live humans only.
 	if err := k.sweepExpiredRegistrations(ctx); err != nil {
 		return err
-	}
-
-	// Democratic allocation upkeep: advance index and settle every option.
-	if err := k.advanceDemIndex(ctx); err != nil {
-		return err
-	}
-	rewardIndex, err := k.demRewardIndex(ctx)
-	if err != nil {
-		return err
-	}
-	// Only INTEGRATED options are settled + resolved every block; ADDRESS options
-	// settle lazily (on claim / vote change).
-	var ids []uint64
-	if err := k.DemIntegratedOptions.Walk(ctx, nil, func(id uint64) (bool, error) {
-		ids = append(ids, id)
-		return false, nil
-	}); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		opt, err := k.DemOptions.Get(ctx, id)
-		if err != nil {
-			return err
-		}
-		settleOption(&opt, rewardIndex)
-		if handler, ok := k.integratedHandlers[opt.Handler]; ok && opt.Accumulated.IsPositive() {
-			resolved, err := handler(ctx, opt.Accumulated)
-			if err != nil {
-				return err
-			}
-			opt.Accumulated = opt.Accumulated.Sub(resolved)
-		}
-		if err := k.DemOptions.Set(ctx, id, opt); err != nil {
-			return err
-		}
 	}
 
 	return k.buybackAndBurn(ctx)

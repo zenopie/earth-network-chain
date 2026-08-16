@@ -67,8 +67,8 @@ import (
 	icatypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/types"
 	ibctransfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
 	ibcexported "github.com/cosmos/ibc-go/v10/modules/core/exported"
-	_ "github.com/earth-network/earth/x/deflation/module"
-	deflationmoduletypes "github.com/earth-network/earth/x/deflation/types"
+	_ "github.com/earth-network/earth/x/allocation/module"
+	allocationmoduletypes "github.com/earth-network/earth/x/allocation/types"
 	_ "github.com/earth-network/earth/x/personhood/module"
 	personhoodmoduletypes "github.com/earth-network/earth/x/personhood/types"
 	_ "github.com/earth-network/earth/x/pki/module"
@@ -91,7 +91,12 @@ var (
 		{Account: nft.ModuleName},
 		{Account: ibctransfertypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: icatypes.ModuleName},
-		{Account: dexmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}}, {Account: deflationmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}}, {Account: personhoodmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
+		{Account: dexmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
+		// x/allocation mints an option's accrued ERTH when it is claimed and burns
+		// the fee for adding one. x/personhood mints ANML and the registration
+		// reward, and burns the ANML it buys back.
+		{Account: allocationmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		{Account: personhoodmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		// x/earth owns issuance: it mints the emission, holds withheld commission,
 		// and burns gas fees. Without these permissions MintCoins panics.
 		{Account: earthmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}}}
@@ -138,8 +143,11 @@ var (
 						// chain modules
 						earthmoduletypes.ModuleName,
 						dexmoduletypes.ModuleName,
-						deflationmoduletypes.ModuleName,
+						// personhood before allocation: its sweep returns a lapsed human's
+						// weight to the human stream, and that has to happen before the
+						// stream settles this block's emission across the voters left.
 						personhoodmoduletypes.ModuleName,
+						allocationmoduletypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/beginBlockers
 					},
 					EndBlockers: []string{
@@ -189,7 +197,7 @@ var (
 						// chain modules
 						earthmoduletypes.ModuleName,
 						dexmoduletypes.ModuleName,
-						deflationmoduletypes.ModuleName,
+						allocationmoduletypes.ModuleName,
 						personhoodmoduletypes.ModuleName,
 						pkimoduletypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/initGenesis
@@ -297,8 +305,8 @@ var (
 				Config: appconfig.WrapAny(&dexmoduletypes.Module{}),
 			},
 			{
-				Name:   deflationmoduletypes.ModuleName,
-				Config: appconfig.WrapAny(&deflationmoduletypes.Module{}),
+				Name:   allocationmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&allocationmoduletypes.Module{}),
 			},
 			{
 				Name:   personhoodmoduletypes.ModuleName,

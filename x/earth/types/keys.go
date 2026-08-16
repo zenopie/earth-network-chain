@@ -27,9 +27,9 @@ const (
 // and two pay collectively-chosen options:
 //
 //	individual         (human,   individual)  x/personhood  ANML buyback-and-burn
-//	collective human   (human,   collective)  x/personhood  democratic allocation
-//	investor           (capital, individual)  x/earth      compounded into bonded stake
-//	collective capital (capital, collective)  x/deflation  stake-weighted allocation
+//	collective human   (human,   collective)  x/allocation  human stream, one-human-one-vote
+//	investor           (capital, individual)  x/earth       compounded into bonded stake
+//	collective capital (capital, collective)  x/allocation  capital stream, stake-weighted
 //
 // The rates live here rather than in each pillar so this file is the single
 // answer to "how much ERTH exists and where does it go". The pillar modules

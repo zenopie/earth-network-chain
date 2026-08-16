@@ -36,7 +36,7 @@ func (k msgServer) Swap(ctx context.Context, msg *types.MsgSwap) (*types.MsgSwap
 
 // SwapExactIn swaps tokenIn for denomOut on behalf of trader, routing through the
 // ERTH hub (1 or 2 hops), charging the per-hop fee/burn and enforcing minOut. It
-// is exported so other modules (e.g. the caretaker buyback) can trade via the dex.
+// is exported so other modules (e.g. the x/personhood ANML buyback) can trade via the dex.
 func (k Keeper) SwapExactIn(ctx context.Context, trader sdk.AccAddress, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
 	if !tokenIn.Amount.IsPositive() {
 		return sdk.Coin{}, errorsmod.Wrap(types.ErrInvalidAmount, "token_in must be positive")

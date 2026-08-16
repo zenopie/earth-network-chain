@@ -1,4 +1,4 @@
-package caretaker
+package personhood
 
 import (
 	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
@@ -18,20 +18,14 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:     "Shows the parameters of the module",
 				},
 				{
-					RpcMethod: "DemocraticOptions",
-					Use:       "democratic-options",
-					Short:     "List democratic allocation options, reward index, total weight, registrations",
+					RpcMethod: "RegistrationCount",
+					Use:       "registration-count",
+					Short:     "Show how many humans are currently registered",
 				},
 				{
 					RpcMethod:      "Registration",
 					Use:            "registration [address]",
 					Short:          "Show a wallet's registration status",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
-				},
-				{
-					RpcMethod:      "DemocraticVoter",
-					Use:            "democratic-voter [address]",
-					Short:          "Show a registered human's democratic split",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
 				},
 				// this line is used by ignite scaffolding # autocli/query
@@ -54,34 +48,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod: "ClaimAnml",
 					Use:       "claim-anml",
 					Short:     "Claim 1 ANML (once per day, registered humans only)",
-				},
-				{
-					RpcMethod: "SetDemocraticAllocations",
-					Use:       "set-democratic-allocations",
-					Short:     "Set your one-human-one-vote split (--percentages JSON, must sum to 100)",
-				},
-				{
-					RpcMethod:      "ClaimDemocraticAllocation",
-					Use:            "claim-democratic-allocation [option-id]",
-					Short:          "Claim an ADDRESS option's accrued ERTH to its recipient",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "option_id"}},
-				},
-				{
-					RpcMethod: "AddIntegratedOption",
-					Skip:      true, // authority (governance) gated
-				},
-				{
-					RpcMethod:      "AddAddressOption",
-					Use:            "add-address-option [recipient] [description]",
-					Short:          "Add a claim-based ADDRESS democratic option (permissionless; burns a fee)",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "recipient"}, {ProtoField: "description"}},
-					FlagOptions: map[string]*autocliv1.FlagOptions{
-						"claimer": {Usage: "address allowed to trigger the claim (default: anyone; payout always goes to recipient)"},
-					},
-				},
-				{
-					RpcMethod: "ResetDemocraticAllocations",
-					Skip:      true, // authority (governance) gated
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

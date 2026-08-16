@@ -14,11 +14,11 @@ import (
 
 // --- volume-weighted LP reward distribution ---
 //
-// The stake-weighted allocation stream lives in x/deflation; when its
-// LP-rewards option accrues ERTH, x/deflation calls DistributeLPRewards below.
+// The stake-weighted allocation stream lives in x/allocation; when its
+// LP-rewards option accrues ERTH, x/allocation calls DistributeLPRewards below.
 // That call is O(1): it only advances a global index. Pools collect what they
 // are owed lazily, the next time a swap or liquidity change touches them, using
-// the same index pattern as the allocation streams (see x/deflation/keeper/
+// the same index pattern as the allocation streams (see x/allocation/keeper/
 // allocation.go). Nothing iterates the pool set, so creating pools is a cost
 // borne only by whoever creates them.
 //
@@ -106,7 +106,7 @@ func (k Keeper) getPoolLpIndex(ctx context.Context, poolID uint64) (math.Int, er
 	return v, nil
 }
 
-// DistributeLPRewards is the exported entry point used by the x/deflation module
+// DistributeLPRewards is the exported entry point used by the x/allocation module
 // to auto-compound the LP-rewards allocation option into the dex pools. It
 // advances the global reward index by amount/totalVolume and returns how much of
 // `amount` that actually represents; the remainder (all of it when no pool has

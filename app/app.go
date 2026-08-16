@@ -46,7 +46,7 @@ import (
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 
 	"github.com/earth-network/earth/docs"
-	deflationmodulekeeper "github.com/earth-network/earth/x/deflation/keeper"
+	allocationmodulekeeper "github.com/earth-network/earth/x/allocation/keeper"
 	personhoodmodulekeeper "github.com/earth-network/earth/x/personhood/keeper"
 	pkimodulekeeper "github.com/earth-network/earth/x/pki/keeper"
 	dexmodulekeeper "github.com/earth-network/earth/x/dex/keeper"
@@ -103,12 +103,12 @@ type App struct {
 	TransferKeeper      ibctransferkeeper.Keeper
 
 	// simulation manager
-	sm              *module.SimulationManager
-	EarthKeeper     earthmodulekeeper.Keeper
-	DexKeeper       dexmodulekeeper.Keeper
-	DeflationKeeper deflationmodulekeeper.Keeper
+	sm               *module.SimulationManager
+	EarthKeeper      earthmodulekeeper.Keeper
+	DexKeeper        dexmodulekeeper.Keeper
+	AllocationKeeper allocationmodulekeeper.Keeper
 	PersonhoodKeeper personhoodmodulekeeper.Keeper
-	PkiKeeper       pkimodulekeeper.Keeper
+	PkiKeeper        pkimodulekeeper.Keeper
 }
 
 func init() {
@@ -185,7 +185,7 @@ func New(
 		&app.ParamsKeeper,
 		&app.EarthKeeper,
 		&app.DexKeeper,
-		&app.DeflationKeeper,
+		&app.AllocationKeeper,
 		&app.PersonhoodKeeper,
 		&app.PkiKeeper,
 	); err != nil {

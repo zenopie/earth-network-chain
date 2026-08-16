@@ -10,7 +10,7 @@ import (
 // TestRegisterVariantProofs verifies that the chain's UltraHonk verifier accepts
 // every per-DSC-algorithm register-circuit variant (RSA-2048/4096 and ECDSA on
 // P-384 and the Brainpool curves) — the SOD→DSC circuits for non-P256 passports.
-// Each is a distinct circuit + VK; the caretaker selects it by signature_algorithm,
+// Each is a distinct circuit + VK; x/personhood selects it by signature_algorithm,
 // so accepting the proof here is what "the chain accepts them" means. Public inputs
 // are [current_date=250101, nullifier, dsc_key].
 func TestRegisterVariantProofs(t *testing.T) {

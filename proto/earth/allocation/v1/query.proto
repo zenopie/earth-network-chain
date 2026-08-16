@@ -1,0 +1,93 @@
+syntax = "proto3";
+package earth.allocation.v1;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/allocation/v1/allocation.proto";
+import "earth/allocation/v1/params.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+
+option go_package = "github.com/earth-network/earth/x/allocation/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // Parameters queries the parameters of the module.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/earth-network/earth/allocation/v1/params";
+  }
+
+  // Option queries a single allocation option within a stream.
+  rpc Option(QueryOptionRequest) returns (QueryOptionResponse) {
+    option (google.api.http).get = "/earth-network/earth/allocation/v1/option/{stream}/{id}";
+  }
+
+  // Options queries every allocation option in a stream, with the stream's
+  // reward index, total weight and epoch.
+  rpc Options(QueryOptionsRequest) returns (QueryOptionsResponse) {
+    option (google.api.http).get = "/earth-network/earth/allocation/v1/options/{stream}";
+  }
+
+  // Voter queries one address's split within a stream.
+  rpc Voter(QueryVoterRequest) returns (QueryVoterResponse) {
+    option (google.api.http).get = "/earth-network/earth/allocation/v1/voter/{stream}/{address}";
+  }
+}
+
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  // params holds all the parameters of this module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryOptionRequest requests a single allocation option.
+message QueryOptionRequest {
+  StreamId stream = 1;
+  uint64 id = 2;
+}
+
+// QueryOptionResponse returns a single allocation option.
+message QueryOptionResponse {
+  AllocationOption option = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryOptionsRequest requests every option in one stream.
+message QueryOptionsRequest {
+  StreamId stream = 1;
+}
+
+// QueryOptionsResponse returns every option in one stream.
+message QueryOptionsResponse {
+  repeated AllocationOption options = 1 [(gogoproto.nullable) = false];
+  // reward_index is the stream's current reward index.
+  string reward_index = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // total_weight is the voting weight currently allocating in this stream.
+  string total_weight = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // epoch is the stream's allocation epoch; votes older than it carry no weight.
+  uint64 epoch = 4;
+}
+
+// QueryVoterRequest requests a voter's split within a stream.
+message QueryVoterRequest {
+  StreamId stream = 1;
+  string address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// QueryVoterResponse returns a voter's split.
+message QueryVoterResponse {
+  Voter voter = 1 [(gogoproto.nullable) = false];
+}

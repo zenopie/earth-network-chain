@@ -14,8 +14,8 @@ import (
 )
 
 // Register verifies a proof-of-personhood proof, dedups on its nullifier, records
-// the registration, mints 1 ANML, and pays the registration reward from
-// democratic option #1 (50% registree / 50% referrer).
+// the registration, mints 1 ANML, and pays the registration reward from the
+// human stream's option #1 (50% registree / 50% referrer).
 func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
 	creatorBz, err := k.addressCodec.StringToBytes(msg.Creator)
 	if err != nil {
@@ -28,10 +28,10 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		return nil, err
 	}
 
-	// Settle the democratic stream up front: clearing a lapsed registration below
+	// Settle the human stream up front: clearing a lapsed registration below
 	// retires its vote weight, and that has to be credited against a current
 	// index. Doing it once here also covers payRegistrationReward at the end.
-	if err := k.advanceDemIndex(ctx); err != nil {
+	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
 		return nil, err
 	}
 
@@ -128,7 +128,7 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		return nil, err
 	}
 
-	// Pay the registration reward from democratic option #1.
+	// Pay the registration reward from the human stream's option #1.
 	reward, err := k.payRegistrationReward(ctx, creator, referrer)
 	if err != nil {
 		return nil, err

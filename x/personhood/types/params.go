@@ -21,7 +21,6 @@ func DefaultParams() Params {
 	// nil (not an empty map) so it matches the value after a proto round-trip,
 	// which marshals an empty map to nothing and unmarshals back to nil.
 	p := NewParams(nil, DefaultRegistrationValiditySeconds)
-	p.AddressOptionFee = DefaultAddressOptionFee
 	p.CurrentDateMaxSkewSeconds = DefaultCurrentDateMaxSkewSeconds
 	p.ExpirySweepLimit = DefaultExpirySweepLimit
 	return p

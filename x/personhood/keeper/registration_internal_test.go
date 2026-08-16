@@ -20,8 +20,23 @@ import (
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
+	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"github.com/earth-network/earth/x/personhood/types"
 )
+
+// stubAllocation stands in for x/allocation in the proof-verification tests
+// below, which never reach the emission stream. The paths that do — the expiry
+// sweep and the registration reward — are covered against the real keeper in
+// keeper_test.go.
+type stubAllocation struct{}
+
+func (stubAllocation) AdvanceIndex(context.Context, allocationtypes.StreamId) error { return nil }
+func (stubAllocation) ClearVoter(context.Context, allocationtypes.StreamId, []byte) error {
+	return nil
+}
+func (stubAllocation) DrawFromOption(context.Context, allocationtypes.StreamId, uint64, int64) (math.Int, error) {
+	return math.ZeroInt(), nil
+}
 
 // oracleDir points at the UltraHonk verifier's known-good bb v5.0.0 fixture.
 const oracleDir = "../../../zk/ultrahonk/testdata"
@@ -72,7 +87,7 @@ func TestVerifyRegistrationProof_DscBinding(t *testing.T) {
 		ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
 		storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 		base := testutil.DefaultContextWithDB(t, storeKey, storetypes.NewTransientStoreKey("transient_test")).Ctx
-		k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac, authtypes.NewModuleAddress(types.GovModuleName), nil, stubDex{}, pki)
+		k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac, authtypes.NewModuleAddress(types.GovModuleName), nil, stubDex{}, pki, stubAllocation{})
 		ctx := base.WithBlockTime(blockTime)
 		if err := k.Params.Set(ctx, params); err != nil {
 			t.Fatal(err)
@@ -131,6 +146,7 @@ func newKeeperForTest(t *testing.T) (Keeper, context.Context) {
 		nil,
 		stubDex{},
 		nil, // pkiKeeper: nil -> falls back to static params.DscRoot in tests
+		stubAllocation{},
 	)
 	return k, ctx
 }

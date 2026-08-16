@@ -1,4 +1,4 @@
-package caretaker
+package personhood
 
 import (
 	"math/rand"
@@ -7,7 +7,7 @@ import (
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
 	"github.com/cosmos/cosmos-sdk/x/simulation"
 
-	caretakersimulation "github.com/earth-network/earth/x/personhood/simulation"
+	personhoodsimulation "github.com/earth-network/earth/x/personhood/simulation"
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
@@ -17,10 +17,10 @@ func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
 	for i, acc := range simState.Accounts {
 		accs[i] = acc.Address.String()
 	}
-	caretakerGenesis := types.GenesisState{
+	personhoodGenesis := types.GenesisState{
 		Params: types.DefaultParams(),
 	}
-	simState.GenState[types.ModuleName] = simState.Cdc.MustMarshalJSON(&caretakerGenesis)
+	simState.GenState[types.ModuleName] = simState.Cdc.MustMarshalJSON(&personhoodGenesis)
 }
 
 // RegisterStoreDecoder registers a decoder.
@@ -30,7 +30,7 @@ func (am AppModule) RegisterStoreDecoder(_ simtypes.StoreDecoderRegistry) {}
 func (am AppModule) WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
 	operations := make([]simtypes.WeightedOperation, 0)
 	const (
-		opWeightMsgRegister          = "op_weight_msg_caretaker"
+		opWeightMsgRegister          = "op_weight_msg_personhood"
 		defaultWeightMsgRegister int = 100
 	)
 
@@ -42,10 +42,10 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 	)
 	operations = append(operations, simulation.NewWeightedOperation(
 		weightMsgRegister,
-		caretakersimulation.SimulateMsgRegister(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
+		personhoodsimulation.SimulateMsgRegister(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
 	))
 	const (
-		opWeightMsgClaimAnml          = "op_weight_msg_caretaker"
+		opWeightMsgClaimAnml          = "op_weight_msg_personhood"
 		defaultWeightMsgClaimAnml int = 100
 	)
 
@@ -57,37 +57,7 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 	)
 	operations = append(operations, simulation.NewWeightedOperation(
 		weightMsgClaimAnml,
-		caretakersimulation.SimulateMsgClaimAnml(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
-	))
-	const (
-		opWeightMsgSetDemocraticAllocations          = "op_weight_msg_caretaker"
-		defaultWeightMsgSetDemocraticAllocations int = 100
-	)
-
-	var weightMsgSetDemocraticAllocations int
-	simState.AppParams.GetOrGenerate(opWeightMsgSetDemocraticAllocations, &weightMsgSetDemocraticAllocations, nil,
-		func(_ *rand.Rand) {
-			weightMsgSetDemocraticAllocations = defaultWeightMsgSetDemocraticAllocations
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgSetDemocraticAllocations,
-		caretakersimulation.SimulateMsgSetDemocraticAllocations(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
-	))
-	const (
-		opWeightMsgClaimDemocraticAllocation          = "op_weight_msg_caretaker"
-		defaultWeightMsgClaimDemocraticAllocation int = 100
-	)
-
-	var weightMsgClaimDemocraticAllocation int
-	simState.AppParams.GetOrGenerate(opWeightMsgClaimDemocraticAllocation, &weightMsgClaimDemocraticAllocation, nil,
-		func(_ *rand.Rand) {
-			weightMsgClaimDemocraticAllocation = defaultWeightMsgClaimDemocraticAllocation
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgClaimDemocraticAllocation,
-		caretakersimulation.SimulateMsgClaimDemocraticAllocation(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
+		personhoodsimulation.SimulateMsgClaimAnml(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
 	))
 	return operations
 }

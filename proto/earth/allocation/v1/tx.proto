@@ -1,0 +1,142 @@
+syntax = "proto3";
+package earth.allocation.v1;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/allocation/v1/allocation.proto";
+import "earth/allocation/v1/params.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/allocation/types";
+
+// Msg defines the Msg service. Every message names the stream it acts on; the
+// two streams share one engine but never share state.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // UpdateParams defines a (governance) operation for updating the module
+  // parameters. The authority defaults to the x/gov module account.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+
+  // SetAllocations sets the sender's split within a stream.
+  rpc SetAllocations(MsgSetAllocations) returns (MsgSetAllocationsResponse);
+
+  // ClaimAllocation pays an ADDRESS option's accrued ERTH to its recipient.
+  rpc ClaimAllocation(MsgClaimAllocation) returns (MsgClaimAllocationResponse);
+
+  // AddIntegratedOption adds an INTEGRATED option to a stream (governance-gated).
+  rpc AddIntegratedOption(MsgAddIntegratedOption) returns (MsgAddIntegratedOptionResponse);
+
+  // AddAddressOption adds an ADDRESS option to a stream (permissionless, fee-gated).
+  rpc AddAddressOption(MsgAddAddressOption) returns (MsgAddAddressOptionResponse);
+
+  // ResetAllocations clears every vote in one stream (governance-gated).
+  rpc ResetAllocations(MsgResetAllocations) returns (MsgResetAllocationsResponse);
+}
+
+// MsgUpdateParams is the Msg/UpdateParams request type.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "earth/x/allocation/MsgUpdateParams";
+
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // params defines the module parameters to update.
+
+  // NOTE: All parameters must be supplied.
+  Params params = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateParamsResponse defines the response structure for executing a
+// MsgUpdateParams message.
+message MsgUpdateParamsResponse {}
+
+// MsgSetAllocations sets the sender's split across the options of one stream.
+// The percentages must sum to 100, or be empty to clear the vote. Eligibility
+// and weight both come from the stream: a live registration in the human
+// stream, bonded stake in the capital stream.
+message MsgSetAllocations {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  StreamId stream = 2;
+  repeated AllocationWeight percentages = 3 [(gogoproto.nullable) = false];
+}
+
+// MsgSetAllocationsResponse defines the MsgSetAllocationsResponse message.
+message MsgSetAllocationsResponse {}
+
+// MsgClaimAllocation triggers the payout of an ADDRESS option.
+message MsgClaimAllocation {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  StreamId stream = 2;
+  uint64 option_id = 3;
+}
+
+// MsgClaimAllocationResponse defines the MsgClaimAllocationResponse message.
+message MsgClaimAllocationResponse {}
+
+// MsgAddIntegratedOption adds an INTEGRATED option, resolved every block by the
+// protocol handler named by `handler`. Governance-gated (authority defaults to
+// the x/gov module account); the handler must be registered on-chain for the
+// stream being added to.
+message MsgAddIntegratedOption {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  StreamId stream = 2;
+  string description = 3;
+  string handler = 4;
+}
+
+// MsgAddIntegratedOptionResponse returns the new option id.
+message MsgAddIntegratedOptionResponse {
+  uint64 id = 1;
+}
+
+// MsgAddAddressOption adds an ADDRESS option payable to `recipient`.
+// Permissionless: any account may add one by paying params.address_option_fee
+// (burned).
+message MsgAddAddressOption {
+  option (cosmos.msg.v1.signer) = "submitter";
+  string submitter = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  StreamId stream = 2;
+  string description = 3;
+  string recipient = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // claimer optionally restricts who may trigger the claim. Leave empty to let
+  // anyone trigger it; the payout goes to `recipient` regardless.
+  string claimer = 5 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgAddAddressOptionResponse returns the new option id.
+message MsgAddAddressOptionResponse {
+  uint64 id = 1;
+}
+
+// MsgResetAllocations clears every vote in one stream, so its emission is only
+// directed by voters who show up and vote again.
+//
+// Votes are cast once and then persist indefinitely, so over time the split
+// reflects whoever was active when they last voted rather than who is active
+// now. This retires the whole slate at once — for one stream only; the other
+// stream's votes and epoch are untouched.
+//
+// Options survive along with any ERTH they have already accrued, so no recipient
+// loses a claimable balance and nobody re-pays the address-option fee. Stake and
+// registrations are untouched: a human keeps their verified-human status and a
+// staker keeps their bond, they only have to re-express a preference. Until
+// voters return, the stream simply accrues to nothing.
+message MsgResetAllocations {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  StreamId stream = 2;
+}
+
+// MsgResetAllocationsResponse reports the epoch now in force for that stream.
+message MsgResetAllocationsResponse {
+  uint64 epoch = 1;
+}

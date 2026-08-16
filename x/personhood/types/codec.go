@@ -8,34 +8,8 @@ import (
 
 func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 	registrar.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgAddIntegratedOption{},
-	)
-
-	registrar.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgResetDemocraticAllocations{},
-	)
-
-	registrar.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgAddAddressOption{},
-	)
-
-	registrar.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgClaimDemocraticAllocation{},
-	)
-
-	registrar.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgSetDemocraticAllocations{},
-	)
-
-	registrar.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgClaimAnml{},
-	)
-
-	registrar.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgRegister{},
-	)
-
-	registrar.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgClaimAnml{},
 		&MsgUpdateParams{},
 	)
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)

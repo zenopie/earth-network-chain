@@ -3,49 +3,21 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/math"
-
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
-// InitGenesis initializes the module's state from a provided genesis state.
+// InitGenesis initializes the module's state from a provided genesis state. The
+// human allocation stream and its registration-rewards option are seeded by
+// x/allocation, which owns them.
 func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) error {
 	if err := k.Params.Set(ctx, genState.Params); err != nil {
 		return err
 	}
 
-	// Initialize the democratic allocation stream and seed option #1
-	// (registration rewards).
-	if err := k.DemRewardIndex.Set(ctx, math.ZeroInt()); err != nil {
-		return err
-	}
-	if err := k.DemTotalWeight.Set(ctx, math.ZeroInt()); err != nil {
-		return err
-	}
-	if err := k.DemLastUpkeep.Set(ctx, 0); err != nil {
-		return err
-	}
-	if err := k.DemEpoch.Set(ctx, 0); err != nil {
-		return err
-	}
 	if err := k.LastBuyback.Set(ctx, 0); err != nil {
 		return err
 	}
-	if err := k.RegCount.Set(ctx, 0); err != nil {
-		return err
-	}
-	if err := k.DemSeq.Set(ctx, types.RegistrationRewardOptionID); err != nil {
-		return err
-	}
-	if _, err := k.appendOption(ctx, types.DemocraticOption{
-		Description: "Registration rewards",
-		Kind:        types.DEMOCRATIC_KIND_INTEGRATED,
-		Handler:     types.HandlerRegistrationRewards,
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	return k.RegCount.Set(ctx, 0)
 }
 
 // ExportGenesis returns the module's exported genesis.

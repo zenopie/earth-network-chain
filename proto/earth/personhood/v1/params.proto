@@ -60,9 +60,10 @@ message Params {
   // passport prove out against a backdated date.
   uint64 current_date_max_skew_seconds = 7;
 
-  // address_option_fee is the ERTH (uerth) burned to add an ADDRESS democratic
-  // option (permissionless).
-  uint64 address_option_fee = 8;
+  // Reserved: address_option_fee moved to x/allocation, which now owns both
+  // emission streams and the fee for adding an option to either of them.
+  reserved 8;
+  reserved "address_option_fee";
 
   // expiry_sweep_limit caps how many lapsed registrations BeginBlocker retires
   // per block, bounding the work a cohort that all registered together can land

@@ -41,14 +41,14 @@ func TestRegisterEndToEnd_RealPki(t *testing.T) {
 	encCfg := moduletestutil.MakeTestEncodingConfig()
 	ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
 
-	// Both modules share one multistore so the caretaker can call into x/pki
+	// Both modules share one multistore so x/personhood can call into x/pki
 	// within a single context, the way the app wires them.
 	pkiStore := storetypes.NewKVStoreKey(pkitypes.StoreKey)
-	caretakerStore := storetypes.NewKVStoreKey(types.StoreKey)
+	personhoodStore := storetypes.NewKVStoreKey(types.StoreKey)
 	ctx := testutil.DefaultContextWithKeys(
 		map[string]*storetypes.KVStoreKey{
 			pkitypes.StoreKey: pkiStore,
-			types.StoreKey:    caretakerStore,
+			types.StoreKey:    personhoodStore,
 		}, nil, nil,
 	).WithBlockTime(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC))
 
@@ -62,8 +62,8 @@ func TestRegisterEndToEnd_RealPki(t *testing.T) {
 		t.Fatalf("seed pki: %v", err)
 	}
 
-	k := NewKeeper(runtime.NewKVStoreService(caretakerStore), encCfg.Codec, ac,
-		authtypes.NewModuleAddress(types.GovModuleName), nil, stubDex{}, pki)
+	k := NewKeeper(runtime.NewKVStoreService(personhoodStore), encCfg.Codec, ac,
+		authtypes.NewModuleAddress(types.GovModuleName), nil, stubDex{}, pki, stubAllocation{})
 
 	params := types.Params{
 		VerifyingKeys:             map[string][]byte{"lean_poa": vk},

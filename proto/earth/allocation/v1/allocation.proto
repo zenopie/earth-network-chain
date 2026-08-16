@@ -1,0 +1,103 @@
+syntax = "proto3";
+package earth.allocation.v1;
+
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/allocation/types";
+
+// StreamId selects which emission stream a message or piece of state belongs to.
+//
+// The two streams run the same engine over separate state; they differ only in
+// where a voter's weight comes from and who is allowed to vote at all.
+enum StreamId {
+  option (gogoproto.goproto_enum_prefix) = false;
+
+  // STREAM_ID_UNSPECIFIED is an invalid default; every message must name a stream.
+  STREAM_ID_UNSPECIFIED = 0;
+  // STREAM_ID_HUMAN is the one-human-one-vote stream. Weight comes from a live
+  // proof-of-personhood registration and is the same for every human.
+  STREAM_ID_HUMAN = 1;
+  // STREAM_ID_CAPITAL is the stake-weighted stream. Weight is the voter's bonded
+  // stake, normalized by the stake compounding index.
+  STREAM_ID_CAPITAL = 2;
+}
+
+// AllocationKind identifies how an allocation option delivers its accrued ERTH.
+enum AllocationKind {
+  option (gogoproto.goproto_enum_prefix) = false;
+
+  // ALLOCATION_KIND_UNSPECIFIED is an invalid default.
+  ALLOCATION_KIND_UNSPECIFIED = 0;
+  // ALLOCATION_KIND_INTEGRATED resolves automatically every block via a protocol
+  // handler selected by `handler` (e.g. "lp_rewards"). Governance-permissioned to add.
+  ALLOCATION_KIND_INTEGRATED = 1;
+  // ALLOCATION_KIND_ADDRESS accrues ERTH claimable by a fixed recipient address.
+  // Permissionless to add (guarded by an address-option fee).
+  ALLOCATION_KIND_ADDRESS = 2;
+}
+
+// AllocationOption is a destination voters can direct an emission stream to.
+// Ids are per stream: option #1 of the human stream and option #1 of the capital
+// stream are different options.
+message AllocationOption {
+  uint64 id = 1;
+  // stream is the emission stream this option draws from.
+  StreamId stream = 10;
+  string description = 2;
+  AllocationKind kind = 3;
+  // recipient is the payout address for ADDRESS options (unused for INTEGRATED).
+  string recipient = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // handler selects the per-block behaviour for INTEGRATED options (e.g.
+  // "lp_rewards"); empty for ADDRESS options.
+  string handler = 8;
+  // claimer optionally restricts who may trigger a claim on an ADDRESS option.
+  // Empty (the default) means anyone may trigger it. Either way the payout goes
+  // to `recipient` — a claimer only spends the gas.
+  string claimer = 9 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // amount_allocated is the total voting weight currently directed at this option.
+  string amount_allocated = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // last_reward_index is the stream's reward index at this option's last settlement.
+  string last_reward_index = 6 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // accumulated is ERTH (uerth) owed to this option, awaiting distribution/claim.
+  string accumulated = 7 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+
+// AllocationWeight is one entry of a voter's split.
+message AllocationWeight {
+  uint64 option_id = 1;
+  // percent is 0-100; a voter's weights must sum to 100.
+  uint64 percent = 2;
+}
+
+// Voter records one address's split within one stream, and the weight it was
+// applied with. The human stream applies the same fixed weight to everyone; the
+// capital stream applies the voter's normalized bonded stake, kept in sync by
+// the staking hooks.
+message Voter {
+  repeated AllocationWeight percentages = 1 [(gogoproto.nullable) = false];
+  string weight = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // epoch is the stream's allocation epoch this split was cast in. A governance
+  // reset bumps that epoch and zeroes the aggregates in one cheap operation
+  // rather than rewriting every voter row; a record from an older epoch is
+  // treated as having no live contribution, so re-voting starts from zero
+  // instead of subtracting weight that has already been cleared. Epochs are per
+  // stream: resetting one stream leaves the other untouched.
+  uint64 epoch = 3;
+}

@@ -5,7 +5,6 @@ package types
 
 import (
 	context "context"
-	cosmossdk_io_math "cosmossdk.io/math"
 	fmt "fmt"
 	_ "github.com/cosmos/cosmos-proto"
 	_ "github.com/cosmos/cosmos-sdk/types/query"
@@ -222,22 +221,22 @@ func (m *QueryRegistrationResponse) GetRegistration() Registration {
 	return Registration{}
 }
 
-// QueryDemocraticOptionsRequest requests all democratic options.
-type QueryDemocraticOptionsRequest struct {
+// QueryRegistrationCountRequest requests the live registration headcount.
+type QueryRegistrationCountRequest struct {
 }
 
-func (m *QueryDemocraticOptionsRequest) Reset()         { *m = QueryDemocraticOptionsRequest{} }
-func (m *QueryDemocraticOptionsRequest) String() string { return proto.CompactTextString(m) }
-func (*QueryDemocraticOptionsRequest) ProtoMessage()    {}
-func (*QueryDemocraticOptionsRequest) Descriptor() ([]byte, []int) {
+func (m *QueryRegistrationCountRequest) Reset()         { *m = QueryRegistrationCountRequest{} }
+func (m *QueryRegistrationCountRequest) String() string { return proto.CompactTextString(m) }
+func (*QueryRegistrationCountRequest) ProtoMessage()    {}
+func (*QueryRegistrationCountRequest) Descriptor() ([]byte, []int) {
 	return fileDescriptor_c227ef87cf4ce02e, []int{4}
 }
-func (m *QueryDemocraticOptionsRequest) XXX_Unmarshal(b []byte) error {
+func (m *QueryRegistrationCountRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *QueryDemocraticOptionsRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *QueryRegistrationCountRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_QueryDemocraticOptionsRequest.Marshal(b, m, deterministic)
+		return xxx_messageInfo_QueryRegistrationCountRequest.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -247,39 +246,36 @@ func (m *QueryDemocraticOptionsRequest) XXX_Marshal(b []byte, deterministic bool
 		return b[:n], nil
 	}
 }
-func (m *QueryDemocraticOptionsRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryDemocraticOptionsRequest.Merge(m, src)
+func (m *QueryRegistrationCountRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryRegistrationCountRequest.Merge(m, src)
 }
-func (m *QueryDemocraticOptionsRequest) XXX_Size() int {
+func (m *QueryRegistrationCountRequest) XXX_Size() int {
 	return m.Size()
 }
-func (m *QueryDemocraticOptionsRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryDemocraticOptionsRequest.DiscardUnknown(m)
+func (m *QueryRegistrationCountRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryRegistrationCountRequest.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_QueryDemocraticOptionsRequest proto.InternalMessageInfo
+var xxx_messageInfo_QueryRegistrationCountRequest proto.InternalMessageInfo
 
-// QueryDemocraticOptionsResponse returns all democratic options.
-type QueryDemocraticOptionsResponse struct {
-	Options     []DemocraticOption    `protobuf:"bytes,1,rep,name=options,proto3" json:"options"`
-	RewardIndex cosmossdk_io_math.Int `protobuf:"bytes,2,opt,name=reward_index,json=rewardIndex,proto3,customtype=cosmossdk.io/math.Int" json:"reward_index"`
-	TotalWeight cosmossdk_io_math.Int `protobuf:"bytes,3,opt,name=total_weight,json=totalWeight,proto3,customtype=cosmossdk.io/math.Int" json:"total_weight"`
-	// registrations is the number of currently registered humans.
-	Registrations uint64 `protobuf:"varint,4,opt,name=registrations,proto3" json:"registrations,omitempty"`
+// QueryRegistrationCountResponse returns the live registration headcount. This
+// is the denominator of the human emission stream: one vote each.
+type QueryRegistrationCountResponse struct {
+	Count uint64 `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
 }
 
-func (m *QueryDemocraticOptionsResponse) Reset()         { *m = QueryDemocraticOptionsResponse{} }
-func (m *QueryDemocraticOptionsResponse) String() string { return proto.CompactTextString(m) }
-func (*QueryDemocraticOptionsResponse) ProtoMessage()    {}
-func (*QueryDemocraticOptionsResponse) Descriptor() ([]byte, []int) {
+func (m *QueryRegistrationCountResponse) Reset()         { *m = QueryRegistrationCountResponse{} }
+func (m *QueryRegistrationCountResponse) String() string { return proto.CompactTextString(m) }
+func (*QueryRegistrationCountResponse) ProtoMessage()    {}
+func (*QueryRegistrationCountResponse) Descriptor() ([]byte, []int) {
 	return fileDescriptor_c227ef87cf4ce02e, []int{5}
 }
-func (m *QueryDemocraticOptionsResponse) XXX_Unmarshal(b []byte) error {
+func (m *QueryRegistrationCountResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *QueryDemocraticOptionsResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *QueryRegistrationCountResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_QueryDemocraticOptionsResponse.Marshal(b, m, deterministic)
+		return xxx_messageInfo_QueryRegistrationCountResponse.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -289,120 +285,23 @@ func (m *QueryDemocraticOptionsResponse) XXX_Marshal(b []byte, deterministic boo
 		return b[:n], nil
 	}
 }
-func (m *QueryDemocraticOptionsResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryDemocraticOptionsResponse.Merge(m, src)
+func (m *QueryRegistrationCountResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryRegistrationCountResponse.Merge(m, src)
 }
-func (m *QueryDemocraticOptionsResponse) XXX_Size() int {
+func (m *QueryRegistrationCountResponse) XXX_Size() int {
 	return m.Size()
 }
-func (m *QueryDemocraticOptionsResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryDemocraticOptionsResponse.DiscardUnknown(m)
+func (m *QueryRegistrationCountResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryRegistrationCountResponse.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_QueryDemocraticOptionsResponse proto.InternalMessageInfo
+var xxx_messageInfo_QueryRegistrationCountResponse proto.InternalMessageInfo
 
-func (m *QueryDemocraticOptionsResponse) GetOptions() []DemocraticOption {
+func (m *QueryRegistrationCountResponse) GetCount() uint64 {
 	if m != nil {
-		return m.Options
-	}
-	return nil
-}
-
-func (m *QueryDemocraticOptionsResponse) GetRegistrations() uint64 {
-	if m != nil {
-		return m.Registrations
+		return m.Count
 	}
 	return 0
-}
-
-// QueryDemocraticVoterRequest requests a voter's democratic split.
-type QueryDemocraticVoterRequest struct {
-	Address string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-}
-
-func (m *QueryDemocraticVoterRequest) Reset()         { *m = QueryDemocraticVoterRequest{} }
-func (m *QueryDemocraticVoterRequest) String() string { return proto.CompactTextString(m) }
-func (*QueryDemocraticVoterRequest) ProtoMessage()    {}
-func (*QueryDemocraticVoterRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c227ef87cf4ce02e, []int{6}
-}
-func (m *QueryDemocraticVoterRequest) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryDemocraticVoterRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryDemocraticVoterRequest.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryDemocraticVoterRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryDemocraticVoterRequest.Merge(m, src)
-}
-func (m *QueryDemocraticVoterRequest) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryDemocraticVoterRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryDemocraticVoterRequest.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryDemocraticVoterRequest proto.InternalMessageInfo
-
-func (m *QueryDemocraticVoterRequest) GetAddress() string {
-	if m != nil {
-		return m.Address
-	}
-	return ""
-}
-
-// QueryDemocraticVoterResponse returns a voter's democratic split.
-type QueryDemocraticVoterResponse struct {
-	Voter DemocraticVoter `protobuf:"bytes,1,opt,name=voter,proto3" json:"voter"`
-}
-
-func (m *QueryDemocraticVoterResponse) Reset()         { *m = QueryDemocraticVoterResponse{} }
-func (m *QueryDemocraticVoterResponse) String() string { return proto.CompactTextString(m) }
-func (*QueryDemocraticVoterResponse) ProtoMessage()    {}
-func (*QueryDemocraticVoterResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c227ef87cf4ce02e, []int{7}
-}
-func (m *QueryDemocraticVoterResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryDemocraticVoterResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryDemocraticVoterResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryDemocraticVoterResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryDemocraticVoterResponse.Merge(m, src)
-}
-func (m *QueryDemocraticVoterResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryDemocraticVoterResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryDemocraticVoterResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryDemocraticVoterResponse proto.InternalMessageInfo
-
-func (m *QueryDemocraticVoterResponse) GetVoter() DemocraticVoter {
-	if m != nil {
-		return m.Voter
-	}
-	return DemocraticVoter{}
 }
 
 // QueryRegistrationsByDscRequest identifies a Document Signer by the hex-encoded
@@ -415,7 +314,7 @@ func (m *QueryRegistrationsByDscRequest) Reset()         { *m = QueryRegistratio
 func (m *QueryRegistrationsByDscRequest) String() string { return proto.CompactTextString(m) }
 func (*QueryRegistrationsByDscRequest) ProtoMessage()    {}
 func (*QueryRegistrationsByDscRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c227ef87cf4ce02e, []int{8}
+	return fileDescriptor_c227ef87cf4ce02e, []int{6}
 }
 func (m *QueryRegistrationsByDscRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -459,7 +358,7 @@ func (m *QueryRegistrationsByDscResponse) Reset()         { *m = QueryRegistrati
 func (m *QueryRegistrationsByDscResponse) String() string { return proto.CompactTextString(m) }
 func (*QueryRegistrationsByDscResponse) ProtoMessage()    {}
 func (*QueryRegistrationsByDscResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c227ef87cf4ce02e, []int{9}
+	return fileDescriptor_c227ef87cf4ce02e, []int{7}
 }
 func (m *QueryRegistrationsByDscResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -505,7 +404,7 @@ func (m *CountryCount) Reset()         { *m = CountryCount{} }
 func (m *CountryCount) String() string { return proto.CompactTextString(m) }
 func (*CountryCount) ProtoMessage()    {}
 func (*CountryCount) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c227ef87cf4ce02e, []int{10}
+	return fileDescriptor_c227ef87cf4ce02e, []int{8}
 }
 func (m *CountryCount) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -555,7 +454,7 @@ func (m *QueryRegistrationCountriesRequest) Reset()         { *m = QueryRegistra
 func (m *QueryRegistrationCountriesRequest) String() string { return proto.CompactTextString(m) }
 func (*QueryRegistrationCountriesRequest) ProtoMessage()    {}
 func (*QueryRegistrationCountriesRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c227ef87cf4ce02e, []int{11}
+	return fileDescriptor_c227ef87cf4ce02e, []int{9}
 }
 func (m *QueryRegistrationCountriesRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -592,7 +491,7 @@ func (m *QueryRegistrationCountriesResponse) Reset()         { *m = QueryRegistr
 func (m *QueryRegistrationCountriesResponse) String() string { return proto.CompactTextString(m) }
 func (*QueryRegistrationCountriesResponse) ProtoMessage()    {}
 func (*QueryRegistrationCountriesResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c227ef87cf4ce02e, []int{12}
+	return fileDescriptor_c227ef87cf4ce02e, []int{10}
 }
 func (m *QueryRegistrationCountriesResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -633,10 +532,8 @@ func init() {
 	proto.RegisterType((*QueryParamsResponse)(nil), "earth.personhood.v1.QueryParamsResponse")
 	proto.RegisterType((*QueryRegistrationRequest)(nil), "earth.personhood.v1.QueryRegistrationRequest")
 	proto.RegisterType((*QueryRegistrationResponse)(nil), "earth.personhood.v1.QueryRegistrationResponse")
-	proto.RegisterType((*QueryDemocraticOptionsRequest)(nil), "earth.personhood.v1.QueryDemocraticOptionsRequest")
-	proto.RegisterType((*QueryDemocraticOptionsResponse)(nil), "earth.personhood.v1.QueryDemocraticOptionsResponse")
-	proto.RegisterType((*QueryDemocraticVoterRequest)(nil), "earth.personhood.v1.QueryDemocraticVoterRequest")
-	proto.RegisterType((*QueryDemocraticVoterResponse)(nil), "earth.personhood.v1.QueryDemocraticVoterResponse")
+	proto.RegisterType((*QueryRegistrationCountRequest)(nil), "earth.personhood.v1.QueryRegistrationCountRequest")
+	proto.RegisterType((*QueryRegistrationCountResponse)(nil), "earth.personhood.v1.QueryRegistrationCountResponse")
 	proto.RegisterType((*QueryRegistrationsByDscRequest)(nil), "earth.personhood.v1.QueryRegistrationsByDscRequest")
 	proto.RegisterType((*QueryRegistrationsByDscResponse)(nil), "earth.personhood.v1.QueryRegistrationsByDscResponse")
 	proto.RegisterType((*CountryCount)(nil), "earth.personhood.v1.CountryCount")
@@ -647,65 +544,52 @@ func init() {
 func init() { proto.RegisterFile("earth/personhood/v1/query.proto", fileDescriptor_c227ef87cf4ce02e) }
 
 var fileDescriptor_c227ef87cf4ce02e = []byte{
-	// 920 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x56, 0x4f, 0x8f, 0xdb, 0x44,
-	0x14, 0x5f, 0x6f, 0xf7, 0x4f, 0xf7, 0xed, 0x22, 0xd4, 0x69, 0x2a, 0x52, 0xb7, 0x38, 0xa9, 0x59,
-	0x20, 0xb4, 0x8a, 0x4d, 0xb2, 0xc0, 0xaa, 0x42, 0x2d, 0x6c, 0xda, 0x1e, 0xa2, 0x95, 0x0a, 0x35,
-	0x02, 0x24, 0x2e, 0xc6, 0xb1, 0x47, 0x8e, 0x95, 0xc4, 0xe3, 0x7a, 0x26, 0xd9, 0x8d, 0xaa, 0x5e,
-	0xf8, 0x00, 0x08, 0x89, 0x6f, 0xc0, 0x89, 0x0b, 0x52, 0x0f, 0xbd, 0x21, 0xee, 0x15, 0x5c, 0xaa,
-	0x72, 0x41, 0x1c, 0x2a, 0xb4, 0x5b, 0x89, 0xaf, 0x81, 0x3c, 0x33, 0x4e, 0x9c, 0xc4, 0xa1, 0x89,
-	0x7a, 0xd9, 0xf5, 0xbc, 0x79, 0xbf, 0xdf, 0xfb, 0xbd, 0x37, 0xef, 0x3d, 0x05, 0x4a, 0xd8, 0x89,
-	0x59, 0xdb, 0x8c, 0x70, 0x4c, 0x49, 0xd8, 0x26, 0xc4, 0x33, 0x07, 0x35, 0xf3, 0x7e, 0x1f, 0xc7,
-	0x43, 0x23, 0x8a, 0x09, 0x23, 0xe8, 0x3c, 0x77, 0x30, 0xc6, 0x0e, 0xc6, 0xa0, 0xa6, 0x9e, 0x73,
-	0x7a, 0x41, 0x48, 0x4c, 0xfe, 0x57, 0xf8, 0xa9, 0x57, 0x5d, 0x42, 0x7b, 0x84, 0x9a, 0x2d, 0x87,
-	0x62, 0x41, 0x60, 0x0e, 0x6a, 0x2d, 0xcc, 0x9c, 0x9a, 0x19, 0x39, 0x7e, 0x10, 0x3a, 0x2c, 0x20,
-	0xa1, 0xf4, 0xbd, 0x28, 0x7c, 0x6d, 0x7e, 0x32, 0xc5, 0x41, 0x5e, 0xed, 0xe6, 0xe9, 0x71, 0xba,
-	0x5d, 0xe2, 0x66, 0x09, 0xca, 0x79, 0x5e, 0x91, 0x13, 0x3b, 0xbd, 0x94, 0xe7, 0x9d, 0x3c, 0x8f,
-	0x18, 0xfb, 0x01, 0x65, 0x71, 0x96, 0xa9, 0xe0, 0x13, 0x9f, 0x08, 0x1d, 0xc9, 0x97, 0xb4, 0x5e,
-	0xf6, 0x09, 0xf1, 0xbb, 0xd8, 0x74, 0xa2, 0xc0, 0x74, 0xc2, 0x90, 0x30, 0x0e, 0x91, 0xdc, 0x7a,
-	0x01, 0xd0, 0xbd, 0x24, 0xc1, 0xcf, 0x79, 0x40, 0x0b, 0xdf, 0xef, 0x63, 0xca, 0xf4, 0x2f, 0xe1,
-	0xfc, 0x84, 0x95, 0x46, 0x24, 0xa4, 0x18, 0xdd, 0x84, 0x0d, 0x21, 0xac, 0xa8, 0x94, 0x95, 0xca,
-	0x76, 0xfd, 0x92, 0x91, 0x53, 0x50, 0x43, 0x80, 0x1a, 0x5b, 0x4f, 0x9e, 0x97, 0x56, 0x7e, 0xfe,
-	0xf7, 0xd1, 0x55, 0xc5, 0x92, 0x28, 0xfd, 0x2e, 0x14, 0x39, 0xad, 0x95, 0xd1, 0x2e, 0x43, 0xa2,
-	0x3a, 0x6c, 0x3a, 0x9e, 0x17, 0x63, 0x2a, 0xc8, 0xb7, 0x1a, 0xc5, 0x67, 0x8f, 0xab, 0x05, 0x59,
-	0xcf, 0x03, 0x71, 0xf3, 0x05, 0x8b, 0x83, 0xd0, 0xb7, 0x52, 0x47, 0xfd, 0x27, 0x05, 0x2e, 0xe6,
-	0x10, 0x4a, 0xb5, 0x1a, 0x80, 0x28, 0x12, 0x8e, 0xb1, 0xc7, 0x49, 0xcf, 0x5a, 0x19, 0x0b, 0x2a,
-	0xc2, 0x26, 0x3e, 0x8e, 0x82, 0xe4, 0x72, 0x95, 0x5f, 0xa6, 0x47, 0x74, 0x08, 0x3b, 0xd9, 0xf2,
-	0x16, 0xcf, 0xf0, 0x6c, 0xaf, 0xe4, 0x66, 0x9b, 0x0d, 0xdd, 0x58, 0x4b, 0x72, 0xb6, 0x26, 0xc0,
-	0x7a, 0x09, 0xde, 0xe4, 0x1a, 0x6f, 0xe3, 0x1e, 0x71, 0x13, 0x9b, 0xfb, 0x59, 0xc4, 0x5f, 0x20,
-	0x2d, 0xf6, 0x2f, 0xab, 0xa0, 0xcd, 0xf3, 0x90, 0xa9, 0xdc, 0x81, 0x4d, 0x22, 0x4c, 0x45, 0xa5,
-	0x7c, 0xa6, 0xb2, 0x5d, 0x7f, 0x3b, 0x57, 0xcb, 0x34, 0x81, 0xd4, 0x93, 0x62, 0xd1, 0xdd, 0x24,
-	0xaf, 0x23, 0x27, 0xf6, 0xec, 0x20, 0xf4, 0xf0, 0x31, 0x4f, 0x7b, 0xab, 0x71, 0x2d, 0x71, 0xfa,
-	0xfb, 0x79, 0xe9, 0x82, 0x28, 0x36, 0xf5, 0x3a, 0x46, 0x40, 0xcc, 0x9e, 0xc3, 0xda, 0x46, 0x33,
-	0x64, 0xcf, 0x1e, 0x57, 0x41, 0xbe, 0x42, 0x33, 0x64, 0xd6, 0xb6, 0x20, 0x68, 0x26, 0xf8, 0x84,
-	0x8f, 0x11, 0xe6, 0x74, 0xed, 0x23, 0x1c, 0xf8, 0x6d, 0xc6, 0xeb, 0xb4, 0x2c, 0x1f, 0x27, 0xf8,
-	0x9a, 0xe3, 0xd1, 0x2e, 0xbc, 0x96, 0x2d, 0x1d, 0x2d, 0xae, 0x95, 0x95, 0xca, 0x9a, 0x35, 0x69,
-	0xd4, 0xef, 0xc1, 0xa5, 0xa9, 0x72, 0x7d, 0x45, 0x18, 0x8e, 0x5f, 0xa5, 0x91, 0xbe, 0x85, 0xcb,
-	0xf9, 0x94, 0xb2, 0xfe, 0x9f, 0xc2, 0xfa, 0x20, 0x31, 0xc8, 0xbe, 0xdf, 0x7d, 0x49, 0xf5, 0x39,
-	0x58, 0x16, 0x5f, 0x00, 0xf5, 0xeb, 0xf2, 0x8d, 0xb3, 0xed, 0x42, 0x1b, 0xc3, 0xdb, 0xd4, 0x4d,
-	0x75, 0xbf, 0x01, 0x9b, 0x1e, 0x75, 0xed, 0x0e, 0x1e, 0x0a, 0xdd, 0xd6, 0x86, 0x47, 0xdd, 0x43,
-	0x3c, 0xd4, 0xf7, 0xa1, 0x34, 0x17, 0x2a, 0xf5, 0x15, 0x60, 0xdd, 0x25, 0xfd, 0x90, 0x71, 0xe4,
-	0x9a, 0x25, 0x0e, 0xfa, 0x4d, 0xd8, 0xb9, 0x95, 0x7c, 0xc4, 0x43, 0xfe, 0x2f, 0x69, 0x78, 0x57,
-	0x9c, 0x65, 0x84, 0xf4, 0x38, 0xc6, 0xaf, 0x66, 0xf1, 0x6f, 0xc1, 0x95, 0x99, 0xc0, 0x82, 0x30,
-	0xc0, 0xa3, 0xee, 0xed, 0x80, 0xfe, 0x7f, 0x4e, 0xa3, 0x06, 0xde, 0x72, 0x53, 0xa3, 0x6c, 0xe1,
-	0xfc, 0x71, 0xca, 0x0a, 0x96, 0x15, 0x1c, 0x23, 0xeb, 0x2f, 0xce, 0xc2, 0x3a, 0x8f, 0x86, 0xbe,
-	0x57, 0x60, 0x43, 0x2c, 0x1a, 0xf4, 0x6e, 0x2e, 0xd1, 0xec, 0x56, 0x53, 0x2b, 0x2f, 0x77, 0x14,
-	0x72, 0xf5, 0xda, 0x77, 0x7f, 0xbe, 0xf8, 0x71, 0xf5, 0x1a, 0x7a, 0xcf, 0xe4, 0x88, 0x6a, 0x88,
-	0xd9, 0x11, 0x89, 0x3b, 0xe6, 0xfc, 0x55, 0x8d, 0x1e, 0x29, 0xb0, 0x93, 0xad, 0x01, 0xaa, 0xce,
-	0x8f, 0x96, 0xb3, 0xff, 0x54, 0x63, 0x51, 0x77, 0x29, 0xf1, 0x80, 0x4b, 0xfc, 0x18, 0x5d, 0x5f,
-	0x40, 0x62, 0x76, 0x7e, 0xcc, 0x07, 0xb2, 0xe9, 0x1f, 0xa2, 0x5f, 0x15, 0x38, 0x37, 0xb3, 0x73,
-	0x50, 0x7d, 0xbe, 0x90, 0x79, 0x2b, 0x4c, 0xdd, 0x5b, 0x0a, 0x23, 0x33, 0xb8, 0xc1, 0x33, 0xd8,
-	0x47, 0x1f, 0x2e, 0x90, 0x81, 0x37, 0x62, 0xb1, 0xd3, 0x65, 0xf6, 0xbb, 0x02, 0x68, 0x76, 0x24,
-	0xd0, 0xde, 0x62, 0x75, 0x9c, 0x98, 0x3d, 0xf5, 0x83, 0xe5, 0x40, 0x32, 0x81, 0x26, 0x4f, 0xe0,
-	0x16, 0x3a, 0x58, 0xf2, 0x09, 0xa8, 0xdd, 0x1a, 0xda, 0x1e, 0x75, 0xcd, 0x07, 0x72, 0xe0, 0x1f,
-	0xa2, 0x3f, 0x14, 0xb8, 0x90, 0x3b, 0x41, 0xe8, 0xa3, 0xc5, 0xa4, 0x4d, 0xcf, 0xa5, 0xba, 0xbf,
-	0x34, 0xee, 0x15, 0x1b, 0xcb, 0x1e, 0x8d, 0x29, 0xfa, 0x4d, 0x81, 0xd7, 0xa7, 0xb6, 0x21, 0x7a,
-	0x7f, 0x91, 0x16, 0xc9, 0x2e, 0x72, 0xb5, 0xb6, 0x04, 0x42, 0x6a, 0xbf, 0xc3, 0xb5, 0x7f, 0x82,
-	0x6e, 0x2c, 0xd7, 0x52, 0x7c, 0x45, 0x8f, 0x07, 0xa3, 0x71, 0xf8, 0xe4, 0x44, 0x53, 0x9e, 0x9e,
-	0x68, 0xca, 0x3f, 0x27, 0x9a, 0xf2, 0xc3, 0xa9, 0xb6, 0xf2, 0xf4, 0x54, 0x5b, 0xf9, 0xeb, 0x54,
-	0x5b, 0xf9, 0xa6, 0xe6, 0x07, 0xac, 0xdd, 0x6f, 0x19, 0x2e, 0xe9, 0xe5, 0x86, 0x38, 0xce, 0x06,
-	0x61, 0xc3, 0x08, 0xd3, 0xd6, 0x06, 0xff, 0xa1, 0xb5, 0xf7, 0x5f, 0x00, 0x00, 0x00, 0xff, 0xff,
-	0x49, 0x0f, 0x30, 0x9b, 0x9e, 0x0a, 0x00, 0x00,
+	// 709 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x55, 0x4f, 0x4f, 0x13, 0x41,
+	0x1c, 0xed, 0xf2, 0xa7, 0x95, 0x9f, 0x5c, 0x18, 0x6a, 0x2c, 0x55, 0xb7, 0xb0, 0x26, 0x8a, 0x18,
+	0x76, 0xd2, 0xa2, 0x10, 0x62, 0x24, 0xa1, 0xe8, 0xc1, 0x90, 0x18, 0x5d, 0xe3, 0xc5, 0x4b, 0xb3,
+	0xdd, 0x9d, 0x2c, 0x1b, 0xec, 0xce, 0x32, 0xb3, 0x45, 0x36, 0x84, 0x8b, 0x1f, 0xc0, 0x98, 0xf8,
+	0x0d, 0x8c, 0x07, 0x8f, 0x1c, 0xbc, 0xf9, 0x05, 0x88, 0x5e, 0x88, 0x5e, 0x3c, 0x19, 0x03, 0x26,
+	0x7e, 0x0d, 0xd3, 0x99, 0x59, 0x58, 0xd2, 0x2d, 0xb6, 0xf1, 0xd2, 0x76, 0x66, 0xde, 0xfb, 0xfd,
+	0xde, 0xfb, 0xcd, 0xbc, 0x14, 0x2a, 0xc4, 0x66, 0xd1, 0x06, 0x0e, 0x09, 0xe3, 0x34, 0xd8, 0xa0,
+	0xd4, 0xc5, 0xdb, 0x55, 0xbc, 0xd5, 0x26, 0x2c, 0x36, 0x43, 0x46, 0x23, 0x8a, 0x26, 0x05, 0xc0,
+	0x3c, 0x05, 0x98, 0xdb, 0xd5, 0xf2, 0x84, 0xdd, 0xf2, 0x03, 0x8a, 0xc5, 0xa7, 0xc4, 0x95, 0xe7,
+	0x1c, 0xca, 0x5b, 0x94, 0xe3, 0xa6, 0xcd, 0x89, 0x2c, 0x80, 0xb7, 0xab, 0x4d, 0x12, 0xd9, 0x55,
+	0x1c, 0xda, 0x9e, 0x1f, 0xd8, 0x91, 0x4f, 0x03, 0x85, 0x9d, 0x92, 0xd8, 0x86, 0x58, 0x61, 0xb9,
+	0x50, 0x47, 0xd3, 0x59, 0x7a, 0x42, 0x9b, 0xd9, 0xad, 0x04, 0x71, 0x23, 0x0b, 0xc1, 0x88, 0xe7,
+	0xf3, 0x88, 0xa5, 0x9b, 0x14, 0x3d, 0xea, 0x51, 0xd9, 0xa1, 0xf3, 0x4b, 0xed, 0x5e, 0xf5, 0x28,
+	0xf5, 0x5e, 0x12, 0x6c, 0x87, 0x3e, 0xb6, 0x83, 0x80, 0x46, 0x82, 0xa2, 0x6a, 0x1b, 0x45, 0x40,
+	0x4f, 0x3b, 0xd2, 0x9f, 0x88, 0x86, 0x16, 0xd9, 0x6a, 0x13, 0x1e, 0x19, 0xcf, 0x61, 0xf2, 0xcc,
+	0x2e, 0x0f, 0x69, 0xc0, 0x09, 0x5a, 0x81, 0xbc, 0x14, 0x56, 0xd2, 0xa6, 0xb5, 0xd9, 0x8b, 0xb5,
+	0x2b, 0x66, 0xc6, 0xa8, 0x4c, 0x49, 0xaa, 0x8f, 0x1d, 0xfc, 0xac, 0xe4, 0x3e, 0xfe, 0xd9, 0x9f,
+	0xd3, 0x2c, 0xc5, 0x32, 0x1e, 0x43, 0x49, 0x94, 0xb5, 0x52, 0xda, 0x55, 0x4b, 0x54, 0x83, 0x82,
+	0xed, 0xba, 0x8c, 0x70, 0x59, 0x7c, 0xac, 0x5e, 0xfa, 0xf6, 0x69, 0xbe, 0xa8, 0x26, 0xb5, 0x2a,
+	0x4f, 0x9e, 0x45, 0xcc, 0x0f, 0x3c, 0x2b, 0x01, 0x1a, 0xef, 0x35, 0x98, 0xca, 0x28, 0xa8, 0xd4,
+	0xea, 0x00, 0x72, 0x48, 0x84, 0x11, 0x57, 0x14, 0xbd, 0x60, 0xa5, 0x76, 0x50, 0x09, 0x0a, 0x64,
+	0x27, 0xf4, 0x3b, 0x87, 0x43, 0xe2, 0x30, 0x59, 0xa2, 0x75, 0x18, 0x4f, 0x8f, 0xb7, 0x34, 0x2c,
+	0xdc, 0xce, 0x64, 0xba, 0x4d, 0xb7, 0xae, 0x8f, 0x74, 0x3c, 0x5b, 0x67, 0xc8, 0x46, 0x05, 0xae,
+	0x75, 0x69, 0x5c, 0xa3, 0xed, 0x20, 0x4a, 0x86, 0xbd, 0x08, 0x7a, 0x2f, 0x80, 0x72, 0x52, 0x84,
+	0x51, 0xa7, 0xb3, 0x21, 0x4c, 0x8c, 0x58, 0x72, 0x61, 0x2c, 0x67, 0xf0, 0x78, 0x3d, 0x7e, 0xc0,
+	0x9d, 0x64, 0xa6, 0x97, 0xa1, 0xe0, 0x72, 0xa7, 0xb1, 0x49, 0x62, 0x39, 0x53, 0x2b, 0xef, 0x72,
+	0x67, 0x9d, 0xc4, 0xc6, 0x12, 0x54, 0x7a, 0x52, 0xcf, 0xed, 0xb9, 0x02, 0xe3, 0x42, 0x1a, 0x8b,
+	0xc5, 0x57, 0x67, 0x86, 0x8e, 0x5c, 0xab, 0x0e, 0xc9, 0xf2, 0x94, 0x3f, 0x94, 0xe6, 0x5f, 0x87,
+	0x99, 0x6c, 0xaf, 0xcc, 0x27, 0x27, 0xaf, 0x6f, 0x13, 0x8c, 0xf3, 0x40, 0x4a, 0xe0, 0x43, 0x18,
+	0x73, 0x92, 0xcd, 0x92, 0x36, 0x3d, 0xdc, 0xf3, 0x86, 0xd2, 0x82, 0xd5, 0x0d, 0x9d, 0x32, 0x6b,
+	0x1f, 0x0a, 0x30, 0x2a, 0xba, 0xa1, 0x37, 0x1a, 0xe4, 0xe5, 0xdb, 0x45, 0x37, 0x33, 0x0b, 0x75,
+	0x07, 0xa5, 0x3c, 0xfb, 0x6f, 0xa0, 0x94, 0x6b, 0x54, 0x5f, 0x7f, 0xff, 0xfd, 0x6e, 0xe8, 0x36,
+	0xba, 0x85, 0x05, 0x63, 0x3e, 0x20, 0xd1, 0x2b, 0xca, 0x36, 0x71, 0xef, 0xf4, 0xa3, 0x7d, 0x0d,
+	0xc6, 0xd3, 0x33, 0x40, 0xf3, 0xbd, 0xbb, 0x65, 0x44, 0xaa, 0x6c, 0xf6, 0x0b, 0x57, 0x12, 0x57,
+	0x85, 0xc4, 0x7b, 0x68, 0xb9, 0x0f, 0x89, 0xe9, 0x27, 0x8e, 0x77, 0x55, 0x20, 0xf7, 0xd0, 0x67,
+	0x0d, 0x26, 0xba, 0xae, 0x0d, 0xd5, 0xfa, 0x13, 0x92, 0x4e, 0x45, 0x79, 0x61, 0x20, 0x8e, 0x72,
+	0x70, 0x5f, 0x38, 0x58, 0x42, 0x77, 0x07, 0x74, 0xd0, 0x10, 0xef, 0x01, 0x7d, 0xd1, 0x00, 0x75,
+	0x47, 0x02, 0xf5, 0x29, 0xe5, 0x4c, 0xf6, 0xca, 0x77, 0x06, 0x23, 0x29, 0x03, 0x8f, 0x84, 0x81,
+	0x35, 0xb4, 0x3a, 0xa0, 0x01, 0xde, 0x68, 0xc6, 0x0d, 0x97, 0x3b, 0x78, 0x57, 0x05, 0x7e, 0x0f,
+	0x7d, 0xd5, 0xe0, 0x52, 0x66, 0x82, 0xd0, 0xe2, 0x00, 0xa3, 0x4d, 0xe5, 0xb2, 0xbc, 0x34, 0x30,
+	0xef, 0x3f, 0x1f, 0x56, 0xe3, 0x24, 0xa6, 0xf5, 0xf5, 0x83, 0x23, 0x5d, 0x3b, 0x3c, 0xd2, 0xb5,
+	0x5f, 0x47, 0xba, 0xf6, 0xf6, 0x58, 0xcf, 0x1d, 0x1e, 0xeb, 0xb9, 0x1f, 0xc7, 0x7a, 0xee, 0x45,
+	0xd5, 0xf3, 0xa3, 0x8d, 0x76, 0xd3, 0x74, 0x68, 0x2b, 0xb3, 0xfc, 0x4e, 0xba, 0x41, 0x14, 0x87,
+	0x84, 0x37, 0xf3, 0xe2, 0xbf, 0x6f, 0xe1, 0x6f, 0x00, 0x00, 0x00, 0xff, 0xff, 0x14, 0x05, 0x05,
+	0x44, 0x0b, 0x08, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -724,14 +608,12 @@ type QueryClient interface {
 	Params(ctx context.Context, in *QueryParamsRequest, opts ...grpc.CallOption) (*QueryParamsResponse, error)
 	// Registration queries a wallet's registration status.
 	Registration(ctx context.Context, in *QueryRegistrationRequest, opts ...grpc.CallOption) (*QueryRegistrationResponse, error)
-	// DemocraticOptions queries all democratic allocation options.
-	DemocraticOptions(ctx context.Context, in *QueryDemocraticOptionsRequest, opts ...grpc.CallOption) (*QueryDemocraticOptionsResponse, error)
+	// RegistrationCount returns how many humans are currently registered.
+	RegistrationCount(ctx context.Context, in *QueryRegistrationCountRequest, opts ...grpc.CallOption) (*QueryRegistrationCountResponse, error)
 	// RegistrationsByDsc counts registrations produced by one Document Signer.
 	RegistrationsByDsc(ctx context.Context, in *QueryRegistrationsByDscRequest, opts ...grpc.CallOption) (*QueryRegistrationsByDscResponse, error)
 	// RegistrationCountries returns the registration count per issuing country.
 	RegistrationCountries(ctx context.Context, in *QueryRegistrationCountriesRequest, opts ...grpc.CallOption) (*QueryRegistrationCountriesResponse, error)
-	// DemocraticVoter queries a registered human's democratic split.
-	DemocraticVoter(ctx context.Context, in *QueryDemocraticVoterRequest, opts ...grpc.CallOption) (*QueryDemocraticVoterResponse, error)
 }
 
 type queryClient struct {
@@ -760,9 +642,9 @@ func (c *queryClient) Registration(ctx context.Context, in *QueryRegistrationReq
 	return out, nil
 }
 
-func (c *queryClient) DemocraticOptions(ctx context.Context, in *QueryDemocraticOptionsRequest, opts ...grpc.CallOption) (*QueryDemocraticOptionsResponse, error) {
-	out := new(QueryDemocraticOptionsResponse)
-	err := c.cc.Invoke(ctx, "/earth.personhood.v1.Query/DemocraticOptions", in, out, opts...)
+func (c *queryClient) RegistrationCount(ctx context.Context, in *QueryRegistrationCountRequest, opts ...grpc.CallOption) (*QueryRegistrationCountResponse, error) {
+	out := new(QueryRegistrationCountResponse)
+	err := c.cc.Invoke(ctx, "/earth.personhood.v1.Query/RegistrationCount", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -787,29 +669,18 @@ func (c *queryClient) RegistrationCountries(ctx context.Context, in *QueryRegist
 	return out, nil
 }
 
-func (c *queryClient) DemocraticVoter(ctx context.Context, in *QueryDemocraticVoterRequest, opts ...grpc.CallOption) (*QueryDemocraticVoterResponse, error) {
-	out := new(QueryDemocraticVoterResponse)
-	err := c.cc.Invoke(ctx, "/earth.personhood.v1.Query/DemocraticVoter", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // QueryServer is the server API for Query service.
 type QueryServer interface {
 	// Parameters queries the parameters of the module.
 	Params(context.Context, *QueryParamsRequest) (*QueryParamsResponse, error)
 	// Registration queries a wallet's registration status.
 	Registration(context.Context, *QueryRegistrationRequest) (*QueryRegistrationResponse, error)
-	// DemocraticOptions queries all democratic allocation options.
-	DemocraticOptions(context.Context, *QueryDemocraticOptionsRequest) (*QueryDemocraticOptionsResponse, error)
+	// RegistrationCount returns how many humans are currently registered.
+	RegistrationCount(context.Context, *QueryRegistrationCountRequest) (*QueryRegistrationCountResponse, error)
 	// RegistrationsByDsc counts registrations produced by one Document Signer.
 	RegistrationsByDsc(context.Context, *QueryRegistrationsByDscRequest) (*QueryRegistrationsByDscResponse, error)
 	// RegistrationCountries returns the registration count per issuing country.
 	RegistrationCountries(context.Context, *QueryRegistrationCountriesRequest) (*QueryRegistrationCountriesResponse, error)
-	// DemocraticVoter queries a registered human's democratic split.
-	DemocraticVoter(context.Context, *QueryDemocraticVoterRequest) (*QueryDemocraticVoterResponse, error)
 }
 
 // UnimplementedQueryServer can be embedded to have forward compatible implementations.
@@ -822,17 +693,14 @@ func (*UnimplementedQueryServer) Params(ctx context.Context, req *QueryParamsReq
 func (*UnimplementedQueryServer) Registration(ctx context.Context, req *QueryRegistrationRequest) (*QueryRegistrationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Registration not implemented")
 }
-func (*UnimplementedQueryServer) DemocraticOptions(ctx context.Context, req *QueryDemocraticOptionsRequest) (*QueryDemocraticOptionsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DemocraticOptions not implemented")
+func (*UnimplementedQueryServer) RegistrationCount(ctx context.Context, req *QueryRegistrationCountRequest) (*QueryRegistrationCountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegistrationCount not implemented")
 }
 func (*UnimplementedQueryServer) RegistrationsByDsc(ctx context.Context, req *QueryRegistrationsByDscRequest) (*QueryRegistrationsByDscResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegistrationsByDsc not implemented")
 }
 func (*UnimplementedQueryServer) RegistrationCountries(ctx context.Context, req *QueryRegistrationCountriesRequest) (*QueryRegistrationCountriesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegistrationCountries not implemented")
-}
-func (*UnimplementedQueryServer) DemocraticVoter(ctx context.Context, req *QueryDemocraticVoterRequest) (*QueryDemocraticVoterResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DemocraticVoter not implemented")
 }
 
 func RegisterQueryServer(s grpc1.Server, srv QueryServer) {
@@ -875,20 +743,20 @@ func _Query_Registration_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_DemocraticOptions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryDemocraticOptionsRequest)
+func _Query_RegistrationCount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryRegistrationCountRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(QueryServer).DemocraticOptions(ctx, in)
+		return srv.(QueryServer).RegistrationCount(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/earth.personhood.v1.Query/DemocraticOptions",
+		FullMethod: "/earth.personhood.v1.Query/RegistrationCount",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).DemocraticOptions(ctx, req.(*QueryDemocraticOptionsRequest))
+		return srv.(QueryServer).RegistrationCount(ctx, req.(*QueryRegistrationCountRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -929,24 +797,6 @@ func _Query_RegistrationCountries_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_DemocraticVoter_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryDemocraticVoterRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).DemocraticVoter(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/earth.personhood.v1.Query/DemocraticVoter",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).DemocraticVoter(ctx, req.(*QueryDemocraticVoterRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 var Query_serviceDesc = _Query_serviceDesc
 var _Query_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "earth.personhood.v1.Query",
@@ -961,8 +811,8 @@ var _Query_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Query_Registration_Handler,
 		},
 		{
-			MethodName: "DemocraticOptions",
-			Handler:    _Query_DemocraticOptions_Handler,
+			MethodName: "RegistrationCount",
+			Handler:    _Query_RegistrationCount_Handler,
 		},
 		{
 			MethodName: "RegistrationsByDsc",
@@ -971,10 +821,6 @@ var _Query_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegistrationCountries",
 			Handler:    _Query_RegistrationCountries_Handler,
-		},
-		{
-			MethodName: "DemocraticVoter",
-			Handler:    _Query_DemocraticVoter_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1120,7 +966,7 @@ func (m *QueryRegistrationResponse) MarshalToSizedBuffer(dAtA []byte) (int, erro
 	return len(dAtA) - i, nil
 }
 
-func (m *QueryDemocraticOptionsRequest) Marshal() (dAtA []byte, err error) {
+func (m *QueryRegistrationCountRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -1130,12 +976,12 @@ func (m *QueryDemocraticOptionsRequest) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *QueryDemocraticOptionsRequest) MarshalTo(dAtA []byte) (int, error) {
+func (m *QueryRegistrationCountRequest) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *QueryDemocraticOptionsRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *QueryRegistrationCountRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -1143,7 +989,7 @@ func (m *QueryDemocraticOptionsRequest) MarshalToSizedBuffer(dAtA []byte) (int, 
 	return len(dAtA) - i, nil
 }
 
-func (m *QueryDemocraticOptionsResponse) Marshal() (dAtA []byte, err error) {
+func (m *QueryRegistrationCountResponse) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -1153,118 +999,21 @@ func (m *QueryDemocraticOptionsResponse) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *QueryDemocraticOptionsResponse) MarshalTo(dAtA []byte) (int, error) {
+func (m *QueryRegistrationCountResponse) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *QueryDemocraticOptionsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *QueryRegistrationCountResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if m.Registrations != 0 {
-		i = encodeVarintQuery(dAtA, i, uint64(m.Registrations))
+	if m.Count != 0 {
+		i = encodeVarintQuery(dAtA, i, uint64(m.Count))
 		i--
-		dAtA[i] = 0x20
+		dAtA[i] = 0x8
 	}
-	{
-		size := m.TotalWeight.Size()
-		i -= size
-		if _, err := m.TotalWeight.MarshalTo(dAtA[i:]); err != nil {
-			return 0, err
-		}
-		i = encodeVarintQuery(dAtA, i, uint64(size))
-	}
-	i--
-	dAtA[i] = 0x1a
-	{
-		size := m.RewardIndex.Size()
-		i -= size
-		if _, err := m.RewardIndex.MarshalTo(dAtA[i:]); err != nil {
-			return 0, err
-		}
-		i = encodeVarintQuery(dAtA, i, uint64(size))
-	}
-	i--
-	dAtA[i] = 0x12
-	if len(m.Options) > 0 {
-		for iNdEx := len(m.Options) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.Options[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintQuery(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0xa
-		}
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryDemocraticVoterRequest) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryDemocraticVoterRequest) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryDemocraticVoterRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Address) > 0 {
-		i -= len(m.Address)
-		copy(dAtA[i:], m.Address)
-		i = encodeVarintQuery(dAtA, i, uint64(len(m.Address)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryDemocraticVoterResponse) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryDemocraticVoterResponse) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryDemocraticVoterResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	{
-		size, err := m.Voter.MarshalToSizedBuffer(dAtA[:i])
-		if err != nil {
-			return 0, err
-		}
-		i -= size
-		i = encodeVarintQuery(dAtA, i, uint64(size))
-	}
-	i--
-	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
 }
 
@@ -1482,7 +1231,7 @@ func (m *QueryRegistrationResponse) Size() (n int) {
 	return n
 }
 
-func (m *QueryDemocraticOptionsRequest) Size() (n int) {
+func (m *QueryRegistrationCountRequest) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1491,49 +1240,15 @@ func (m *QueryDemocraticOptionsRequest) Size() (n int) {
 	return n
 }
 
-func (m *QueryDemocraticOptionsResponse) Size() (n int) {
+func (m *QueryRegistrationCountResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	if len(m.Options) > 0 {
-		for _, e := range m.Options {
-			l = e.Size()
-			n += 1 + l + sovQuery(uint64(l))
-		}
+	if m.Count != 0 {
+		n += 1 + sovQuery(uint64(m.Count))
 	}
-	l = m.RewardIndex.Size()
-	n += 1 + l + sovQuery(uint64(l))
-	l = m.TotalWeight.Size()
-	n += 1 + l + sovQuery(uint64(l))
-	if m.Registrations != 0 {
-		n += 1 + sovQuery(uint64(m.Registrations))
-	}
-	return n
-}
-
-func (m *QueryDemocraticVoterRequest) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.Address)
-	if l > 0 {
-		n += 1 + l + sovQuery(uint64(l))
-	}
-	return n
-}
-
-func (m *QueryDemocraticVoterResponse) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = m.Voter.Size()
-	n += 1 + l + sovQuery(uint64(l))
 	return n
 }
 
@@ -1946,7 +1661,7 @@ func (m *QueryRegistrationResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *QueryDemocraticOptionsRequest) Unmarshal(dAtA []byte) error {
+func (m *QueryRegistrationCountRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1969,10 +1684,10 @@ func (m *QueryDemocraticOptionsRequest) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: QueryDemocraticOptionsRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: QueryRegistrationCountRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryDemocraticOptionsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: QueryRegistrationCountRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		default:
@@ -1996,7 +1711,7 @@ func (m *QueryDemocraticOptionsRequest) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *QueryDemocraticOptionsResponse) Unmarshal(dAtA []byte) error {
+func (m *QueryRegistrationCountResponse) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -2019,119 +1734,17 @@ func (m *QueryDemocraticOptionsResponse) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: QueryDemocraticOptionsResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: QueryRegistrationCountResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryDemocraticOptionsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: QueryRegistrationCountResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Options", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Options = append(m.Options, DemocraticOption{})
-			if err := m.Options[len(m.Options)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field RewardIndex", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if err := m.RewardIndex.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field TotalWeight", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if err := m.TotalWeight.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 4:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Registrations", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Count", wireType)
 			}
-			m.Registrations = 0
+			m.Count = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowQuery
@@ -2141,176 +1754,11 @@ func (m *QueryDemocraticOptionsResponse) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Registrations |= uint64(b&0x7F) << shift
+				m.Count |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryDemocraticVoterRequest) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryDemocraticVoterRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryDemocraticVoterRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Address = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryDemocraticVoterResponse) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryDemocraticVoterResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryDemocraticVoterResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Voter", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if err := m.Voter.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipQuery(dAtA[iNdEx:])

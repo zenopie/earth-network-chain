@@ -3,6 +3,7 @@ package types
 import (
 	"cosmossdk.io/collections"
 
+	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	earthtypes "github.com/earth-network/earth/x/earth/types"
 )
 
@@ -22,29 +23,17 @@ const (
 	// OneAnml is one ANML in uanml, minted per daily claim / registration.
 	OneAnml = 1_000_000
 
-	// RegistrationRewardOptionID is the genesis democratic option (#1) whose ERTH
-	// is paid out to new registrees and their referrers.
-	RegistrationRewardOptionID = 1
-
-	// VoterWeight is the fixed per-human democratic vote weight (one-human-one-vote).
-	VoterWeight = 100
-
 	// RegistrationRewardBps is the fraction of the registration-rewards pool paid
 	// out on each registration, in basis points (10 bps = 0.1%). The pool stacks
-	// from the democratic stream and decays by this fraction per registration, so
-	// each registrant's reward is normalized to the current pool size.
+	// from the human allocation stream and decays by this fraction per
+	// registration, so each registrant's reward is normalized to the current pool
+	// size.
 	RegistrationRewardBps = 10
 
-	// EmissionPerSecond is the ERTH emission rate in uerth for each democratic
-	// stream (1 ERTH/sec): buyback-and-burn, and democratic allocations.
+	// EmissionPerSecond is the ERTH emission rate in uerth for this module's
+	// pillar (1 ERTH/sec): the ANML buyback-and-burn. The human allocation
+	// stream's pillar is emitted by x/allocation.
 	EmissionPerSecond = earthtypes.EmissionPerSecondPerPillar
-
-	// DefaultAddressOptionFee is the ERTH (uerth) burned to add an ADDRESS option.
-	DefaultAddressOptionFee = 1_000_000
-
-	// HandlerRegistrationRewards is the integrated handler for the registration-
-	// reward pool (accrues each block; paid out on registration).
-	HandlerRegistrationRewards = "registration_rewards"
 
 	// DefaultRegistrationValiditySeconds is the default registration lifetime (1 year).
 	DefaultRegistrationValiditySeconds = 365 * 24 * 60 * 60
@@ -64,16 +53,26 @@ const (
 	// retires in one block, so a cohort that all registered together cannot land
 	// an unbounded sweep on a single block. Overridable via params.
 	DefaultExpirySweepLimit = 100
+)
 
-	// MaxVoterOptions caps how many options one voter may split across.
-	//
-	// This has to be a hard bound rather than a convention, because resyncDemVoter
-	// is reachable from BeginBlock: the expiry sweep calls removeRegistration,
-	// which unwinds the lapsed voter's stored split one option at a time, and
-	// nobody pays gas for that. Uncapped, a human could store thousands of entries
-	// and hand the chain the bill when their registration lapsed — multiplied by
-	// DefaultExpirySweepLimit registrations in the same block.
-	MaxVoterOptions = 20
+// The human allocation stream is x/allocation's; this module only supplies its
+// weight source (one live registration = one vote) and draws down the
+// registration-reward pool.
+const (
+	// AllocationStream is the stream registered humans vote in.
+	AllocationStream = allocationtypes.STREAM_ID_HUMAN
+
+	// RegistrationRewardOptionID is that stream's option #1, whose accrued ERTH
+	// is paid out to new registrees and their referrers.
+	RegistrationRewardOptionID = allocationtypes.RegistrationRewardOptionID
+
+	// HandlerRegistrationRewards names the integrated handler this module
+	// registers for that option. It resolves nothing per block — the pool is
+	// drawn down on registration instead.
+	HandlerRegistrationRewards = allocationtypes.HandlerRegistrationRewards
+
+	// VoterWeight is the fixed weight of one registered human.
+	VoterWeight = allocationtypes.HumanVoterWeight
 )
 
 // ParamsKey is the prefix to retrieve all Params
@@ -81,25 +80,15 @@ var ParamsKey = collections.NewPrefix("p_personhood")
 
 // Storage prefixes.
 var (
-	RegistrationsKey        = collections.NewPrefix("registrations") // nullifier -> Registration
-	RegByAddrKey            = collections.NewPrefix("reg_by_addr")   // addr -> nullifier
-	RegCountByDscKey        = collections.NewPrefix("regs_by_dsc")
-	RegCountByCountryKey    = collections.NewPrefix("regs_by_country")
-	RegCountKey             = collections.NewPrefix("reg_count")        // uint64
-	DemOptionsKey           = collections.NewPrefix("dem_options")      // id -> DemocraticOption
-	DemSeqKey               = collections.NewPrefix("dem_seq")          // sequence
-	DemVotersKey            = collections.NewPrefix("dem_voters")       // addr -> DemocraticVoter
-	DemRewardIndexKey       = collections.NewPrefix("dem_reward_index") // Int
-	DemTotalWeightKey       = collections.NewPrefix("dem_total_weight") // Int
-	DemLastUpkeepKey        = collections.NewPrefix("dem_last_upkeep")  // int64 (unix nanos)
-	LastBuybackKey          = collections.NewPrefix("last_buyback")     // int64 (unix nanos)
-	DemIntegratedOptionsKey = collections.NewPrefix("dem_integrated_options")
+	RegistrationsKey     = collections.NewPrefix("registrations") // nullifier -> Registration
+	RegByAddrKey         = collections.NewPrefix("reg_by_addr")   // addr -> nullifier
+	RegCountByDscKey     = collections.NewPrefix("regs_by_dsc")
+	RegCountByCountryKey = collections.NewPrefix("regs_by_country")
+	RegCountKey          = collections.NewPrefix("reg_count")    // uint64
+	LastBuybackKey       = collections.NewPrefix("last_buyback") // int64 (unix nanos)
 	// RegByRegisteredAt orders registrations by their registration time so the
 	// expiry sweep can find the lapsed ones without walking every registration.
 	// Keyed on registered-at rather than a precomputed expiry so that a governance
 	// change to registration_validity_seconds applies to existing registrations.
 	RegByRegisteredAtKey = collections.NewPrefix("reg_by_registered_at") // (registeredAt, nullifier)
-	// DemEpochKey is the democratic allocation epoch. Bumped by a governance
-	// reset; votes recorded under an older epoch carry no live weight.
-	DemEpochKey = collections.NewPrefix("dem_epoch") // uint64
 )

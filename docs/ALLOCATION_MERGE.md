@@ -1,53 +1,28 @@
-# Merging the two allocation streams
+# The two allocation streams, merged
 
-Step 3 of the module reorganisation. Steps 1 (tokenomics into `x/earth`) and 2
-(`x/caretaker` → `x/personhood`) are done and verified on a running chain.
+Step 3 of the module reorganisation, **done**. Steps 1 (tokenomics into `x/earth`)
+and 2 (`x/caretaker` → `x/personhood`) preceded it.
 
-## Why
+`x/personhood/keeper/allocation.go` and `x/deflation/keeper/allocation.go` were
+near-duplicates of one engine, maintained twice — every fix so far (epoch-reset
+semantics, the voter split cap, the zero-percent rejection) had to be applied in
+both. They are now one module.
 
-`x/personhood/keeper/allocation.go` and `x/deflation/keeper/allocation.go` are
-near-duplicates. Both implement the same engine:
+## What exists now
 
-| concern | personhood | deflation |
-|---|---|---|
-| advance index | `advanceDemIndex` | `advanceAllocationIndex` |
-| settle option | `settleOption` | `settleOption` |
-| resync voter | `resyncDemVoter` | `resyncVoter` |
-| reward index | `DemRewardIndex` | `RewardIndex` |
-| total weight | `DemTotalWeight` | `TotalWeight` |
-| epoch | `DemEpoch` | `AllocationEpoch` |
-| reset | `resetDemAllocations` | `resetAllocations` |
-
-They differ in exactly two places:
-
-1. **Weight source.** Personhood uses a fixed `VoterWeight = 100` per registered
-   human (one-human-one-vote). Deflation uses bonded stake, normalized through
-   `earthKeeper.NormalizeStakeWeight`.
-2. **Who may vote.** Personhood requires a live registration
-   (`requireValidHuman`); deflation requires positive bonded stake.
-
-Everything else — options, voters, the index maths, epoch reset, claim, the
-INTEGRATED/ADDRESS split, the `MaxVoterOptions` cap — is identical and currently
-maintained twice. Every fix so far has had to be applied in both places: the
-epoch-reset semantics, the voter split cap, the zero-percent rejection.
-
-## Target
-
-One `x/allocation` module owning two *streams*, keyed by a stream id:
+`x/allocation` owns both emission streams, keyed by a stream id:
 
 ```go
-type StreamID uint32
-const (
-    StreamHuman   StreamID = 1 // one-human-one-vote, 1 ERTH/sec
-    StreamCapital StreamID = 2 // stake-weighted,     1 ERTH/sec
-)
+STREAM_ID_HUMAN   = 1 // one-human-one-vote, 1 ERTH/sec
+STREAM_ID_CAPITAL = 2 // stake-weighted,     1 ERTH/sec
 ```
 
-All state becomes stream-prefixed: `Options[(stream, id)]`,
+Every piece of state is stream-prefixed: `Options[(stream, id)]`,
 `Voters[(stream, addr)]`, `RewardIndex[stream]`, `TotalWeight[stream]`,
-`Epoch[stream]`, `IntegratedOptions[(stream, id)]`.
+`Epoch[stream]`, `OptionSeq[stream]`, `IntegratedOptions[(stream, id)]`. Option
+ids restart per stream.
 
-Weight resolution moves behind one interface the module is constructed with:
+The streams differ in exactly one place, behind one interface:
 
 ```go
 type WeightSource interface {
@@ -56,46 +31,48 @@ type WeightSource interface {
 }
 ```
 
-`x/personhood` supplies the human source (registration lookup → `VoterWeight`);
-`x/earth` + staking supply the capital source (`GetDelegatorBonded` →
-`NormalizeStakeWeight`). Both are one small adapter each.
+`x/personhood` registers the human source (live registration → `HumanVoterWeight`);
+the capital source is internal to `x/allocation` (`GetDelegatorBonded` →
+`NormalizeStakeWeight`), since that module already holds the staking hooks and
+both halves of the calculation.
 
-## Order of work
+`x/deflation` is gone. Its `lp_rewards` integrated handler is registered by
+`x/dex`, and `registration_rewards` by `x/personhood`.
 
-1. Scaffold `x/allocation` with stream-prefixed state and the merged engine.
-   Port the deflation version — it is the one with the epoch, cap and
-   normalization fixes already in it.
-2. Move the msg servers, collapsing each pair into one message carrying a
-   `stream` field: `SetAllocations`, `ClaimAllocation`, `AddIntegratedOption`,
-   `AddAddressOption`, `ResetAllocations`.
-3. Move both integrated handlers: `lp_rewards` (→ `x/dex`) and
-   `registration_rewards` (→ `x/personhood`).
-4. Move the staking hooks (`AfterDelegationModified`, `BeforeDelegationRemoved`)
-   — they only serve the capital stream.
-5. Strip both old modules down; `x/deflation` disappears entirely.
-6. Genesis: `config.yml` currently seeds allocation state under `deflation:` and
-   `personhood:`. Both move under `allocation:` with stream ids.
-7. Rewire depinject and `app_config.go`.
+## Dependency direction
 
-## Traps
+The registries (`RegisterWeightSource`, `RegisterIntegratedHandler`) are maps on
+the keeper, populated from other modules' wiring. That is what keeps the graph a
+tree: `x/allocation` depends on staking, bank and `x/earth` and nothing else;
+`x/dex` and `x/personhood` reach *into* it. A keeper-to-keeper dependency in both
+directions would deadlock depinject.
 
-- **`removeRegistration` calls the human resync from BeginBlock.** The expiry
-  sweep unwinds a lapsed voter's split with nobody paying gas. `MaxVoterOptions`
-  must survive the merge or that becomes an unmetered DoS again.
+`x/personhood` calls back through a narrow interface it declares itself
+(`AdvanceIndex`, `ClearVoter`, `DrawFromOption`) rather than importing the
+allocation keeper.
+
+## Invariants worth not breaking
+
 - **The two epochs are independent.** A governance reset of one stream must not
-  touch the other. Keep `Epoch` per stream, not global.
-- **The human stream's weight is constant.** `resyncDemVoter` takes no weight
-  argument today; the merged version passes `VoterWeight` from the source. Do not
-  accidentally normalize it by the stake compound index.
-- **`x/personhood` registration rewards read option #1.** `RegistrationRewardOptionID`
-  and `LPRewardsOptionID` are both 1 today, in different modules. Under one module
-  they collide unless ids are per-stream.
+  touch the other. `TestResetAllocationsIsPerStream` pins this.
+- **`MaxVoterOptions` is a DoS bound, not a usability rule.** `x/personhood`'s
+  expiry sweep clears a lapsed human's vote from BeginBlock, unwinding their
+  split one option at a time with nobody paying gas — multiplied by the sweep
+  limit in a single block.
+- **The human stream's weight is flat.** It must not be normalized by the stake
+  compound index. Normalization lives in the capital weight source and the
+  staking hooks, never in the shared engine.
+- **Option ids are per stream.** `RegistrationRewardOptionID` and
+  `LPRewardsOptionID` are both 1; under one module they would collide if ids were
+  global.
+- **`x/personhood` runs before `x/allocation` in BeginBlock.** The sweep has to
+  return a lapsed human's weight before the stream settles the block's emission.
 
 ## Verification
 
-Run the chain after each step, not just the test suite. Three separate breakages
-this session passed all tests and would still have broken a running chain:
-missing module account permissions, a renamed genesis key, and a mangled proto.
+Run the chain, not just the test suite. Three separate breakages during this
+reorg passed all tests and would still have broken a running chain: missing
+module account permissions, a renamed genesis key, and a mangled proto.
 
 Minimum checks: bonded pool balance equals the sum of validator tokens at a
 pinned height; `personhood params` returns 7 verifying keys; both streams accrue

@@ -1,0 +1,17 @@
+syntax = "proto3";
+package earth.allocation.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/allocation/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "earth/x/allocation/Params";
+  option (gogoproto.equal) = true;
+
+  // address_option_fee is the ERTH (uerth) burned to add an ADDRESS allocation
+  // option. Adding one is permissionless in either stream; this fee deters spam.
+  uint64 address_option_fee = 1;
+}

@@ -7,7 +7,7 @@ import "gogoproto/gogo.proto";
 
 option go_package = "github.com/earth-network/earth/x/personhood/types";
 
-// GenesisState defines the caretaker module's genesis state.
+// GenesisState defines the personhood module's genesis state.
 message GenesisState {
   // params defines all the parameters of the module.
   Params params = 1 [

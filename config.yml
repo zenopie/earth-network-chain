@@ -87,7 +87,8 @@ genesis:
     # Sized to 20 years (365 d/y) of emissions so the opening price equals the
     # long-run emission ratio:
     #   ERTH  = 4 pillars x 1 ERTH/sec x 630,720,000 s = 2,522,880,000 ERTH
-    #           (staking base, stake-weighted allocations, buyback-and-burn, democratic)
+    #           (staking base, ANML buyback-and-burn, and the human and
+    #            capital allocation streams)
     #   ANML  = 1 person x 1 ANML/day x 7,300 d       =         7,300 ANML
     #   => 1 ANML = 345,600 ERTH at open
     # LP shares are sqrt(reserve_erth * reserve_token), matching CreatePool.
@@ -135,6 +136,13 @@ genesis:
           amount: "7300000000"
         volume: "0"
         last_volume_day: "0"
+    # x/allocation runs both emission streams — one directed by registered
+    # humans, one by bonded stake — over the same engine and shared params.
+    allocation:
+      params:
+        # address_option_fee is the ERTH (uerth) burned to add a permissionless
+        # ADDRESS option to either stream (anti-spam). 0 = free (demo/testing).
+        address_option_fee: "1000000"
     personhood:
       params:
         # verifying_keys maps a register-circuit id to its Barretenberg UltraHonk
@@ -174,9 +182,6 @@ genesis:
         # 0 is rejected: it does not mean "no tolerance", it means the check never
         # runs, and every backdated proof gets in.
         current_date_max_skew_seconds: "172800"
-        # address_option_fee is the ERTH (uerth) burned to add a permissionless
-        # ADDRESS democratic option (anti-spam). 0 = free (demo/testing).
-        address_option_fee: "1000000"
         # expiry_sweep_limit caps how many lapsed registrations BeginBlocker
         # retires per block. Exceeding it is safe — the backlog drains over the
         # following blocks and emits registration_sweep_capped — so raise this if

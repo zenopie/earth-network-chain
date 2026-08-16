@@ -211,15 +211,15 @@ func (k Keeper) getRegCount(ctx context.Context) (uint64, error) {
 
 // removeRegistration retires a registration completely: its indexes, the
 // headcount and per-signer/per-country tallies, and — importantly — the
-// democratic vote weight it was carrying.
+// allocation vote weight it was carrying.
 //
 // The vote weight is the part that is easy to miss. A registration that lapses
-// without being cleaned up leaves its percentages sitting in DemTotalWeight
-// forever, diluting every voter who is still a verified human, while the
-// options it pointed at keep accruing ERTH that no live human directs.
+// without being cleaned up leaves its percentages sitting in the human stream's
+// total weight forever, diluting every voter who is still a verified human,
+// while the options it pointed at keep accruing ERTH that no live human directs.
 //
-// Callers must have advanced the democratic index to the current block first —
-// resyncDemVoter credits against it. The sweep retires up to a full batch per
+// Callers must have advanced the human stream to the current block first —
+// ClearVoter credits against its index. The sweep retires up to a full batch per
 // block, so advancing once per block there beats re-advancing per registration.
 func (k Keeper) removeRegistration(ctx context.Context, reg types.Registration) error {
 	addrBz, err := k.addressCodec.StringToBytes(reg.Address)
@@ -227,7 +227,7 @@ func (k Keeper) removeRegistration(ctx context.Context, reg types.Registration) 
 		return err
 	}
 
-	if err := k.resyncDemVoter(ctx, addrBz, nil); err != nil {
+	if err := k.allocationKeeper.ClearVoter(ctx, types.AllocationStream, addrBz); err != nil {
 		return err
 	}
 
@@ -264,7 +264,7 @@ func (k Keeper) removeRegistration(ctx context.Context, reg types.Registration) 
 // sweepExpiredRegistrations retires registrations whose validity window has
 // closed. Expiry is otherwise only noticed lazily (when the holder or someone
 // re-registering trips over it), which means a human who simply stops using the
-// chain keeps their democratic weight indefinitely.
+// chain keeps their vote weight in the human stream indefinitely.
 //
 // The registered-at index is ordered, so this walks only the lapsed prefix and
 // stops at the first live registration rather than scanning the whole set.
@@ -300,8 +300,8 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context) error {
 	}
 
 	// Advance once for the whole batch rather than per removal: the settle is to
-	// the same block time either way, and resyncDemVoter reads the same index.
-	if err := k.advanceDemIndex(ctx); err != nil {
+	// the same block time either way, and every ClearVoter reads the same index.
+	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
 		return err
 	}
 

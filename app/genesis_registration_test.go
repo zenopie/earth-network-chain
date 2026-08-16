@@ -26,7 +26,7 @@ func TestGenesisSeedsRegistrationTrustAnchors(t *testing.T) {
 	var cfg struct {
 		Genesis struct {
 			AppState struct {
-				Caretaker struct {
+				Personhood struct {
 					Params struct {
 						VerifyingKeys map[string]string `yaml:"verifying_keys"`
 					} `yaml:"params"`
@@ -54,7 +54,7 @@ func TestGenesisSeedsRegistrationTrustAnchors(t *testing.T) {
 		"lean_poa_brainpool384",
 		"lean_poa_brainpool512",
 	}
-	keys := cfg.Genesis.AppState.Caretaker.Params.VerifyingKeys
+	keys := cfg.Genesis.AppState.Personhood.Params.VerifyingKeys
 	for _, algo := range wantAlgorithms {
 		vk, ok := keys[algo]
 		if !ok {

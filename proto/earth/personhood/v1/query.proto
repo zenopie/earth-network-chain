@@ -4,7 +4,6 @@ package earth.personhood.v1;
 import "amino/amino.proto";
 import "cosmos/base/query/v1beta1/pagination.proto";
 import "cosmos_proto/cosmos.proto";
-import "earth/personhood/v1/allocation.proto";
 import "earth/personhood/v1/params.proto";
 import "earth/personhood/v1/registration.proto";
 import "gogoproto/gogo.proto";
@@ -24,9 +23,9 @@ service Query {
     option (google.api.http).get = "/earth-network/earth/personhood/v1/registration/{address}";
   }
 
-  // DemocraticOptions queries all democratic allocation options.
-  rpc DemocraticOptions(QueryDemocraticOptionsRequest) returns (QueryDemocraticOptionsResponse) {
-    option (google.api.http).get = "/earth-network/earth/personhood/v1/democratic_options";
+  // RegistrationCount returns how many humans are currently registered.
+  rpc RegistrationCount(QueryRegistrationCountRequest) returns (QueryRegistrationCountResponse) {
+    option (google.api.http).get = "/earth-network/earth/personhood/v1/registration_count";
   }
 
   // RegistrationsByDsc counts registrations produced by one Document Signer.
@@ -37,11 +36,6 @@ service Query {
   // RegistrationCountries returns the registration count per issuing country.
   rpc RegistrationCountries(QueryRegistrationCountriesRequest) returns (QueryRegistrationCountriesResponse) {
     option (google.api.http).get = "/earth-network/earth/personhood/v1/registration_countries";
-  }
-
-  // DemocraticVoter queries a registered human's democratic split.
-  rpc DemocraticVoter(QueryDemocraticVoterRequest) returns (QueryDemocraticVoterResponse) {
-    option (google.api.http).get = "/earth-network/earth/personhood/v1/democratic_voter/{address}";
   }
 }
 
@@ -69,34 +63,13 @@ message QueryRegistrationResponse {
   Registration registration = 3 [(gogoproto.nullable) = false];
 }
 
-// QueryDemocraticOptionsRequest requests all democratic options.
-message QueryDemocraticOptionsRequest {}
+// QueryRegistrationCountRequest requests the live registration headcount.
+message QueryRegistrationCountRequest {}
 
-// QueryDemocraticOptionsResponse returns all democratic options.
-message QueryDemocraticOptionsResponse {
-  repeated DemocraticOption options = 1 [(gogoproto.nullable) = false];
-  string reward_index = 2 [
-    (cosmos_proto.scalar) = "cosmos.Int",
-    (gogoproto.customtype) = "cosmossdk.io/math.Int",
-    (gogoproto.nullable) = false
-  ];
-  string total_weight = 3 [
-    (cosmos_proto.scalar) = "cosmos.Int",
-    (gogoproto.customtype) = "cosmossdk.io/math.Int",
-    (gogoproto.nullable) = false
-  ];
-  // registrations is the number of currently registered humans.
-  uint64 registrations = 4;
-}
-
-// QueryDemocraticVoterRequest requests a voter's democratic split.
-message QueryDemocraticVoterRequest {
-  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-}
-
-// QueryDemocraticVoterResponse returns a voter's democratic split.
-message QueryDemocraticVoterResponse {
-  DemocraticVoter voter = 1 [(gogoproto.nullable) = false];
+// QueryRegistrationCountResponse returns the live registration headcount. This
+// is the denominator of the human emission stream: one vote each.
+message QueryRegistrationCountResponse {
+  uint64 count = 1;
 }
 
 // QueryRegistrationsByDscRequest identifies a Document Signer by the hex-encoded

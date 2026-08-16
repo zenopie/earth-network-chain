@@ -17,7 +17,7 @@ import (
 // with "wrong Block.Header.AppHash". It cannot be caught by a single-node
 // devnet, which only ever compares against itself.
 //
-// This is a real incident, not a hypothetical: caretaker's Params carries a
+// This is a real incident, not a hypothetical: x/personhood's Params carries a
 // verifying_keys map, and the chain halted on a 3-validator testnet the moment
 // more than one register-circuit key was configured. A unit test on one message
 // would not have prevented it — the next map field added anywhere would

@@ -14,10 +14,15 @@ ERTH is emitted at a **fixed 4 ERTH/sec** (prorated by block time), as four inde
 
 | Pillar | Stream (1 ERTH/sec each) | Directed by | Where |
 | --- | --- | --- | --- |
-| **Investor** (`x/dex` + `x/deflation`) | Base staking → stakers | validators/delegators | `app/mint.go` |
-| | Stake-weighted allocation | **plutocratic** vote (bonded stake) | `x/deflation/keeper/allocation.go` |
-| **Democratic** (`x/caretaker`) | ANML buyback-and-burn | — (protocol) | `x/caretaker/keeper/abci.go` |
-| | Democratic allocation | **one-human-one-vote** (registered humans) | `x/caretaker/keeper/allocation.go` |
+| **Investor** | Base staking → stakers | validators/delegators | `x/earth` |
+| | Capital allocation stream | **plutocratic** vote (bonded stake) | `x/allocation` |
+| **Democratic** | ANML buyback-and-burn | — (protocol) | `x/personhood/keeper/abci.go` |
+| | Human allocation stream | **one-human-one-vote** (registered humans) | `x/allocation` |
+
+Both allocation streams are one engine in **`x/allocation`**, keyed by a stream id
+(`human` / `capital`). They share the options, the reward-index maths, the epoch reset
+and the claim path; they differ only in where a voter's weight comes from and who is
+allowed to vote at all.
 
 The two allocation streams don't mint continuously — they accrue via a reward index and
 are minted when realized (LP auto-compound, an option claim, or a registration payout), so
@@ -81,54 +86,72 @@ earthd tx dex swap 100000uusdc uatom 40000 --from alice --keyring-backend test -
 earthd q dex list-pool
 ```
 
-## Investor pillar — stake-weighted allocations (plutocratic, 1 ERTH/sec)
+## Allocation streams — `x/allocation` (2 ERTH/sec)
 
-The investor pillar's second stream (alongside base staking) is directed by **stakers'
-votes**, weighted by their bonded stake. This stream lives in **`x/deflation`** (extracted
-from `x/dex`). Stakers set percentages (summing to 100) across *allocation options*; each
-option accrues ERTH pro-rata to the stake pointed at it, tracked with a reward index
-(`x/deflation/keeper/allocation.go`). Vote weights are kept in sync with live bonded stake
-via staking hooks (`x/deflation/keeper/hooks.go`) — delegating/undelegating re-weights your
-vote automatically, no re-vote needed.
+Two of the four streams are directed by *votes* rather than by protocol rules, and both
+run the same engine in **`x/allocation`**:
+
+| Stream | Who may vote | Weight |
+| --- | --- | --- |
+| `human` | anyone with a live proof-of-personhood registration | flat, identical for every human |
+| `capital` | anyone with bonded stake | their bonded stake, normalized by the stake compounding index |
+
+Voters set percentages (summing to 100) across that stream's *allocation options*; each
+option accrues ERTH pro-rata to the weight pointed at it, tracked with a reward index
+(`x/allocation/keeper/allocation.go`). All state is keyed by stream first, so option ids,
+totals and epochs are per stream — the human stream's option #1 and the capital stream's
+option #1 are two different options, and a governance reset of one slate leaves the other
+standing.
+
+Capital-stream weights are kept in sync with live bonded stake via staking hooks
+(`x/allocation/keeper/hooks.go`) — delegating/undelegating re-weights your vote
+automatically, no re-vote needed. Human-stream weights are cleared when a registration
+lapses, by `x/personhood`'s expiry sweep.
 
 There are two kinds of allocation option, differing in how they deliver their ERTH:
 
 - **`ALLOCATION_KIND_INTEGRATED`** — resolved automatically every block by a protocol
   handler named in the option's `handler` field. **Governance-permissioned to add**, since
-  each handler is code that ships with the chain; unknown handler names are rejected at
-  add-time. Integrated options are tracked in a dedicated key set, so `BeginBlocker` only
-  ever iterates this bounded set.
-  - **Option #1 (`lp_rewards`, seeded at genesis)** — "volume-weighted LP rewards". Its
-    ERTH is split across dex pools by each pool's decaying trading volume (ERTH-denominated,
-    ~7-day window) and **auto-compounded into each pool's `reserve_erth`**, raising every
-    LP's redemption value pro-rata. Zero-volume pools get nothing.
+  each handler is code that ships with the chain; unknown handler names, and handlers
+  belonging to the other stream, are rejected at add-time. Integrated options are tracked
+  in a dedicated key set, so `BeginBlocker` only ever iterates this bounded set.
+  - **capital option #1 (`lp_rewards`, seeded at genesis)** — "volume-weighted LP rewards".
+    Its ERTH is split across dex pools by each pool's decaying trading volume
+    (ERTH-denominated, ~7-day window) and **auto-compounded into each pool's
+    `reserve_erth`**, raising every LP's redemption value pro-rata. Zero-volume pools get
+    nothing. The handler lives in `x/dex`, which registers it with `x/allocation`.
+  - **human option #1 (`registration_rewards`, seeded at genesis)** — resolves nothing per
+    block; the pool stacks and is drawn down on each new registration, **50% registree /
+    50% referrer**. Registered by `x/personhood`.
 - **`ALLOCATION_KIND_ADDRESS`** — accrues ERTH claimable by a fixed `recipient` via
-  `claim-allocation`. **Permissionless to add**: any account may add one by burning
-  `params.address_option_fee` ERTH (default 1 ERTH) as anti-spam. These settle *lazily* on
-  claim rather than per-block, so permissionless additions cost no per-block work. An
-  optional `--claimer` restricts who may trigger the claim; leave it empty (the default) and
-  anyone can trigger it. The payout always goes to `recipient` either way — a triggerer only
-  spends the gas.
+  `claim-allocation`. **Permissionless to add** in either stream: any account may add one
+  by burning `params.address_option_fee` ERTH (default 1 ERTH) as anti-spam. These settle
+  *lazily* on claim rather than per-block, so permissionless additions cost no per-block
+  work. An optional `--claimer` restricts who may trigger the claim; leave it empty (the
+  default) and anyone can trigger it. The payout always goes to `recipient` either way — a
+  triggerer only spends the gas.
 
-**Messages / CLI**
+**Messages / CLI** — every command names the stream (`human` or `capital`):
+
 | Command | Effect |
 | --- | --- |
-| `earthd tx deflation set-allocations --percentages '{"option_id":"1","percent":"100"}' [...]` | Set your stake-weighted split (must sum to 100). |
-| `earthd tx deflation claim-allocation [option-id]` | Pay an ADDRESS option's accrued ERTH to its recipient. |
-| `earthd tx deflation add-address-option [recipient] [description] [--claimer addr]` | Permissionless: add an ADDRESS option (burns the fee). |
-| `earthd tx deflation add-integrated-option` | Governance-gated (authority = x/gov): add an INTEGRATED option. |
+| `earthd tx allocation set-allocations [stream] --percentages '{"option_id":2,"percent":100}'` | Set your split in that stream (must sum to 100; empty clears it). |
+| `earthd tx allocation claim-allocation [stream] [option-id]` | Pay an ADDRESS option's accrued ERTH to its recipient. |
+| `earthd tx allocation add-address-option [stream] [recipient] [description] [--claimer addr]` | Permissionless: add an ADDRESS option (burns the fee). |
+| `earthd tx allocation add-integrated-option` | Governance-gated (authority = x/gov): add an INTEGRATED option. |
+| `earthd tx allocation reset-allocations` | Governance-gated: retire one stream's whole slate of votes. |
 
-**Queries**: `earthd q deflation allocation-options`, `earthd q deflation allocation-option [id]`,
-`earthd q deflation voter [address]`.
+**Queries**: `earthd q allocation options [stream]`, `earthd q allocation option [stream] [id]`,
+`earthd q allocation voter [stream] [address]`, `earthd q allocation params`.
 
 ```
 # vote 100% of your stake weight to volume-weighted LP rewards
-earthd tx deflation set-allocations --percentages '{"option_id":"1","percent":"100"}' \
+earthd tx allocation set-allocations capital --percentages '{"option_id":1,"percent":100}' \
   --from alice --keyring-backend test --chain-id earth --gas auto --gas-adjustment 1.5 -y
-earthd q deflation allocation-option 1   # amount_allocated tracks your bonded stake
+earthd q allocation option capital 1   # amount_allocated tracks your bonded stake
 ```
 
-## Democratic pillar — `x/caretaker` (proof-of-personhood, 2 ERTH/sec)
+## Democratic pillar — `x/personhood` (proof-of-personhood)
 
 The democratic pillar is gated on **proof-of-personhood registration**. Instead of a
 trusted backend, the app scans a passport and generates a **zk proof** on-device; the
@@ -143,20 +166,13 @@ the DSC registry and its CSCA trust anchor are `x/pki` — see
 - **ANML token** (`uanml`, 1 ANML = 1e6 uanml) — minted 1/day per registered human.
 - **Buyback-and-burn (1 ERTH/sec)** — `BeginBlock` mints ERTH, swaps it for ANML on the
   dex (`dexKeeper.SwapExactIn`), and burns the ANML (deflationary for ANML).
-- **Democratic allocations (1 ERTH/sec)** — same reward-index mechanism as the investor
-  pillar but **one-human-one-vote** (each registered voter has equal weight), gated on a
-  valid registration. The same two option kinds apply: `DEMOCRATIC_KIND_INTEGRATED`
-  (gov-permissioned, handler-resolved) and `DEMOCRATIC_KIND_ADDRESS` (permissionless behind
-  a burned `address_option_fee`, claimed to a fixed recipient, with the same optional
-  `--claimer` gate). **Option #1 = registration rewards** (integrated,
-  `registration_rewards`): its accrued ERTH is paid out on each new registration,
-  **50% registree / 50% referrer**.
+- **The human allocation stream (1 ERTH/sec)** lives in `x/allocation`; this module only
+  supplies its weight source (one live registration = one vote), clears a lapsed human's
+  vote, and draws down the registration-reward pool.
 
-**Messages / CLI** (`earthd tx caretaker ...`): `register --proof <b64> --public-signals <s,s,…> --signature-algorithm <id> [--affiliate <addr>]`,
-`claim-anml`, `set-democratic-allocations --percentages ...`, `claim-democratic-allocation [id]`,
-permissionless `add-address-option [recipient] [description] [--claimer addr]`, and gov-gated
-`add-integrated-option`. **Queries**: `caretaker registration [addr]`,
-`caretaker democratic-options`, `caretaker democratic-voter [addr]`.
+**Messages / CLI** (`earthd tx personhood ...`): `register --proof <b64> --public-signals <s,s,…> --signature-algorithm <id> [--affiliate <addr>]`,
+`claim-anml`. **Queries**: `personhood registration [addr]`, `personhood registration-count`,
+`personhood params`.
 
 The registration nullifier is derived deterministically in-circuit from the passport
 (name + date of birth), so a renewed passport yields the same nullifier (one person, one
