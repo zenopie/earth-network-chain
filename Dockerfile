@@ -33,8 +33,15 @@ FROM --platform=linux/amd64 golang:1.25-bookworm
 ARG IGNITE_VERSION=29.10.1
 # clang/python3/binutils are for the Barretenberg verifier lib built below, not
 # for Ignite.
+#
+# libc++ specifically, not libstdc++: build-wrapper.sh compiles the shim with
+# -stdlib=libc++ to match Aztec's prebuilt archive, and the cgo LDFLAGS link
+# -lc++. Without the dev packages clang cannot find <memory> and the build stops
+# at the first standard header. Both are kept in the final image — this is a
+# single-stage build and the binary links libc++ dynamically.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates jq clang python3 binutils \
+        libc++-dev libc++abi-dev \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL "https://github.com/ignite/cli/releases/download/v${IGNITE_VERSION}/ignite_${IGNITE_VERSION}_linux_amd64.tar.gz" \
         | tar -xz -C /usr/local/bin ignite \
