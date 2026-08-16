@@ -195,8 +195,8 @@ genesis:
       #
       # Generated with:
       #   go run ./tools/pki-genesis \
-      #     <backend>/csca_masterlist/allowlist.ml \
-      #     <backend>/csca_additional/*.cer
+      #     csca/masterlist/allowlist.ml \
+      #     csca/additional/*.cer
       #
       # 536 from the ICAO master list + 3 Israeli CSCAs ICAO does not distribute.
       # Certificates sharing a signing key are intentionally NOT collapsed: the

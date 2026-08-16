@@ -46,7 +46,7 @@ governance action is maintaining the small, stable CSCA masterlist.
 ## 2. Components
 
 1. **CSCA masterlist** — the ~536 ICAO country roots, governance-managed. Seeded
-   from `earth-network-backend/csca_masterlist/allowlist.ml`. Rarely changes.
+   from `csca/masterlist/allowlist.ml`. Rarely changes.
 2. **DSC registry** — an append-only Poseidon2 Merkle tree of validated DSC public
    keys. Grows via `MsgSubmitDSC`. Its root is what `lean_poa` proves membership in.
 3. **`MsgSubmitDSC`** — permissionless; the chain natively verifies DSC→CSCA and
@@ -182,7 +182,7 @@ v1; call it out so it isn't forgotten.
 
 ## 10. Genesis / seeding
 
-- Extract the 536 CSCAs from `csca_masterlist/allowlist.ml`
+- Extract the 536 CSCAs from `csca/masterlist/allowlist.ml`
   (`tools/extract_csca.extract_csca_ders`) → seed the masterlist at genesis (or via an
   initial governance batch).
 - DSC tree starts empty; it fills permissionlessly via `MsgSubmitDSC`. Optionally

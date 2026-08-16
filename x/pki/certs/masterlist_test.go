@@ -6,7 +6,7 @@ import (
 )
 
 // TestParseMasterList extracts CSCA certs from a real ICAO master list. Point
-// MASTERLIST_ML at csca_masterlist/allowlist.ml. Skips if unset.
+// MASTERLIST_ML at csca/masterlist/allowlist.ml. Skips if unset.
 func TestParseMasterList(t *testing.T) {
 	path := os.Getenv("MASTERLIST_ML")
 	if path == "" {

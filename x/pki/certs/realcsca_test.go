@@ -14,7 +14,7 @@ import (
 // parser + big.Int ECDSA (all curves) + RSA path works on real-world certs.
 //
 // Point CSCA_DER_DIR at extracted CSCA *.der files (from the backend's
-// tools/extract_csca on csca_masterlist/allowlist.ml). Skips if unset.
+// tools/extract_csca on csca/masterlist/allowlist.ml). Skips if unset.
 func TestParseAndVerifyRealCSCAs(t *testing.T) {
 	dir := os.Getenv("CSCA_DER_DIR")
 	if dir == "" {
