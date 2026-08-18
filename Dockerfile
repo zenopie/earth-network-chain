@@ -60,7 +60,16 @@ RUN CGO_ENABLED=1 go build -o /out/earthd ./cmd/earthd
 # inert unless the SDL turns it on. Installed from the module root: the
 # .../cmd/rly package path no longer exists, and the binary comes out named
 # `relayer`.
-RUN CGO_ENABLED=0 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 \
+# CGO_ENABLED=1, not 0. With cgo off, go-ethereum compiles signature_nocgo.go,
+# which calls btc_ecdsa.SignCompact with the wrong arity for the btcec version
+# this dependency graph resolves to:
+#
+#   signature_nocgo.go:85: assignment mismatch: 2 variables but
+#   btc_ecdsa.SignCompact returns 1 value
+#
+# The cgo path sidesteps it entirely. The runtime image is debian and already
+# carries glibc for earthd, so a dynamically linked relayer runs there fine.
+RUN CGO_ENABLED=1 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 \
     && mv /out/relayer /out/rly
 
 # ---- runtime --------------------------------------------------------------
