@@ -1,11 +1,11 @@
 ---
 # Akash SDL — earth chain node + its Cloudflare tunnel.
 #
-# Separate from deploy/akash/backend.yaml on purpose. Both run the same image,
-# but this lease holds the chain's persistent volume — genesis, the validator's
-# consensus key, all state — and closing a lease destroys its volumes. Keeping
-# the backend in its own lease means a backend change can never take the chain
-# with it.
+# The ads-for-gas service is its own repo, its own image and its own lease
+# (earth-network-backend). That separation is deliberate: closing a lease
+# destroys its volumes, and this one holds the chain's — genesis, the
+# validator's consensus key, every account. A backend change must never be able
+# to take that with it.
 #
 # Deploy with the Console API (credit-card / managed wallet):
 #   POST /v1/deployments  {"data":{"sdl":"<this file>","deposit":5}}
@@ -25,7 +25,7 @@ services:
     # A version tag is mutable and a digest is not; on a chain the difference
     # between "the image I tested" and "an image with that name" is a consensus
     # failure. The workflow fails the release if its pattern stops matching.
-    image: ghcr.io/zenopie/earth-network-chain:v0.0.9
+    image: ghcr.io/zenopie/earth-network-chain@sha256:f46e4e636ec67f1574563c11d586f2b50647c8832560ece99513e8a9e3f9ce50
 
     env:
       - CHAIN_ID=earth
@@ -79,6 +79,10 @@ services:
   # Public Hostnames are configured on Cloudflare's side, pointing at:
   #   lcd.*  -> http://node:1317
   #   rpc.*  -> http://node:26657
+  #
+  # The backend has its own tunnel in its own repo; one tunnel per deployment,
+  # because a tunnel's replicas are chosen by proximity with no traffic
+  # steering, so connectors reaching different origins would black-hole traffic.
   cloudflared:
     image: cloudflare/cloudflared:latest
     command:

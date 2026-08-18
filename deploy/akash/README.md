@@ -1,19 +1,17 @@
-# Akash deployment — earth devnet
+# Akash deployment — earth chain node
 
-One deployment, three services, one image.
+Two services in one deployment: the validator and a Cloudflare Tunnel connector.
 
-    node          earthd, the single validator          -> /data
-    app           the ads-for-gas service               -> /app/state
+    node          earthd, the single validator   -> /data
     cloudflared   Cloudflare Tunnel connector
 
-`node` and `app` are the same container run with different entrypoints; the
-Dockerfile at the repo root builds both payloads. That is why there is one image
-to build, one digest to pin, and one release.
+The ads-for-gas service is a separate repo, image and lease
+(`earth-network-backend`), with its own tunnel. Closing a lease destroys its
+volumes, and this one holds the chain's state — a backend change must not be
+able to take it.
 
     deploy/akash/deploy.yaml       the deployed unit
-    deploy/docker/entrypoint.sh    node: first-boot genesis, then earthd start
-    deploy/docker/backend-entrypoint.sh   app: uvicorn
-    backend/                       the ads-for-gas source
+    deploy/docker/entrypoint.sh    first-boot genesis, then earthd start
 
 ## Build the image first
 
@@ -32,10 +30,9 @@ built. The package must be public on ghcr.io, or the provider cannot pull it.
 Secrets are NOT in the SDL. Two values are injected into the submitted copy from
 the gitignored `.env` at the repo root:
 
-    GAS_WALLET_MNEMONIC   spendable ERTH; must never reach the repository
     TUNNEL_TOKEN          anyone holding it can attach a replica to your tunnel
 
-Both still reach the provider — everything in a submitted SDL does. What the
+It still reaches the provider — everything in a submitted SDL does. What the
 injection avoids is them reaching a public repository.
 
     POST /v1/deployments   {"data": {"sdl": "<sdl>", "deposit": 5}}
@@ -71,33 +68,22 @@ hostname; on the first lease of this deployment the pod went ready and served
 RPC while the hostname returned nginx 404 for ten minutes, indistinguishable
 from a hostname that was never registered. Mapped ports came up immediately.
 
-**One tunnel is enough, and that is a consequence of one deployment.** A tunnel's
-replicas are chosen by proximity with no traffic steering, so connectors able to
-reach different origins would black-hole requests non-deterministically. Here a
-single connector reaches both origins by service name, so the question does not
-arise. Configure the Public Hostnames on Cloudflare's side:
+**One tunnel per deployment, not per service.** A tunnel's replicas are chosen
+by proximity with no traffic steering, so connectors able to reach different
+origins would black-hole requests non-deterministically. This tunnel serves this
+deployment; the backend has its own. Configure the Public Hostnames on
+Cloudflare's side:
 
     lcd.* -> http://node:1317      rpc.* -> http://node:26657
-    ads.* -> http://app:8000
 
-`app` reaches the chain at `rest+http://node:1317` over the cluster network. Do
-not point it at the provider's public hostname: on the provider hosting it, that
-is a hairpin back to its own NodePort and it hangs rather than failing. cosmpy
-builds its LedgerClient inside FastAPI's startup event, so uvicorn never finishes
-starting — the port completes a TCP handshake and then never answers, while the
-lease still reports ready, because nothing defines a readiness probe.
-
-## AdMob
-
-`ADMOB_AD_UNIT_ID` is the mobile app's `REWARDED_AD_UNIT_ID` (`HostActivity.kt`),
-the unit whose `ServerSideVerificationOptions` carry the wallet address as
-`custom_data`. The interstitial unit beside it never calls back. Unset is not a
-safe default: the service starts and skips the check, letting a valid Google
-signature from any of your ad units claim a grant.
-
-Point the SSV callback at the tunnel hostname, not a mapped port — a dead
-callback URL fails silently: Google records a delivery, the user watched an
-advert, and nothing arrives.
+The backend must NOT be leased on the same provider as this node. Its
+`EARTH_NODE_URL` is a provider hostname and NodePort, and from inside that same
+provider's cluster it is a hairpin back to itself which hangs rather than
+failing — cosmpy builds its LedgerClient inside FastAPI's startup event, so
+uvicorn never finishes starting, the port completes a TCP handshake and then
+never answers, and the lease still reports ready because nothing defines a
+readiness probe. Pointing it at this tunnel's `lcd.*` hostname avoids the
+question entirely.
 
 ## Devnet posture
 
@@ -106,6 +92,6 @@ chain; both want revisiting before anything real. Zero-fee plus open CORS on a
 public endpoint is a free write-amplification target, and the gas burn that makes
 fees deflationary collects nothing to burn.
 
-The hot wallet holds 10,000 ERTH from genesis — 200,000 grants at
-`DUST_UERTH=50000`. `/health` reports `grants_remaining`; when it runs dry the
-failure is silent and expensive.
+`deploy/genesis.json` seeds the ads-for-gas hot wallet
+(`earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6`) with 10,000 ERTH and the dev
+handset with 100,000. Both are devnet keys; drop them before anything real.
