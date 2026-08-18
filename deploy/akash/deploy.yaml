@@ -44,15 +44,24 @@ services:
 
     expose:
       # LCD — the wallet apps and the ads-for-gas backend.
-      # `as: 80` is what earns a hostname on the provider rather than a random
-      # high port, so this is the endpoint worth having be predictable.
+      #
+      # Deliberately NOT `as: 80`. That form asks the provider for an HTTP
+      # ingress on a generated hostname, which is nicer to hand out but is only
+      # as reliable as the provider's ingress controller: on the first lease of
+      # this deployment the pod went ready and served RPC fine while the
+      # hostname returned nginx 404 for ten minutes, indistinguishable from a
+      # hostname that was never registered. A mapped port is handled by
+      # kube-proxy instead and came up immediately.
+      #
+      # The cost is a random external port in the 30000-32767 range instead of a
+      # clean URL. Read it back from the lease status. If you want a stable
+      # pretty address, put a domain in front with `accept:` rather than relying
+      # on the generated hostname.
       - port: 1317
-        as: 80
+        as: 1317
         to:
           - global: true
-      # RPC — the explorer's block-range queries. Akash assigns this a random
-      # external port in the 30000-32767 range; read it back with
-      # `provider-services lease-status`.
+      # RPC — the explorer's block-range queries. Same treatment.
       - port: 26657
         as: 26657
         to:

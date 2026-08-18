@@ -51,15 +51,24 @@ deposit), and a client certificate created once per key.
 
     provider-services lease-status --dseq <dseq> --provider <provider> --from <key>
 
-LCD is exposed `as: 80`, which is what earns a provider hostname instead of a
-random high port — so it comes back as a plain URL and is the address worth
-handing to the apps:
+Both ports come back under `forwarded_ports` as assigned external ports in the
+30000-32767 range. They are stable for the life of the lease and change if the
+lease is recreated, so read them rather than assuming them.
 
-    EARTH_NODE_URL=rest+http://<hostname>
+    EARTH_NODE_URL=rest+http://<host>:<lcd port>
 
-RPC gets an assigned external port in the 30000-32767 range, printed by
-`lease-status` as `forwarded_ports`. It is stable for the life of the lease and
-changes if the lease is recreated, so read it rather than assuming it.
+**Neither is exposed `as: 80`, and that is deliberate.** `as: 80` asks the
+provider for an HTTP ingress on a generated hostname, which is nicer to hand
+out. On the first lease of this deployment it did not work: the pod went ready
+and served RPC fine while the generated hostname returned nginx 404 for ten
+minutes. A request to a hostname that was never registered returned the same
+404, so there was no way to tell "still propagating" from "never created". The
+mapped ports came up in under a minute on the same provider.
+
+That also means the endpoint kinds are part of what a provider bids on, so you
+cannot switch between them on a live deployment — `PUT /v1/deployments/{dseq}`
+rejects it with `over-utilized PORT endpoints` and you have to close and
+recreate.
 
 p2p (26656) and gRPC (9090) are not exposed. A single validator has no peers to
 gossip with, and everything here speaks REST.
