@@ -8,6 +8,7 @@ import "cosmos/base/v1beta1/coin.proto";
 import "cosmos_proto/cosmos.proto";
 import "earth/dex/v1/params.proto";
 import "earth/dex/v1/pool.proto";
+import "earth/dex/v1/unbonding.proto";
 import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
 
@@ -28,6 +29,15 @@ service Query {
   // ListPool defines the ListPool RPC.
   rpc ListPool(QueryAllPoolRequest) returns (QueryAllPoolResponse) {
     option (google.api.http).get = "/earth-network/earth/dex/v1/pool";
+  }
+
+  // LpUnbondings lists a provider's withdrawals still waiting to mature.
+  //
+  // A withdrawal pays out on its own when the escrow ends, with nothing more to
+  // sign, so without this a provider has no way to see that it is coming or
+  // when — the shares have left their balance and the assets have not arrived.
+  rpc LpUnbondings(QueryLpUnbondingsRequest) returns (QueryLpUnbondingsResponse) {
+    option (google.api.http).get = "/earth-network/earth/dex/v1/unbondings/{address}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -61,4 +71,15 @@ message QueryAllPoolRequest {
 message QueryAllPoolResponse {
   repeated Pool pool = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+// QueryLpUnbondingsRequest is request type for the Query/LpUnbondings RPC method.
+message QueryLpUnbondingsRequest {
+  // address is the provider whose pending withdrawals to list.
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// QueryLpUnbondingsResponse is response type for the Query/LpUnbondings RPC method.
+message QueryLpUnbondingsResponse {
+  repeated LpUnbonding unbondings = 1 [(gogoproto.nullable) = false];
 }
