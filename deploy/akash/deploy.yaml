@@ -72,24 +72,32 @@ profiles:
   compute:
     node:
       resources:
+        # Sized for a single-operator test chain with no load. Empty blocks on a
+        # single validator are cheap; what these numbers do NOT leave room for is
+        # MsgRegister, which verifies a passport proof with the native UltraHonk
+        # verifier and is by far the most expensive thing the chain does. Expect
+        # registrations to be slow here, and raise cpu/memory before testing them
+        # in earnest.
         cpu:
-          # The UltraHonk verifier is the expensive part — MsgRegister verifies
-          # a passport proof natively. 1.0 keeps up with empty blocks but has no
-          # headroom for registrations.
-          units: 2.0
+          units: 0.5
         memory:
-          size: 4Gi
+          size: 1Gi
         storage:
-          # Ephemeral root: the image plus its writable layer.
-          - size: 8Gi
+          # Ephemeral root: the image plus its writable layer. The image is a
+          # slim debian with earthd and the verifier libs, well under 1Gi.
+          - size: 2Gi
           # Persistent volume mounted at /data by params.storage.data above.
-          # class beta2 is ssd; beta1 is hdd and beta3 nvme, and each narrows
-          # the set of providers that can bid.
+          # Holds genesis, the validator's consensus key and all chain state —
+          # a fresh devnet uses a tiny fraction of this.
+          #
+          # class beta3 because that is what providers actually run: at the time
+          # of writing 41 online providers advertise beta3 against 3 for beta2,
+          # so beta2 would mean waiting on a very short list to bid.
           - name: data
-            size: 32Gi
+            size: 5Gi
             attributes:
               persistent: true
-              class: beta2
+              class: beta3
 
   placement:
     dcloud:
