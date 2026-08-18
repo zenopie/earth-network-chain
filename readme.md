@@ -93,10 +93,10 @@ LPs) and **half burned** (ERTH supply is permanently reduced).
 Example against a running dev chain (accounts `alice`/`bob` are pre-funded in `config.yml`):
 ```
 # two spokes on the wheel
-earthd tx dex create-pool 1000000uerth 1000000uusdc --from alice --keyring-backend test --chain-id earth --gas auto --gas-adjustment 1.5 -y
-earthd tx dex create-pool 1000000uerth 500000uatom  --from alice --keyring-backend test --chain-id earth --gas auto --gas-adjustment 1.5 -y
+earthd tx dex create-pool 1000000uerth 1000000uusdc --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
+earthd tx dex create-pool 1000000uerth 500000uatom  --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
 # token -> token, routed uusdc -> ERTH -> uatom (burns ERTH on both hops)
-earthd tx dex swap 100000uusdc uatom 40000 --from alice --keyring-backend test --chain-id earth --gas auto --gas-adjustment 1.5 -y
+earthd tx dex swap 100000uusdc uatom 40000 --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
 earthd q dex list-pool
 ```
 
@@ -161,7 +161,7 @@ There are two kinds of allocation option, differing in how they deliver their ER
 ```
 # vote 100% of your stake weight to volume-weighted LP rewards
 earthd tx allocation set-allocations capital --percentages '{"option_id":1,"percent":100}' \
-  --from alice --keyring-backend test --chain-id earth --gas auto --gas-adjustment 1.5 -y
+  --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
 earthd q allocation option capital 1   # amount_allocated tracks your bonded stake
 ```
 

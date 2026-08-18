@@ -2,7 +2,7 @@
   "app_name": "earthd",
   "app_version": "0.0.1-5b5d77d3",
   "genesis_time": "2026-08-16T15:56:41.808823Z",
-  "chain_id": "earth",
+  "chain_id": "earth-1",
   "initial_height": 1,
   "app_hash": null,
   "app_state": {

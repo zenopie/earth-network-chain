@@ -45,10 +45,9 @@ ephemeral storage is a poor place to run one.
 The entrypoint writes it into config.toml. Unset, nothing changes and the node
 signs locally as it does today.
 
-Then expose 26659 to the tunnel service only — never `global: true`. The signer
-authenticates with Secret Connection, so an open port is not immediately fatal,
-but there is no reason to offer it to the internet when the tunnel is already
-there.
+Then expose 26659 to the tunnel service only — never `global: true`. Treat that
+as load-bearing, not tidiness: **this port must not be reachable by anyone but
+the KMS.** See "What the privval socket does not protect" below.
 
     expose:
       - port: 26659
@@ -58,6 +57,40 @@ there.
 On Cloudflare, add a Public Hostname of type **TCP**:
 
     signer.erth.network -> tcp://node:26659
+
+## What the privval socket does not protect
+
+The connection is Secret Connection encrypted, but on this socket it is
+effectively *unauthenticated in both directions*.
+
+tmkms can pin the node's identity — `tcp://<node_id>@host:port` — but there is
+nothing stable to pin, because CometBFT mints a throwaway key for the privval
+listener on every process start (`privval/listener.go`):
+
+    case "tcp":
+      // TODO: persist this key so external signer can actually authenticate us
+      listener = NewTCPListener(ln, ed25519.GenPrivKey())
+
+Pin it anyway and the node dies on its next restart: tmkms rejects with
+`validator peer ID mismatch`, the node gets `can't get pubkey: send: EOF` and
+exits. So the address is configured without the `<node_id>@` prefix, and tmkms
+logs `unverified validator peer ID!` on every connect. That warning is expected
+and cannot currently be cleared.
+
+The node does not authenticate the KMS either — its listener accepts whoever
+connects first.
+
+The consequence worth internalising: **anyone who can reach 26659 can
+impersonate the node to the KMS and ask it to sign votes.** They cannot steal
+the key, but they can request signatures at heights the real node has not
+reached — which is a double-sign/slashing risk, not merely a nuisance. The
+double-sign guard in `state/earth-consensus.json` blocks conflicting votes at or
+below the heights it has already seen, but it cannot tell a forged future height
+from a real one.
+
+Authentication therefore has to come from the transport, which is why the port
+is exposed only to `cloudflared` and reached through the tunnel. Do not
+shortcut that with a plain `global: true` port even temporarily.
 
 ## Home side
 

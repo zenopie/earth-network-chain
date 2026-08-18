@@ -14,7 +14,7 @@
 set -euo pipefail
 
 EARTH_HOME="${EARTH_HOME:-/data}"
-CHAIN_ID="${CHAIN_ID:-earth}"
+CHAIN_ID="${CHAIN_ID:-earth-1}"
 MONIKER="${MONIKER:-earth-node}"
 MIN_GAS_PRICES="${MIN_GAS_PRICES:-0uerth}"
 # What the validator account holds, and how much of it is bonded. The default

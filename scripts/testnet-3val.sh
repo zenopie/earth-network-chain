@@ -18,7 +18,7 @@ set -euo pipefail
 
 CHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EARTHD="${EARTHD:-$HOME/go/bin/earthd}"
-CHAIN_ID=earth
+CHAIN_ID=earth-1
 BASE=/tmp/earth-3val
 
 # node index -> RPC / P2P / API / gRPC ports

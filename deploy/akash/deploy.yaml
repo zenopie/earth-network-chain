@@ -28,7 +28,7 @@ services:
     image: ghcr.io/zenopie/earth-network-chain@sha256:595ff488cd56c57d142d8c3b365ff24bfee977edef2e994917ca409a01374ed4
 
     env:
-      - CHAIN_ID=earth
+      - CHAIN_ID=earth-1
       - MONIKER=earth-akash-devnet
       # Zero-fee transactions. Devnet posture — see README.
       - MIN_GAS_PRICES=0uerth
@@ -38,6 +38,16 @@ services:
       # VALIDATOR_MNEMONIC is deliberately unset. Everything in this file is
       # sent to the provider hosting the lease. With it unset the entrypoint
       # generates a key and prints the mnemonic once into the container log.
+      #
+      # Remote consensus signer. The node stops holding its own consensus key
+      # and asks tmkms for every signature instead — see REMOTE_SIGNER.md.
+      #
+      # This FAILS CLOSED: with this set and no signer answering, the node
+      # produces no blocks at all. Do not deploy it until tmkms is running with
+      # the real consensus key imported and the tunnel is up, in that order.
+      # Deferred until there is a dedicated signer host. Uncomment this line
+      # AND the 26659 expose block together — never one without the other.
+      # - PRIV_VALIDATOR_LADDR=tcp://0.0.0.0:26659
 
     expose:
       # Tunnel-only. Nothing is published on a provider port: every entry below
@@ -57,6 +67,14 @@ services:
         as: 26657
         to:
           - service: cloudflared
+      # Consensus signer. `to: service: cloudflared` is load-bearing here, not
+      # tidiness: this socket cannot authenticate whoever connects, so anyone
+      # who reaches it can ask the KMS to sign votes the validator never cast.
+      # Never give this one `global: true`, not even briefly while debugging.
+      # - port: 26659
+      #   as: 26659
+      #   to:
+      #     - service: cloudflared
       #
       # p2p (26656) and gRPC (9090) stay unexposed: a single validator has no
       # peers, and everything here speaks REST.
