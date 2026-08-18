@@ -1,0 +1,108 @@
+---
+# Akash SDL — single-validator earth devnet.
+#
+# Same image and the same entrypoint as the SecretVM deployment; only the
+# hosting primitives differ. Deploy with:
+#
+#     provider-services tx deployment create deploy/akash/deploy.yaml --from <key>
+#
+# See README.md in this directory for the full walkthrough, and read the note
+# about the persistent volume before closing a lease — it is the one mistake
+# that cannot be undone.
+version: "2.0"
+
+services:
+  node:
+    # MUST be an image built from the commit you intend to run. `:latest` and a
+    # version tag are both mutable; a digest is not, so pin one here once CI has
+    # published it:
+    #
+    #     image: ghcr.io/zenopie/earth-network-chain@sha256:<digest>
+    #
+    # CI builds and pushes only on `v[0-9]+.[0-9]+.[0-9]+` tags. The digest for
+    # a release is written into docker-compose-secretvm.yaml by that same
+    # workflow, so it can be copied from there.
+    image: ghcr.io/zenopie/earth-network-chain:v0.0.8
+
+    env:
+      # Read by deploy/secretvm/entrypoint.sh on first boot.
+      - CHAIN_ID=earth
+      - MONIKER=earth-akash-devnet
+      # Zero-fee transactions. Devnet posture — see README.
+      - MIN_GAS_PRICES=0uerth
+      # What the validator account holds, and how much of it bonds.
+      - VALIDATOR_COINS=1000000000000uerth
+      - VALIDATOR_BONDED=100000000uerth
+      #
+      # VALIDATOR_MNEMONIC lets you supply the validator key instead of having
+      # one generated. Deliberately left out: everything in this file is visible
+      # to the provider hosting the lease, so a mnemonic written here is a
+      # mnemonic you have handed to a third party. With it unset the entrypoint
+      # generates a key and prints the mnemonic once into the container log,
+      # readable with `provider-services lease-logs`.
+
+    expose:
+      # LCD — the wallet apps and the ads-for-gas backend.
+      # `as: 80` is what earns a hostname on the provider rather than a random
+      # high port, so this is the endpoint worth having be predictable.
+      - port: 1317
+        as: 80
+        to:
+          - global: true
+      # RPC — the explorer's block-range queries. Akash assigns this a random
+      # external port in the 30000-32767 range; read it back with
+      # `provider-services lease-status`.
+      - port: 26657
+        as: 26657
+        to:
+          - global: true
+      #
+      # p2p (26656) and gRPC (9090) are not exposed. A single validator has no
+      # peers to gossip with, and everything here speaks REST.
+
+    params:
+      storage:
+        data:
+          # Genesis, the validator's consensus key, and all chain state.
+          mount: /data
+          readOnly: false
+
+profiles:
+  compute:
+    node:
+      resources:
+        cpu:
+          # The UltraHonk verifier is the expensive part — MsgRegister verifies
+          # a passport proof natively. 1.0 keeps up with empty blocks but has no
+          # headroom for registrations.
+          units: 2.0
+        memory:
+          size: 4Gi
+        storage:
+          # Ephemeral root: the image plus its writable layer.
+          - size: 8Gi
+          # Persistent volume mounted at /data by params.storage.data above.
+          # class beta2 is ssd; beta1 is hdd and beta3 nvme, and each narrows
+          # the set of providers that can bid.
+          - name: data
+            size: 32Gi
+            attributes:
+              persistent: true
+              class: beta2
+
+  placement:
+    dcloud:
+      pricing:
+        node:
+          denom: uakt
+          # Bid ceiling, not the price paid — you accept a bid at or under it.
+          amount: 10000
+
+deployment:
+  node:
+    dcloud:
+      profile: node
+      # MUST stay 1. This is a single-validator chain: a second replica is not a
+      # second node on the same network, it is a second chain that boots the
+      # same genesis with its own validator key and immediately diverges.
+      count: 1

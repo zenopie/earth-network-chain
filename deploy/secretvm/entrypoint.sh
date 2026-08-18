@@ -32,6 +32,19 @@ if [ ! -f "$EARTH_HOME/config/genesis.json" ]; then
   # Replace the stock genesis with the one carrying this chain's state.
   cp /etc/earth/genesis.json "$EARTH_HOME/config/genesis.json"
 
+  # Stamp genesis_time to now.
+  #
+  # The committed genesis carries the timestamp of whichever machine ran
+  # `ignite chain init`, and CometBFT gives block 1 exactly that time while
+  # block 2 gets the wall clock. The emission is prorated against elapsed time,
+  # so the whole gap is paid out in a single block: a genesis committed a day
+  # ago mints a day of ERTH at height 2, and the lump grows for as long as the
+  # file sits in the repo unchanged.
+  NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  sed -i "s|\"genesis_time\":[[:space:]]*\"[^\"]*\"|\"genesis_time\": \"$NOW\"|" \
+    "$EARTH_HOME/config/genesis.json"
+  say "genesis_time stamped to $NOW"
+
   if [ -n "${VALIDATOR_MNEMONIC:-}" ]; then
     say "recovering the validator key from VALIDATOR_MNEMONIC"
     printf '%s\n' "$VALIDATOR_MNEMONIC" | earthd keys add validator --recover $KEYRING >/dev/null

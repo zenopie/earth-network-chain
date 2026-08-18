@@ -55,6 +55,14 @@ without hunting for the validator's mnemonic: the development handset, and the
 ads-for-gas hot wallet. Both are devnet keys with no value; drop them from
 `deploy/genesis.json` for anything real.
 
+`genesis_time` is stamped to the current time by the entrypoint before the
+validator is created. The committed file carries the timestamp of the machine
+that generated it, and CometBFT gives block 1 exactly that time while block 2
+gets the wall clock — so the emission, prorated against elapsed time, would pay
+the whole gap out in a single block. Left alone, a genesis committed a day
+earlier minted 125,485 ERTH at height 2, and the lump grew for as long as the
+file sat unchanged.
+
 Regenerate it after any change to `config.yml`:
 
     ignite chain init --home /tmp/gen --skip-proto
