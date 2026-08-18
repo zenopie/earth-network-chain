@@ -23,7 +23,7 @@ services:
     #
     # The workflow fails the release if its pattern stops matching this line, so
     # moving or reformatting it is caught rather than silently ignored.
-    image: ghcr.io/zenopie/earth-network-chain@sha256:5bc794299fee307764df4c91539e728a5da7b3470f784706509d0b74027bbf26
+    image: ghcr.io/zenopie/earth-network-chain@sha256:f46e4e636ec67f1574563c11d586f2b50647c8832560ece99513e8a9e3f9ce50
 
     env:
       # Read by deploy/docker/entrypoint.sh on first boot.

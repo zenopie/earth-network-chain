@@ -1,12 +1,12 @@
-# Release: https://github.com/zenopie/earth-network-chain/releases/tag/v0.0.8
-# Workflow URL: https://github.com/zenopie/earth-network-chain/actions/runs/32093750182
-# Commit: https://github.com/zenopie/earth-network-chain/commit/25a2f3ddde0e3e2729f05479a1edb1b708560a0f
+# Release: https://github.com/zenopie/earth-network-chain/releases/tag/v0.0.9
+# Workflow URL: https://github.com/zenopie/earth-network-chain/actions/runs/32096160510
+# Commit: https://github.com/zenopie/earth-network-chain/commit/172d3291ae4bbf36130bfc116483e49d608ad4a9
 # Dockerfile Path: Dockerfile
 # Docker Compose Location: ./docker-compose.yaml
 version: '3'
 services:
   app:
-    image: ghcr.io/zenopie/earth-network-chain@sha256:5bc794299fee307764df4c91539e728a5da7b3470f784706509d0b74027bbf26
+    image: ghcr.io/zenopie/earth-network-chain@sha256:f46e4e636ec67f1574563c11d586f2b50647c8832560ece99513e8a9e3f9ce50
     ports:
       # Explicit host mappings: EARTH_NODE_URL and both wallet apps need
       # a fixed address. The short form publishes on a random host port.
