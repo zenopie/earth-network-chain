@@ -117,7 +117,11 @@ jobs:
           #
           # The pattern matches whatever the line currently holds, tag or
           # digest, so re-releasing overwrites a previous pin.
-          sed -i -E "s|^([[:space:]]*image:[[:space:]]*)ghcr\.io/[^[:space:]]+|\1${IMAGE}|" "$SDL"
+          # Anchored on this repo's own image path. The looser `ghcr.io/...`
+          # pattern rewrote EVERY ghcr image line, so adding any second image to
+          # the SDL — a relayer, a sidecar — silently became a second copy of the
+          # node, with no error and a deploy that looked fine.
+          sed -i -E "s|^([[:space:]]*image:[[:space:]]*)ghcr\.io/${{ steps.set_repo.outputs.REPO_NAME }}(@sha256:[a-f0-9]+\|:[^[:space:]]+)?|\1${IMAGE}|" "$SDL"
 
           # Fail loudly if that matched nothing. A silent no-op here is the
           # worst outcome available: the SDL keeps whatever it had, and a

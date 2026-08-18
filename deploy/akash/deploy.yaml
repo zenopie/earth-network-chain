@@ -101,6 +101,40 @@ services:
   # The backend has its own tunnel in its own repo; one tunnel per deployment,
   # because a tunnel's replicas are chosen by proximity with no traffic
   # steering, so connectors reaching different origins would black-hole traffic.
+  # IBC relayer. OFF by default — see deploy/docker/relayer.sh.
+  #
+  # Same image as the node, deliberately: one image is one digest for CI to pin
+  # and one artefact to reason about. The relayer binary is just a second entry
+  # point in it.
+  #
+  # Co-locating this with the validator is safe in a way nothing else in this
+  # repo is. A relayer cannot forge packets or move funds — it only submits
+  # proofs both chains verify themselves — so its key pays gas and holds nothing
+  # else. The failure mode is delay, not theft.
+  relayer:
+    # PINNED BY CI alongside the node's image; both are this repo.
+    image: ghcr.io/zenopie/earth-network-chain@sha256:3aa4e96a2e61fbad24f1ae82bd29647f6cc385780aba45b65f889dc135b90684
+    command:
+      - /usr/local/bin/relayer.sh
+    env:
+      # The switch. Anything other than "true" and the container idles.
+      - ENABLED=false
+      #
+      # Everything below is read only when ENABLED=true, and only the first time
+      # — the config is written once into /data/relayer and reused after that.
+      #
+      # - COUNTERPARTY_CHAIN_ID=cosmoshub-4
+      # - COUNTERPARTY_RPC=https://...
+      # - COUNTERPARTY_PREFIX=cosmos
+      # - COUNTERPARTY_GAS_PRICES=0.025uatom
+      # - LINK_ON_START=false   # true once, to create the channel
+      #
+      # RELAYER_MNEMONIC is NOT set here. Everything in this file reaches the
+      # provider, and while this key only pays gas, a mnemonic in a public repo
+      # is a mnemonic on the internet. Inject it at deploy time like
+      # TUNNEL_TOKEN.
+    expose: []
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     # `cloudflared` first: Akash's `command` maps to Kubernetes `command`, which
@@ -154,6 +188,17 @@ profiles:
               # 41 advertised beta3 against 3 for beta2.
               class: beta3
 
+    relayer:
+      resources:
+        # Idle when disabled; when enabled it polls two chains and submits
+        # small transactions. Neither is demanding.
+        cpu:
+          units: 0.1
+        memory:
+          size: 256Mi
+        storage:
+          - size: 512Mi
+
     cloudflared:
       resources:
         # A Go binary holding four outbound connections.
@@ -171,6 +216,9 @@ profiles:
         node:
           denom: uakt
           amount: 10000
+        relayer:
+          denom: uakt
+          amount: 10000
         cloudflared:
           denom: uakt
           amount: 10000
@@ -182,6 +230,10 @@ deployment:
       # MUST stay 1. A second replica is not a second node on this network; it
       # is a second chain booting the same genesis with its own validator key,
       # diverging from the first block it signs.
+      count: 1
+  relayer:
+    dcloud:
+      profile: relayer
       count: 1
   cloudflared:
     dcloud:

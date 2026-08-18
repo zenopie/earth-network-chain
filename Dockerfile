@@ -55,6 +55,14 @@ RUN cd third_party/barretenberg-go \
 
 RUN CGO_ENABLED=1 go build -o /out/earthd ./cmd/earthd
 
+# The IBC relayer ships in the same image rather than its own. One image means
+# one digest for CI to pin and one artefact to reason about, and the relayer is
+# inert unless the SDL turns it on. Installed from the module root: the
+# .../cmd/rly package path no longer exists, and the binary comes out named
+# `relayer`.
+RUN CGO_ENABLED=0 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 \
+    && mv /out/relayer /out/rly
+
 # ---- runtime --------------------------------------------------------------
 FROM debian:trixie-slim
 
@@ -65,9 +73,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/earthd /usr/local/bin/earthd
+COPY --from=build /out/rly /usr/local/bin/rly
+COPY deploy/docker/relayer.sh /usr/local/bin/relayer.sh
 COPY deploy/genesis.json /etc/earth/genesis.json
 COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/relayer.sh
 
 # Node home. Mount a volume here — without one, every redeploy is a brand new
 # chain with a new genesis, new keys and no history.

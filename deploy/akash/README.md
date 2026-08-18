@@ -56,6 +56,40 @@ endpoints`. Those need a close-and-recreate.
 If you are on an Akash trial, deployments auto-close after 24 hours, which is the
 same thing.
 
+## IBC relayer
+
+A third service, off by default (`ENABLED=false`). It shares the node's image —
+one image is one digest for CI to pin — and runs `deploy/docker/relayer.sh`
+instead of the node entrypoint.
+
+Co-locating it with the validator is safe in a way nothing else here is. A
+relayer cannot forge packets or move funds; it only submits proofs that both
+chains verify for themselves. Its key pays gas and holds nothing else, so the
+failure mode is delayed packets, not theft.
+
+To turn it on, set `ENABLED=true` and supply the counterparty:
+
+    - ENABLED=true
+    - COUNTERPARTY_CHAIN_ID=cosmoshub-4
+    - COUNTERPARTY_RPC=https://...
+    - COUNTERPARTY_PREFIX=cosmos
+    - COUNTERPARTY_GAS_PRICES=0.025uatom
+
+`RELAYER_MNEMONIC` is injected at deploy time from `.env`, never committed. Set
+`LINK_ON_START=true` for one deploy to create the client, connection and channel,
+then put it back — linking spends gas on both chains and is not something a
+restart should retry.
+
+The config is written once into `/data/relayer` and reused, so changing the env
+afterwards does nothing until that directory is cleared.
+
+**It needs funding on the counterparty.** Earth is zero-fee, but every packet
+also costs a transaction on the other chain, in that chain's token. A relayer
+whose counterparty balance runs dry stops relaying silently.
+
+`earth-ibc-test` in the projects folder is the local two-chain rig this was
+derived from.
+
 ## Addresses
 
 The node is reachable **only through the tunnel** — `lcd.erth.network` and
