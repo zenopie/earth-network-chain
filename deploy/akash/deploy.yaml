@@ -25,7 +25,7 @@ services:
     # A version tag is mutable and a digest is not; on a chain the difference
     # between "the image I tested" and "an image with that name" is a consensus
     # failure. The workflow fails the release if its pattern stops matching.
-    image: ghcr.io/zenopie/earth-network-chain@sha256:595ff488cd56c57d142d8c3b365ff24bfee977edef2e994917ca409a01374ed4
+    image: ghcr.io/zenopie/earth-network-chain@sha256:10f613268e9eaa605330129a8c694521ed9aa75f7a1d817f06a55c978699bc81
 
     env:
       - CHAIN_ID=earth-1
