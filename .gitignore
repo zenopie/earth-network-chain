@@ -9,3 +9,10 @@ release/
 vue/node_modules/
 release/
 *.log
+
+# Secrets never belong in this repo — the chain takes its config from config.yml
+# locally and from the SDL's env block when deployed. This is here because a bare
+# `.env` pattern in the backend repo matched only that exact name, and a
+# `.env.local` carrying a wallet mnemonic reached a public repository through the
+# gap. `.env*` covers the family.
+.env*
