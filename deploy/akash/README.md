@@ -18,14 +18,18 @@ tax. Deploying `v0.0.7` gets you that chain, not this one.
 
     git tag v0.0.8 && git push origin v0.0.8
 
-Then pin the digest rather than the tag. The workflow writes it into
-`docker-compose.yaml`; copy it across:
+The workflow pins `deploy.yaml` for you: it rewrites the `image:` line with the
+digest it just pushed and commits that back to master alongside
+`docker-compose.yaml`. So after a release, pull master and deploy — the SDL is
+already pointing at the bytes CI built.
 
-    image: ghcr.io/zenopie/earth-network-chain@sha256:<digest>
+    git pull origin master
 
 A tag can be moved to point at different bytes later. A digest cannot, and on a
 chain the difference between "the image I tested" and "an image with that name"
-is a consensus failure.
+is a consensus failure — which is why the workflow fails the release outright if
+its pattern stops matching the `image:` line, rather than leaving a stale pin
+behind a green build.
 
 The package must be public on ghcr.io, or the provider cannot pull it — Akash
 has nowhere to put registry credentials.

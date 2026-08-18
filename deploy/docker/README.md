@@ -14,6 +14,10 @@ to `master` builds nothing.
 workflow rather than the file — anything written directly into it is overwritten
 by the next build.
 
+The same release step also pins `deploy/akash/deploy.yaml`, but that file is
+hand-maintained rather than generated: only its `image:` line is rewritten, and
+everything else you put there survives.
+
     Dockerfile                          builds earthd on a slim runtime
     deploy/docker/entrypoint.sh         first-boot genesis, then earthd start
     docker-compose.yaml                 the deployed unit

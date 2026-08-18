@@ -13,15 +13,16 @@ version: "2.0"
 
 services:
   node:
-    # MUST be an image built from the commit you intend to run. `:latest` and a
-    # version tag are both mutable; a digest is not, so pin one here once CI has
-    # published it:
+    # PINNED BY CI — .github/workflows/docker-build.yml rewrites this line with
+    # the digest it just pushed and commits it back to master, so a release
+    # leaves the SDL already pointing at the bytes it built.
     #
-    #     image: ghcr.io/zenopie/earth-network-chain@sha256:<digest>
+    # A version tag is mutable and a digest is not; on a chain the difference
+    # between "the image I tested" and "an image with that name" is a consensus
+    # failure. Edit this line by hand only to roll back to an older digest.
     #
-    # CI builds and pushes only on `v[0-9]+.[0-9]+.[0-9]+` tags. The digest for
-    # a release is written into docker-compose.yaml by that same
-    # workflow, so it can be copied from there.
+    # The workflow fails the release if its pattern stops matching this line, so
+    # moving or reformatting it is caught rather than silently ignored.
     image: ghcr.io/zenopie/earth-network-chain:v0.0.8
 
     env:

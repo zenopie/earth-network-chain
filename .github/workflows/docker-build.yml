@@ -86,7 +86,7 @@ jobs:
             earth-data:
           EOL
 
-      - name: Commit docker-compose.yaml
+      - name: Pin the digest and commit
         run: |
           # Fetch all branches
           git fetch origin
@@ -104,13 +104,37 @@ jobs:
           
           # Determine the directory where the Dockerfile is located
           DOCKERFILE_DIR="."
+
+          IMAGE="ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}@sha256:${{ steps.push.outputs.IMAGE_HASH }}"
+          SDL="$DOCKERFILE_DIR/deploy/akash/deploy.yaml"
+
+          # Pin the Akash SDL to the digest just pushed.
+          #
+          # Unlike docker-compose.yaml this file is NOT generated — it is
+          # hand-maintained and mostly comments — so only the image line is
+          # rewritten, in place, after the checkout above so the edit lands on
+          # the branch being committed rather than being carried across it.
+          #
+          # The pattern matches whatever the line currently holds, tag or
+          # digest, so re-releasing overwrites a previous pin.
+          sed -i -E "s|^([[:space:]]*image:[[:space:]]*)ghcr\.io/[^[:space:]]+|\1${IMAGE}|" "$SDL"
+
+          # Fail loudly if that matched nothing. A silent no-op here is the
+          # worst outcome available: the SDL keeps whatever it had, and a
+          # deployment made from it runs an image nobody chose while the
+          # release looks clean.
+          if ! grep -qF "$IMAGE" "$SDL"; then
+            echo "::error file=$SDL::image line not rewritten - the sed pattern no longer matches this file"
+            exit 1
+          fi
+          echo "pinned $SDL to $IMAGE"
           
           # Add and commit changes
-          git add $DOCKERFILE_DIR/docker-compose.yaml
+          git add $DOCKERFILE_DIR/docker-compose.yaml "$SDL"
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Update docker-compose.yaml for version ${{ steps.get_version.outputs.VERSION }}"
+            git commit -m "Pin docker-compose.yaml and the Akash SDL to ${{ steps.get_version.outputs.VERSION }}"
             git push origin $BRANCH_NAME
           fi
 
