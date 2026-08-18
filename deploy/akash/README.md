@@ -58,15 +58,31 @@ same thing.
 
 ## Addresses
 
-Every port is exposed both `global` (a mapped port in the 30000-32767 range,
-read from the lease status) and to `cloudflared`. The mapped ports are the escape
-hatch that keeps working if the tunnel is misconfigured; the tunnel is what
-survives a lease change, since Akash reassigns external ports every time.
+The node is reachable **only through the tunnel** — `lcd.erth.network` and
+`rpc.erth.network`. Neither 1317 nor 26657 is published on a provider port, so
+there is no address to update when Akash reassigns external ports on a new
+lease, which is what the tunnel is for.
 
-Not `as: 80`. That asks the provider for an HTTP ingress on a generated
-hostname; on the first lease of this deployment the pod went ready and served
-RPC while the hostname returned nginx 404 for ten minutes, indistinguishable
-from a hostname that was never registered. Mapped ports came up immediately.
+One port is published, and it is not the application: `cloudflared`'s metrics on
+2000. Akash rejects a manifest with `zero global services`, so something has to
+be. Publishing the connector rather than the node keeps the chain private and
+gives `/ready` as a health check — worth having, because the Console API exposes
+no logs endpoint and a connector that fails to start is otherwise completely
+silent. Read its external port from the lease status:
+
+    curl http://<provider>:<port>/ready
+    {"status":200,"readyConnections":4,...}
+
+Nothing is exposed `as: 80`. That asks the provider for an HTTP ingress on a
+generated hostname; on the first lease of this deployment the pod went ready and
+served RPC while the hostname returned nginx 404 for ten minutes,
+indistinguishable from a hostname that was never registered. Mapped ports came
+up immediately, and the tunnel replaced them once its hostnames were verified.
+
+Ordering matters here and is not reversible: endpoint kinds are part of what a
+provider bids on, so the global ports could not be removed in place. They stayed
+until lcd.* and rpc.* were confirmed serving, and taking them out required a
+close-and-recreate, which destroyed the volume.
 
 **One tunnel per deployment, not per service.** A tunnel's replicas are chosen
 by proximity with no traffic steering, so connectors able to reach different

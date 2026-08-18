@@ -93,7 +93,21 @@ services:
       - cloudflared
       - tunnel
       - --no-autoupdate
+      # Akash rejects a manifest with "zero global services", so something must
+      # be published. Publishing cloudflared's own metrics rather than the
+      # application keeps the chain and the service reachable only through the
+      # tunnel, and /ready gives a way to check connector health without the
+      # Cloudflare dashboard — which matters here because the Console API has no
+      # logs endpoint, and a connector that fails to start is otherwise silent.
+      - --metrics
+      - 0.0.0.0:2000
       - run
+
+    expose:
+      - port: 2000
+        as: 2000
+        to:
+          - global: true
     # TUNNEL_TOKEN is injected at deploy time from .env, like the mnemonic.
     # Anyone holding it can attach a replica and receive this tunnel's traffic.
     env: []
