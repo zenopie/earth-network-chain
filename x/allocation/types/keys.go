@@ -79,4 +79,4 @@ const (
 
 // Streams is every valid stream id, in id order. Used by genesis and BeginBlock,
 // which have to touch both streams and must do so in a fixed order.
-var Streams = []StreamId{STREAM_ID_HUMAN, STREAM_ID_CAPITAL}
+var Streams = []StreamId{STREAM_ID_CARETAKER, STREAM_ID_GROUNDWORKS}

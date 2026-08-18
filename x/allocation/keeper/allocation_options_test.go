@@ -97,13 +97,13 @@ func newTestEnv(t *testing.T) *testEnv {
 		authtypes.NewModuleAddress(types.GovModuleName), bank, staking)
 
 	// The same registrations the app performs from x/dex and x/personhood.
-	k.RegisterWeightSource(types.STREAM_ID_HUMAN, humans)
-	k.RegisterIntegratedHandler(types.STREAM_ID_CAPITAL, types.HandlerLPRewards,
+	k.RegisterWeightSource(types.STREAM_ID_CARETAKER, humans)
+	k.RegisterIntegratedHandler(types.STREAM_ID_GROUNDWORKS, types.HandlerLPRewards,
 		func(_ context.Context, accrued math.Int) (math.Int, error) {
 			dex.distributed = dex.distributed.Add(accrued)
 			return accrued, nil // fully distributed
 		})
-	k.RegisterIntegratedHandler(types.STREAM_ID_HUMAN, types.HandlerRegistrationRewards,
+	k.RegisterIntegratedHandler(types.STREAM_ID_CARETAKER, types.HandlerRegistrationRewards,
 		func(context.Context, math.Int) (math.Int, error) {
 			return math.ZeroInt(), nil // stacks; drawn down on registration
 		})
@@ -126,19 +126,19 @@ func TestGenesisSeedsBothStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	human, err := e.k.Options.Get(e.ctx, optionKey(types.STREAM_ID_HUMAN, 1))
+	human, err := e.k.Options.Get(e.ctx, optionKey(types.STREAM_ID_CARETAKER, 1))
 	if err != nil {
 		t.Fatalf("human option #1: %v", err)
 	}
-	if human.Handler != types.HandlerRegistrationRewards || human.Stream != types.STREAM_ID_HUMAN {
+	if human.Handler != types.HandlerRegistrationRewards || human.Stream != types.STREAM_ID_CARETAKER {
 		t.Fatalf("human option #1 = %+v, want the registration-rewards handler", human)
 	}
 
-	capital, err := e.k.Options.Get(e.ctx, optionKey(types.STREAM_ID_CAPITAL, 1))
+	capital, err := e.k.Options.Get(e.ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 1))
 	if err != nil {
 		t.Fatalf("capital option #1: %v", err)
 	}
-	if capital.Handler != types.HandlerLPRewards || capital.Stream != types.STREAM_ID_CAPITAL {
+	if capital.Handler != types.HandlerLPRewards || capital.Stream != types.STREAM_ID_GROUNDWORKS {
 		t.Fatalf("capital option #1 = %+v, want the lp_rewards handler", capital)
 	}
 }
@@ -156,49 +156,49 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 	authority, _ := k.addressCodec.BytesToString(k.GetAuthority())
 	_, alice := e.addr("alice")
 
-	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_CAPITAL, 1)); !has {
+	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 1)); !has {
 		t.Fatal("capital option #1 not in the integrated set")
 	}
 
 	// AddAddressOption is permissionless and burns the fee; option is NOT integrated.
 	if _, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
-		Submitter: alice, Stream: types.STREAM_ID_CAPITAL, Recipient: alice, Description: "grant",
+		Submitter: alice, Stream: types.STREAM_ID_GROUNDWORKS, Recipient: alice, Description: "grant",
 	}); err != nil {
 		t.Fatalf("AddAddressOption: %v", err)
 	}
 	if got := e.bank.burned.AmountOf("uerth"); !got.Equal(math.NewInt(types.DefaultAddressOptionFee)) {
 		t.Fatalf("fee burned = %s, want %d", got, types.DefaultAddressOptionFee)
 	}
-	if opt2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_CAPITAL, 2)); opt2.Kind != types.ALLOCATION_KIND_ADDRESS {
+	if opt2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 2)); opt2.Kind != types.ALLOCATION_KIND_ADDRESS {
 		t.Fatalf("option #2 kind = %v, want ADDRESS", opt2.Kind)
 	}
-	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_CAPITAL, 2)); has {
+	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 2)); has {
 		t.Fatal("ADDRESS option must NOT be in the integrated set")
 	}
 
 	// AddIntegratedOption: non-authority rejected; unknown handler rejected; a
 	// handler belonging to the other stream rejected; valid ok.
 	if _, err := ms.AddIntegratedOption(ctx, &types.MsgAddIntegratedOption{
-		Authority: alice, Stream: types.STREAM_ID_CAPITAL, Handler: types.HandlerLPRewards,
+		Authority: alice, Stream: types.STREAM_ID_GROUNDWORKS, Handler: types.HandlerLPRewards,
 	}); err == nil {
 		t.Fatal("expected rejection: non-authority adding integrated option")
 	}
 	if _, err := ms.AddIntegratedOption(ctx, &types.MsgAddIntegratedOption{
-		Authority: authority, Stream: types.STREAM_ID_CAPITAL, Handler: "nope",
+		Authority: authority, Stream: types.STREAM_ID_GROUNDWORKS, Handler: "nope",
 	}); err == nil {
 		t.Fatal("expected rejection: unknown handler")
 	}
 	if _, err := ms.AddIntegratedOption(ctx, &types.MsgAddIntegratedOption{
-		Authority: authority, Stream: types.STREAM_ID_HUMAN, Handler: types.HandlerLPRewards,
+		Authority: authority, Stream: types.STREAM_ID_CARETAKER, Handler: types.HandlerLPRewards,
 	}); err == nil {
 		t.Fatal("expected rejection: capital handler attached to the human stream")
 	}
 	if _, err := ms.AddIntegratedOption(ctx, &types.MsgAddIntegratedOption{
-		Authority: authority, Stream: types.STREAM_ID_CAPITAL, Handler: types.HandlerLPRewards, Description: "more lp",
+		Authority: authority, Stream: types.STREAM_ID_GROUNDWORKS, Handler: types.HandlerLPRewards, Description: "more lp",
 	}); err != nil {
 		t.Fatalf("valid AddIntegratedOption: %v", err)
 	}
-	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_CAPITAL, 3)); !has {
+	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 3)); !has {
 		t.Fatal("option #3 should be in the integrated set")
 	}
 
@@ -208,9 +208,9 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 		o.Accumulated = math.NewInt(amt)
 		_ = k.Options.Set(ctx, optionKey(stream, id), o)
 	}
-	set(types.STREAM_ID_CAPITAL, 1, 500) // integrated (lp_rewards)
-	set(types.STREAM_ID_CAPITAL, 2, 300) // address
-	set(types.STREAM_ID_HUMAN, 1, 700)   // integrated, but its handler resolves nothing
+	set(types.STREAM_ID_GROUNDWORKS, 1, 500) // integrated (lp_rewards)
+	set(types.STREAM_ID_GROUNDWORKS, 2, 300) // address
+	set(types.STREAM_ID_CARETAKER, 1, 700)   // integrated, but its handler resolves nothing
 	ctx = ctx.WithBlockTime(time.Unix(1000, 0))
 	if err := k.BeginBlocker(ctx); err != nil {
 		t.Fatalf("BeginBlocker: %v", err)
@@ -218,13 +218,13 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 	if !e.dex.distributed.Equal(math.NewInt(500)) {
 		t.Fatalf("integrated handler distributed %s, want 500", e.dex.distributed)
 	}
-	if o1, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_CAPITAL, 1)); !o1.Accumulated.IsZero() {
+	if o1, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 1)); !o1.Accumulated.IsZero() {
 		t.Fatalf("integrated option accumulated = %s, want 0 (resolved)", o1.Accumulated)
 	}
-	if o2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_CAPITAL, 2)); !o2.Accumulated.Equal(math.NewInt(300)) {
+	if o2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 2)); !o2.Accumulated.Equal(math.NewInt(300)) {
 		t.Fatalf("ADDRESS option accumulated = %s, want 300 (untouched, lazy)", o2.Accumulated)
 	}
-	if h1, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_HUMAN, 1)); !h1.Accumulated.Equal(math.NewInt(700)) {
+	if h1, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_CARETAKER, 1)); !h1.Accumulated.Equal(math.NewInt(700)) {
 		t.Fatalf("registration-rewards pool = %s, want 700 (stacks until a registration draws it)", h1.Accumulated)
 	}
 }
@@ -243,7 +243,7 @@ func TestAddressOptionClaimer(t *testing.T) {
 	_, claimer := e.addr("claimer")
 	_, stranger := e.addr("stranger")
 
-	stream := types.STREAM_ID_CAPITAL
+	stream := types.STREAM_ID_GROUNDWORKS
 	open, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
 		Submitter: recipient, Stream: stream, Recipient: recipient, Description: "open",
 	})
@@ -321,25 +321,25 @@ func TestStreamsAreIndependent(t *testing.T) {
 
 	vote := []types.AllocationWeight{{OptionId: 1, Percent: 100}}
 	if _, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator: addr, Stream: types.STREAM_ID_HUMAN, Percentages: vote,
+		Creator: addr, Stream: types.STREAM_ID_CARETAKER, Percentages: vote,
 	}); err != nil {
 		t.Fatalf("registered human voting in the human stream: %v", err)
 	}
 	// No bonded stake, so the capital stream refuses the same address.
 	if _, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator: addr, Stream: types.STREAM_ID_CAPITAL, Percentages: vote,
+		Creator: addr, Stream: types.STREAM_ID_GROUNDWORKS, Percentages: vote,
 	}); err == nil {
 		t.Fatal("expected rejection: no bonded stake in the capital stream")
 	}
 
-	humanTotal, err := k.getTotalWeight(ctx, types.STREAM_ID_HUMAN)
+	humanTotal, err := k.getTotalWeight(ctx, types.STREAM_ID_CARETAKER)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !humanTotal.Equal(math.NewInt(types.HumanVoterWeight)) {
 		t.Fatalf("human total weight = %s, want %d", humanTotal, types.HumanVoterWeight)
 	}
-	capitalTotal, err := k.getTotalWeight(ctx, types.STREAM_ID_CAPITAL)
+	capitalTotal, err := k.getTotalWeight(ctx, types.STREAM_ID_GROUNDWORKS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,11 +352,11 @@ func TestStreamsAreIndependent(t *testing.T) {
 	staker, stakerAddr := e.addr("staker")
 	e.staking.bonded[staker.String()] = math.NewInt(5_000)
 	if _, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator: stakerAddr, Stream: types.STREAM_ID_CAPITAL, Percentages: vote,
+		Creator: stakerAddr, Stream: types.STREAM_ID_GROUNDWORKS, Percentages: vote,
 	}); err != nil {
 		t.Fatalf("staker voting in the capital stream: %v", err)
 	}
-	capitalTotal, err = k.getTotalWeight(ctx, types.STREAM_ID_CAPITAL)
+	capitalTotal, err = k.getTotalWeight(ctx, types.STREAM_ID_GROUNDWORKS)
 	if err != nil {
 		t.Fatal(err)
 	}

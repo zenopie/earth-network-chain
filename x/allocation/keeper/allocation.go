@@ -33,7 +33,7 @@ func voterKey(stream types.StreamId, addr []byte) collections.Pair[uint32, []byt
 // ValidateStream rejects a message that names no stream or an unknown one.
 func ValidateStream(stream types.StreamId) error {
 	switch stream {
-	case types.STREAM_ID_HUMAN, types.STREAM_ID_CAPITAL:
+	case types.STREAM_ID_CARETAKER, types.STREAM_ID_GROUNDWORKS:
 		return nil
 	default:
 		return types.ErrUnknownStream.Wrapf("%s", stream)

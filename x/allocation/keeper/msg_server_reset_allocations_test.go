@@ -39,7 +39,7 @@ func TestResetAllocations(t *testing.T) {
 	authority, err := k.addressCodec.BytesToString(k.GetAuthority())
 	require.NoError(t, err)
 
-	stream := types.STREAM_ID_CAPITAL
+	stream := types.STREAM_ID_GROUNDWORKS
 	addr := sdk.AccAddress(authtypes.NewModuleAddress("staker"))
 	seedVoter(t, k, ctx, stream, addr, 1_000)
 
@@ -87,28 +87,28 @@ func TestResetAllocationsIsPerStream(t *testing.T) {
 
 	human := sdk.AccAddress(authtypes.NewModuleAddress("human"))
 	staker := sdk.AccAddress(authtypes.NewModuleAddress("staker"))
-	seedVoter(t, k, ctx, types.STREAM_ID_HUMAN, human, types.HumanVoterWeight)
-	seedVoter(t, k, ctx, types.STREAM_ID_CAPITAL, staker, 1_000)
+	seedVoter(t, k, ctx, types.STREAM_ID_CARETAKER, human, types.HumanVoterWeight)
+	seedVoter(t, k, ctx, types.STREAM_ID_GROUNDWORKS, staker, 1_000)
 
 	_, err = ms.ResetAllocations(ctx, &types.MsgResetAllocations{
-		Authority: authority, Stream: types.STREAM_ID_HUMAN,
+		Authority: authority, Stream: types.STREAM_ID_CARETAKER,
 	})
 	require.NoError(t, err)
 
-	humanTotal, err := k.getTotalWeight(ctx, types.STREAM_ID_HUMAN)
+	humanTotal, err := k.getTotalWeight(ctx, types.STREAM_ID_CARETAKER)
 	require.NoError(t, err)
 	require.True(t, humanTotal.IsZero(), "the reset stream should be cleared")
 
-	capitalTotal, err := k.getTotalWeight(ctx, types.STREAM_ID_CAPITAL)
+	capitalTotal, err := k.getTotalWeight(ctx, types.STREAM_ID_GROUNDWORKS)
 	require.NoError(t, err)
 	require.Equal(t, int64(1_000), capitalTotal.Int64(),
 		"resetting one stream must not touch the other's weight")
 
-	capitalEpoch, err := k.getEpoch(ctx, types.STREAM_ID_CAPITAL)
+	capitalEpoch, err := k.getEpoch(ctx, types.STREAM_ID_GROUNDWORKS)
 	require.NoError(t, err)
 	require.Zero(t, capitalEpoch, "resetting one stream must not bump the other's epoch")
 
-	opt, err := k.Options.Get(ctx, optionKey(types.STREAM_ID_CAPITAL, 1))
+	opt, err := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 1))
 	require.NoError(t, err)
 	require.Equal(t, int64(1_000), opt.AmountAllocated.Int64(),
 		"the untouched stream's options keep their weight")
@@ -124,11 +124,11 @@ func TestResetAllocationsRequiresAuthority(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = ms.ResetAllocations(ctx, &types.MsgResetAllocations{
-		Authority: notAuthority, Stream: types.STREAM_ID_CAPITAL,
+		Authority: notAuthority, Stream: types.STREAM_ID_GROUNDWORKS,
 	})
 	require.Error(t, err, "only the module authority may reset the slate")
 
-	epoch, err := k.getEpoch(ctx, types.STREAM_ID_CAPITAL)
+	epoch, err := k.getEpoch(ctx, types.STREAM_ID_GROUNDWORKS)
 	require.NoError(t, err)
 	require.Zero(t, epoch, "a rejected reset must not bump the epoch")
 }

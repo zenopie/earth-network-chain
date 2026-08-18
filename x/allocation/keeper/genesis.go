@@ -36,14 +36,14 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	// Option #1 of each stream. Both are INTEGRATED and both are id 1 — ids are
 	// per stream, so they do not collide, and each is resolved only by the
 	// handler registered for its own stream.
-	if _, err := k.appendOption(ctx, types.STREAM_ID_HUMAN, types.AllocationOption{
+	if _, err := k.appendOption(ctx, types.STREAM_ID_CARETAKER, types.AllocationOption{
 		Description: "Registration rewards",
 		Kind:        types.ALLOCATION_KIND_INTEGRATED,
 		Handler:     types.HandlerRegistrationRewards,
 	}); err != nil {
 		return err
 	}
-	if _, err := k.appendOption(ctx, types.STREAM_ID_CAPITAL, types.AllocationOption{
+	if _, err := k.appendOption(ctx, types.STREAM_ID_GROUNDWORKS, types.AllocationOption{
 		Description: "Volume-weighted LP rewards",
 		Kind:        types.ALLOCATION_KIND_INTEGRATED,
 		Handler:     types.HandlerLPRewards,

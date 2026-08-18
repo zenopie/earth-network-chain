@@ -114,7 +114,7 @@ func NewKeeper(
 	// module already holds both halves of it (bonded stake from staking, the
 	// compounding index from earth) and owns the staking hooks that keep it
 	// current.
-	k.weightSources[types.STREAM_ID_CAPITAL] = capitalWeightSource{k: k}
+	k.weightSources[types.STREAM_ID_GROUNDWORKS] = capitalWeightSource{k: k}
 
 	return k
 }

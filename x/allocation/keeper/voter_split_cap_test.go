@@ -41,13 +41,13 @@ func TestVoterSplitIsCapped(t *testing.T) {
 	acc, addr := e.addr("registered-human")
 	e.humans.add(acc)
 
-	weights := seedOptions(t, k, ctx, types.STREAM_ID_HUMAN, types.MaxVoterOptions+1)
+	weights := seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, types.MaxVoterOptions+1)
 	// Give it a valid sum so only the length can be what rejects it.
 	weights[0].Percent = 100
 
 	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
 		Creator:     addr,
-		Stream:      types.STREAM_ID_HUMAN,
+		Stream:      types.STREAM_ID_CARETAKER,
 		Percentages: weights,
 	})
 	require.ErrorIs(t, err, types.ErrBadPercentages,
@@ -66,12 +66,12 @@ func TestVoterSplitRejectsZeroShares(t *testing.T) {
 	acc, addr := e.addr("registered-human")
 	e.humans.add(acc)
 
-	weights := seedOptions(t, k, ctx, types.STREAM_ID_HUMAN, 3)
+	weights := seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, 3)
 	weights[0].Percent = 100 // sums to 100; the other two are padding
 
 	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
 		Creator:     addr,
-		Stream:      types.STREAM_ID_HUMAN,
+		Stream:      types.STREAM_ID_CARETAKER,
 		Percentages: weights,
 	})
 	require.ErrorIs(t, err, types.ErrBadPercentages,
@@ -89,14 +89,14 @@ func TestVoterSplitAtCapIsAccepted(t *testing.T) {
 	acc, addr := e.addr("registered-human")
 	e.humans.add(acc)
 
-	weights := seedOptions(t, k, ctx, types.STREAM_ID_HUMAN, types.MaxVoterOptions)
+	weights := seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, types.MaxVoterOptions)
 	for i := range weights {
 		weights[i].Percent = 5 // 20 x 5 = 100
 	}
 
 	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
 		Creator:     addr,
-		Stream:      types.STREAM_ID_HUMAN,
+		Stream:      types.STREAM_ID_CARETAKER,
 		Percentages: weights,
 	})
 	require.NoError(t, err, "a full-width but valid split must still be accepted")
@@ -112,11 +112,11 @@ func TestUnregisteredHumanCannotVote(t *testing.T) {
 	ms := NewMsgServerImpl(k)
 
 	_, addr := e.addr("not-a-human")
-	seedOptions(t, k, ctx, types.STREAM_ID_HUMAN, 1)
+	seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, 1)
 
 	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
 		Creator:     addr,
-		Stream:      types.STREAM_ID_HUMAN,
+		Stream:      types.STREAM_ID_CARETAKER,
 		Percentages: []types.AllocationWeight{{OptionId: 1, Percent: 100}},
 	})
 	require.ErrorIs(t, err, types.ErrNoWeight)
@@ -125,7 +125,7 @@ func TestUnregisteredHumanCannotVote(t *testing.T) {
 	// be able to tidy up after themselves.
 	_, err = ms.SetAllocations(ctx, &types.MsgSetAllocations{
 		Creator: addr,
-		Stream:  types.STREAM_ID_HUMAN,
+		Stream:  types.STREAM_ID_CARETAKER,
 	})
 	require.NoError(t, err)
 }

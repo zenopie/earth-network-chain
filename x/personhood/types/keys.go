@@ -60,7 +60,7 @@ const (
 // registration-reward pool.
 const (
 	// AllocationStream is the stream registered humans vote in.
-	AllocationStream = allocationtypes.STREAM_ID_HUMAN
+	AllocationStream = allocationtypes.STREAM_ID_CARETAKER
 
 	// RegistrationRewardOptionID is that stream's option #1, whose accrued ERTH
 	// is paid out to new registrees and their referrers.

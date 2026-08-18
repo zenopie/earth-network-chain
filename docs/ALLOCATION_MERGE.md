@@ -13,8 +13,8 @@ both. They are now one module.
 `x/allocation` owns both emission streams, keyed by a stream id:
 
 ```go
-STREAM_ID_HUMAN   = 1 // one-human-one-vote, 1 ERTH/sec
-STREAM_ID_CAPITAL = 2 // stake-weighted,     1 ERTH/sec
+STREAM_ID_CARETAKER   = 1 // one-human-one-vote, 1 ERTH/sec
+STREAM_ID_GROUNDWORKS = 2 // stake-weighted,     1 ERTH/sec
 ```
 
 Every piece of state is stream-prefixed: `Options[(stream, id)]`,

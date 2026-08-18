@@ -71,7 +71,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 
-	in.AllocationKeeper.RegisterIntegratedHandler(allocationtypes.STREAM_ID_CAPITAL, allocationtypes.HandlerLPRewards,
+	in.AllocationKeeper.RegisterIntegratedHandler(allocationtypes.STREAM_ID_GROUNDWORKS, allocationtypes.HandlerLPRewards,
 		func(ctx context.Context, accrued math.Int) (math.Int, error) {
 			return k.DistributeLPRewards(ctx, accrued)
 		})

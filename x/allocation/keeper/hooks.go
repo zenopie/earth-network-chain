@@ -27,12 +27,12 @@ func (k Keeper) Hooks() Hooks { return Hooks{k: k} }
 // removed. It is a no-op for addresses that have not voted.
 func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, removeVal *sdk.ValAddress) error {
 	addrBz := delAddr.Bytes()
-	voter, err := k.Voters.Get(ctx, voterKey(types.STREAM_ID_CAPITAL, addrBz))
+	voter, err := k.Voters.Get(ctx, voterKey(types.STREAM_ID_GROUNDWORKS, addrBz))
 	if err != nil {
 		return nil // not a voter (or not found) — nothing to do
 	}
 
-	if err := k.AdvanceIndex(ctx, types.STREAM_ID_CAPITAL); err != nil {
+	if err := k.AdvanceIndex(ctx, types.STREAM_ID_GROUNDWORKS); err != nil {
 		return err
 	}
 
@@ -54,7 +54,7 @@ func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, re
 		weight = math.ZeroInt()
 	}
 
-	return k.resyncVoter(ctx, types.STREAM_ID_CAPITAL, addrBz, voter.Percentages, weight)
+	return k.resyncVoter(ctx, types.STREAM_ID_GROUNDWORKS, addrBz, voter.Percentages, weight)
 }
 
 func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddress, _ sdk.ValAddress) error {
