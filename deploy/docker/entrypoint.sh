@@ -64,6 +64,29 @@ else
   say "existing genesis found — resuming chain at $EARTH_HOME"
 fi
 
+# Remote signer, if one is configured.
+#
+# PRIV_VALIDATOR_LADDR turns the node into something that asks for signatures
+# rather than something that can produce them: CometBFT listens on this address
+# and an external signer (tmkms) dials in, signs, and returns just the
+# signature. The consensus key then lives wherever the signer runs — which is
+# the point, because this container runs on hardware someone else owns.
+#
+# Set in config.toml rather than passed as a flag: it is a config field, and
+# writing it here means a restart cannot quietly fall back to the local key.
+#
+# The signer is the client, so it needs no inbound address of its own. That is
+# what makes a home machine on a dynamic IP a viable place to keep the key.
+#
+# NOTE: setting this does not delete priv_validator_key.json. A real migration
+# removes it from this host afterwards — leaving it behind means the key you
+# just moved is still sitting on the machine you moved it off.
+if [ -n "${PRIV_VALIDATOR_LADDR:-}" ]; then
+  sed -i "s|^priv_validator_laddr = .*|priv_validator_laddr = \"$PRIV_VALIDATOR_LADDR\"|" \
+    "$EARTH_HOME/config/config.toml"
+  say "remote signer expected at $PRIV_VALIDATOR_LADDR"
+fi
+
 # Bind to every interface. The defaults listen on loopback, which inside a
 # container means nothing outside it can reach the node — including the
 # ads-for-gas backend and the wallet apps.
