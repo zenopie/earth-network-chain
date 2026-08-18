@@ -40,6 +40,10 @@ services:
       # generates a key and prints the mnemonic once into the container log.
 
     expose:
+      # Tunnel-only. Nothing is published on a provider port: every entry below
+      # goes to `cloudflared`, so the only way in is a Cloudflare hostname.
+      # Verified serving before the mapped ports were removed, because dropping
+      # them is a structural change and cannot be undone in place.
       # LCD. Not `as: 80`: that asks the provider for an HTTP ingress on a
       # generated hostname, and on the first lease of this deployment the pod
       # went ready and served RPC while the hostname returned nginx 404 for ten
@@ -48,14 +52,10 @@ services:
       - port: 1317
         as: 1317
         to:
-          # `global` is the escape hatch that keeps working if the tunnel is
-          # misconfigured; `service` entries are the internal paths.
-          - global: true
           - service: cloudflared
       - port: 26657
         as: 26657
         to:
-          - global: true
           - service: cloudflared
       #
       # p2p (26656) and gRPC (9090) stay unexposed: a single validator has no
