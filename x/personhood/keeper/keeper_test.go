@@ -33,6 +33,27 @@ type fixture struct {
 	addressCodec address.Codec
 }
 
+// stubBankKeeper records mints and sends so a handler that moves coins can be
+// exercised without a real bank module. It is deliberately not a mock with
+// expectations — the tests that use it care whether the handler was reached at
+// all, not how many coins moved.
+type stubBankKeeper struct{}
+
+func (stubBankKeeper) GetSupply(context.Context, string) sdk.Coin { return sdk.Coin{} }
+func (stubBankKeeper) SendCoinsFromModuleToAccount(
+	context.Context, string, sdk.AccAddress, sdk.Coins,
+) error {
+	return nil
+}
+
+func (stubBankKeeper) SendCoinsFromAccountToModule(
+	context.Context, sdk.AccAddress, string, sdk.Coins,
+) error {
+	return nil
+}
+func (stubBankKeeper) MintCoins(context.Context, string, sdk.Coins) error { return nil }
+func (stubBankKeeper) BurnCoins(context.Context, string, sdk.Coins) error { return nil }
+
 // stubDexKeeper is a minimal DexKeeper for unit tests.
 type stubDexKeeper struct{}
 
@@ -95,7 +116,7 @@ func initFixture(t *testing.T) *fixture {
 		encCfg.Codec,
 		addressCodec,
 		authority,
-		nil,
+		stubBankKeeper{},
 		stubDexKeeper{},
 		nil, // pkiKeeper
 		ak,
