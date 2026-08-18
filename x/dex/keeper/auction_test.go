@@ -244,3 +244,36 @@ func TestAuctionBidsAccumulate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(earmark), bank.sentTo(alice).AmountOf("uerth").Int64())
 }
+
+// The intended denominator is ETH arriving over IBC, which means bid_denom is an
+// `ibc/<64 hex>` hash rather than a plain denom. StartLiquidityAuction validates
+// it, so pin that the SDK's denom rules accept that shape -- getting this wrong
+// would only surface at the governance proposal, after the code was frozen.
+func TestAuctionAcceptsIBCDenom(t *testing.T) {
+	k, ctx, _ := initRewardFixture(t)
+	ms := keeper.NewMsgServerImpl(k)
+	seedAuction(t, k, ctx)
+
+	const ibcETH = "ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2"
+
+	_, err := ms.StartLiquidityAuction(ctx, &types.MsgStartLiquidityAuction{
+		Authority: govAddr(t), BidDenom: ibcETH, DurationSeconds: 86400,
+	})
+	require.NoError(t, err)
+
+	_, aliceStr := bidderAddr(t, 1)
+	_, err = ms.BidLiquidityAuction(ctx, &types.MsgBidLiquidityAuction{
+		Bidder: aliceStr, Amount: sdk.NewInt64Coin(ibcETH, 1_000_000)})
+	require.NoError(t, err)
+
+	ctx = ctx.WithBlockTime(ctx.BlockTime().Add(48 * time.Hour))
+	require.NoError(t, k.SettleDueAuction(ctx))
+
+	a, err := k.LiquidityAuction.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, types.AUCTION_STATUS_SETTLED, a.Status)
+
+	pool, err := k.Pool.Get(ctx, a.PoolId)
+	require.NoError(t, err)
+	require.Equal(t, ibcETH, pool.ReserveToken.Denom)
+}
