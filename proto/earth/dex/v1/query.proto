@@ -6,6 +6,7 @@ import "amino/amino.proto";
 import "cosmos/base/query/v1beta1/pagination.proto";
 import "cosmos/base/v1beta1/coin.proto";
 import "cosmos_proto/cosmos.proto";
+import "earth/dex/v1/auction.proto";
 import "earth/dex/v1/params.proto";
 import "earth/dex/v1/pool.proto";
 import "earth/dex/v1/unbonding.proto";
@@ -38,6 +39,16 @@ service Query {
   // when — the shares have left their balance and the assets have not arrived.
   rpc LpUnbondings(QueryLpUnbondingsRequest) returns (QueryLpUnbondingsResponse) {
     option (google.api.http).get = "/earth-network/earth/dex/v1/unbondings/{address}";
+  }
+
+  // LiquidityAuction returns the genesis liquidity auction's current state.
+  rpc LiquidityAuction(QueryLiquidityAuctionRequest) returns (QueryLiquidityAuctionResponse) {
+    option (google.api.http).get = "/earth-network/earth/dex/v1/liquidity_auction";
+  }
+
+  // AuctionBid returns one bidder's contribution and whether they have claimed.
+  rpc AuctionBid(QueryAuctionBidRequest) returns (QueryAuctionBidResponse) {
+    option (google.api.http).get = "/earth-network/earth/dex/v1/liquidity_auction/bid/{bidder}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -82,4 +93,25 @@ message QueryLpUnbondingsRequest {
 // QueryLpUnbondingsResponse is response type for the Query/LpUnbondings RPC method.
 message QueryLpUnbondingsResponse {
   repeated LpUnbonding unbondings = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryLiquidityAuctionRequest is the request type for Query/LiquidityAuction.
+message QueryLiquidityAuctionRequest {}
+
+// QueryLiquidityAuctionResponse is the response type for Query/LiquidityAuction.
+message QueryLiquidityAuctionResponse {
+  LiquidityAuction auction = 1;
+}
+
+// QueryAuctionBidRequest is the request type for Query/AuctionBid.
+message QueryAuctionBidRequest {
+  string bidder = 1;
+}
+
+// QueryAuctionBidResponse is the response type for Query/AuctionBid.
+message QueryAuctionBidResponse {
+  AuctionBid bid = 1 [(gogoproto.nullable) = false];
+  // claimable is the ERTH this bidder can take right now: their pro-rata share
+  // after settlement, or zero before it.
+  cosmos.base.v1beta1.Coin claimable = 2 [(gogoproto.nullable) = false];
 }

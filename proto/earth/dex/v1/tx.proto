@@ -32,6 +32,17 @@ service Msg {
 
   // Swap defines the Swap RPC.
   rpc Swap(MsgSwap) returns (MsgSwapResponse);
+
+  // StartLiquidityAuction opens the bidding window for the pre-funded genesis
+  // liquidity auction. Governance-only, and only meaningful once IBC is live
+  // and the intended bid asset actually exists on the chain.
+  rpc StartLiquidityAuction(MsgStartLiquidityAuction) returns (MsgStartLiquidityAuctionResponse);
+
+  // BidLiquidityAuction contributes bid_denom to the open auction.
+  rpc BidLiquidityAuction(MsgBidLiquidityAuction) returns (MsgBidLiquidityAuctionResponse);
+
+  // ClaimLiquidityAuction pays out a bidder's pro-rata ERTH after settlement.
+  rpc ClaimLiquidityAuction(MsgClaimLiquidityAuction) returns (MsgClaimLiquidityAuctionResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -115,4 +126,56 @@ message MsgSwap {
 // MsgSwapResponse defines the MsgSwapResponse message.
 message MsgSwapResponse {
   cosmos.base.v1beta1.Coin token_out = 1 [(gogoproto.nullable) = false];
+}
+
+// MsgStartLiquidityAuction opens the bidding window.
+//
+// The ERTH is already on the module account and already earmarked at genesis,
+// so this does not move funds -- it chooses the bid asset and the deadline,
+// which are the only two things that cannot be known before IBC exists.
+message MsgStartLiquidityAuction {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "earth/x/dex/MsgStartLiquidityAuction";
+
+  // authority is the address that controls the module (defaults to x/gov).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // bid_denom is the asset bids are denominated in. It must not already have a
+  // pool: the dex allows one pool per spoke token, and settlement creates one.
+  string bid_denom = 2;
+
+  // duration_seconds is how long bidding stays open, measured from the block
+  // that executes this message.
+  int64 duration_seconds = 3;
+}
+
+// MsgStartLiquidityAuctionResponse is the response type.
+message MsgStartLiquidityAuctionResponse {
+  // end_time is the unix timestamp (seconds) at which bidding closes.
+  int64 end_time = 1;
+}
+
+// MsgBidLiquidityAuction contributes to the open auction. Bids are additive and
+// cannot be withdrawn.
+message MsgBidLiquidityAuction {
+  option (cosmos.msg.v1.signer) = "bidder";
+  string bidder = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  cosmos.base.v1beta1.Coin amount = 2 [(gogoproto.nullable) = false];
+}
+
+// MsgBidLiquidityAuctionResponse is the response type.
+message MsgBidLiquidityAuctionResponse {
+  // total_bid is the bidder's cumulative contribution after this message.
+  cosmos.base.v1beta1.Coin total_bid = 1 [(gogoproto.nullable) = false];
+}
+
+// MsgClaimLiquidityAuction pays out a bidder's share of the bidder earmark.
+message MsgClaimLiquidityAuction {
+  option (cosmos.msg.v1.signer) = "bidder";
+  string bidder = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgClaimLiquidityAuctionResponse is the response type.
+message MsgClaimLiquidityAuctionResponse {
+  cosmos.base.v1beta1.Coin amount = 1 [(gogoproto.nullable) = false];
 }

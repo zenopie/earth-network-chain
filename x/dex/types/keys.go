@@ -44,6 +44,15 @@ var (
 	PoolLpIndexKey = collections.NewPrefix("pool_lp_index")
 )
 
+// Genesis liquidity auction — see auction.proto. The auction itself is a
+// singleton; bids are keyed by bidder address.
+var (
+	// LiquidityAuctionKey is the prefix for the auction singleton.
+	LiquidityAuctionKey = collections.NewPrefix("liquidity_auction")
+	// AuctionBidKey is the prefix for bidder address -> AuctionBid.
+	AuctionBidKey = collections.NewPrefix("auction_bid")
+)
+
 // LpUnbondingKey is the prefix for in-flight liquidity withdrawals, keyed
 // (completion_time, pool_id, address). Completion time leads the key so the
 // maturity sweep walks the due prefix in order and stops at the first entry that

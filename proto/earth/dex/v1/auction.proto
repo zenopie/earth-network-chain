@@ -1,0 +1,94 @@
+syntax = "proto3";
+package earth.dex.v1;
+
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/dex/types";
+
+// AuctionStatus is the lifecycle of the genesis liquidity auction.
+enum AuctionStatus {
+  option (gogoproto.goproto_enum_prefix) = false;
+
+  AUCTION_STATUS_UNSPECIFIED = 0;
+  // PENDING: the ERTH is pre-funded on the module account and earmarked, but no
+  // bidding window is open. This is the state genesis starts in, and the state
+  // an auction that drew no bids returns to, so governance can try again.
+  AUCTION_STATUS_PENDING = 1;
+  // OPEN: accepting bids in bid_denom until end_time.
+  AUCTION_STATUS_OPEN = 2;
+  // SETTLED: the pool exists and bidders may claim. Terminal.
+  AUCTION_STATUS_SETTLED = 3;
+}
+
+// LiquidityAuction is the one-shot genesis liquidity event.
+//
+// Two thirds of the pre-mine sits on the dex module account from genesis, split
+// in half: one half is paid out to bidders pro rata, the other half is paired
+// with everything they bid to open the pool. Because both halves are equal, the
+// pool opens at exactly the price the auction cleared at -- bidders paid
+// total_raised for erth_for_bidders, and the pool is seeded with the same ratio.
+// There is no separate price to set and no gap to arbitrage on the first block.
+//
+// The resulting LP shares are minted to the module account, which cannot sign a
+// transaction, so this liquidity is permanent in the same way the genesis
+// ANML/ERTH pool is. Nobody owns it, governance included.
+message LiquidityAuction {
+  AuctionStatus status = 1;
+
+  // bid_denom is the asset bids are denominated in, chosen by governance when
+  // the window opens rather than fixed at genesis -- the intended denominator
+  // is IBC USDC, which does not exist on the chain until IBC is enabled.
+  string bid_denom = 2;
+
+  // end_time is the unix timestamp (seconds) at which bidding closes and the
+  // pool is created. Settlement happens in the EndBlocker, not on a message, so
+  // it cannot be withheld by anyone declining to send one.
+  int64 end_time = 3;
+
+  // erth_for_bidders is the earmark paid out to bidders pro rata to their bid.
+  cosmos.base.v1beta1.Coin erth_for_bidders = 4 [(gogoproto.nullable) = false];
+
+  // erth_for_pool is the earmark paired with total_raised to open the pool.
+  cosmos.base.v1beta1.Coin erth_for_pool = 5 [(gogoproto.nullable) = false];
+
+  // total_raised is the sum of every bid placed in the open window.
+  string total_raised = 6 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // pool_id is the pool opened at settlement. Zero until then.
+  uint64 pool_id = 7;
+
+  // claimed is the running sum of ERTH already claimed by bidders. It exists so
+  // the last claimant can be paid the remainder rather than a truncated share:
+  // pro-rata division floors, so the individual shares do not sum to the
+  // earmark, and without this the dust would be stranded on the module account.
+  string claimed = 8 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+
+// AuctionBid is one bidder's total contribution to the open window.
+message AuctionBid {
+  string bidder = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // amount is the cumulative bid in bid_denom. Bidding more than once adds to
+  // it; there is no withdrawal, which is what makes total_raised final at
+  // end_time.
+  string amount = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // claimed records that this bidder has taken their ERTH. The entry is kept
+  // rather than deleted so a second claim fails loudly instead of looking like
+  // a bidder who never participated.
+  bool claimed = 3;
+}

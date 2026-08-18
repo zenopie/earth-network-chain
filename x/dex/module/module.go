@@ -130,7 +130,15 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, _ codec.JSONCodec) json.RawMe
 func (AppModule) ConsensusVersion() uint64 { return 1 }
 
 // EndBlock sweeps liquidity whose unbonding period has elapsed straight to its
-// provider's wallet. It is bounded per block — see SweepMaturedUnbondings.
+// provider's wallet, then settles the genesis liquidity auction if its deadline
+// has passed.
+//
+// Both are bounded per block. The sweep caps its payouts (see
+// SweepMaturedUnbondings); settlement creates one pool and pays nobody, because
+// bidders claim their own ERTH rather than being paid out in the closing block.
 func (am AppModule) EndBlock(ctx context.Context) error {
-	return am.keeper.SweepMaturedUnbondings(ctx)
+	if err := am.keeper.SweepMaturedUnbondings(ctx); err != nil {
+		return err
+	}
+	return am.keeper.SettleDueAuction(ctx)
 }

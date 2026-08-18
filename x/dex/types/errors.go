@@ -17,4 +17,11 @@ var (
 	ErrSlippage         = errors.Register(ModuleName, 1106, "output amount is below the requested minimum")
 	ErrZeroShares       = errors.Register(ModuleName, 1107, "computed share amount is zero")
 	ErrPoolExists       = errors.Register(ModuleName, 1108, "a pool already exists for this token")
+
+	// Genesis liquidity auction.
+	ErrAuctionUnavailable = errors.Register(ModuleName, 1109, "no liquidity auction is configured")
+	ErrAuctionState       = errors.Register(ModuleName, 1110, "liquidity auction is not in the required state")
+	ErrAuctionDuration    = errors.Register(ModuleName, 1111, "auction duration must be positive")
+	ErrNoBid              = errors.Register(ModuleName, 1112, "no bid found for this address")
+	ErrAlreadyClaimed     = errors.Register(ModuleName, 1113, "auction proceeds already claimed")
 )

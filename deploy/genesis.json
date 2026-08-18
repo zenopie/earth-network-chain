@@ -54,7 +54,7 @@
           "coins": [
             {
               "denom": "dexlp/1",
-              "amount": "4291506029356"
+              "amount": "2477702161277"
             },
             {
               "denom": "uanml",
@@ -70,7 +70,7 @@
       "supply": [
         {
           "denom": "dexlp/1",
-          "amount": "4291506029356"
+          "amount": "2477702161277"
         },
         {
           "denom": "uanml",
@@ -100,7 +100,7 @@
           "last_volume_day": "0",
           "pool_id": "1",
           "reserve_erth": {
-            "amount": "2522880000000000",
+            "amount": "840960000000000",
             "denom": "uerth"
           },
           "reserve_token": {
@@ -109,7 +109,24 @@
           },
           "volume": "0"
         }
-      ]
+      ],
+      "liquidity_auction": {
+        "status": "AUCTION_STATUS_PENDING",
+        "bid_denom": "",
+        "end_time": "0",
+        "erth_for_bidders": {
+          "denom": "uerth",
+          "amount": "840960000000000"
+        },
+        "erth_for_pool": {
+          "denom": "uerth",
+          "amount": "840960000000000"
+        },
+        "total_raised": "0",
+        "pool_id": "0",
+        "claimed": "0"
+      },
+      "auction_bids": []
     },
     "distribution": {
       "delegator_starting_infos": [],

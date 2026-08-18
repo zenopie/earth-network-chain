@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
@@ -61,6 +62,35 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		}
 	}
 
+	// The auction's earmarks are pre-funded: the ERTH is already in the module
+	// account's genesis balance, and this only records how much of it is spoken
+	// for. Nil leaves the auction unconfigured, and every auction message then
+	// fails with ErrAuctionUnavailable.
+	if genState.LiquidityAuction != nil {
+		a := *genState.LiquidityAuction
+		if a.TotalRaised.IsNil() {
+			a.TotalRaised = math.ZeroInt()
+		}
+		if a.Claimed.IsNil() {
+			a.Claimed = math.ZeroInt()
+		}
+		if err := k.LiquidityAuction.Set(ctx, a); err != nil {
+			return err
+		}
+	}
+	for _, b := range genState.AuctionBids {
+		addrBz, err := k.addressCodec.StringToBytes(b.Bidder)
+		if err != nil {
+			return err
+		}
+		if b.Amount.IsNil() {
+			b.Amount = math.ZeroInt()
+		}
+		if err := k.AuctionBids.Set(ctx, addrBz, b); err != nil {
+			return err
+		}
+	}
+
 	if err := k.Params.Set(ctx, genState.Params); err != nil {
 		return err
 	}
@@ -88,6 +118,18 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 			genesis.LpUnbondings = append(genesis.LpUnbondings, val)
 			return false, nil
 		}); err != nil {
+		return nil, err
+	}
+
+	if a, err := k.LiquidityAuction.Get(ctx); err == nil {
+		genesis.LiquidityAuction = &a
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
+	if err := k.AuctionBids.Walk(ctx, nil, func(_ []byte, val types.AuctionBid) (stop bool, err error) {
+		genesis.AuctionBids = append(genesis.AuctionBids, val)
+		return false, nil
+	}); err != nil {
 		return nil, err
 	}
 
