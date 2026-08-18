@@ -1,4 +1,7 @@
-# Dockerfile — single-validator earth node.
+# Dockerfile — single-validator earth node AND the ads-for-gas service.
+#
+# One image, two entrypoints. The Akash SDL chooses: the default runs the node,
+# /usr/local/bin/backend-entrypoint.sh runs the FastAPI service.
 #
 # Runs under docker-compose (plain Docker host or SecretVM) and on Akash;
 # both use the same entrypoint.
@@ -67,7 +70,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=build /out/earthd /usr/local/bin/earthd
 COPY deploy/genesis.json /etc/earth/genesis.json
 COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY deploy/docker/backend-entrypoint.sh /usr/local/bin/backend-entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/backend-entrypoint.sh
+
+# ---- ads-for-gas ----------------------------------------------------------
+# The Python service ships in the same image as the chain. One build, one
+# digest, one thing to pin; the SDL picks which of the two entrypoints to run.
+# The cost is that each pod carries the other's payload, which is why the
+# backend's root storage in its SDL is sized for this image rather than for a
+# slim Python one.
+#
+# A venv rather than a bare `pip install`: Debian's python3 is externally
+# managed (PEP 668) and refuses to be installed into directly.
+#
+# build-essential goes in and comes out in the same layer, as the backend's own
+# Dockerfile did — cosmpy's crypto dependencies fall back to building from
+# source when there is no wheel for the platform, and a failure there would
+# otherwise only show up in CI.
+COPY backend /app/backend
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-venv build-essential \
+    && python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -r /app/backend/requirements.txt \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Replay protection for SSV transaction ids. Mount a volume here when running
+# the backend: a fresh filesystem forgets which ids were honoured, and every one
+# of them becomes replayable against the hot wallet.
+ENV STATE_DB=/app/state/ads_for_gas.db
+RUN mkdir -p /app/state
 
 # Node home. Mount a volume here — without one, every redeploy is a brand new
 # chain with a new genesis, new keys and no history.
@@ -76,6 +109,7 @@ VOLUME ["/data"]
 
 # LCD and RPC. gRPC and p2p are not published: everything here speaks REST, and
 # a single validator has no peers.
-EXPOSE 1317 26657
+# 1317/26657 are the chain; 8000 is the ads-for-gas service.
+EXPOSE 1317 26657 8000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

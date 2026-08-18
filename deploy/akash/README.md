@@ -1,136 +1,111 @@
-# Akash deployment — single-validator earth devnet
+# Akash deployment — earth devnet
 
-Same image and the same `deploy/docker/entrypoint.sh` as the docker-compose
-deployment; only the hosting primitives differ. `deploy.yaml` is the SDL.
+One deployment, three services, one image.
 
-    deploy/akash/deploy.yaml        the deployed unit
-    deploy/docker/entrypoint.sh   first-boot genesis, then earthd start
-    deploy/genesis.json             the chain state genesis carries
-    Dockerfile                      builds earthd
+    node          earthd, the single validator          -> /data
+    app           the ads-for-gas service               -> /app/state
+    cloudflared   Cloudflare Tunnel connector
+
+`node` and `app` are the same container run with different entrypoints; the
+Dockerfile at the repo root builds both payloads. That is why there is one image
+to build, one digest to pin, and one release.
+
+    deploy/akash/deploy.yaml       the deployed unit
+    deploy/docker/entrypoint.sh    node: first-boot genesis, then earthd start
+    deploy/docker/backend-entrypoint.sh   app: uvicorn
+    backend/                       the ads-for-gas source
 
 ## Build the image first
 
-**The tag in `deploy.yaml` does not exist until you make it.** CI builds and
-pushes only on `v[0-9]+.[0-9]+.[0-9]+` tags — a push to `master` builds nothing —
-so an image published before the staking change carries the *old* tokenomics:
-the emission compounded into bonded stake, no claimable rewards, a 2% community
-tax. Deploying `v0.0.7` gets you that chain, not this one.
+CI builds and pushes on `v[0-9]+.[0-9]+.[0-9]+` tags only — a push to `master`
+builds nothing — and then rewrites both `image:` lines in `deploy.yaml` with the
+digest it just pushed and commits that back to master.
 
-    git tag v0.0.8 && git push origin v0.0.8
+    git tag v0.1.0 && git push origin v0.1.0
+    git pull origin master     # picks up the pinned digest
 
-The workflow pins `deploy.yaml` for you: it rewrites the `image:` line with the
-digest it just pushed and commits that back to master alongside
-`docker-compose.yaml`. So after a release, pull master and deploy — the SDL is
-already pointing at the bytes CI built.
-
-    git pull origin master
-
-A tag can be moved to point at different bytes later. A digest cannot, and on a
-chain the difference between "the image I tested" and "an image with that name"
-is a consensus failure — which is why the workflow fails the release outright if
-its pattern stops matching the `image:` line, rather than leaving a stale pin
-behind a green build.
-
-The package must be public on ghcr.io, or the provider cannot pull it — Akash
-has nowhere to put registry credentials.
+So after a release, pull and deploy: the SDL already points at the bytes CI
+built. The package must be public on ghcr.io, or the provider cannot pull it.
 
 ## Deploy
 
-Needs the `provider-services` CLI, a funded AKT wallet (~5 AKT covers the
-deposit), and a client certificate created once per key.
+Secrets are NOT in the SDL. Two values are injected into the submitted copy from
+the gitignored `.env` at the repo root:
 
-    provider-services tx cert generate client --from <key>
-    provider-services tx cert publish client --from <key>
+    GAS_WALLET_MNEMONIC   spendable ERTH; must never reach the repository
+    TUNNEL_TOKEN          anyone holding it can attach a replica to your tunnel
 
-    provider-services tx deployment create deploy/akash/deploy.yaml --from <key>
-    provider-services query market bid list --owner <addr> --dseq <dseq>
-    provider-services tx market lease create --dseq <dseq> --provider <provider> --from <key>
-    provider-services provider send-manifest deploy/akash/deploy.yaml --dseq <dseq> --provider <provider> --from <key>
+Both still reach the provider — everything in a submitted SDL does. What the
+injection avoids is them reaching a public repository.
 
-## Endpoints
+    POST /v1/deployments   {"data": {"sdl": "<sdl>", "deposit": 5}}
+    GET  /v1/bids/{dseq}
+    POST /v1/leases        {"manifest": "<from create>", "leases": [...]}
 
-    provider-services lease-status --dseq <dseq> --provider <provider> --from <key>
+Auth is `x-api-key` (Console API, managed wallet / credit card). There is no
+`provider-services login` — that CLI signs with a local key and has no session.
 
-Both ports come back under `forwarded_ports` as assigned external ports in the
-30000-32767 range. They are stable for the life of the lease and change if the
-lease is recreated, so read them rather than assuming them.
+## One lease holds both volumes
 
-    EARTH_NODE_URL=rest+http://<host>:<lcd port>
+Closing it destroys the chain's state — genesis, the validator's consensus key,
+every account — and the replay database with it. The next deploy is not a
+restart; it is a different chain.
 
-**Neither is exposed `as: 80`, and that is deliberate.** `as: 80` asks the
-provider for an HTTP ingress on a generated hostname, which is nicer to hand
-out. On the first lease of this deployment it did not work: the pod went ready
-and served RPC fine while the generated hostname returned nginx 404 for ten
-minutes. A request to a hostname that was never registered returned the same
-404, so there was no way to tell "still propagating" from "never created". The
-mapped ports came up in under a minute on the same provider.
+Image and env changes go in place with `PUT /v1/deployments/{dseq}` and keep the
+volumes. Structural changes do not: endpoint kinds and resources are part of what
+the provider bid on, and the API rejects them with `over-utilized PORT
+endpoints`. Those need a close-and-recreate.
 
-That also means the endpoint kinds are part of what a provider bids on, so you
-cannot switch between them on a live deployment — `PUT /v1/deployments/{dseq}`
-rejects it with `over-utilized PORT endpoints` and you have to close and
-recreate.
+If you are on an Akash trial, deployments auto-close after 24 hours, which is the
+same thing.
 
-p2p (26656) and gRPC (9090) are not exposed. A single validator has no peers to
-gossip with, and everything here speaks REST.
+## Addresses
 
-For addresses that survive a lease being recreated, put a domain in front:
-add `accept: [rpc.example.com]` to the exposed port and point a DNS A record at
-the provider's IP.
+Every port is exposed both `global` (a mapped port in the 30000-32767 range,
+read from the lease status) and to `cloudflared`. The mapped ports are the escape
+hatch that keeps working if the tunnel is misconfigured; the tunnel is what
+survives a lease change, since Akash reassigns external ports every time.
 
-## Closing the lease destroys the chain
+Not `as: 80`. That asks the provider for an HTTP ingress on a generated
+hostname; on the first lease of this deployment the pod went ready and served
+RPC while the hostname returned nginx 404 for ten minutes, indistinguishable
+from a hostname that was never registered. Mapped ports came up immediately.
 
-The persistent volume survives container restarts and deployment *updates*. It
-does not survive `deployment close`. When the lease ends the volume goes with
-it, and the next deploy is not a restart — it is a different chain, with a new
-genesis, a new validator key, and every address the apps knew about gone.
+**One tunnel is enough, and that is a consequence of one deployment.** A tunnel's
+replicas are chosen by proximity with no traffic steering, so connectors able to
+reach different origins would black-hole requests non-deterministically. Here a
+single connector reaches both origins by service name, so the question does not
+arise. Configure the Public Hostnames on Cloudflare's side:
 
-This is the same failure `deploy/docker/README.md` describes for a missing
-volume, with a different trigger. The entrypoint tells the two cases apart purely by whether
-`/data/config/genesis.json` is there.
+    lcd.* -> http://node:1317      rpc.* -> http://node:26657
+    ads.* -> http://app:8000
 
-`count: 1` matters for the same reason. A second replica is not a second node on
-this network; it is a second chain booting the same genesis with its own
-validator key, diverging from the first block it signs.
+`app` reaches the chain at `rest+http://node:1317` over the cluster network. Do
+not point it at the provider's public hostname: on the provider hosting it, that
+is a hairpin back to its own NodePort and it hangs rather than failing. cosmpy
+builds its LedgerClient inside FastAPI's startup event, so uvicorn never finishes
+starting — the port completes a TCP handshake and then never answers, while the
+lease still reports ready, because nothing defines a readiness probe.
 
-## First boot
+## AdMob
 
-The validator key is generated on the node and its mnemonic printed exactly once
-into the container log:
+`ADMOB_AD_UNIT_ID` is the mobile app's `REWARDED_AD_UNIT_ID` (`HostActivity.kt`),
+the unit whose `ServerSideVerificationOptions` carry the wallet address as
+`custom_data`. The interstitial unit beside it never calls back. Unset is not a
+safe default: the service starts and skips the check, letting a valid Google
+signature from any of your ad units claim a grant.
 
-    provider-services lease-logs --dseq <dseq> --provider <provider> --from <key>
-
-Capture it then or not at all. `VALIDATOR_MNEMONIC` in the SDL would let you
-supply the key instead, and is deliberately not set: everything in `deploy.yaml`
-is visible to the provider hosting the lease.
-
-You mostly should not need it. `deploy/genesis.json` seeds the development
-handset with 100k ERTH so a fresh deployment is testable without the validator's
-key. Drop that account before anything real runs on this chain.
-
-Keys live in the test keyring on the volume:
-
-    earthd keys list --keyring-backend test --home /data
-
-## genesis_time is stamped at first boot
-
-`deploy/genesis.json` carries the timestamp of whichever machine ran `ignite
-chain init`. CometBFT gives block 1 exactly that time while block 2 gets the
-wall clock, and the emission is prorated against elapsed time — so the entire
-gap pays out in a single block. Deploying the committed genesis a day after it
-was generated minted **125,485 ERTH at height 2**, and the lump grows for as
-long as the file sits in the repo unchanged.
-
-The entrypoint now rewrites `genesis_time` to the current time before creating
-the validator, so a fresh chain starts at zero regardless of how old the file
-is. Nothing to do per-deploy; it is worth knowing because the symptom — a
-supply that is wrong from the second block, before any transaction — looks
-nothing like its cause.
+Point the SSV callback at the tunnel hostname, not a mapped port — a dead
+callback URL fails silently: Google records a delivery, the user watched an
+advert, and nothing arrives.
 
 ## Devnet posture
 
-`--api.enabled-unsafe-cors` is on so the web app can read the LCD straight from
-a browser, and `MIN_GAS_PRICES=0uerth` accepts zero-fee transactions. Both are
-fine for a throwaway chain and both want revisiting before anything real runs on
-it. Note that zero-fee plus open CORS on a public endpoint is a free
-write-amplification target — the gas burn that makes fees deflationary collects
-nothing to burn.
+`--api.enabled-unsafe-cors` and `MIN_GAS_PRICES=0uerth`. Fine for a throwaway
+chain; both want revisiting before anything real. Zero-fee plus open CORS on a
+public endpoint is a free write-amplification target, and the gas burn that makes
+fees deflationary collects nothing to burn.
+
+The hot wallet holds 10,000 ERTH from genesis — 200,000 grants at
+`DUST_UERTH=50000`. `/health` reports `grants_remaining`; when it runs dry the
+failure is silent and expensive.

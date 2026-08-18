@@ -1,0 +1,148 @@
+---
+# Akash SDL — earth chain node + its Cloudflare tunnel.
+#
+# Separate from deploy/akash/backend.yaml on purpose. Both run the same image,
+# but this lease holds the chain's persistent volume — genesis, the validator's
+# consensus key, all state — and closing a lease destroys its volumes. Keeping
+# the backend in its own lease means a backend change can never take the chain
+# with it.
+#
+# Deploy with the Console API (credit-card / managed wallet):
+#   POST /v1/deployments  {"data":{"sdl":"<this file>","deposit":5}}
+# See README.md in this directory.
+#
+# Closing this lease destroys the chain's state — genesis, the validator's
+# consensus key, every account. Structural edits (adding a service, changing resources or exposed ports)
+# cannot be applied in place and require exactly that. Image and env changes can
+# be pushed with PUT /v1/deployments/{dseq} and keep the volumes.
+version: "2.0"
+
+services:
+  # --- the chain -----------------------------------------------------------
+  node:
+    # PINNED BY CI — .github/workflows/docker-build.yml rewrites every `image:`
+    # line here with the digest it just pushed and commits it back to master.
+    # A version tag is mutable and a digest is not; on a chain the difference
+    # between "the image I tested" and "an image with that name" is a consensus
+    # failure. The workflow fails the release if its pattern stops matching.
+    image: ghcr.io/zenopie/earth-network-chain:v0.0.9
+
+    env:
+      - CHAIN_ID=earth
+      - MONIKER=earth-akash-devnet
+      # Zero-fee transactions. Devnet posture — see README.
+      - MIN_GAS_PRICES=0uerth
+      - VALIDATOR_COINS=1000000000000uerth
+      - VALIDATOR_BONDED=100000000uerth
+      #
+      # VALIDATOR_MNEMONIC is deliberately unset. Everything in this file is
+      # sent to the provider hosting the lease. With it unset the entrypoint
+      # generates a key and prints the mnemonic once into the container log.
+
+    expose:
+      # LCD. Not `as: 80`: that asks the provider for an HTTP ingress on a
+      # generated hostname, and on the first lease of this deployment the pod
+      # went ready and served RPC while the hostname returned nginx 404 for ten
+      # minutes — indistinguishable from a hostname never registered. Mapped
+      # ports came up immediately.
+      - port: 1317
+        as: 1317
+        to:
+          # `global` is the escape hatch that keeps working if the tunnel is
+          # misconfigured; `service` entries are the internal paths.
+          - global: true
+          - service: cloudflared
+      - port: 26657
+        as: 26657
+        to:
+          - global: true
+          - service: cloudflared
+      #
+      # p2p (26656) and gRPC (9090) stay unexposed: a single validator has no
+      # peers, and everything here speaks REST.
+
+    params:
+      storage:
+        data:
+          # Genesis, the validator's consensus key, and all chain state.
+          mount: /data
+          readOnly: false
+
+  # --- the tunnel ----------------------------------------------------------
+  # Dials out to Cloudflare, so it needs no inbound port and nothing is exposed
+  # for it. One connector serves every hostname because both origins are in this
+  # deployment and reachable by service name — which is exactly the case where a
+  # single tunnel is correct. Tunnel replicas are chosen by proximity with no
+  # traffic steering, so connectors that could reach different origins would
+  # black-hole a share of requests non-deterministically.
+  #
+  # Public Hostnames are configured on Cloudflare's side, pointing at:
+  #   lcd.*  -> http://node:1317
+  #   rpc.*  -> http://node:26657
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+    # TUNNEL_TOKEN is injected at deploy time from .env, like the mnemonic.
+    # Anyone holding it can attach a replica and receive this tunnel's traffic.
+    env: []
+
+profiles:
+  compute:
+    node:
+      resources:
+        # Sized for a single-operator test chain with no load. NOT sized for
+        # MsgRegister, which verifies a passport proof with the native UltraHonk
+        # verifier and is by far the most expensive thing the chain does — raise
+        # cpu and memory before testing registration in earnest.
+        cpu:
+          units: 0.5
+        memory:
+          size: 1Gi
+        storage:
+          # Root has to fit the shared image: earthd, the UltraHonk verifier and
+          # its libc++ runtime, plus the Python service and its dependencies.
+          - size: 4Gi
+          - name: data
+            size: 5Gi
+            attributes:
+              persistent: true
+              # beta3, not beta2: of the providers online when this was written,
+              # 41 advertised beta3 against 3 for beta2.
+              class: beta3
+
+    cloudflared:
+      resources:
+        # A Go binary holding four outbound connections.
+        cpu:
+          units: 0.1
+        memory:
+          size: 128Mi
+        storage:
+          - size: 512Mi
+
+  placement:
+    dcloud:
+      pricing:
+        # Bid ceilings, not the price paid.
+        node:
+          denom: uakt
+          amount: 10000
+        cloudflared:
+          denom: uakt
+          amount: 10000
+
+deployment:
+  node:
+    dcloud:
+      profile: node
+      # MUST stay 1. A second replica is not a second node on this network; it
+      # is a second chain booting the same genesis with its own validator key,
+      # diverging from the first block it signs.
+      count: 1
+  cloudflared:
+    dcloud:
+      profile: cloudflared
+      count: 1

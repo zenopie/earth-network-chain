@@ -106,7 +106,11 @@ jobs:
           DOCKERFILE_DIR="."
 
           IMAGE="ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}@sha256:${{ steps.push.outputs.IMAGE_HASH }}"
-          SDL="$DOCKERFILE_DIR/deploy/akash/deploy.yaml"
+          # Both SDLs, same digest. The chain and the ads-for-gas service ship in
+          # one image and differ only by which entrypoint the SDL runs, so there
+          # is one thing to build and one digest to pin — but two leases, so the
+          # backend can never take the chain's volume with it.
+          SDLS="$DOCKERFILE_DIR/deploy/akash/chain.yaml $DOCKERFILE_DIR/deploy/akash/backend.yaml"
 
           # Pin the Akash SDL to the digest just pushed.
           #
@@ -117,6 +121,7 @@ jobs:
           #
           # The pattern matches whatever the line currently holds, tag or
           # digest, so re-releasing overwrites a previous pin.
+          for SDL in $SDLS; do
           sed -i -E "s|^([[:space:]]*image:[[:space:]]*)ghcr\.io/[^[:space:]]+|\1${IMAGE}|" "$SDL"
 
           # Fail loudly if that matched nothing. A silent no-op here is the
@@ -128,9 +133,10 @@ jobs:
             exit 1
           fi
           echo "pinned $SDL to $IMAGE"
+          done
           
           # Add and commit changes
-          git add $DOCKERFILE_DIR/docker-compose.yaml "$SDL"
+          git add $DOCKERFILE_DIR/docker-compose.yaml $SDLS
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else

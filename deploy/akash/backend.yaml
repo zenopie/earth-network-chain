@@ -1,0 +1,140 @@
+---
+# Akash SDL — ads-for-gas service + its Cloudflare tunnel.
+#
+# Runs the same image as deploy/akash/chain.yaml, started with a different
+# entrypoint. Separate lease on purpose: closing a lease destroys its volumes,
+# and the chain's volume is the one thing here that cannot be recreated.
+#
+# Deploy with the Console API (credit-card / managed wallet):
+#   POST /v1/deployments  {"data":{"sdl":"<this file>","deposit":5}}
+# See README.md in this directory.
+#
+# Closing this lease destroys the replay database, which does not lose money but
+# makes every previously-honoured SSV transaction id replayable. Structural edits (adding a service, changing resources or exposed ports)
+# cannot be applied in place and require exactly that. Image and env changes can
+# be pushed with PUT /v1/deployments/{dseq} and keep the volumes.
+version: "2.0"
+
+services:
+  # --- ads-for-gas ---------------------------------------------------------
+  app:
+    # Same image as the node. The entrypoint below is the only difference.
+    image: ghcr.io/zenopie/earth-network-chain:v0.0.9
+    command:
+      - /usr/local/bin/backend-entrypoint.sh
+
+    env:
+      # The whole point of one deployment: the node is reachable by service name
+      # over the cluster network. No provider hostname, no external port, and
+      # nothing to update when a lease is recreated.
+      #
+      # It also avoids a trap. Pointing this at the provider's own public
+      # hostname and NodePort, while running on that same provider, is a hairpin
+      # back to itself and it hangs rather than failing — cosmpy builds its
+      # LedgerClient inside FastAPI's startup event, so uvicorn never finishes
+      # starting and the port answers a TCP handshake and then nothing.
+      - EARTH_NODE_URL=rest+http://provider.hurricane.akash.pub:32317
+      - EARTH_CHAIN_ID=earth
+      - EARTH_PREFIX=earth
+      - EARTH_DENOM=uerth
+      - EARTH_GAS_PRICE=0.025
+      # What one verified ad view is worth. Must materialise the account and
+      # cover a registration (~400k gas).
+      - DUST_UERTH=50000
+      # The rewarded ad unit allowed to trigger a grant — the mobile app's
+      # REWARDED_AD_UNIT_ID (HostActivity.kt), not the interstitial one, which
+      # never calls back. Unset is not a safe default: the service starts and
+      # skips the check, so any of your ad units could claim a grant.
+      - ADMOB_AD_UNIT_ID=ca-app-pub-8662126294069074/9040854138
+      #
+      # GAS_WALLET_MNEMONIC is NOT here, and must not be. It holds spendable
+      # ERTH, and this file is committed to a public repository. It is injected
+      # into the SDL that is POSTed, from the gitignored .env at the repo root.
+
+    expose:
+      - port: 8000
+        as: 8000
+        to:
+          - global: true
+          - service: cloudflared
+
+    params:
+      storage:
+        state:
+          # Replay protection for SSV transaction ids.
+          mount: /app/state
+          readOnly: false
+
+  # --- the tunnel ----------------------------------------------------------
+  # Dials out to Cloudflare, so it needs no inbound port and nothing is exposed
+  # for it. One connector serves every hostname because both origins are in this
+  # deployment and reachable by service name — which is exactly the case where a
+  # single tunnel is correct. Tunnel replicas are chosen by proximity with no
+  # traffic steering, so connectors that could reach different origins would
+  # black-hole a share of requests non-deterministically.
+  #
+  # Public Hostnames are configured on Cloudflare's side, pointing at:
+  #   ads.*  -> http://app:8000
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+    # TUNNEL_TOKEN is injected at deploy time from .env, like the mnemonic.
+    # Anyone holding it can attach a replica and receive this tunnel's traffic.
+    env: []
+
+profiles:
+  compute:
+    app:
+      resources:
+        # Measured, not guessed: the service idles at 69 MB RSS with the wallet
+        # built and a /health round trip served. It is one process serving a
+        # callback rate-limited by how fast humans can watch adverts.
+        cpu:
+          units: 0.1
+        memory:
+          size: 256Mi
+        storage:
+          - size: 4Gi
+          # Losing this does not lose money; it loses the record of which SSV
+          # transaction ids were honoured, and every one becomes replayable.
+          - name: state
+            size: 1Gi
+            attributes:
+              persistent: true
+              class: beta3
+
+    cloudflared:
+      resources:
+        # A Go binary holding four outbound connections.
+        cpu:
+          units: 0.1
+        memory:
+          size: 128Mi
+        storage:
+          - size: 512Mi
+
+  placement:
+    dcloud:
+      pricing:
+        # Bid ceilings, not the price paid.
+        app:
+          denom: uakt
+          amount: 10000
+        cloudflared:
+          denom: uakt
+          amount: 10000
+
+deployment:
+  app:
+    dcloud:
+      profile: app
+      # Also 1. Sends are serialised behind a single lock on one account
+      # sequence; a second replica shares the account but not the lock.
+      count: 1
+  cloudflared:
+    dcloud:
+      profile: cloudflared
+      count: 1
