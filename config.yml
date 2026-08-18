@@ -79,6 +79,55 @@ genesis:
         burn_vote_veto: true
         burn_vote_quorum: false
         burn_proposal_deposit_prevote: false
+    # x/mint does NOT decide issuance on this chain. app.ProvideEarthMintFn
+    # replaces the module's MintFn, and x/mint's BeginBlocker calls nothing but
+    # that function — so the bonded-ratio inflation model is never evaluated and
+    # the Minter record is never written. All of ERTH issuance is the fixed
+    # 4 ERTH/sec in x/earth/types/keys.go.
+    #
+    # `mint_denom` is the single param that still does something: MintEmission
+    # mints in it. It is not set here on purpose — ignite fills it from
+    # `default_denom` at the top of this file, and one source of truth beats two.
+    #
+    # Everything below is zeroed so genesis reads honestly. Left at the SDK
+    # defaults, `earthd q mint params` would report 20%/7% bonded-ratio inflation
+    # and `q mint inflation` a flat 13%, none of which this chain does — a
+    # plausible-looking wrong answer is worse than an obviously inert one.
+    mint:
+      minter:
+        # Frozen at genesis: with a custom MintFn nothing ever updates these, so
+        # whatever is written here is what the queries return forever.
+        inflation: "0"
+        annual_provisions: "0"
+      params:
+        inflation_rate_change: "0"
+        inflation_max: "0"
+        inflation_min: "0"
+        # goal_bonded and blocks_per_year cannot be zeroed — x/mint's
+        # Params.Validate rejects a non-positive value for either, so InitGenesis
+        # would panic. They are left at the SDK defaults and are just as unread as
+        # the three above.
+        goal_bonded: "0.67"
+        blocks_per_year: "6311520"
+    # x/distribution splits the base staking stream under the SDK's standard
+    # rules — power-weighted, validator commission withheld at each validator's
+    # own rate, claimed with MsgWithdrawDelegatorReward. The one default that is
+    # overridden is the community tax.
+    distribution:
+      params:
+        # No community tax. The SDK default (2%) skims staking rewards to fund a
+        # pool that governance then votes to spend — which is the job the two
+        # allocation streams already do, and do better: the capital stream is
+        # continuous and stake-weighted, the human stream one-human-one-vote, and
+        # both direct their own dedicated 1 ERTH/sec rather than a cut of someone
+        # else's. Taxing the staking pillar on top would fund the same function
+        # twice and make the emission table wrong about where ERTH goes.
+        #
+        # Truncation dust from the per-validator split still lands in the
+        # community pool, since that is where x/distribution puts its remainder.
+        # It is a rounding artefact of a few uerth per block, not a funding
+        # source.
+        community_tax: "0"
     # Protocol-owned ANML/ERTH liquidity, seeded at genesis. The LP shares sit in
     # the x/dex module account itself and there is no message that can withdraw
     # them, so this liquidity is PERMANENT — not even governance can pull it.

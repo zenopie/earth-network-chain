@@ -6,19 +6,16 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/address"
 	corestore "cosmossdk.io/core/store"
-	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/earth/types"
 )
 
 // Keeper owns ERTH tokenomics — everything that creates or destroys the token.
 //
-// The emission is minted here and compounded straight into bonded stake, gas
-// fees are burned here, and the two pieces of bookkeeping that fall out of
-// compounding (withheld validator commission, and the stake growth index that
-// keeps stored stake figures honest) live here too.
+// The investor pillar's emission is minted here and paid into the fee collector,
+// where x/distribution picks it up and splits it under the SDK's standard
+// staking rules; gas fees are burned here.
 //
 // The division of labour with the pillar modules: this module owns how much ERTH
 // exists; they own how their share is directed.
@@ -30,8 +27,7 @@ type Keeper struct {
 	// Typically, this should be the x/gov module account.
 	authority []byte
 
-	bankKeeper    types.BankKeeper
-	stakingKeeper types.StakingKeeper
+	bankKeeper types.BankKeeper
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -39,15 +35,6 @@ type Keeper struct {
 	// LastMintTime is the previous emission's block time (unix nanos), used to
 	// prorate the fixed per-second rate across variable block times.
 	LastMintTime collections.Item[int64]
-
-	// StakeCompoundIndex is the cumulative growth factor of bonded stake from
-	// auto-compounding, scaled by 1e18. Anything storing a stake figure
-	// normalizes by it — see NormalizeStakeWeight.
-	StakeCompoundIndex collections.Item[math.Int]
-
-	// AccruedCommission is commission withheld from the emission per validator,
-	// held on this module's account until compounded into their self-delegation.
-	AccruedCommission collections.Map[[]byte, math.Int]
 }
 
 func NewKeeper(
@@ -57,7 +44,6 @@ func NewKeeper(
 	authority []byte,
 
 	bankKeeper types.BankKeeper,
-	stakingKeeper types.StakingKeeper,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -66,19 +52,14 @@ func NewKeeper(
 	sb := collections.NewSchemaBuilder(storeService)
 
 	k := Keeper{
-		storeService:  storeService,
-		cdc:           cdc,
-		addressCodec:  addressCodec,
-		authority:     authority,
-		bankKeeper:    bankKeeper,
-		stakingKeeper: stakingKeeper,
+		storeService: storeService,
+		cdc:          cdc,
+		addressCodec: addressCodec,
+		authority:    authority,
+		bankKeeper:   bankKeeper,
 
 		Params:       collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		LastMintTime: collections.NewItem(sb, types.LastMintTimeKey, "last_mint_time", collections.Int64Value),
-		StakeCompoundIndex: collections.NewItem(
-			sb, types.StakeCompoundIndexKey, "stake_compound_index", sdk.IntValue),
-		AccruedCommission: collections.NewMap(
-			sb, types.AccruedCommissionKey, "accrued_commission", collections.BytesKey, sdk.IntValue),
 	}
 
 	schema, err := sb.Build()

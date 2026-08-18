@@ -54,15 +54,6 @@ func (*stubStaking) GetValidator(_ context.Context, valAddr sdk.ValAddress) (sta
 	return stakingtypes.Validator{OperatorAddress: valAddr.String()}, nil
 }
 
-// stubEarth stands in for the tokenomics module. Returning the weight unchanged
-// is the identity normalization — what a compounding index of 1.0 produces,
-// i.e. a chain where nothing has compounded yet.
-type stubEarth struct{}
-
-func (stubEarth) NormalizeStakeWeight(_ context.Context, weight math.Int) (math.Int, error) {
-	return weight, nil
-}
-
 // stubHumans is the human stream's weight source: a set of addresses that count
 // as live registrations, each carrying the same fixed weight.
 type stubHumans struct{ registered map[string]bool }
@@ -103,7 +94,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	humans := newStubHumans()
 
 	k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac,
-		authtypes.NewModuleAddress(types.GovModuleName), bank, staking, stubEarth{})
+		authtypes.NewModuleAddress(types.GovModuleName), bank, staking)
 
 	// The same registrations the app performs from x/dex and x/personhood.
 	k.RegisterWeightSource(types.STREAM_ID_HUMAN, humans)

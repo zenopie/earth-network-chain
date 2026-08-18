@@ -16,11 +16,6 @@ service Msg {
   // UpdateParams defines a (governance) operation for updating the module
   // parameters. The authority defaults to the x/gov module account.
   rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
-
-  // CompoundCommission moves a validator's withheld commission into their own
-  // self-delegation. It is the only exit commission has, so realising it means
-  // unbonding like any other stake.
-  rpc CompoundCommission(MsgCompoundCommission) returns (MsgCompoundCommissionResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -43,31 +38,3 @@ message MsgUpdateParams {
 // MsgUpdateParamsResponse defines the response structure for executing a
 // MsgUpdateParams message.
 message MsgUpdateParamsResponse {}
-
-// MsgCompoundCommission converts a validator's withheld commission into stake in
-// their own validator.
-//
-// The emission is added to a validator's pot without issuing shares, which pays
-// an operator nothing beyond growth on their own stake, so commission is
-// withheld at mint time and parked on the module account. This is its only exit,
-// and deliberately not a withdrawal: paying it out liquid would let capital
-// route through a 100%-commission validator and turn staking yield back into
-// something claimable on demand.
-//
-// The signer is the validator operator, whose account address shares the bytes
-// of validator_address, so nobody else can move it.
-message MsgCompoundCommission {
-  option (cosmos.msg.v1.signer) = "validator_address";
-  option (amino.name) = "earth/x/earth/MsgCompoundCommission";
-
-  string validator_address = 1 [(cosmos_proto.scalar) = "cosmos.ValidatorAddressString"];
-}
-
-// MsgCompoundCommissionResponse reports what was compounded.
-message MsgCompoundCommissionResponse {
-  string amount = 1 [
-    (cosmos_proto.scalar) = "cosmos.Int",
-    (gogoproto.customtype) = "cosmossdk.io/math.Int",
-    (gogoproto.nullable) = false
-  ];
-}

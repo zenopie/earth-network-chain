@@ -12,7 +12,6 @@ import (
 
 	"github.com/earth-network/earth/x/allocation/keeper"
 	"github.com/earth-network/earth/x/allocation/types"
-	earthkeeper "github.com/earth-network/earth/x/earth/keeper"
 )
 
 var _ depinject.OnePerModuleType = AppModule{}
@@ -38,10 +37,6 @@ type ModuleInputs struct {
 	AuthKeeper    types.AuthKeeper
 	BankKeeper    types.BankKeeper
 	StakingKeeper types.StakingKeeper
-	// EarthKeeper supplies the stake compounding index that capital-stream vote
-	// weights are normalized by, so compounding does not silently reshuffle
-	// voting power.
-	EarthKeeper earthkeeper.Keeper
 }
 
 type ModuleOutputs struct {
@@ -54,7 +49,7 @@ type ModuleOutputs struct {
 }
 
 // ProvideModule builds the allocation keeper. It deliberately depends on nothing
-// but staking, bank and earth: the modules that own the two streams' behaviour
+// but staking and bank: the modules that own the two streams' behaviour
 // (x/personhood's weight source, x/dex's lp_rewards handler) register themselves
 // into this keeper from their own wiring, which is what keeps the dependency
 // graph a tree rather than a cycle.
@@ -71,7 +66,6 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		authority,
 		in.BankKeeper,
 		in.StakingKeeper,
-		in.EarthKeeper,
 	)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 

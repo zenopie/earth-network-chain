@@ -45,11 +45,3 @@ type BankKeeper interface {
 	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 }
-
-// EarthKeeper is the tokenomics surface this module needs. Capital-stream
-// weights are stored normalized by the stake compounding index, which x/earth
-// owns, so that a voter who touches their delegation is not marked to market
-// ahead of one who has not voted since the stake compounded.
-type EarthKeeper interface {
-	NormalizeStakeWeight(ctx context.Context, weight math.Int) (math.Int, error)
-}

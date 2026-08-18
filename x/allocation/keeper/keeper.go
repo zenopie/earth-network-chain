@@ -43,7 +43,6 @@ type Keeper struct {
 
 	bankKeeper    types.BankKeeper
 	stakingKeeper types.StakingKeeper
-	earthKeeper   types.EarthKeeper
 
 	// --- per-stream allocation state ---
 	Options           collections.Map[collections.Pair[uint32, uint64], types.AllocationOption]
@@ -73,7 +72,6 @@ func NewKeeper(
 
 	bankKeeper types.BankKeeper,
 	stakingKeeper types.StakingKeeper,
-	earthKeeper types.EarthKeeper,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -89,7 +87,6 @@ func NewKeeper(
 		authority:     authority,
 		bankKeeper:    bankKeeper,
 		stakingKeeper: stakingKeeper,
-		earthKeeper:   earthKeeper,
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 
@@ -156,14 +153,10 @@ func (k Keeper) weightSource(stream types.StreamId) (types.WeightSource, error) 
 	return src, nil
 }
 
-// capitalWeightSource resolves a staker's weight: their bonded stake, normalized
-// by the stake compounding index. No bond means no vote.
+// capitalWeightSource resolves a staker's weight: their bonded stake. No bond
+// means no vote.
 type capitalWeightSource struct{ k Keeper }
 
 func (s capitalWeightSource) Weight(ctx context.Context, addr []byte) (math.Int, error) {
-	bonded, err := s.k.stakingKeeper.GetDelegatorBonded(ctx, sdk.AccAddress(addr))
-	if err != nil {
-		return math.Int{}, err
-	}
-	return s.k.earthKeeper.NormalizeStakeWeight(ctx, bonded)
+	return s.k.stakingKeeper.GetDelegatorBonded(ctx, sdk.AccAddress(addr))
 }

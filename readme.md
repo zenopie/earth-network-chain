@@ -14,10 +14,24 @@ ERTH is emitted at a **fixed 4 ERTH/sec** (prorated by block time), as four inde
 
 | Pillar | Stream (1 ERTH/sec each) | Directed by | Where |
 | --- | --- | --- | --- |
-| **Investor** | Base staking → stakers | validators/delegators | `x/earth` |
+| **Investor** | Base staking → stakers | validators/delegators (standard `x/distribution`) | `x/earth` |
 | | Capital allocation stream | **plutocratic** vote (bonded stake) | `x/allocation` |
 | **Democratic** | ANML buyback-and-burn | — (protocol) | `x/personhood/keeper/abci.go` |
 | | Human allocation stream | **one-human-one-vote** (registered humans) | `x/allocation` |
+
+The **base staking** stream is the only part of issuance that touches the SDK's own
+reward machinery, and it uses it unmodified: `x/earth` mints its 1 ERTH/sec into the fee
+collector during `BeginBlock` and `x/distribution` takes it from there — split by voting
+power, validator commission withheld at each validator's configured rate, and claimed with
+the usual `MsgWithdrawDelegatorReward` / `MsgWithdrawValidatorCommission`. The only thing
+this chain changes is *how much* is minted (a fixed per-second rate instead of
+bonded-ratio inflation), never who may claim it or on what terms.
+
+**`community_tax` is 0.** The SDK default skims 2% of staking rewards into a pool
+governance then votes to spend; the two allocation streams already do that job, with their
+own dedicated 1 ERTH/sec each and a continuous vote rather than a proposal. So the base
+staking stream reaches stakers whole, and the emission table above is the complete answer
+to where ERTH goes.
 
 Both allocation streams are one engine in **`x/allocation`**, keyed by a stream id
 (`human` / `capital`). They share the options, the reward-index maths, the epoch reset
@@ -94,7 +108,7 @@ run the same engine in **`x/allocation`**:
 | Stream | Who may vote | Weight |
 | --- | --- | --- |
 | `human` | anyone with a live proof-of-personhood registration | flat, identical for every human |
-| `capital` | anyone with bonded stake | their bonded stake, normalized by the stake compounding index |
+| `capital` | anyone with bonded stake | their bonded stake |
 
 Voters set percentages (summing to 100) across that stream's *allocation options*; each
 option accrues ERTH pro-rata to the weight pointed at it, tracked with a reward index

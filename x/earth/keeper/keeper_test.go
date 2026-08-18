@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"cosmossdk.io/core/address"
-	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -13,7 +12,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/earth/keeper"
 	module "github.com/earth-network/earth/x/earth/module"
@@ -40,31 +38,6 @@ func (stubBank) SendCoinsFromModuleToAccount(context.Context, string, sdk.AccAdd
 func (stubBank) MintCoins(context.Context, string, sdk.Coins) error { return nil }
 func (stubBank) BurnCoins(context.Context, string, sdk.Coins) error { return nil }
 
-type stubStaking struct{}
-
-func (stubStaking) BondDenom(context.Context) (string, error) { return "uerth", nil }
-func (stubStaking) TotalBondedTokens(context.Context) (math.Int, error) {
-	return math.ZeroInt(), nil
-}
-func (stubStaking) GetBondedValidatorsByPower(context.Context) ([]stakingtypes.Validator, error) {
-	return nil, nil
-}
-func (stubStaking) GetValidator(context.Context, sdk.ValAddress) (stakingtypes.Validator, error) {
-	return stakingtypes.Validator{}, nil
-}
-func (stubStaking) DeleteValidatorByPowerIndex(context.Context, stakingtypes.Validator) error {
-	return nil
-}
-func (stubStaking) SetValidator(context.Context, stakingtypes.Validator) error { return nil }
-func (stubStaking) SetValidatorByPowerIndex(context.Context, stakingtypes.Validator) error {
-	return nil
-}
-func (stubStaking) Delegate(
-	context.Context, sdk.AccAddress, math.Int, stakingtypes.BondStatus, stakingtypes.Validator, bool,
-) (math.LegacyDec, error) {
-	return math.LegacyZeroDec(), nil
-}
-
 func initFixture(t *testing.T) *fixture {
 	t.Helper()
 
@@ -83,7 +56,6 @@ func initFixture(t *testing.T) *fixture {
 		addressCodec,
 		authority,
 		stubBank{},
-		stubStaking{},
 	)
 
 	// Initialize params

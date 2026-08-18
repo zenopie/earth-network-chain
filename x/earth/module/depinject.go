@@ -8,7 +8,6 @@ import (
 	"cosmossdk.io/depinject/appconfig"
 	"github.com/cosmos/cosmos-sdk/codec"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/earth/keeper"
 	"github.com/earth-network/earth/x/earth/types"
@@ -34,9 +33,8 @@ type ModuleInputs struct {
 	Cdc          codec.Codec
 	AddressCodec address.Codec
 
-	AuthKeeper    types.AuthKeeper
-	BankKeeper    types.BankKeeper
-	StakingKeeper types.StakingKeeper
+	AuthKeeper types.AuthKeeper
+	BankKeeper types.BankKeeper
 }
 
 type ModuleOutputs struct {
@@ -44,9 +42,6 @@ type ModuleOutputs struct {
 
 	EarthKeeper keeper.Keeper
 	Module      appmodule.AppModule
-	// Hooks keep withheld commission in step with the stake that earned it —
-	// slashed alongside it, and destroyed if the validator record goes away.
-	Hooks stakingtypes.StakingHooksWrapper
 }
 
 func ProvideModule(in ModuleInputs) ModuleOutputs {
@@ -61,13 +56,11 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.AddressCodec,
 		authority,
 		in.BankKeeper,
-		in.StakingKeeper,
 	)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 
 	return ModuleOutputs{
 		EarthKeeper: k,
 		Module:      m,
-		Hooks:       stakingtypes.StakingHooksWrapper{StakingHooks: k.Hooks()},
 	}
 }

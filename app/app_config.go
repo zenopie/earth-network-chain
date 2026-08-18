@@ -97,9 +97,10 @@ var (
 		// reward, and burns the ANML it buys back.
 		{Account: allocationmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: personhoodmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
-		// x/earth owns issuance: it mints the emission, holds withheld commission,
-		// and burns gas fees. Without these permissions MintCoins panics.
-		{Account: earthmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}}}
+		// x/earth owns issuance: it mints the emission on its way to the fee
+		// collector, and burns gas fees. Without these permissions MintCoins panics.
+		// It needs no Staking permission — it never touches the staking pools.
+		{Account: earthmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}}}
 
 	// blocked account addresses
 	blockAccAddrs = []string{

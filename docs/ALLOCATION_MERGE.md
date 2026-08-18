@@ -32,9 +32,8 @@ type WeightSource interface {
 ```
 
 `x/personhood` registers the human source (live registration → `HumanVoterWeight`);
-the capital source is internal to `x/allocation` (`GetDelegatorBonded` →
-`NormalizeStakeWeight`), since that module already holds the staking hooks and
-both halves of the calculation.
+the capital source is internal to `x/allocation` (`GetDelegatorBonded`), since
+that module already holds the staking hooks that keep the weight in sync.
 
 `x/deflation` is gone. Its `lp_rewards` integrated handler is registered by
 `x/dex`, and `registration_rewards` by `x/personhood`.
@@ -43,7 +42,7 @@ both halves of the calculation.
 
 The registries (`RegisterWeightSource`, `RegisterIntegratedHandler`) are maps on
 the keeper, populated from other modules' wiring. That is what keeps the graph a
-tree: `x/allocation` depends on staking, bank and `x/earth` and nothing else;
+tree: `x/allocation` depends on staking and bank and nothing else;
 `x/dex` and `x/personhood` reach *into* it. A keeper-to-keeper dependency in both
 directions would deadlock depinject.
 
@@ -59,9 +58,8 @@ allocation keeper.
   expiry sweep clears a lapsed human's vote from BeginBlock, unwinding their
   split one option at a time with nobody paying gas — multiplied by the sweep
   limit in a single block.
-- **The human stream's weight is flat.** It must not be normalized by the stake
-  compound index. Normalization lives in the capital weight source and the
-  staking hooks, never in the shared engine.
+- **The human stream's weight is flat.** Bonded stake belongs to the capital
+  weight source and the staking hooks, never to the shared engine.
 - **Option ids are per stream.** `RegistrationRewardOptionID` and
   `LPRewardsOptionID` are both 1; under one module they would collide if ids were
   global.

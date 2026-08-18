@@ -44,9 +44,9 @@ func (stubDexKeeper) SwapExactIn(context.Context, sdk.AccAddress, sdk.Coin, stri
 	return sdk.Coin{}, nil
 }
 
-// stubStaking and stubEarth feed the allocation keeper's capital stream, which
-// these tests never touch — the human stream's weight comes from the personhood
-// keeper registered as its source below.
+// stubStaking feeds the allocation keeper's capital stream, which these tests
+// never touch — the human stream's weight comes from the personhood keeper
+// registered as its source below.
 type stubStaking struct{}
 
 func (stubStaking) BondDenom(context.Context) (string, error) { return "uerth", nil }
@@ -58,12 +58,6 @@ func (stubStaking) GetDelegation(context.Context, sdk.AccAddress, sdk.ValAddress
 }
 func (stubStaking) GetValidator(context.Context, sdk.ValAddress) (stakingtypes.Validator, error) {
 	return stakingtypes.Validator{}, nil
-}
-
-type stubEarth struct{}
-
-func (stubEarth) NormalizeStakeWeight(_ context.Context, weight math.Int) (math.Int, error) {
-	return weight, nil
 }
 
 func initFixture(t *testing.T) *fixture {
@@ -94,7 +88,6 @@ func initFixture(t *testing.T) *fixture {
 		authority,
 		nil,
 		stubStaking{},
-		stubEarth{},
 	)
 
 	k := keeper.NewKeeper(

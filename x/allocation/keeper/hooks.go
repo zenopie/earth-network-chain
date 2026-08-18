@@ -54,15 +54,6 @@ func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, re
 		weight = math.ZeroInt()
 	}
 
-	// The stream stores normalized units. Doing the conversion here rather than
-	// leaving live tokens in state is what keeps a voter who touches their
-	// delegation on the same footing as one who has not voted since before the
-	// stake compounded.
-	weight, err = k.earthKeeper.NormalizeStakeWeight(ctx, weight)
-	if err != nil {
-		return err
-	}
-
 	return k.resyncVoter(ctx, types.STREAM_ID_CAPITAL, addrBz, voter.Percentages, weight)
 }
 

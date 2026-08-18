@@ -28,7 +28,7 @@ const (
 //
 //	individual         (human,   individual)  x/personhood  ANML buyback-and-burn
 //	collective human   (human,   collective)  x/allocation  human stream, one-human-one-vote
-//	investor           (capital, individual)  x/earth       compounded into bonded stake
+//	investor           (capital, individual)  x/earth       staking rewards via x/distribution
 //	collective capital (capital, collective)  x/allocation  capital stream, stake-weighted
 //
 // The rates live here rather than in each pillar so this file is the single
@@ -49,29 +49,13 @@ const (
 var ParamsKey = collections.NewPrefix("p_earth")
 
 // Tokenomics state. This module owns the creation and destruction of ERTH: the
-// investor pillar's emission into bonded stake, the commission withheld from it,
-// and the burning of gas fees.
+// investor pillar's emission into the fee collector, and the burning of gas
+// fees. What happens to the emission after that — the power-weighted split,
+// commission, the community tax, unclaimed reward accounting — is x/distribution
+// working exactly as it does on any other chain, and needs no state here.
 var (
 	// LastMintTimeKey is the block time (unix nanoseconds) of the previous
 	// emission, used to prorate the fixed per-second rate across variable block
 	// times.
 	LastMintTimeKey = collections.NewPrefix("last_mint_time")
-
-	// StakeCompoundIndexKey is the cumulative growth factor of bonded stake from
-	// auto-compounding (Int, scaled by 1e18, starting at 1e18 = 1.0).
-	//
-	// Compounding grows every delegator's stake with no delegation event to
-	// observe, so anything that stores a stake figure goes stale. Consumers
-	// normalize by this index to keep every record on the same units — without it
-	// the allocation stream hands free voting weight to whoever touches a
-	// delegation first.
-	StakeCompoundIndexKey = collections.NewPrefix("stake_compound_index")
-
-	// AccruedCommissionKey is per-validator commission withheld from the emission
-	// and awaiting compounding (valoper bytes -> Int).
-	//
-	// Commission must be withheld at mint time: once the remainder is added to a
-	// validator's pot share-free it belongs to the delegators proportionally, and
-	// there is nothing left to reclaim.
-	AccruedCommissionKey = collections.NewPrefix("accrued_commission")
 )

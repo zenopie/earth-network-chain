@@ -139,9 +139,10 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 // EndBlock burns the transaction fees collected this block, making gas
 // deflationary instead of paying it to validators.
 //
-// By EndBlock the fee collector holds only this block's gas: the emission never
-// passes through it (x/earth compounds it straight into bonded stake), and
-// x/distribution has no inflow left to sweep.
+// By EndBlock the fee collector holds only this block's gas. The emission also
+// passes through the fee collector, but it is minted in BeginBlock and swept by
+// x/distribution in the same BeginBlock (mint runs before distribution), so what
+// is left here is exactly the fees of the transactions that just executed.
 func (am AppModule) EndBlock(ctx context.Context) error {
 	return am.keeper.BurnCollectedFees(ctx)
 }
