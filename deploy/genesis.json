@@ -1,6 +1,10 @@
 {
-  "app_hash": null,
   "app_name": "earthd",
+  "app_version": "0.0.1-5b5d77d3",
+  "genesis_time": "2026-08-16T15:56:41.808823Z",
+  "chain_id": "earth",
+  "initial_height": 1,
+  "app_hash": null,
   "app_state": {
     "06-solomachine": null,
     "07-tendermint": null,
@@ -10,42 +14,62 @@
       }
     },
     "auth": {
+      "params": {
+        "max_memo_characters": "256",
+        "tx_sig_limit": "7",
+        "tx_size_cost_per_byte": "10",
+        "sig_verify_cost_ed25519": "590",
+        "sig_verify_cost_secp256k1": "1000"
+      },
       "accounts": [
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "account_number": "0",
           "address": "earth1c9pthe4a5ngylhm5mjem6y5tt0sz65yqdngthx",
           "pub_key": null,
+          "account_number": "0",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
+          "pub_key": null,
+          "account_number": "1",
           "sequence": "0"
         }
-      ],
-      "params": {
-        "max_memo_characters": "256",
-        "sig_verify_cost_ed25519": "590",
-        "sig_verify_cost_secp256k1": "1000",
-        "tx_sig_limit": "7",
-        "tx_size_cost_per_byte": "10"
-      }
+      ]
     },
     "authz": {
       "authorization": []
     },
     "bank": {
+      "params": {
+        "send_enabled": [],
+        "default_send_enabled": true
+      },
       "balances": [
+        {
+          "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
+          "coins": [
+            {
+              "denom": "uerth",
+              "amount": "10000000000"
+            }
+          ]
+        },
         {
           "address": "earth1n58mly6f7er0zs6swtetqgfqs36jaarqqsddqt",
           "coins": [
             {
-              "amount": "4291506029356",
-              "denom": "dexlp/1"
+              "denom": "dexlp/1",
+              "amount": "4291506029356"
             },
             {
-              "amount": "7300000000",
-              "denom": "uanml"
+              "denom": "uanml",
+              "amount": "7300000000"
             },
             {
-              "amount": "2522880000000000",
-              "denom": "uerth"
+              "denom": "uerth",
+              "amount": "2522880000000000"
             }
           ]
         },
@@ -53,32 +77,28 @@
           "address": "earth1c9pthe4a5ngylhm5mjem6y5tt0sz65yqdngthx",
           "coins": [
             {
-              "amount": "100000000000",
-              "denom": "uerth"
+              "denom": "uerth",
+              "amount": "100000000000"
             }
           ]
         }
       ],
-      "denom_metadata": [],
-      "params": {
-        "default_send_enabled": true,
-        "send_enabled": []
-      },
-      "send_enabled": [],
       "supply": [
         {
-          "amount": "4291506029356",
-          "denom": "dexlp/1"
+          "denom": "dexlp/1",
+          "amount": "4291506029356"
         },
         {
-          "amount": "7300000000",
-          "denom": "uanml"
+          "denom": "uanml",
+          "amount": "7300000000"
         },
         {
-          "amount": "2522980000000000",
-          "denom": "uerth"
+          "denom": "uerth",
+          "amount": "2522990000000000"
         }
-      ]
+      ],
+      "denom_metadata": [],
+      "send_enabled": []
     },
     "circuit": {
       "account_permissions": [],
@@ -1990,20 +2010,15 @@
     "upgrade": {},
     "vesting": {}
   },
-  "app_version": "0.0.1-5b5d77d3",
-  "chain_id": "earth",
   "consensus": {
     "params": {
-      "abci": {
-        "vote_extensions_enable_height": "0"
-      },
       "block": {
         "max_bytes": "22020096",
         "max_gas": "-1"
       },
       "evidence": {
-        "max_age_duration": "172800000000000",
         "max_age_num_blocks": "100000",
+        "max_age_duration": "172800000000000",
         "max_bytes": "1048576"
       },
       "validator": {
@@ -2013,9 +2028,10 @@
       },
       "version": {
         "app": "0"
+      },
+      "abci": {
+        "vote_extensions_enable_height": "0"
       }
     }
-  },
-  "genesis_time": "2026-08-16T15:56:41.808823Z",
-  "initial_height": 1
+  }
 }
