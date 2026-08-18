@@ -1,4 +1,7 @@
-# Dockerfile — single-validator earth node for SecretVM.
+# Dockerfile — single-validator earth node.
+#
+# Runs under docker-compose (plain Docker host or SecretVM) and on Akash;
+# both use the same entrypoint.
 #
 # Two stages: build earthd, then ship it on a slim base. The runtime carries no
 # Go toolchain, no Ignite and no source.
@@ -63,7 +66,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=build /out/earthd /usr/local/bin/earthd
 COPY deploy/genesis.json /etc/earth/genesis.json
-COPY deploy/secretvm/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Node home. Mount a volume here — without one, every redeploy is a brand new

@@ -1,18 +1,23 @@
-# SecretVM deployment — single-validator earth node
+# Container deployment — single-validator earth node
+
+The image and the entrypoint here are the deployment. `docker-compose.yaml` runs
+them on a plain Docker host or on SecretVM; `deploy/akash/` runs the same image
+on Akash and shares this entrypoint. Anything below that is not about compose
+specifically applies to both.
 
 Mirrors `earth-network-backend`: pushing a `v*.*.*` tag has CI build the image,
 push it to `ghcr.io/zenopie/earth-network-chain` and rewrite
-`docker-compose-secretvm.yaml` with the pinned digest. Tags only — a plain push
+`docker-compose.yaml` with the pinned digest. Tags only — a plain push
 to `master` builds nothing.
 
-**`docker-compose-secretvm.yaml` is generated**, so edit the heredoc in the
+**`docker-compose.yaml` is generated**, so edit the heredoc in the
 workflow rather than the file — anything written directly into it is overwritten
 by the next build.
 
-    Dockerfile                              builds earthd, carries Ignite + source
-    deploy/secretvm/entrypoint.sh           first-boot genesis, then earthd start
-    docker-compose-secretvm.yaml            the deployed unit
-    .github/workflows/docker-build-secretvm.yml
+    Dockerfile                          builds earthd on a slim runtime
+    deploy/docker/entrypoint.sh         first-boot genesis, then earthd start
+    docker-compose.yaml                 the deployed unit
+    .github/workflows/docker-build.yml  builds and pins the digest
 
 ## Ports
 

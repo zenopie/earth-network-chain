@@ -2,7 +2,7 @@
 # Workflow URL: https://github.com/zenopie/earth-network-chain/actions/runs/31958336654
 # Commit: https://github.com/zenopie/earth-network-chain/commit/50622beb7c2a32e65dca15cd30fb4f3f2def1233
 # Dockerfile Path: Dockerfile
-# Docker Compose Location: ./docker-compose-secretvm.yaml
+# Docker Compose Location: ./docker-compose.yaml
 version: '3'
 services:
   app:

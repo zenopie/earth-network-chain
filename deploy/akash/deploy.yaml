@@ -1,8 +1,8 @@
 ---
 # Akash SDL — single-validator earth devnet.
 #
-# Same image and the same entrypoint as the SecretVM deployment; only the
-# hosting primitives differ. Deploy with:
+# Same image and the same entrypoint as the docker-compose deployment; only
+# the hosting primitives differ. Deploy with:
 #
 #     provider-services tx deployment create deploy/akash/deploy.yaml --from <key>
 #
@@ -20,12 +20,12 @@ services:
     #     image: ghcr.io/zenopie/earth-network-chain@sha256:<digest>
     #
     # CI builds and pushes only on `v[0-9]+.[0-9]+.[0-9]+` tags. The digest for
-    # a release is written into docker-compose-secretvm.yaml by that same
+    # a release is written into docker-compose.yaml by that same
     # workflow, so it can be copied from there.
     image: ghcr.io/zenopie/earth-network-chain:v0.0.8
 
     env:
-      # Read by deploy/secretvm/entrypoint.sh on first boot.
+      # Read by deploy/docker/entrypoint.sh on first boot.
       - CHAIN_ID=earth
       - MONIKER=earth-akash-devnet
       # Zero-fee transactions. Devnet posture — see README.

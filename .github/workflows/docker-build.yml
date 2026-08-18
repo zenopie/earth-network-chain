@@ -52,18 +52,18 @@ jobs:
           MANIFEST_DIGEST=$(docker inspect ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:latest --format='{{index .RepoDigests 0}}' | cut -d'@' -f2 | cut -d':' -f2)
           echo "IMAGE_HASH=${MANIFEST_DIGEST}" >> $GITHUB_OUTPUT          
 
-      - name: Generate docker-compose-secretvm.yaml
+      - name: Generate docker-compose.yaml
         run: |
           # Determine the directory where the Dockerfile is located
           DOCKERFILE_DIR="."
           
           # Create the docker-compose file in the same directory as the Dockerfile
-          cat > $DOCKERFILE_DIR/docker-compose-secretvm.yaml << EOL
+          cat > $DOCKERFILE_DIR/docker-compose.yaml << EOL
           # Release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.get_version.outputs.VERSION }}
           # Workflow URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           # Commit: https://github.com/${{ github.repository }}/commit/${{ github.sha }}
           # Dockerfile Path: Dockerfile
-          # Docker Compose Location: $DOCKERFILE_DIR/docker-compose-secretvm.yaml
+          # Docker Compose Location: $DOCKERFILE_DIR/docker-compose.yaml
           version: '3'
           services:
             app:
@@ -86,7 +86,7 @@ jobs:
             earth-data:
           EOL
 
-      - name: Commit docker-compose-secretvm.yaml
+      - name: Commit docker-compose.yaml
         run: |
           # Fetch all branches
           git fetch origin
@@ -106,11 +106,11 @@ jobs:
           DOCKERFILE_DIR="."
           
           # Add and commit changes
-          git add $DOCKERFILE_DIR/docker-compose-secretvm.yaml
+          git add $DOCKERFILE_DIR/docker-compose.yaml
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Update docker-compose-secretvm.yaml for version ${{ steps.get_version.outputs.VERSION }}"
+            git commit -m "Update docker-compose.yaml for version ${{ steps.get_version.outputs.VERSION }}"
             git push origin $BRANCH_NAME
           fi
 

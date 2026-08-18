@@ -1,10 +1,10 @@
 # Akash deployment — single-validator earth devnet
 
-Same image and the same `deploy/secretvm/entrypoint.sh` as the SecretVM
+Same image and the same `deploy/docker/entrypoint.sh` as the docker-compose
 deployment; only the hosting primitives differ. `deploy.yaml` is the SDL.
 
     deploy/akash/deploy.yaml        the deployed unit
-    deploy/secretvm/entrypoint.sh   first-boot genesis, then earthd start
+    deploy/docker/entrypoint.sh   first-boot genesis, then earthd start
     deploy/genesis.json             the chain state genesis carries
     Dockerfile                      builds earthd
 
@@ -19,7 +19,7 @@ tax. Deploying `v0.0.7` gets you that chain, not this one.
     git tag v0.0.8 && git push origin v0.0.8
 
 Then pin the digest rather than the tag. The workflow writes it into
-`docker-compose-secretvm.yaml`; copy it across:
+`docker-compose.yaml`; copy it across:
 
     image: ghcr.io/zenopie/earth-network-chain@sha256:<digest>
 
@@ -71,8 +71,8 @@ does not survive `deployment close`. When the lease ends the volume goes with
 it, and the next deploy is not a restart — it is a different chain, with a new
 genesis, a new validator key, and every address the apps knew about gone.
 
-This is the same failure the SecretVM notes describe for a missing volume, with
-a different trigger. The entrypoint tells the two cases apart purely by whether
+This is the same failure `deploy/docker/README.md` describes for a missing
+volume, with a different trigger. The entrypoint tells the two cases apart purely by whether
 `/data/config/genesis.json` is there.
 
 `count: 1` matters for the same reason. A second replica is not a second node on
