@@ -13,15 +13,30 @@ func (k Keeper) erthDenom(ctx context.Context) (string, error) {
 	return k.dexKeeper.HubDenom(ctx)
 }
 
-// payRegistrationReward draws on the human stream's registration-rewards option
-// and pays it out on a new registration: 50% registree / 50% referrer (100%
-// registree if there is no referrer). Returns the amount paid to the registree.
+// payRegistrationReward draws on the stream's registration-rewards option and
+// pays it out on a new registration: half to the registree, half to the
+// referrer. Returns the amount paid to the registree.
+//
+// With no referrer, only the registree's half is DRAWN — the other half stays
+// in the option's accrued pool rather than being minted. The registree is paid
+// the same amount either way, which is the whole point: naming a referrer must
+// never cost the person naming them. Paying the unmatched half to the registree
+// instead (the previous behaviour) made being referred halve your own reward,
+// so the rational move was to never name anyone.
 //
 // Only a fixed fraction (RegistrationRewardBps) of the stacked pool is paid, so
 // each reward is normalized to the pool size and the pool decays gradually
 // rather than being fully drained by whoever happens to register next.
 func (k Keeper) payRegistrationReward(ctx context.Context, registree, referrer sdk.AccAddress) (math.Int, error) {
-	payout, err := k.allocationKeeper.DrawFromOption(ctx, types.AllocationStream, types.RegistrationRewardOptionID, types.RegistrationRewardBps)
+	// Halving the draw, rather than drawing in full and returning the remainder,
+	// is what keeps the unmatched half in the pool: the option has no deposit
+	// path, so anything drawn cannot be put back.
+	drawBps := int64(types.RegistrationRewardBps)
+	if referrer == nil {
+		drawBps = types.RegistrationRewardBps / 2
+	}
+
+	payout, err := k.allocationKeeper.DrawFromOption(ctx, types.AllocationStream, types.RegistrationRewardOptionID, drawBps)
 	if err != nil {
 		return math.ZeroInt(), err
 	}
