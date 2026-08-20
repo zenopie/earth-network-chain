@@ -35,9 +35,18 @@ services:
       - VALIDATOR_COINS=1000000000000uerth
       - VALIDATOR_BONDED=100000000uerth
       #
-      # VALIDATOR_MNEMONIC is deliberately unset. Everything in this file is
-      # sent to the provider hosting the lease. With it unset the entrypoint
-      # generates a key and prints the mnemonic once into the container log.
+      # VALIDATOR_MNEMONIC is NOT in this file, but it is no longer unset: it is
+      # injected into the submitted copy from the gitignored .env, like
+      # TUNNEL_TOKEN. Everything submitted still reaches the provider, so the
+      # devnet validator key is exposed to whoever hosts the lease. That is a
+      # deliberate trade, made on 2026-08-19: with it unset the entrypoint
+      # generates a key and prints the mnemonic once into a container log the
+      # Console API cannot read, which means nobody can fund a test wallet or
+      # seed a DEX pool, because only the validator holds coins at genesis.
+      #
+      # It can only be chosen at genesis. Setting it on an existing chain does
+      # nothing — the entrypoint skips key creation once /data/config/genesis.json
+      # exists — so changing your mind costs another wipe.
       #
       # Remote consensus signer. The node stops holding its own consensus key
       # and asks tmkms for every signature instead — see REMOTE_SIGNER.md.
