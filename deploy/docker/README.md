@@ -77,7 +77,27 @@ throwaway devnet. It is deliberately not set in the SDL or the compose file. It
 also rewrites the genesis, so a devnet's genesis can never be mistaken for the
 release: the hash no longer matches.
 
-Two flags are now off unless asked for:
+## Browser access
+
+The two surfaces behave differently and only one can be scoped.
+
+| | port | setting | granularity |
+| --- | --- | --- | --- |
+| RPC | 26657 | `RPC_CORS_ORIGINS=https://a,https://b` | an allowlist |
+| LCD | 1317 | `API_UNSAFE_CORS=1` | `*` or nothing — all the SDK offers |
+
+**`RPC_CORS_ORIGINS` closes a gap that has always been open.** CometBFT ships
+`cors_allowed_origins = []`, so a browser could never reach the RPC
+cross-origin — confirmed against the live devnet, which returns no CORS headers
+there from the node or from Cloudflare. CosmJS talks to the RPC, so anything the
+page does itself was blocked. Keplr masks it: signing is in the extension and
+`keplr.sendTx` broadcasts from its background context, neither subject to page
+CORS.
+
+It is re-applied on every start, so an origin can be added or removed with a
+restart rather than a volume wipe.
+
+Two flags are off unless asked for:
 
 - **`API_UNSAFE_CORS=1`** — any origin may read the LCD *and broadcast through
   it*. Fine on a public read-only node, wrong on a block producer.

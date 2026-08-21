@@ -30,10 +30,23 @@ CHAIN_ID="${CHAIN_ID:-earth-1}"
 MONIKER="${MONIKER:-earth-node}"
 MIN_GAS_PRICES="${MIN_GAS_PRICES:-0uerth}"
 
-# Open CORS lets any origin read the LCD *and broadcast through it*. That belongs
-# on a public read-only node, not on something producing blocks, so it is off
-# unless asked for. The wallet apps need it wherever they point; point them at an
-# LCD node rather than at a validator.
+# Browser access, which the two RPC surfaces handle very differently.
+#
+# RPC_CORS_ORIGINS is a comma-separated allowlist for the CometBFT RPC (26657):
+#
+#   RPC_CORS_ORIGINS=https://app.erth.network,https://wallet.erth.network
+#
+# This is the one that matters for a CosmJS app. StargateClient talks to the RPC,
+# not the LCD, and the RPC ships with cors_allowed_origins = [] — so a browser has
+# never been able to reach it cross-origin, on any deployment of this chain. Use
+# "*" only if you mean it.
+RPC_CORS_ORIGINS="${RPC_CORS_ORIGINS:-}"
+#
+# API_UNSAFE_CORS opens the LCD (1317) to *any* origin. It is all-or-nothing
+# because that is all the SDK offers — server/config has a bool and no allowlist —
+# which is why it keeps the "unsafe" in its name. Prefer scoping the RPC above and
+# pointing browsers there; reach for this only when something genuinely needs the
+# REST surface from a page.
 API_UNSAFE_CORS="${API_UNSAFE_CORS:-0}"
 
 # Where the release genesis and its hash live in the image. Overridable only so
@@ -154,6 +167,24 @@ if [ -n "${PRIV_VALIDATOR_LADDR:-}" ]; then
   sed_inplace "s|^priv_validator_laddr = .*|priv_validator_laddr = \"$PRIV_VALIDATOR_LADDR\"|" \
     "$EARTH_HOME/config/config.toml"
   say "remote signer expected at $PRIV_VALIDATOR_LADDR"
+fi
+
+# RPC CORS. Applied on every start, not just first boot: config.toml lives in the
+# volume, so an origin can be added or removed with a restart instead of a wipe.
+if [ -n "$RPC_CORS_ORIGINS" ]; then
+  # ["https://a", "https://b"] — a TOML array of quoted strings.
+  RPC_CORS_TOML="$(printf '%s' "$RPC_CORS_ORIGINS" | awk -F, '{
+    out = ""
+    for (i = 1; i <= NF; i++) {
+      gsub(/^[ \t]+|[ \t]+$/, "", $i)
+      if ($i == "") continue
+      out = out (out == "" ? "" : ", ") "\"" $i "\""
+    }
+    print "[" out "]"
+  }')"
+  sed_inplace "s|^cors_allowed_origins = .*|cors_allowed_origins = $RPC_CORS_TOML|" \
+    "$EARTH_HOME/config/config.toml"
+  say "rpc cors_allowed_origins = $RPC_CORS_TOML"
 fi
 
 # Bind to every interface. The defaults listen on loopback, which inside a

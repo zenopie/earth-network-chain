@@ -120,10 +120,31 @@ file confirms the shape: one account, `"gen_txs": []`.
 - [ ] **Publish seeds.** At least one seed node's `nodeid@host:26656`, in the
       README and in the release notes.
 - [x] **Turn off `--api.enabled-unsafe-cors`** for validator nodes. Now
-      `API_UNSAFE_CORS`, defaulting to off, logging a warning when enabled, and
-      not set in the SDL or the compose file. **Consequence to plan for:** the
-      wallet apps talk to the LCD from a browser, so they need either a public
-      LCD node or the flag turned on deliberately wherever they point.
+      `API_UNSAFE_CORS`, off by default and logging a warning when on.
+
+      Measured against the live devnet rather than assumed, which changed the
+      answer twice. The LCD returns `access-control-allow-origin: *` to any
+      origin, from the node's own flag. The RPC returns **no CORS headers at
+      all** — not from the node (`cors_allowed_origins = []`) and not from
+      Cloudflare, which adds none anywhere. So a browser has never been able to
+      reach the RPC cross-origin on any deployment of this chain, and the web
+      app's page-level traffic must be going to the LCD.
+
+      Keplr hides part of that: signing is in the extension and `keplr.sendTx`
+      broadcasts from its background context, neither subject to page CORS.
+      Anything the page does itself — a `StargateClient` query, a
+      `SigningStargateClient` broadcast — is.
+
+      New `RPC_CORS_ORIGINS` takes a comma-separated allowlist and writes
+      `cors_allowed_origins` into `config.toml`, re-applied on every start so an
+      origin can change without wiping the volume. The SDL sets it to
+      `https://erth.network`. The LCD stays all-or-nothing because that is all
+      the SDK offers — `server/config` has a bool and no allowlist.
+- [ ] **Split the browser-facing LCD off the block producer.** One node is
+      currently both, so `API_UNSAFE_CORS=1` (literally `*`) sits on a validator.
+      Two ways out and they compose: run a separate read-only LCD/RPC service, and
+      scope the header at Cloudflare, which already terminates both hostnames and
+      can rewrite it per origin.
 - [ ] **Set snapshot and pruning defaults** so a new node can state-sync instead
       of replaying from genesis: `snapshot-interval`, `snapshot-keep-recent`, and
       a documented `pruning` profile per node role (validator, archive, public

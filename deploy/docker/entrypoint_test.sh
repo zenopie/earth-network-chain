@@ -33,7 +33,7 @@ case "$1" in
   init)
     home=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--home" ] && j=$((i+1)) && home="${!j}"; done
     mkdir -p "$home/config"
-    printf 'priv_validator_laddr = ""\n' > "$home/config/config.toml"
+    printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$home/config/config.toml"
     printf '{"stock":true}\n' > "$home/config/genesis.json"
     ;;
   start) echo "STARTED $*" >> "$EARTHD_LOG" ;;
@@ -145,6 +145,47 @@ if run "$H" API_UNSAFE_CORS=1; then
     && ok "cors: warns when enabled" || bad "cors: enabled silently" ""
 else
   bad "cors: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# ── 6. RPC CORS allowlist ──────────────────────────────────────────────────
+#
+# The gap this closes: CosmJS talks to the RPC, not the LCD, and the RPC ships
+# with cors_allowed_origins = [] — so a browser has never been able to reach it.
+# Confirmed against the live devnet: rpc.erth.network returns no CORS headers at
+# all, from the node or from Cloudflare.
+H="$WORK/rpccors"; mkdir -p "$H"
+if run "$H" RPC_CORS_ORIGINS="https://app.erth.network, https://wallet.erth.network"; then
+  want='cors_allowed_origins = ["https://app.erth.network", "https://wallet.erth.network"]'
+  got="$(grep '^cors_allowed_origins' "$H/config/config.toml" || true)"
+  [ "$got" = "$want" ] \
+    && ok "rpc cors: writes a scoped allowlist, trimming whitespace" \
+    || bad "rpc cors: wrong TOML" "want: $want
+     got:  $got"
+else
+  bad "rpc cors: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# Unset must leave the default alone — an accidental "*" here is the whole
+# problem this is meant to avoid.
+H="$WORK/rpccors-off"; mkdir -p "$H"
+if run "$H"; then
+  grep -q '^cors_allowed_origins = \[\]$' "$H/config/config.toml" \
+    && ok "rpc cors: closed unless asked for" \
+    || bad "rpc cors: default changed" "$(grep '^cors_allowed_origins' "$H/config/config.toml")"
+else
+  bad "rpc cors off: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# It is applied on restart too, so an origin can be changed without a wipe.
+H="$WORK/rpccors-resume"; mkdir -p "$H/config"
+printf '{"mine":true}\n' > "$H/config/genesis.json"
+printf 'priv_validator_laddr = ""\ncors_allowed_origins = ["https://old.example"]\n' > "$H/config/config.toml"
+if run "$H" RPC_CORS_ORIGINS="https://new.example"; then
+  grep -q 'cors_allowed_origins = \["https://new.example"\]' "$H/config/config.toml" \
+    && ok "rpc cors: re-applied on an existing volume" \
+    || bad "rpc cors: stale on restart" "$(grep '^cors_allowed_origins' "$H/config/config.toml")"
+else
+  bad "rpc cors resume: entrypoint exited non-zero" "$(tail -3 "$LOG")"
 fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"

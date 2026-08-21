@@ -42,13 +42,31 @@ services:
       # a validator set.
       #
       # Deliberately NOT set here. This file describes a node on a network, not a
-      # chain of its own, and a devnet is one uncomment away when wanted:
+      # chain of its own; a devnet is one uncomment away when wanted:
       #
       #   - DEV_INIT=1
-      #   - API_UNSAFE_CORS=1       # any origin may read AND broadcast
       #
-      # Turn both on together — a devnet the wallet apps talk to needs the second
-      # as much as the first. Neither belongs on a validator.
+      # ---- browser access -------------------------------------------------
+      #
+      # Measured against this deployment on 2026-08-20: the LCD answers every
+      # origin with `access-control-allow-origin: *`, and the RPC answers with no
+      # CORS headers at all — not from the node (cors_allowed_origins = []) and
+      # not from Cloudflare, which adds none. So the web app's page-level traffic
+      # has been going to the LCD, and a browser has never been able to reach the
+      # RPC cross-origin on any deployment of this chain.
+      #
+      # Keplr hides part of that: signing happens in the extension and
+      # keplr.sendTx broadcasts from its background context, neither of which is
+      # subject to page CORS. Anything the page does itself — a StargateClient
+      # query, a SigningStargateClient broadcast — is.
+      - RPC_CORS_ORIGINS=https://erth.network
+      #
+      # The LCD is all-or-nothing: the SDK's API server has a bool and no
+      # allowlist, so this is literally `*`. Scoping it belongs at Cloudflare,
+      # which already terminates both hostnames and can rewrite the header per
+      # origin. At launch the browser-facing LCD should be a separate service
+      # from the block producer; while one node is both, this is the trade.
+      - API_UNSAFE_CORS=1
       #
       # Both ignored unless DEV_INIT=1 — the join path creates no accounts.
       - VALIDATOR_COINS=1000000000000uerth
