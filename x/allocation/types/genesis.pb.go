@@ -105,9 +105,12 @@ type StreamState struct {
 	// voter's record is only counted against the current epoch, so carrying this
 	// is what stops a stale vote being subtracted twice after an import.
 	Epoch uint64 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	// last_upkeep is when the index last advanced, in unix nanoseconds. Zero is
-	// "start here" — see last_buyback in the personhood genesis for the same
-	// reasoning about restoring a clock onto a chain that has been running.
+	// last_upkeep is when the index last advanced, in unix nanoseconds.
+	//
+	// Always exported as ZERO, for the reason spelled out on last_buyback in the
+	// personhood genesis: the index advances by elapsed wall-clock time, a chain
+	// restarted from an export did not run during the gap, and carrying the old
+	// timestamp would advance the index by the whole downtime in one block.
 	LastUpkeep int64 `protobuf:"varint,5,opt,name=last_upkeep,json=lastUpkeep,proto3" json:"last_upkeep,omitempty"`
 	// option_seq is the highest option id handed out. It must not go backwards on
 	// an import or a new option would reuse a retired id.

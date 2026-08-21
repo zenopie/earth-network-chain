@@ -64,10 +64,10 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return nil, err
 	}
 
-	genesis.LastBuyback, err = k.LastBuyback.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
+	// Deliberately not carried: see last_buyback in genesis.proto. The buyback
+	// mints for elapsed wall-clock time, and a chain restarted from this file did
+	// not run during the gap.
+	genesis.LastBuyback = 0
 
 	if err := k.Registrations.Walk(ctx, nil, func(_ []byte, reg types.Registration) (bool, error) {
 		genesis.Registrations = append(genesis.Registrations, reg)

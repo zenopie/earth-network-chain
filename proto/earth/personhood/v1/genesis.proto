@@ -30,10 +30,18 @@ message GenesisState {
   // subject-DN index from the certificates.
   repeated Registration registrations = 2 [(gogoproto.nullable) = false];
 
-  // last_buyback is the ANML buyback-and-burn clock, in unix nanoseconds. Zero
-  // means "start the clock at the next block", which is what a fresh chain
-  // wants and what an import must not silently choose for itself: restoring
-  // zero on a chain that has been running would pay out the whole elapsed gap
-  // in one block.
+  // last_buyback is the ANML buyback-and-burn clock, in unix nanoseconds.
+  //
+  // Always exported as ZERO, deliberately. The field exists so that this
+  // decision is visible in the schema rather than buried in a keeper.
+  //
+  // The buyback mints for elapsed wall-clock time (now - last). A chain restarted
+  // from an export was not running during the gap, so carrying the old timestamp
+  // across would mint the entire downtime in the first block — a week off is
+  // 604,800 ERTH minted and swapped into the ANML pool at once. Zero means "start
+  // the clock here", and the gap is simply not emitted, which is the honest
+  // answer: no chain ran, so no emission was earned.
+  //
+  // x/earth reaches the same conclusion by never carrying LastMintTime at all.
   int64 last_buyback = 3;
 }

@@ -85,7 +85,6 @@ func TestGenesisRoundTripsPopulatedState(t *testing.T) {
 	// And the round trip returns what went in.
 	got, err := f.keeper.ExportGenesis(f.ctx)
 	require.NoError(t, err)
-	require.Equal(t, original.LastBuyback, got.LastBuyback)
 	require.Len(t, got.Registrations, 2)
 	require.ElementsMatch(t, original.Registrations, got.Registrations)
 }
@@ -109,4 +108,32 @@ func TestGenesisRejectsADuplicateNullifier(t *testing.T) {
 	err = gs.Validate()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "one passport, two humans")
+}
+
+// The buyback clock must NOT survive an export, which is the opposite of every
+// other field here and is the whole reason it is called out in the schema.
+//
+// The buyback mints for elapsed wall-clock time (now - last). A chain restarted
+// from an export did not run during the gap, so carrying the timestamp across
+// would mint the entire downtime in the first block — a week of downtime is
+// 604,800 ERTH minted and swapped into the ANML pool at once. x/earth reaches the
+// same conclusion by never carrying LastMintTime at all.
+func TestGenesisDoesNotCarryTheBuybackClock(t *testing.T) {
+	f := initFixture(t)
+
+	require.NoError(t, f.keeper.InitGenesis(f.ctx, types.GenesisState{
+		Params:      types.DefaultParams(),
+		LastBuyback: 1_700_000_000_000_000_000,
+	}))
+
+	// It is honoured in state, so an import can still be handed one...
+	stored, err := f.keeper.LastBuyback.Get(f.ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(1_700_000_000_000_000_000), stored)
+
+	// ...but an export never produces one.
+	got, err := f.keeper.ExportGenesis(f.ctx)
+	require.NoError(t, err)
+	require.Zero(t, got.LastBuyback,
+		"exporting the clock would mint the whole restart gap in one block")
 }

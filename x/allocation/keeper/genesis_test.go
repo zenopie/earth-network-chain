@@ -314,3 +314,27 @@ func TestStreamWeightSurvivesRevoting(t *testing.T) {
 	require.Equal(t, math.NewInt(1_000_000), rep.Declared,
 		"re-voting must not leave weight behind or duplicate it")
 }
+
+// The stream's upkeep cursor must not survive an export, for the same reason the
+// personhood buyback clock does not: AdvanceIndex advances by elapsed wall-clock
+// time, and a chain restarted from an export did not run during the gap. Carrying
+// it would advance the index by the whole downtime in the first block.
+func TestGenesisDoesNotCarryTheUpkeepClock(t *testing.T) {
+	e := newTestEnv(t)
+	require.NoError(t, e.k.InitGenesis(e.ctx, *types.DefaultGenesis()))
+
+	// Run the streams so the cursor is genuinely set.
+	e.ctx = e.ctx.WithBlockTime(e.ctx.BlockTime().Add(time.Hour))
+	require.NoError(t, e.k.AdvanceIndex(e.ctx, types.STREAM_ID_GROUNDWORKS))
+	live, err := e.k.getLastUpkeep(e.ctx, types.STREAM_ID_GROUNDWORKS)
+	require.NoError(t, err)
+	require.NotZero(t, live, "the cursor should be set on a running chain")
+
+	gs, err := e.k.ExportGenesis(e.ctx)
+	require.NoError(t, err)
+	for _, st := range gs.Streams {
+		require.Zerof(t, st.LastUpkeep,
+			"stream %s exported a wall-clock cursor; a restart would advance its "+
+				"index by the whole downtime in one block", st.Stream)
+	}
+}

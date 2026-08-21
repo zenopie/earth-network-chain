@@ -57,9 +57,12 @@ message StreamState {
   // is what stops a stale vote being subtracted twice after an import.
   uint64 epoch = 4;
 
-  // last_upkeep is when the index last advanced, in unix nanoseconds. Zero is
-  // "start here" — see last_buyback in the personhood genesis for the same
-  // reasoning about restoring a clock onto a chain that has been running.
+  // last_upkeep is when the index last advanced, in unix nanoseconds.
+  //
+  // Always exported as ZERO, for the reason spelled out on last_buyback in the
+  // personhood genesis: the index advances by elapsed wall-clock time, a chain
+  // restarted from an export did not run during the gap, and carrying the old
+  // timestamp would advance the index by the whole downtime in one block.
   int64 last_upkeep = 5;
 
   // option_seq is the highest option id handed out. It must not go backwards on

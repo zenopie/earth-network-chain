@@ -156,10 +156,6 @@ func (k Keeper) exportStream(ctx context.Context, stream types.StreamId) (types.
 	if err != nil {
 		return types.StreamState{}, err
 	}
-	last, err := k.getLastUpkeep(ctx, stream)
-	if err != nil {
-		return types.StreamState{}, err
-	}
 	seq, err := k.OptionSeq.Get(ctx, key(stream))
 	if err != nil && !errors.Is(err, collections.ErrNotFound) {
 		return types.StreamState{}, err
@@ -170,8 +166,10 @@ func (k Keeper) exportStream(ctx context.Context, stream types.StreamId) (types.
 		RewardIndex: idx,
 		TotalWeight: total,
 		Epoch:       epoch,
-		LastUpkeep:  last,
-		OptionSeq:   seq,
+		// Deliberately zero: see last_upkeep in genesis.proto. Carrying the
+		// cursor would advance the index by the whole restart gap in one block.
+		LastUpkeep: 0,
+		OptionSeq:  seq,
 	}
 
 	rng := collections.NewPrefixedPairRange[uint32, uint64](key(stream))
