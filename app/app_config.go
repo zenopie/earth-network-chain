@@ -180,6 +180,10 @@ var (
 						earthmoduletypes.ModuleName,
 						dexmoduletypes.ModuleName,
 						personhoodmoduletypes.ModuleName,
+						// allocation last: its EndBlocker only verifies that each stream's
+						// declared weight still matches its options, so it should see every
+						// other module's writes for the block before it does.
+						allocationmoduletypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/endBlockers
 					},
 					// The following is mostly only needed when ModuleName != StoreKey name.

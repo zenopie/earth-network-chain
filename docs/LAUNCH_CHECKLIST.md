@@ -239,6 +239,30 @@ An untested upgrade path is discovered during the upgrade.
       shim in `zk/ultrahonk`. These are the three places where a bug is
       unrecoverable rather than embarrassing.
 
+- [x] **Genesis export was dropping most of the chain's state.** `GenesisState`
+      was params-only for `x/allocation`, `x/personhood` and `x/pki`, so
+      `earthd export` → import silently discarded every registration (and with
+      them the nullifier set, resetting the anti-Sybil property to "nobody ever
+      registered"), every revoked Document Signer, and every allocation option,
+      vote and reward index. Fixed: all three now carry their state, with derived
+      indexes rebuilt at InitGenesis rather than exported, and `Validate` refusing
+      a malformed file at import instead of halting the chain at height 1.
+      `TestAppImportExport` passed throughout because the simulation ops are
+      stubs, so the sim never created a registration, an option or a revocation —
+      empty state round-trips perfectly. That is a concrete argument for the sim
+      ops above.
+- [ ] **`x/pki` still cannot round-trip its trust store.** `deploy/genesis.json`
+      carries 539 CSCAs; an export returns 369. `Cscas` is a map keyed by SKI
+      (`x/pki/keeper/dsc.go:90,97`), so certificates that share a signing key —
+      renewals and link certificates — overwrite each other, and only the last
+      one's bytes survive. The live chain keeps a `CscaByDN` entry for all 539,
+      but an export carries only the 369 surviving certificates, so re-importing
+      indexes 369 DNs and loses the rest. This is precisely what `csca/README.md`
+      warns about for the generation tool ("collapsing on SKI would silently drop
+      DN index entries and shrink the set of DSCs the chain can verify") — the
+      tool avoids it, the export does not. Fixing it means CSCAs can no longer be
+      stored in a map keyed by SKI, which is a data-model change, not a patch.
+
 ---
 
 ## 6. Documentation the launch produces

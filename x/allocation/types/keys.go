@@ -80,3 +80,15 @@ const (
 // Streams is every valid stream id, in id order. Used by genesis and BeginBlock,
 // which have to touch both streams and must do so in a fixed order.
 var Streams = []StreamId{STREAM_ID_CARETAKER, STREAM_ID_GROUNDWORKS}
+
+// ValidateStreamId rejects a message or a genesis entry that names no stream or
+// an unknown one. It lives here rather than in the keeper so genesis validation
+// can reach it; keeper.ValidateStream delegates to it.
+func ValidateStreamId(stream StreamId) error {
+	for _, s := range Streams {
+		if s == stream {
+			return nil
+		}
+	}
+	return ErrUnknownStream.Wrapf("%s", stream)
+}

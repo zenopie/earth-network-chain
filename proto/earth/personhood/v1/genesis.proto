@@ -3,6 +3,7 @@ package earth.personhood.v1;
 
 import "amino/amino.proto";
 import "earth/personhood/v1/params.proto";
+import "earth/personhood/v1/registration.proto";
 import "gogoproto/gogo.proto";
 
 option go_package = "github.com/earth-network/earth/x/personhood/types";
@@ -14,4 +15,25 @@ message GenesisState {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+
+  // registrations is every registered human.
+  //
+  // This is the state the chain exists to hold, and losing it is not a matter
+  // of inconvenience: each record carries the nullifier that makes a passport
+  // unable to register twice. An export without these does not merely forget
+  // who is registered, it resets the anti-Sybil property to "nobody ever has",
+  // and the same passport can register again.
+  //
+  // Every other registration index — by address, by Document Signer, by issuing
+  // country, by registration time, and the total count — is derived from these
+  // records at InitGenesis rather than carried, the same way x/pki rebuilds its
+  // subject-DN index from the certificates.
+  repeated Registration registrations = 2 [(gogoproto.nullable) = false];
+
+  // last_buyback is the ANML buyback-and-burn clock, in unix nanoseconds. Zero
+  // means "start the clock at the next block", which is what a fresh chain
+  // wants and what an import must not silently choose for itself: restoring
+  // zero on a chain that has been running would pay out the whole elapsed gap
+  // in one block.
+  int64 last_buyback = 3;
 }

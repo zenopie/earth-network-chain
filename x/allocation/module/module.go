@@ -25,6 +25,7 @@ var (
 
 	_ appmodule.AppModule       = (*AppModule)(nil)
 	_ appmodule.HasBeginBlocker = (*AppModule)(nil)
+	_ appmodule.HasEndBlocker   = (*AppModule)(nil)
 )
 
 // AppModule implements the AppModule interface that defines the inter-dependent methods that modules need to implement
@@ -130,4 +131,15 @@ func (AppModule) ConsensusVersion() uint64 { return 1 }
 // stacking the registration-reward pool for x/personhood to draw on.
 func (am AppModule) BeginBlock(ctx context.Context) error {
 	return am.keeper.BeginBlocker(ctx)
+}
+
+// EndBlock verifies that each stream's declared total weight still equals the
+// sum of its options' allocations.
+//
+// It runs at the end rather than alongside BeginBlock because allocations change
+// by message — MsgSetAllocations, MsgAddOption, MsgResetAllocations — and those
+// land between the two. Checking here catches a breach in the block that caused
+// it instead of the one after. Both streams are walked, which is O(options).
+func (am AppModule) EndBlock(ctx context.Context) error {
+	return am.keeper.AssertInvariants(ctx)
 }

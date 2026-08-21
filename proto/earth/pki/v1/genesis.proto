@@ -12,5 +12,17 @@ option go_package = "github.com/earth-network/earth/x/pki/types";
 message GenesisState {
   Params params = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
   // cscas is the initial trusted CSCA master list (e.g. seeded from ICAO's).
+  // The subject-DN index is rebuilt from these at InitGenesis rather than
+  // carried, since it is derived.
   repeated Csca cscas = 2 [(gogoproto.nullable) = false];
+
+  // revoked_dscs is the set of revoked Document Signer certificate ids.
+  //
+  // It has to be carried. Revocation is the emergency response to a compromised
+  // DSC, and it is the one piece of this module's state that nothing else can
+  // reconstruct: a CSCA can be re-derived from its certificate, but "we decided
+  // to stop trusting this signer" exists nowhere but here. An export that
+  // dropped it would silently re-trust every certificate governance had
+  // revoked.
+  repeated bytes revoked_dscs = 3;
 }

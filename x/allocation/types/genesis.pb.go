@@ -4,7 +4,9 @@
 package types
 
 import (
+	cosmossdk_io_math "cosmossdk.io/math"
 	fmt "fmt"
+	_ "github.com/cosmos/cosmos-proto"
 	_ "github.com/cosmos/cosmos-sdk/types/tx/amino"
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	proto "github.com/cosmos/gogoproto/proto"
@@ -28,6 +30,14 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 type GenesisState struct {
 	// params defines all the parameters of the module.
 	Params Params `protobuf:"bytes,1,opt,name=params,proto3" json:"params"`
+	// streams carries each emission stream's whole state.
+	//
+	// Empty means a fresh chain: InitGenesis then seeds both streams at zero and
+	// gives each its option #1. Non-empty is an import, and is restored exactly —
+	// including the option ids — because an option's id is what every voter's
+	// allocation refers to. Re-seeding on top of an import would hand out id 1
+	// twice and silently repoint everyone who had voted for it.
+	Streams []StreamState `protobuf:"bytes,2,rep,name=streams,proto3" json:"streams"`
 }
 
 func (m *GenesisState) Reset()         { *m = GenesisState{} }
@@ -70,28 +80,215 @@ func (m *GenesisState) GetParams() Params {
 	return Params{}
 }
 
+func (m *GenesisState) GetStreams() []StreamState {
+	if m != nil {
+		return m.Streams
+	}
+	return nil
+}
+
+// StreamState is one emission stream at a point in time: its reward accounting,
+// the options it can be directed to, and who has directed it where.
+type StreamState struct {
+	Stream StreamId `protobuf:"varint,1,opt,name=stream,proto3,enum=earth.allocation.v1.StreamId" json:"stream,omitempty"`
+	// reward_index is the stream's running per-weight reward index, scaled by
+	// 1e18. An option collects amount_allocated * (index - last_reward_index), so
+	// resetting it to zero on an import would pay every option the entire history
+	// of the chain again.
+	RewardIndex cosmossdk_io_math.Int `protobuf:"bytes,2,opt,name=reward_index,json=rewardIndex,proto3,customtype=cosmossdk.io/math.Int" json:"reward_index"`
+	// total_weight is the denominator the index advances against, and must equal
+	// the sum of every option's amount_allocated. The invariant in
+	// keeper/invariants.go enforces that; Validate checks it at import, so a
+	// malformed genesis is refused rather than halting the chain at height 1.
+	TotalWeight cosmossdk_io_math.Int `protobuf:"bytes,3,opt,name=total_weight,json=totalWeight,proto3,customtype=cosmossdk.io/math.Int" json:"total_weight"`
+	// epoch increments on a reset, which zeroes the aggregates wholesale. A
+	// voter's record is only counted against the current epoch, so carrying this
+	// is what stops a stale vote being subtracted twice after an import.
+	Epoch uint64 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	// last_upkeep is when the index last advanced, in unix nanoseconds. Zero is
+	// "start here" — see last_buyback in the personhood genesis for the same
+	// reasoning about restoring a clock onto a chain that has been running.
+	LastUpkeep int64 `protobuf:"varint,5,opt,name=last_upkeep,json=lastUpkeep,proto3" json:"last_upkeep,omitempty"`
+	// option_seq is the highest option id handed out. It must not go backwards on
+	// an import or a new option would reuse a retired id.
+	OptionSeq uint64             `protobuf:"varint,6,opt,name=option_seq,json=optionSeq,proto3" json:"option_seq,omitempty"`
+	Options   []AllocationOption `protobuf:"bytes,7,rep,name=options,proto3" json:"options"`
+	Voters    []VoterEntry       `protobuf:"bytes,8,rep,name=voters,proto3" json:"voters"`
+}
+
+func (m *StreamState) Reset()         { *m = StreamState{} }
+func (m *StreamState) String() string { return proto.CompactTextString(m) }
+func (*StreamState) ProtoMessage()    {}
+func (*StreamState) Descriptor() ([]byte, []int) {
+	return fileDescriptor_96ed0240d466af8d, []int{1}
+}
+func (m *StreamState) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *StreamState) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_StreamState.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *StreamState) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_StreamState.Merge(m, src)
+}
+func (m *StreamState) XXX_Size() int {
+	return m.Size()
+}
+func (m *StreamState) XXX_DiscardUnknown() {
+	xxx_messageInfo_StreamState.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_StreamState proto.InternalMessageInfo
+
+func (m *StreamState) GetStream() StreamId {
+	if m != nil {
+		return m.Stream
+	}
+	return STREAM_ID_UNSPECIFIED
+}
+
+func (m *StreamState) GetEpoch() uint64 {
+	if m != nil {
+		return m.Epoch
+	}
+	return 0
+}
+
+func (m *StreamState) GetLastUpkeep() int64 {
+	if m != nil {
+		return m.LastUpkeep
+	}
+	return 0
+}
+
+func (m *StreamState) GetOptionSeq() uint64 {
+	if m != nil {
+		return m.OptionSeq
+	}
+	return 0
+}
+
+func (m *StreamState) GetOptions() []AllocationOption {
+	if m != nil {
+		return m.Options
+	}
+	return nil
+}
+
+func (m *StreamState) GetVoters() []VoterEntry {
+	if m != nil {
+		return m.Voters
+	}
+	return nil
+}
+
+// VoterEntry is one address's allocation within one stream. The address lives
+// here rather than on Voter because in the store it is part of the key.
+type VoterEntry struct {
+	Address string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	Voter   Voter  `protobuf:"bytes,2,opt,name=voter,proto3" json:"voter"`
+}
+
+func (m *VoterEntry) Reset()         { *m = VoterEntry{} }
+func (m *VoterEntry) String() string { return proto.CompactTextString(m) }
+func (*VoterEntry) ProtoMessage()    {}
+func (*VoterEntry) Descriptor() ([]byte, []int) {
+	return fileDescriptor_96ed0240d466af8d, []int{2}
+}
+func (m *VoterEntry) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *VoterEntry) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_VoterEntry.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *VoterEntry) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_VoterEntry.Merge(m, src)
+}
+func (m *VoterEntry) XXX_Size() int {
+	return m.Size()
+}
+func (m *VoterEntry) XXX_DiscardUnknown() {
+	xxx_messageInfo_VoterEntry.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_VoterEntry proto.InternalMessageInfo
+
+func (m *VoterEntry) GetAddress() string {
+	if m != nil {
+		return m.Address
+	}
+	return ""
+}
+
+func (m *VoterEntry) GetVoter() Voter {
+	if m != nil {
+		return m.Voter
+	}
+	return Voter{}
+}
+
 func init() {
 	proto.RegisterType((*GenesisState)(nil), "earth.allocation.v1.GenesisState")
+	proto.RegisterType((*StreamState)(nil), "earth.allocation.v1.StreamState")
+	proto.RegisterType((*VoterEntry)(nil), "earth.allocation.v1.VoterEntry")
 }
 
 func init() { proto.RegisterFile("earth/allocation/v1/genesis.proto", fileDescriptor_96ed0240d466af8d) }
 
 var fileDescriptor_96ed0240d466af8d = []byte{
-	// 220 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0x52, 0x4c, 0x4d, 0x2c, 0x2a,
-	0xc9, 0xd0, 0x4f, 0xcc, 0xc9, 0xc9, 0x4f, 0x4e, 0x2c, 0xc9, 0xcc, 0xcf, 0xd3, 0x2f, 0x33, 0xd4,
-	0x4f, 0x4f, 0xcd, 0x4b, 0x2d, 0xce, 0x2c, 0xd6, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x12, 0x06,
-	0x2b, 0xd1, 0x43, 0x28, 0xd1, 0x2b, 0x33, 0x94, 0x12, 0x4c, 0xcc, 0xcd, 0xcc, 0xcb, 0xd7, 0x07,
-	0x93, 0x10, 0x75, 0x52, 0x0a, 0xd8, 0x8c, 0x2a, 0x48, 0x2c, 0x4a, 0xcc, 0x85, 0x9a, 0x24, 0x25,
-	0x92, 0x9e, 0x9f, 0x9e, 0x0f, 0x66, 0xea, 0x83, 0x58, 0x10, 0x51, 0x25, 0x3f, 0x2e, 0x1e, 0x77,
-	0x88, 0x85, 0xc1, 0x25, 0x89, 0x25, 0xa9, 0x42, 0x76, 0x5c, 0x6c, 0x10, 0x5d, 0x12, 0x8c, 0x0a,
-	0x8c, 0x1a, 0xdc, 0x46, 0xd2, 0x7a, 0x58, 0x1c, 0xa0, 0x17, 0x00, 0x56, 0xe2, 0xc4, 0x79, 0xe2,
-	0x9e, 0x3c, 0xc3, 0x8a, 0xe7, 0x1b, 0xb4, 0x18, 0x83, 0xa0, 0xba, 0x9c, 0xbc, 0x4f, 0x3c, 0x92,
-	0x63, 0xbc, 0xf0, 0x48, 0x8e, 0xf1, 0xc1, 0x23, 0x39, 0xc6, 0x09, 0x8f, 0xe5, 0x18, 0x2e, 0x3c,
-	0x96, 0x63, 0xb8, 0xf1, 0x58, 0x8e, 0x21, 0xca, 0x30, 0x3d, 0xb3, 0x24, 0xa3, 0x34, 0x49, 0x2f,
-	0x39, 0x3f, 0x57, 0x1f, 0x6c, 0xa6, 0x6e, 0x5e, 0x6a, 0x49, 0x79, 0x7e, 0x51, 0x36, 0x84, 0xa7,
-	0x5f, 0x81, 0xec, 0xf8, 0x92, 0xca, 0x82, 0xd4, 0xe2, 0x24, 0x36, 0xb0, 0x1b, 0x8d, 0x01, 0x01,
-	0x00, 0x00, 0xff, 0xff, 0x56, 0x54, 0x90, 0x54, 0x28, 0x01, 0x00, 0x00,
+	// 541 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x9c, 0x93, 0x4f, 0x8b, 0xd3, 0x40,
+	0x18, 0xc6, 0x3b, 0xdb, 0x7f, 0x76, 0xb2, 0x08, 0x8e, 0x15, 0x62, 0x65, 0xd3, 0x58, 0x14, 0x8a,
+	0xd2, 0x84, 0x46, 0xf4, 0xa6, 0xb8, 0x81, 0x45, 0x8a, 0xa0, 0x92, 0xa2, 0x82, 0x97, 0x30, 0xdb,
+	0x0c, 0x49, 0x68, 0x93, 0xc9, 0xce, 0xcc, 0xb6, 0xdd, 0x6f, 0xb1, 0x1f, 0xc3, 0xa3, 0x87, 0xfd,
+	0x00, 0x1e, 0xf7, 0xb8, 0xec, 0x49, 0x3c, 0x2c, 0xd2, 0x1e, 0xfc, 0x1a, 0x92, 0x99, 0xd4, 0xed,
+	0x21, 0x7a, 0xd8, 0x4b, 0xc8, 0xfb, 0xbe, 0xcf, 0xf3, 0x7b, 0x67, 0xde, 0x99, 0x81, 0x0f, 0x09,
+	0x66, 0x22, 0xb2, 0xf1, 0x6c, 0x46, 0x27, 0x58, 0xc4, 0x34, 0xb5, 0xe7, 0x43, 0x3b, 0x24, 0x29,
+	0xe1, 0x31, 0xb7, 0x32, 0x46, 0x05, 0x45, 0x77, 0xa5, 0xc4, 0xba, 0x96, 0x58, 0xf3, 0x61, 0xe7,
+	0x0e, 0x4e, 0xe2, 0x94, 0xda, 0xf2, 0xab, 0x74, 0x9d, 0xfb, 0x13, 0xca, 0x13, 0xca, 0x7d, 0x19,
+	0xd9, 0x2a, 0x28, 0x4a, 0x8f, 0xca, 0xba, 0x6c, 0x01, 0x95, 0xca, 0x2c, 0x53, 0x65, 0x98, 0xe1,
+	0x64, 0xc3, 0x69, 0x87, 0x34, 0xa4, 0x8a, 0x9f, 0xff, 0xa9, 0x6c, 0xef, 0x14, 0xc0, 0xdd, 0x37,
+	0x6a, 0xc9, 0x63, 0x81, 0x05, 0x41, 0xaf, 0x60, 0x43, 0xd9, 0x74, 0x60, 0x82, 0xbe, 0xe6, 0x3c,
+	0xb0, 0x4a, 0xb6, 0x60, 0x7d, 0x90, 0x12, 0xb7, 0x75, 0x7e, 0xd5, 0xad, 0x7c, 0xfd, 0xfd, 0xed,
+	0x09, 0xf0, 0x0a, 0x17, 0x7a, 0x0d, 0x9b, 0x5c, 0x30, 0x92, 0x03, 0x76, 0xcc, 0x6a, 0x5f, 0x73,
+	0xcc, 0x52, 0xc0, 0x58, 0x6a, 0x64, 0x4b, 0xb7, 0x96, 0x53, 0xbc, 0x8d, 0xad, 0xf7, 0xbd, 0x0a,
+	0xb5, 0xad, 0x32, 0x7a, 0x0e, 0x1b, 0xaa, 0x24, 0x57, 0x74, 0xdb, 0xd9, 0xfb, 0x0f, 0x70, 0x14,
+	0x78, 0x85, 0x18, 0xbd, 0x83, 0xbb, 0x8c, 0x2c, 0x30, 0x0b, 0xfc, 0x38, 0x0d, 0xc8, 0x52, 0xdf,
+	0x31, 0x41, 0xbf, 0xe5, 0x3e, 0xcd, 0x7b, 0xfd, 0xbc, 0xea, 0xde, 0x53, 0x33, 0xe6, 0xc1, 0xd4,
+	0x8a, 0xa9, 0x9d, 0x60, 0x11, 0x59, 0xa3, 0x54, 0x5c, 0x9e, 0x0d, 0x60, 0x31, 0xfc, 0x51, 0x2a,
+	0x3c, 0x4d, 0x01, 0x46, 0xb9, 0x3f, 0xe7, 0x09, 0x2a, 0xf0, 0xcc, 0x5f, 0x90, 0x38, 0x8c, 0x84,
+	0x5e, 0xbd, 0x01, 0x4f, 0x02, 0x3e, 0x4b, 0x3f, 0x6a, 0xc3, 0x3a, 0xc9, 0xe8, 0x24, 0xd2, 0x6b,
+	0x26, 0xe8, 0xd7, 0x3c, 0x15, 0xa0, 0x2e, 0xd4, 0x66, 0x98, 0x0b, 0xff, 0x38, 0x9b, 0x12, 0x92,
+	0xe9, 0x75, 0x13, 0xf4, 0xab, 0x1e, 0xcc, 0x53, 0x1f, 0x65, 0x06, 0xed, 0x41, 0x48, 0xb3, 0x7c,
+	0xd3, 0x3e, 0x27, 0x47, 0x7a, 0x43, 0x7a, 0x5b, 0x2a, 0x33, 0x26, 0x47, 0xe8, 0x00, 0x36, 0x55,
+	0xc0, 0xf5, 0xa6, 0x1c, 0xff, 0xe3, 0xd2, 0x69, 0xed, 0xff, 0x8d, 0xde, 0x4b, 0xf5, 0xe6, 0x0c,
+	0x0a, 0x2f, 0x7a, 0x09, 0x1b, 0x73, 0x2a, 0x08, 0xe3, 0xfa, 0x2d, 0x49, 0xe9, 0x96, 0x52, 0x3e,
+	0xe5, 0x92, 0x83, 0x54, 0xb0, 0x93, 0xc2, 0x5f, 0x98, 0x7a, 0x4b, 0x08, 0xaf, 0x6b, 0xc8, 0x81,
+	0x4d, 0x1c, 0x04, 0x8c, 0x70, 0x75, 0xa7, 0x5a, 0xae, 0x7e, 0x79, 0x36, 0x68, 0x17, 0x73, 0xd9,
+	0x57, 0x95, 0xb1, 0x60, 0x71, 0x1a, 0x7a, 0x1b, 0x21, 0x7a, 0x01, 0xeb, 0x92, 0x25, 0x8f, 0x4d,
+	0x73, 0x3a, 0xff, 0xee, 0x5f, 0xb4, 0x56, 0x72, 0xf7, 0xed, 0xf9, 0xca, 0x00, 0x17, 0x2b, 0x03,
+	0xfc, 0x5a, 0x19, 0xe0, 0x74, 0x6d, 0x54, 0x2e, 0xd6, 0x46, 0xe5, 0xc7, 0xda, 0xa8, 0x7c, 0x19,
+	0x86, 0xb1, 0x88, 0x8e, 0x0f, 0xad, 0x09, 0x4d, 0x6c, 0x09, 0x1b, 0xa4, 0x44, 0x2c, 0x28, 0x9b,
+	0xaa, 0xc8, 0x5e, 0x6e, 0x3f, 0x1e, 0x71, 0x92, 0x11, 0x7e, 0xd8, 0x90, 0x6f, 0xe4, 0xd9, 0x9f,
+	0x00, 0x00, 0x00, 0xff, 0xff, 0x8a, 0xd0, 0xa8, 0x53, 0xe9, 0x03, 0x00, 0x00,
 }
 
 func (m *GenesisState) Marshal() (dAtA []byte, err error) {
@@ -114,6 +311,20 @@ func (m *GenesisState) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.Streams) > 0 {
+		for iNdEx := len(m.Streams) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Streams[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintGenesis(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x12
+		}
+	}
 	{
 		size, err := m.Params.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
@@ -124,6 +335,137 @@ func (m *GenesisState) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	}
 	i--
 	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *StreamState) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *StreamState) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *StreamState) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Voters) > 0 {
+		for iNdEx := len(m.Voters) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Voters[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintGenesis(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x42
+		}
+	}
+	if len(m.Options) > 0 {
+		for iNdEx := len(m.Options) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Options[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintGenesis(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x3a
+		}
+	}
+	if m.OptionSeq != 0 {
+		i = encodeVarintGenesis(dAtA, i, uint64(m.OptionSeq))
+		i--
+		dAtA[i] = 0x30
+	}
+	if m.LastUpkeep != 0 {
+		i = encodeVarintGenesis(dAtA, i, uint64(m.LastUpkeep))
+		i--
+		dAtA[i] = 0x28
+	}
+	if m.Epoch != 0 {
+		i = encodeVarintGenesis(dAtA, i, uint64(m.Epoch))
+		i--
+		dAtA[i] = 0x20
+	}
+	{
+		size := m.TotalWeight.Size()
+		i -= size
+		if _, err := m.TotalWeight.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintGenesis(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x1a
+	{
+		size := m.RewardIndex.Size()
+		i -= size
+		if _, err := m.RewardIndex.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintGenesis(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	if m.Stream != 0 {
+		i = encodeVarintGenesis(dAtA, i, uint64(m.Stream))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *VoterEntry) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *VoterEntry) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *VoterEntry) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size, err := m.Voter.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintGenesis(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	if len(m.Address) > 0 {
+		i -= len(m.Address)
+		copy(dAtA[i:], m.Address)
+		i = encodeVarintGenesis(dAtA, i, uint64(len(m.Address)))
+		i--
+		dAtA[i] = 0xa
+	}
 	return len(dAtA) - i, nil
 }
 
@@ -145,6 +487,64 @@ func (m *GenesisState) Size() (n int) {
 	var l int
 	_ = l
 	l = m.Params.Size()
+	n += 1 + l + sovGenesis(uint64(l))
+	if len(m.Streams) > 0 {
+		for _, e := range m.Streams {
+			l = e.Size()
+			n += 1 + l + sovGenesis(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *StreamState) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.Stream != 0 {
+		n += 1 + sovGenesis(uint64(m.Stream))
+	}
+	l = m.RewardIndex.Size()
+	n += 1 + l + sovGenesis(uint64(l))
+	l = m.TotalWeight.Size()
+	n += 1 + l + sovGenesis(uint64(l))
+	if m.Epoch != 0 {
+		n += 1 + sovGenesis(uint64(m.Epoch))
+	}
+	if m.LastUpkeep != 0 {
+		n += 1 + sovGenesis(uint64(m.LastUpkeep))
+	}
+	if m.OptionSeq != 0 {
+		n += 1 + sovGenesis(uint64(m.OptionSeq))
+	}
+	if len(m.Options) > 0 {
+		for _, e := range m.Options {
+			l = e.Size()
+			n += 1 + l + sovGenesis(uint64(l))
+		}
+	}
+	if len(m.Voters) > 0 {
+		for _, e := range m.Voters {
+			l = e.Size()
+			n += 1 + l + sovGenesis(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *VoterEntry) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Address)
+	if l > 0 {
+		n += 1 + l + sovGenesis(uint64(l))
+	}
+	l = m.Voter.Size()
 	n += 1 + l + sovGenesis(uint64(l))
 	return n
 }
@@ -214,6 +614,417 @@ func (m *GenesisState) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if err := m.Params.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Streams", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Streams = append(m.Streams, StreamState{})
+			if err := m.Streams[len(m.Streams)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipGenesis(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *StreamState) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowGenesis
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: StreamState: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: StreamState: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stream", wireType)
+			}
+			m.Stream = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Stream |= StreamId(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RewardIndex", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.RewardIndex.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TotalWeight", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.TotalWeight.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Epoch", wireType)
+			}
+			m.Epoch = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Epoch |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LastUpkeep", wireType)
+			}
+			m.LastUpkeep = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.LastUpkeep |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OptionSeq", wireType)
+			}
+			m.OptionSeq = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OptionSeq |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Options", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Options = append(m.Options, AllocationOption{})
+			if err := m.Options[len(m.Options)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Voters", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Voters = append(m.Voters, VoterEntry{})
+			if err := m.Voters[len(m.Voters)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipGenesis(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *VoterEntry) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowGenesis
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: VoterEntry: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: VoterEntry: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Address = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Voter", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenesis
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenesis
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Voter.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

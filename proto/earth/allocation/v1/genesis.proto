@@ -2,6 +2,8 @@ syntax = "proto3";
 package earth.allocation.v1;
 
 import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/allocation/v1/allocation.proto";
 import "earth/allocation/v1/params.proto";
 import "gogoproto/gogo.proto";
 
@@ -14,4 +16,63 @@ message GenesisState {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+
+  // streams carries each emission stream's whole state.
+  //
+  // Empty means a fresh chain: InitGenesis then seeds both streams at zero and
+  // gives each its option #1. Non-empty is an import, and is restored exactly —
+  // including the option ids — because an option's id is what every voter's
+  // allocation refers to. Re-seeding on top of an import would hand out id 1
+  // twice and silently repoint everyone who had voted for it.
+  repeated StreamState streams = 2 [(gogoproto.nullable) = false];
+}
+
+// StreamState is one emission stream at a point in time: its reward accounting,
+// the options it can be directed to, and who has directed it where.
+message StreamState {
+  StreamId stream = 1;
+
+  // reward_index is the stream's running per-weight reward index, scaled by
+  // 1e18. An option collects amount_allocated * (index - last_reward_index), so
+  // resetting it to zero on an import would pay every option the entire history
+  // of the chain again.
+  string reward_index = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // total_weight is the denominator the index advances against, and must equal
+  // the sum of every option's amount_allocated. The invariant in
+  // keeper/invariants.go enforces that; Validate checks it at import, so a
+  // malformed genesis is refused rather than halting the chain at height 1.
+  string total_weight = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // epoch increments on a reset, which zeroes the aggregates wholesale. A
+  // voter's record is only counted against the current epoch, so carrying this
+  // is what stops a stale vote being subtracted twice after an import.
+  uint64 epoch = 4;
+
+  // last_upkeep is when the index last advanced, in unix nanoseconds. Zero is
+  // "start here" — see last_buyback in the personhood genesis for the same
+  // reasoning about restoring a clock onto a chain that has been running.
+  int64 last_upkeep = 5;
+
+  // option_seq is the highest option id handed out. It must not go backwards on
+  // an import or a new option would reuse a retired id.
+  uint64 option_seq = 6;
+
+  repeated AllocationOption options = 7 [(gogoproto.nullable) = false];
+  repeated VoterEntry voters = 8 [(gogoproto.nullable) = false];
+}
+
+// VoterEntry is one address's allocation within one stream. The address lives
+// here rather than on Voter because in the store it is part of the key.
+message VoterEntry {
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Voter voter = 2 [(gogoproto.nullable) = false];
 }
