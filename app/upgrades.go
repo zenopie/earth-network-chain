@@ -82,6 +82,11 @@ func (app *App) setupUpgrades() {
 // defaultUpgradeHandler runs the standard module migrations and nothing else.
 // Suitable for any upgrade that changes logic or parameters but not the set of
 // modules.
+//
+// Deliberately unreferenced until the first upgrade adds an entry to Upgrades
+// above — Go permits an unused function, and this is the shape every upgrade
+// starts from. scripts/rehearse-upgrade.sh injects exactly this line to exercise
+// the halt-and-resume path, so deleting it as dead code breaks that rehearsal.
 func defaultUpgradeHandler(app *App) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)

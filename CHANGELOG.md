@@ -51,7 +51,15 @@ nothing to join.
 - **Minimum gas price is `0.005uerth`.** Transactions without `--gas-prices` are
   now rejected.
 - **Binaries are published.** Linux amd64 and arm64, with checksums and the
-  genesis file, on the releases page.
+  genesis file, on the releases page. Verified by a full dry run.
+- **State-sync snapshots are on by default** — every 1000 blocks, keeping 5.
+  The SDK default is off, and a snapshot cannot be made for a height already
+  passed, so a chain launched without them leaves everyone who joins later
+  replaying from genesis. `SNAPSHOT_INTERVAL=0` disables them, loudly.
+- **Genesis funds no devnet account.** The ads-for-gas hot wallet is out; its key
+  had been on a laptop. **It therefore has no funds at height 1** and must be
+  funded after launch from the validator. Only the genesis validator and the dex
+  module hold anything.
 
 ### Added
 
@@ -63,6 +71,9 @@ nothing to join.
 - `scripts/rehearse-upgrade.sh` — runs a governance upgrade end to end locally.
 - `LICENSE` — Apache 2.0. There was none, which legally meant nobody could use
   this.
+- A documentation site at **[docs.erth.network](https://docs.erth.network)**,
+  built with Docusaurus from `docs-site/`. Every page has an edit link, and the
+  build fails on a broken link.
 
 ---
 

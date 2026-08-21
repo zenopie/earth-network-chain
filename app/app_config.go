@@ -69,14 +69,14 @@ import (
 	ibcexported "github.com/cosmos/ibc-go/v10/modules/core/exported"
 	_ "github.com/earth-network/earth/x/allocation/module"
 	allocationmoduletypes "github.com/earth-network/earth/x/allocation/types"
-	_ "github.com/earth-network/earth/x/personhood/module"
-	personhoodmoduletypes "github.com/earth-network/earth/x/personhood/types"
-	_ "github.com/earth-network/earth/x/pki/module"
-	pkimoduletypes "github.com/earth-network/earth/x/pki/types"
 	_ "github.com/earth-network/earth/x/dex/module"
 	dexmoduletypes "github.com/earth-network/earth/x/dex/types"
 	_ "github.com/earth-network/earth/x/earth/module"
 	earthmoduletypes "github.com/earth-network/earth/x/earth/types"
+	_ "github.com/earth-network/earth/x/personhood/module"
+	personhoodmoduletypes "github.com/earth-network/earth/x/personhood/types"
+	_ "github.com/earth-network/earth/x/pki/module"
+	pkimoduletypes "github.com/earth-network/earth/x/pki/types"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 

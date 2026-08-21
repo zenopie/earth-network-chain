@@ -23,10 +23,15 @@ v5.0.0 UltraHonk proofs (poseidon2 flavor), verified natively on-chain.
    `third_party/barretenberg-go/scripts/build-wrapper.sh --platform linux_amd64`
    (runs on Linux; SHA-pinned). The chain build needs `CGO_ENABLED=1` + the
    platform lib.
-2. **Pin the public-input schema** — `verifyRegistrationProof` currently uses
-   placeholder indices (`nullifierSignalIndex=0`, `dscRootSignalIndex=2`). Set
-   these to zkPassport's actual register/outer-circuit public-input positions for
-   the nullifier and the certificate-registry root once that circuit is fixed.
+2. **Pin the public-input schema** — ~~`verifyRegistrationProof` currently uses
+   placeholder indices.~~ No longer hardcoded: the positions are governance
+   parameters, read at `x/personhood/keeper/registration.go:43,74,112` as
+   `params.NullifierIndex`, `params.DscKeyIndex` and `params.CurrentDateIndex`.
+   Genesis seeds them 1, 2 and 0.
+   What remains is choosing the right values, not changing code — and getting
+   them wrong at launch is recoverable by proposal rather than invalidating every
+   registration made so far. Set them to zkPassport's actual register/outer-
+   circuit positions once that circuit is fixed.
 3. **On-device prover + proof flavor** — the mobile app must generate a **bb
    v5.0.0 poseidon2** UltraHonk proof via zkPassport's prover (Noir witness +
    Barretenberg), *not* their EVM/keccak proof. The `MsgRegister` wire shape

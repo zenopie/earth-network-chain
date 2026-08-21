@@ -47,10 +47,10 @@ import (
 
 	"github.com/earth-network/earth/docs"
 	allocationmodulekeeper "github.com/earth-network/earth/x/allocation/keeper"
-	personhoodmodulekeeper "github.com/earth-network/earth/x/personhood/keeper"
-	pkimodulekeeper "github.com/earth-network/earth/x/pki/keeper"
 	dexmodulekeeper "github.com/earth-network/earth/x/dex/keeper"
 	earthmodulekeeper "github.com/earth-network/earth/x/earth/keeper"
+	personhoodmodulekeeper "github.com/earth-network/earth/x/personhood/keeper"
+	pkimodulekeeper "github.com/earth-network/earth/x/pki/keeper"
 )
 
 const (
