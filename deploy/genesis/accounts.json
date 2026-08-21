@@ -3,6 +3,11 @@
     "Every balance the chain starts with. Nothing else may hold one — genesis_test.go",
     "fails the build if it does.",
     "",
+    "The ads-for-gas hot wallet used to be here with 10,000 ERTH. It is gone: its key",
+    "was a devnet key that had been on a laptop, and a launch genesis is not the place",
+    "to fund an operational wallet from one. Fund it after launch from the validator,",
+    "with a key that has never left a signer.",
+    "",
     "'keyed' accounts are added with `earthd genesis add-genesis-account`, which writes",
     "auth, bank.balances and bank.supply together. That is the whole reason the tool is",
     "used instead of editing the file: the three have to move as one, and hand-editing",
@@ -19,11 +24,6 @@
       "address": "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a",
       "coins": "1000000000uerth",
       "note": "The genesis validator. 1,000 ERTH: enough to self-delegate 100, and to fund governance deposits (5 ERTH expedited, 1 normal) for years. Deliberately small — 0.00004% of the pre-mine — because the validator's real income is the staking pillar, which pays 1 ERTH/sec split by voting power, and a large genesis balance on top of that is an allocation nobody voted for. Address derived from the operator address of the running devnet validator; the key itself is the VALIDATOR_MNEMONIC in the gitignored .env and is not in this repo."
-    },
-    {
-      "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
-      "coins": "10000000000uerth",
-      "note": "ads-for-gas hot wallet. DEVNET KEY, no value — see deploy/docker/README.md. Replace before a real launch (docs/LAUNCH_CHECKLIST.md §1)."
     }
   ],
 

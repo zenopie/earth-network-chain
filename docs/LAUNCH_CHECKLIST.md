@@ -85,12 +85,12 @@ file confirms the shape: one account, `"gen_txs": []`.
       with `MsgCreateValidator` after height 1 — decided in phase 0.
 - [x] **Set `consensus.version.app`.** Now `1`, in
       `deploy/genesis/chain.json`.
-- [ ] **Drop the devnet accounts.** `earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6`
-      holds 10,000 ERTH and is the ads-for-gas hot wallet; `deploy/docker/README.md:64`
-      already says both seeded accounts are "devnet keys with no value; drop them
-      from `deploy/genesis.json` for anything real". They are still there.
-      Replace with whatever the real operational funding is, from a key that
-      exists in a signer nobody's laptop has seen.
+- [x] **Drop the devnet accounts.** The ads-for-gas hot wallet is out of genesis.
+      Its key was a devnet key that had been on a laptop, and a launch genesis is
+      not the place to fund an operational wallet from one.
+      **Consequence to handle after launch:** ads-for-gas has no funds at height
+      1. Fund it from the validator, with a key that has never left a signer.
+      Only the validator and the dex module now hold anything.
 - [x] **Publish the sha256 of the final genesis** ~~in the release notes, and
       have the entrypoint *verify* it rather than generate anything.~~ Done for
       the entrypoint: join is the default, a hash mismatch against

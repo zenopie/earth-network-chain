@@ -137,11 +137,16 @@ question entirely.
 
 ## Devnet posture
 
-`--api.enabled-unsafe-cors` and `MIN_GAS_PRICES=0uerth`. Fine for a throwaway
-chain; both want revisiting before anything real. Zero-fee plus open CORS on a
-public endpoint is a free write-amplification target, and the gas burn that makes
-fees deflationary collects nothing to burn.
+Both of these were unconditional and are now opt-in, off by default:
 
-`deploy/genesis.json` seeds the ads-for-gas hot wallet
-(`earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6`) with 10,000 ERTH and the dev
-handset with 100,000. Both are devnet keys; drop them before anything real.
+- `API_UNSAFE_CORS` — any origin may read the LCD *and broadcast through it*.
+- `DEV_INIT` — makes a new chain on every fresh volume rather than joining one.
+
+`MIN_GAS_PRICES` is `0.005uerth`, not zero. Free transactions are free spam, and
+the gas burn that makes fees deflationary collects nothing to burn at zero.
+
+Genesis no longer funds any devnet account. The ads-for-gas hot wallet is out —
+its key had been on a laptop, and a launch genesis is not the place to fund an
+operational wallet from one. **It therefore has no funds at height 1**; fund it
+after launch from the validator, with a key that has never left a signer. Only
+the genesis validator and the dex module hold anything.
