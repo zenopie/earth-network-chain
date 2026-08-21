@@ -4,6 +4,12 @@
       "bond_denom": "uerth"
     }
   },
+  "slashing": {
+    "params": {
+      "signed_blocks_window": "10000",
+      "min_signed_per_window": "0.05"
+    }
+  },
   "mint": {
     "minter": {
       "inflation": "0.000000000000000000"

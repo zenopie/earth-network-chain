@@ -237,6 +237,16 @@ genesis:
         start_time: "0"
         duration_seconds: "315576000"
         burn_token: true
+    # Downtime tolerance. The SDK defaults — a 100-block window at 50% — jail a
+    # validator after 50 missed blocks, which at 5s blocks is four minutes. On a
+    # chain with one validator that means a container restart halts the chain and
+    # slashes 1% of its stake. 10,000 at 5% is the Cosmos Hub's setting and gives
+    # about thirteen hours; with a single validator the usual downside of leniency
+    # (a dead validator lingering in the set) does not exist.
+    slashing:
+      params:
+        signed_blocks_window: "10000"
+        min_signed_per_window: "0.05"
     # x/allocation runs both emission streams — one directed by registered
     # humans, one by bonded stake — over the same engine and shared params.
     allocation:

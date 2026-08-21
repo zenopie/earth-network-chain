@@ -14,8 +14,9 @@
     "theoretical -- launching from this file today burns 2,996,952,143 LP shares at",
     "height 2.",
     "",
-    "app_version: 0 is a placeholder. Set it to the launch app version; it moves with",
-    "every coordinated upgrade.",
+    "app_version is the launch app version. It moves with every coordinated upgrade,",
+    "and x/upgrade uses it to refuse a binary that is not the one the network agreed",
+    "to run.",
     "",
     "block_max_gas caps how much gas one block may consume. The SDK default is -1,",
     "meaning no cap at all: a block is bounded only by its 22MB size, so a single",
@@ -33,7 +34,7 @@
   "chain_id": "earth-1",
   "genesis_time": "2026-08-16T15:56:41.808823Z",
   "initial_height": 1,
-  "app_version": "0",
+  "app_version": "1",
 
   "block_max_gas": "100000000",
 

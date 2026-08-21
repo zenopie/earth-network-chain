@@ -45,17 +45,20 @@ can be changed after the file is signed and published.
       mainnet`, and 1 ERTH to propose is not a mainnet number. It is the one gov
       value that cannot be copied from another chain: it should be a meaningful
       fiat amount at ERTH's launch price.
-- [ ] **A nonzero minimum gas price.** `MIN_GAS_PRICES=0uerth`
-      (`deploy/docker/entrypoint.sh:19`, `deploy/akash/deploy.yaml:34`) is a
-      devnet posture and is labelled as one. Free transactions on a public chain
-      are free spam, and the mempool is the cheapest thing to attack. ads-for-gas
-      is the answer to "users have no ERTH yet" — it is not an argument for a
-      zero floor at the node.
-- [ ] **Who holds the gov keys at launch**, given that `MsgAddCsca`,
-      `MsgRevokeDsc`, `MsgUpdateParams` (verifying keys, `dsc_root`) and
-      `MsgStartLiquidityAuction` are all governance-gated and all
-      security-critical. With a small genesis validator set, "governance" is a
-      short list of people; say who.
+- [x] **A nonzero minimum gas price.** `0.005uerth`, in the entrypoint default
+      and the SDL — ~500uerth on a typical transaction. Per-node config, not a
+      chain parameter, so it is a restart to change. Also set a block gas limit:
+      `max_gas` was `-1`, meaning a block was bounded only by its 22MB size and
+      the fee was the only brake on one transaction eating all of it. Now 100M.
+- [x] **Who holds the gov keys at launch.** Nobody: the authority for all of
+      those is the gov module account, which has no private key. The real
+      question is who has the voting power to pass a proposal, and at launch that
+      is the sole validator — not by holding anything special, but by being the
+      only staker. It resolves itself as others stake.
+      What did need deciding was timing, and that is
+      `docs/TRUST_STORE_RUNBOOK.md`: a compromised Document Signer goes on the
+      expedited track, one day rather than seven, with the proposal drafted in
+      advance.
 
 ---
 
@@ -80,8 +83,8 @@ file confirms the shape: one account, `"gen_txs": []`.
       predicted.
 - [ ] **Collect the gentxs** into the file, or ship zero and have validators join
       with `MsgCreateValidator` after height 1 — decided in phase 0.
-- [ ] **Set `consensus.version.app`.** It is `"0"` today. It should be the
-      launch app version, and it moves with each upgrade.
+- [x] **Set `consensus.version.app`.** Now `1`, in
+      `deploy/genesis/chain.json`.
 - [ ] **Drop the devnet accounts.** `earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6`
       holds 10,000 ERTH and is the ads-for-gas hot wallet; `deploy/docker/README.md:64`
       already says both seeded accounts are "devnet keys with no value; drop them
@@ -158,15 +161,17 @@ file confirms the shape: one account, `"gen_txs": []`.
       of replaying from genesis: `snapshot-interval`, `snapshot-keep-recent`, and
       a documented `pruning` profile per node role (validator, archive, public
       RPC).
-- [ ] **Write the join procedure** as a single doc: binary + checksum, genesis +
-      sha256, seeds, min-gas-price, pruning, hardware. If a competent operator
-      cannot get a node syncing from that page alone, the network is not
-      launchable regardless of the code.
-- [ ] **Revisit the slashing window.** `signed_blocks_window: 100` with
-      `min_signed_per_window: 0.5` jails a validator for 50 missed blocks in a
-      100-block window — minutes of downtime. The Hub uses 10,000 / 0.05. Also
-      check `historical_entries: 10000` on staking, which is 100x the SDK default
-      and is state every node carries.
+- [x] **Write the join procedure** — `docs/JOIN.md`, walked end to end against
+      the real binary. Two values wait for launch day: the seed address and the
+      genesis hash.
+- [x] **Revisit the slashing window.** Both values were the SDK defaults, not
+      choices: a 100-block window at 50% jails after 50 missed blocks, about four
+      minutes at 5s. With one validator that means a container restart halts the
+      chain and slashes 1% of its stake. Now 10,000 / 0.05, the Hub's setting,
+      giving ~13 hours — and with a single validator the usual cost of leniency,
+      a dead validator lingering in the set, does not apply.
+      `historical_entries: 10000` turns out to be the SDK default exactly
+      (`DefaultHistoricalEntries`), not 100x it. That note was wrong.
 
 ---
 
@@ -263,11 +268,11 @@ An untested upgrade path is discovered during the upgrade.
       "adjusted later" without invalidating everyone already registered.
 - [ ] **Seed the real verifying keys and `dsc_root`** in genesis, per supported
       signature algorithm, from the final circuits.
-- [ ] **Write the trust-store runbook.** The on-chain path exists —
-      `MsgAddCsca` and `MsgRevokeDsc`, both governance-gated — but a CSCA
-      rotation or a compromised DSC is a time-sensitive event, and a 7-day
-      voting period is not a response time. Decide in advance whether revocation
-      goes through the expedited track (1 day, 2/3) and who drafts it.
+- [x] **Write the trust-store runbook.** `docs/TRUST_STORE_RUNBOOK.md`.
+      Revocation goes expedited. It also names two gaps rather than hiding them:
+      there is no `MsgRevokeCsca`, so a country's root going bad has no fast
+      path, and the same is true for a CSCA issuing certificates it should
+      not.
 - [ ] **External audit** of `x/dex` (auction settlement and LP accounting),
       `x/allocation` (the reward index, shared by two streams) and the verifier
       shim in `zk/ultrahonk`. These are the three places where a bug is
