@@ -26,17 +26,25 @@ import (
 //
 // Payouts out of the module are recorded per recipient so the unbonding tests
 // can assert who was actually paid, and how much.
+//
+// It also keeps a real running balance for the module account, because the
+// solvency invariant (keeper/invariants.go) compares what the module's records
+// say it owes against what it actually holds — and a stub that always answers
+// zero, or always answers enough, would make that check meaningless. Every path
+// that moves coins in or out of the module moves modBal by the same amount.
 type mintingBank struct {
 	minted, burned sdk.Coins
 	sent           sdk.Coins
 	sentByAddr     map[string]sdk.Coins
+	modBal         sdk.Coins
 }
 
 func (b *mintingBank) SpendableCoins(context.Context, sdk.AccAddress) sdk.Coins { return nil }
 func (b *mintingBank) GetSupply(_ context.Context, denom string) sdk.Coin {
 	return sdk.NewCoin(denom, b.minted.AmountOf(denom).Sub(b.burned.AmountOf(denom)))
 }
-func (b *mintingBank) SendCoinsFromAccountToModule(context.Context, sdk.AccAddress, string, sdk.Coins) error {
+func (b *mintingBank) SendCoinsFromAccountToModule(_ context.Context, _ sdk.AccAddress, _ string, amt sdk.Coins) error {
+	b.modBal = b.modBal.Add(amt...)
 	return nil
 }
 func (b *mintingBank) SendCoinsFromModuleToAccount(_ context.Context, _ string, to sdk.AccAddress, amt sdk.Coins) error {
@@ -45,14 +53,47 @@ func (b *mintingBank) SendCoinsFromModuleToAccount(_ context.Context, _ string, 
 		b.sentByAddr = map[string]sdk.Coins{}
 	}
 	b.sentByAddr[to.String()] = b.sentByAddr[to.String()].Add(amt...)
+	b.debit(amt)
 	return nil
 }
+
+// GetBalance and GetAllBalances answer for the module account; nothing in these
+// tests asks about anyone else's, and a per-address ledger would be a bank
+// reimplementation.
+func (b *mintingBank) GetBalance(_ context.Context, _ sdk.AccAddress, denom string) sdk.Coin {
+	return sdk.NewCoin(denom, b.modBal.AmountOf(denom))
+}
+func (b *mintingBank) GetAllBalances(_ context.Context, _ sdk.AccAddress) sdk.Coins {
+	return b.modBal
+}
+
+// debit subtracts without letting the ledger go negative — sdk.Coins panics on
+// a negative amount, and a test asserting insolvency wants a failed invariant,
+// not a panic in the stub.
+func (b *mintingBank) debit(amt sdk.Coins) {
+	for _, c := range amt {
+		have := b.modBal.AmountOf(c.Denom)
+		take := c.Amount
+		if take.GT(have) {
+			take = have
+		}
+		if take.IsPositive() {
+			b.modBal = b.modBal.Sub(sdk.NewCoin(c.Denom, take))
+		}
+	}
+}
+
+// fundModule credits the module account without touching the mint tally, for
+// seeding a fixture into the state a funded genesis would have left.
+func (b *mintingBank) fundModule(amt ...sdk.Coin) { b.modBal = b.modBal.Add(amt...) }
 
 // sentTo returns everything the module has paid out to addr.
 func (b *mintingBank) sentTo(addr sdk.AccAddress) sdk.Coins { return b.sentByAddr[addr.String()] }
 
 // setSupply seeds an outstanding coin supply, standing in for shares that
-// AddLiquidity would have minted.
+// AddLiquidity would have minted. It does not credit the module account: the
+// caller says who holds them, because "supply exists" and "the module holds it"
+// are exactly the two facts the share-backing invariant tells apart.
 func (b *mintingBank) setSupply(denom string, amount math.Int) {
 	b.minted = b.minted.Add(sdk.NewCoin(denom, amount))
 }
@@ -61,10 +102,12 @@ func (b *mintingBank) SendCoinsFromModuleToModule(context.Context, string, strin
 }
 func (b *mintingBank) MintCoins(_ context.Context, _ string, amt sdk.Coins) error {
 	b.minted = b.minted.Add(amt...)
+	b.modBal = b.modBal.Add(amt...)
 	return nil
 }
 func (b *mintingBank) BurnCoins(_ context.Context, _ string, amt sdk.Coins) error {
 	b.burned = b.burned.Add(amt...)
+	b.debit(amt)
 	return nil
 }
 
@@ -90,6 +133,11 @@ func initRewardFixture(t *testing.T) (keeper.Keeper, sdk.Context, *mintingBank) 
 
 // seedPool writes a pool with the given reserves and volume, keeping the global
 // LP denominator in step the way a real swap would.
+//
+// It does not fund the module account — seedFundedPool does. The two exist
+// separately because most tests here care about reward arithmetic and not about
+// whether the coins are really there, while the invariant tests care about
+// exactly that.
 func seedPool(t *testing.T, k keeper.Keeper, ctx sdk.Context, id uint64, erth, token, volume int64) {
 	t.Helper()
 	require.NoError(t, k.Pool.Set(ctx, id, types.Pool{
@@ -106,6 +154,16 @@ func seedPool(t *testing.T, k keeper.Keeper, ctx sdk.Context, id uint64, erth, t
 		total = math.ZeroInt()
 	}
 	require.NoError(t, k.LpTotalVolume.Set(ctx, total.Add(math.NewInt(volume))))
+}
+
+// seedFundedPool is seedPool plus the coins to back it, which is the state a
+// funded genesis actually leaves: reserves recorded in the pool AND sitting on
+// the module account.
+func seedFundedPool(t *testing.T, k keeper.Keeper, ctx sdk.Context, bank *mintingBank,
+	id uint64, erth, token, volume int64) {
+	t.Helper()
+	seedPool(t, k, ctx, id, erth, token, volume)
+	bank.fundModule(sdk.NewInt64Coin("uerth", erth), sdk.NewInt64Coin("utok", token))
 }
 
 // TestDistributeLPRewards_IsLazy is the point of the whole refactor: handing

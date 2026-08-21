@@ -148,5 +148,11 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if err := am.keeper.SettleDueAuction(ctx); err != nil {
 		return err
 	}
-	return am.keeper.BurnDuePol(ctx)
+	if err := am.keeper.BurnDuePol(ctx); err != nil {
+		return err
+	}
+	// Last, and after every write this block: the module's records must still
+	// agree with the coins it holds. See keeper/invariants.go for why a breach
+	// halts the chain rather than being logged and walked past.
+	return am.keeper.AssertHotInvariants(ctx)
 }

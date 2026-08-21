@@ -24,4 +24,9 @@ var (
 	ErrAuctionDuration    = errors.Register(ModuleName, 1111, "auction duration must be positive")
 	ErrNoBid              = errors.Register(ModuleName, 1112, "no bid found for this address")
 	ErrAlreadyClaimed     = errors.Register(ModuleName, 1113, "auction proceeds already claimed")
+
+	// ErrInvariantBroken means the module's own records no longer agree with the
+	// coins it holds. Returned from the EndBlocker, so it halts the chain — see
+	// keeper/invariants.go for why that is the intended outcome.
+	ErrInvariantBroken = errors.Register(ModuleName, 1114, "dex invariant broken")
 )

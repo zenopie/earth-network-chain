@@ -107,6 +107,18 @@ chain halt cannot push the end date out and truncation never compounds. Progress
 visible at `earthd q dex pol-burns`; a finished schedule is deleted, so an empty list
 means the protocol no longer owns liquidity it is still retiring.
 
+**The module checks its own books every block.** The dex module account holds the
+whole pre-mine in one balance, and six paths move it — swap fee burns, LP
+unbonding payouts, LP reward minting, deposits, the ANML buyback, and POL
+retirement. The EndBlocker asserts that what the module's records say it owes and
+what it actually holds are **exactly** equal, in both directions: a shortfall is
+a withdrawal that will not be payable, and a surplus is coins that should have
+been destroyed and were not — which nothing else would ever notice. A breach
+halts the node rather than letting the chain keep trading on mispriced reserves.
+The chain's own module accounts are therefore blocked from receiving ordinary
+transfers, since an outside deposit would otherwise be indistinguishable from a
+bug.
+
 **Parameters** (`earthd q dex params`)
 - `swap_fee` — swap fee as a percent (default `0.3` = 0.3%).
 

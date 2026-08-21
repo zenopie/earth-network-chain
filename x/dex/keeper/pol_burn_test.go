@@ -18,11 +18,14 @@ import (
 func seedPol(t *testing.T, k keeper.Keeper, ctx sdk.Context, bank *mintingBank,
 	id uint64, erth, token int64, burnToken bool) math.Int {
 	t.Helper()
-	seedPool(t, k, ctx, id, erth, token, 0)
+	seedFundedPool(t, k, ctx, bank, id, erth, token, 0)
 
 	shares := math.NewInt(erth).Mul(math.NewInt(token))
 	shares = math.NewIntFromBigInt(shares.BigInt().Sqrt(shares.BigInt()))
+	// The shares exist AND the module holds them: that is what makes the
+	// position the protocol's, and what the retirement will burn.
 	bank.setSupply(types.LPShareDenom(id), shares)
+	bank.fundModule(sdk.NewCoin(types.LPShareDenom(id), shares))
 
 	require.NoError(t, k.PolBurns.Set(ctx, id, types.PolBurn{
 		PoolId:          id,

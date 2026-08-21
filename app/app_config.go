@@ -102,7 +102,23 @@ var (
 		// It needs no Staking permission — it never touches the staking pools.
 		{Account: earthmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}}}
 
-	// blocked account addresses
+	// Blocked account addresses — MsgSend and MsgMultiSend refuse them as a
+	// recipient. Setting this list at all overrides the SDK default, which is to
+	// block every account holding module permissions, so anything omitted here is
+	// deliberately *reachable* by an ordinary transfer.
+	//
+	// The chain's own module accounts are blocked because sending to one is
+	// always a mistake: nothing credits the sender, and there is no path that
+	// pays the coins back out. On x/dex that mistake would also be undetectable
+	// — the module holds the whole pre-mine in one balance, and its solvency
+	// invariant (x/dex/keeper/invariants.go) is an exact equality between what it
+	// records and what it holds. An outside deposit would either break the chain
+	// or force the invariant to be weakened to "at least", which stops catching
+	// coins that should have been burned and were not.
+	//
+	// This does not affect the modules' own transfers: BlockedAddr is consulted
+	// only by the bank msg server, so keeper-level moves — deposits, swaps, bids,
+	// buybacks — are unaffected.
 	blockAccAddrs = []string{
 		authtypes.FeeCollectorName,
 		distrtypes.ModuleName,
@@ -110,6 +126,10 @@ var (
 		stakingtypes.BondedPoolName,
 		stakingtypes.NotBondedPoolName,
 		nft.ModuleName,
+		dexmoduletypes.ModuleName,
+		earthmoduletypes.ModuleName,
+		allocationmoduletypes.ModuleName,
+		personhoodmoduletypes.ModuleName,
 		// We allow the following module accounts to receive funds:
 		// govtypes.ModuleName
 	}

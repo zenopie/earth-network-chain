@@ -196,10 +196,32 @@ An untested upgrade path is discovered during the upgrade.
       and nothing of this chain. These are the cheapest confidence available on
       the AMM's invariants and the personhood state machine, and they run in CI
       forever once written.
-- [ ] **No invariants are registered anywhere** — no `RegisterInvariants`, no
-      `x/crisis`. For a chain that mints against a wall clock, burns on every
-      swap, and retires its own LP position block by block, a supply invariant
-      and a pool-reserves-vs-module-balance invariant are worth the block time.
+- [x] **No invariants are registered anywhere.** Done for `x/dex`, which is
+      where the pre-mine sits. `x/dex/keeper/invariants.go` checks, every block
+      in the EndBlocker, that the module's records and its bank balance agree
+      **exactly** — both a shortfall (a withdrawal that will not be payable) and
+      a surplus (coins that should have been burned and were not, which nothing
+      else would ever notice). A breach returns an error from EndBlock, which
+      halts the node; that is the intended outcome, since a halt is recoverable
+      by upgrade and a silent drain of the pre-mine is not. A second check
+      enforces the LP-reward denominator that `lp_rewards.go` had only asserted
+      in prose. Share backing (escrowed withdrawals plus the protocol's own
+      position against the shares that exist) walks the unbonding queue, so it
+      runs in tests rather than per block.
+      Verified by mutation: five separate injected bugs — a retirement that
+      shrinks a reserve without burning, a swap fee deducted but left in the
+      pool, an unbonding paid without shrinking the reserve, a reward credited
+      twice, and double-counted escrow — are each caught with an exact figure.
+      A live node ran 62 blocks from `deploy/genesis.json` with no breach.
+      **Not done:** `x/allocation`'s reward index and `x/personhood`'s ANML
+      accounting have no equivalent.
+      **Note:** `x/crisis` is deprecated in SDK v0.53 and removed in the next
+      release, so the checks are enforced directly rather than registered
+      through it. This also required blocking the chain's own module accounts
+      from receiving ordinary transfers (`app/app_config.go`) — without that,
+      anyone could halt the chain with a `MsgSend`, and the check would have to
+      weaken to "holds at least what it owes", which stops catching the second
+      class of bug entirely.
 - [ ] **Pin the public-input schema.** `docs/PROOF_OF_PERSONHOOD_TODO.md:27`
       records that `verifyRegistrationProof` still uses placeholder indices
       (`nullifierSignalIndex=0`, `dscRootSignalIndex=2`). These are consensus
