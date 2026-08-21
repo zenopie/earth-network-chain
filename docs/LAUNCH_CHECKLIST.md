@@ -28,6 +28,13 @@ can be changed after the file is signed and published.
       **Still open:** the gentx itself, which needs the key and so happens on
       launch day. And saying it in public.
 
+      Note there is no "plan for opening it up" to write, because nothing is
+      closed: `max_validators` is 100, there is no allowlist, and a second
+      validator needs only ERTH and `MsgCreateValidator`. The plan is the
+      absence of one, which is already on docs.erth.network. What is worth
+      saying at launch is the current fact — one validator — not a roadmap to
+      permissionlessness that already exists.
+
       Worth stating plainly when you do: a single validator can censor
       registrations, which is the one thing the chain exists to make
       unforgeable. It also collects the entire staking pillar — 1 ERTH/sec, or
