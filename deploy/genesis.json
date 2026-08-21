@@ -2030,7 +2030,7 @@
       },
       "block": {
         "max_bytes": "22020096",
-        "max_gas": "-1"
+        "max_gas": "100000000"
       },
       "evidence": {
         "max_age_duration": "172800000000000",

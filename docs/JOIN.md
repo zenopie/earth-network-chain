@@ -5,10 +5,9 @@ Everything you need to sync a node on `earth-1`.
 If you can't get a node syncing from this page alone, that's a bug in this page —
 please open an issue.
 
-> **Not launched yet.** Three values below are marked `TBD` and will be filled in
-> with the launch release: the seed address, the genesis hash, and the chain's
-> start time. Until then the network is a single validator and there is nothing
-> to join.
+> **Not launched yet.** Two values below are marked `TBD` and will be filled in
+> with the launch release: the seed address and the genesis hash. Until then the
+> network is a single validator and there is nothing to join.
 
 ---
 
@@ -100,10 +99,12 @@ not start without it**, and the error doesn't say which file to edit:
 set min gas price in app.toml or flag or env variable
 ```
 
-Below this value your node won't relay a transaction:
+Below this value your node won't relay a transaction. This is a per-node setting,
+not a chain rule — there is no fee module, so the network's real floor is whatever
+most validators pick:
 
 ```toml
-minimum-gas-prices = "TBD"    # the launch release will name the figure
+minimum-gas-prices = "0.005uerth"
 ```
 
 **Pruning** — pick by what the node is for:

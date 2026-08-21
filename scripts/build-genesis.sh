@@ -11,7 +11,7 @@
 #
 # What goes in:
 #
-#   deploy/genesis/chain.json        chain id, genesis time, app version
+#   deploy/genesis/chain.json        chain id, genesis time, app version, block gas limit
 #   deploy/genesis/app_state.json    the parameters this chain deliberately sets
 #   deploy/genesis/accounts.json     every balance that exists at height 1
 #   deploy/genesis/verifying-keys/   one base64 UltraHonk key per register circuit
@@ -183,6 +183,7 @@ g['genesis_time'] = c['genesis_time']
 g['chain_id'] = c['chain_id']
 g['initial_height'] = c['initial_height']
 g['consensus']['params']['version']['app'] = c['app_version']
+g['consensus']['params']['block']['max_gas'] = c['block_max_gas']
 # `earthd init` fills these from the build's ldflags, which carry the git commit.
 # Pinned instead, or the artifact would differ for every person who built it.
 g['app_name'] = c['app_name']

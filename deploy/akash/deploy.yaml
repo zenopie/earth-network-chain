@@ -30,8 +30,11 @@ services:
     env:
       - CHAIN_ID=earth-1
       - MONIKER=earth-akash-devnet
-      # Zero-fee transactions. Devnet posture — see README.
-      - MIN_GAS_PRICES=0uerth
+      # Free transactions mean free spam. Per-node config, not a chain parameter,
+      # so this is a restart to change and not a governance vote. ~500uerth on a
+      # typical transaction; ads-for-gas sponsors users, so the fee is not an
+      # adoption barrier.
+      - MIN_GAS_PRICES=0.005uerth
       #
       # DEV_INIT=1 makes this a NEW throwaway chain on every fresh volume: its
       # own genesis_time, its own validator, its own genesis hash. That is what

@@ -17,6 +17,13 @@
     "app_version: 0 is a placeholder. Set it to the launch app version; it moves with",
     "every coordinated upgrade.",
     "",
+    "block_max_gas caps how much gas one block may consume. The SDK default is -1,",
+    "meaning no cap at all: a block is bounded only by its 22MB size, so a single",
+    "transaction can consume as much gas as it likes and the per-node minimum fee is",
+    "the only brake on it. 100M is generous for normal use — a transfer is ~80k, a",
+    "passport registration much more because it verifies a proof — while still",
+    "stopping one transaction from taking a whole block. Governance can change it.",
+    "",
     "app_name / binary_version are the informational strings `earthd init` puts at the",
     "top of the file. They are pinned here rather than taken from the build because a",
     "genesis is only useful if it is byte-identical for everyone, and ldflags bake in",
@@ -27,6 +34,8 @@
   "genesis_time": "2026-08-16T15:56:41.808823Z",
   "initial_height": 1,
   "app_version": "0",
+
+  "block_max_gas": "100000000",
 
   "app_name": "earthd",
   "binary_version": "0.0.1-5b5d77d3"

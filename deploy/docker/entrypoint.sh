@@ -28,7 +28,15 @@ set -euo pipefail
 EARTH_HOME="${EARTH_HOME:-/data}"
 CHAIN_ID="${CHAIN_ID:-earth-1}"
 MONIKER="${MONIKER:-earth-node}"
-MIN_GAS_PRICES="${MIN_GAS_PRICES:-0uerth}"
+# The floor below which this node will not relay a transaction. Per-node config,
+# not a chain parameter — there is no fee module, so the network's effective
+# minimum is whatever most validators set, and changing it is a restart rather
+# than a governance vote.
+#
+# 0uerth means free transactions, which means free spam. 0.005 is ~500uerth on a
+# typical transaction — nothing to a user, especially since ads-for-gas sponsors
+# them — while filling every block for a day would cost a spammer real ERTH.
+MIN_GAS_PRICES="${MIN_GAS_PRICES:-0.005uerth}"
 
 # Browser access, which the two RPC surfaces handle very differently.
 #
