@@ -34,6 +34,7 @@ case "$1" in
     home=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--home" ] && j=$((i+1)) && home="${!j}"; done
     mkdir -p "$home/config"
     printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$home/config/config.toml"
+    printf 'snapshot-interval = 0\nsnapshot-keep-recent = 2\n' > "$home/config/app.toml"
     printf '{"stock":true}\n' > "$home/config/genesis.json"
     ;;
   start) echo "STARTED $*" >> "$EARTHD_LOG" ;;
@@ -126,6 +127,8 @@ fi
 # ── 4. resume: an existing genesis is never replaced ───────────────────────
 H="$WORK/resume"; mkdir -p "$H/config"
 printf '{"mine":true}\n' > "$H/config/genesis.json"
+printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$H/config/config.toml"
+printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H"; then
   grep -q "resuming chain" "$LOG" && ok "resume: detects existing state" \
     || bad "resume: did not resume" "$(tail -2 "$LOG")"
@@ -180,12 +183,57 @@ fi
 H="$WORK/rpccors-resume"; mkdir -p "$H/config"
 printf '{"mine":true}\n' > "$H/config/genesis.json"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = ["https://old.example"]\n' > "$H/config/config.toml"
+printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H" RPC_CORS_ORIGINS="https://new.example"; then
   grep -q 'cors_allowed_origins = \["https://new.example"\]' "$H/config/config.toml" \
     && ok "rpc cors: re-applied on an existing volume" \
     || bad "rpc cors: stale on restart" "$(grep '^cors_allowed_origins' "$H/config/config.toml")"
 else
   bad "rpc cors resume: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# ── 7. state-sync snapshots ────────────────────────────────────────────────
+#
+# The SDK default is 0, meaning this node offers no snapshots and nobody can
+# state-sync from it. A snapshot cannot be produced for a height already passed,
+# so launching with it off is a decision that cannot be revisited later.
+H="$WORK/snap"; mkdir -p "$H"
+if run "$H"; then
+  grep -q '^snapshot-interval = 1000$' "$H/config/app.toml" \
+    && ok "snapshots: on by default" \
+    || bad "snapshots: not enabled" "$(grep '^snapshot-' "$H/config/app.toml")"
+  grep -q '^snapshot-keep-recent = 5$' "$H/config/app.toml" \
+    && ok "snapshots: keeps 5" \
+    || bad "snapshots: wrong keep-recent" "$(grep '^snapshot-keep' "$H/config/app.toml")"
+else
+  bad "snapshots: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# Overridable, including off — and turning them off should be loud, because a
+# node with snapshots off looks identical to one with them on until someone
+# tries to sync from it.
+H="$WORK/snap-off"; mkdir -p "$H"
+if run "$H" SNAPSHOT_INTERVAL=0; then
+  grep -q '^snapshot-interval = 0$' "$H/config/app.toml" \
+    && ok "snapshots: can be turned off" \
+    || bad "snapshots: override ignored" ""
+  grep -q "snapshots OFF" "$LOG" \
+    && ok "snapshots: says so when off" || bad "snapshots: turned off silently" ""
+else
+  bad "snapshots off: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# Re-applied on an existing volume, so the cadence can change with a restart.
+H="$WORK/snap-resume"; mkdir -p "$H/config"
+printf '{"mine":true}\n' > "$H/config/genesis.json"
+printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$H/config/config.toml"
+printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
+if run "$H" SNAPSHOT_INTERVAL=500; then
+  grep -q '^snapshot-interval = 500$' "$H/config/app.toml" \
+    && ok "snapshots: re-applied on an existing volume" \
+    || bad "snapshots: stale on restart" "$(grep '^snapshot-interval' "$H/config/app.toml")"
+else
+  bad "snapshots resume: entrypoint exited non-zero" "$(tail -3 "$LOG")"
 fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"

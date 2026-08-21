@@ -63,6 +63,25 @@ API_UNSAFE_CORS="${API_UNSAFE_CORS:-0}"
 GENESIS_SRC="${GENESIS_SRC:-/etc/earth/genesis.json}"
 GENESIS_SHA="${GENESIS_SHA:-${GENESIS_SRC}.sha256}"
 
+# State-sync snapshots. This node produces them so that a NEW node can join by
+# downloading state at a height instead of replaying every block from genesis.
+#
+# Worth more on this chain than on most. Replaying a block re-executes its
+# transactions, and every passport registration verifies a zkSNARK
+# (x/personhood, ultrahonk.Verify). A chain that mostly moves tokens replays
+# quickly; this one re-runs a proof per registration, so sync cost grows with
+# adoption rather than with time alone.
+#
+# The SDK default is 0 — off. A chain launched that way has no node offering
+# snapshots, nobody can state-sync, and a snapshot cannot be produced for a
+# height already passed. It is cheap now and unavailable later, which is the only
+# reason it is on by default here.
+#
+# 1000 blocks is roughly 80 minutes at 5s. Keeping 5 gives a joining node a
+# choice of recent heights without holding much disk.
+SNAPSHOT_INTERVAL="${SNAPSHOT_INTERVAL:-1000}"
+SNAPSHOT_KEEP_RECENT="${SNAPSHOT_KEEP_RECENT:-5}"
+
 # Devnet-only. See the header: this makes a new chain, not a node on yours.
 DEV_INIT="${DEV_INIT:-0}"
 # What the devnet validator holds, and how much of it is bonded. Ignored unless
@@ -83,6 +102,9 @@ sha256_of() {
 # also run directly by its tests and by anyone debugging on a Mac.
 sed_inplace() {
   local expr="$1" file="$2"
+  [ -f "$file" ] || die "$file is missing — the node home at $EARTH_HOME is not
+    one earthd created. Point EARTH_HOME at a real node home, or delete it and
+    let this script initialise one."
   sed "$expr" "$file" > "$file.tmp" && mv "$file.tmp" "$file"
 }
 
@@ -175,6 +197,22 @@ if [ -n "${PRIV_VALIDATOR_LADDR:-}" ]; then
   sed_inplace "s|^priv_validator_laddr = .*|priv_validator_laddr = \"$PRIV_VALIDATOR_LADDR\"|" \
     "$EARTH_HOME/config/config.toml"
   say "remote signer expected at $PRIV_VALIDATOR_LADDR"
+fi
+
+# Snapshots. Applied on every start for the same reason as the CORS settings:
+# app.toml lives in the volume, so these can change with a restart.
+#
+# The default pruning profile keeps 362,880 recent states — far more than the
+# snapshot interval — so a snapshot is never asked for a height that has already
+# been pruned away. Change pruning and check that still holds.
+sed_inplace "s|^snapshot-interval = .*|snapshot-interval = $SNAPSHOT_INTERVAL|" \
+  "$EARTH_HOME/config/app.toml"
+sed_inplace "s|^snapshot-keep-recent = .*|snapshot-keep-recent = $SNAPSHOT_KEEP_RECENT|" \
+  "$EARTH_HOME/config/app.toml"
+if [ "$SNAPSHOT_INTERVAL" = "0" ]; then
+  say "snapshots OFF — no node can state-sync from this one"
+else
+  say "snapshots every $SNAPSHOT_INTERVAL blocks, keeping $SNAPSHOT_KEEP_RECENT"
 fi
 
 # RPC CORS. Applied on every start, not just first boot: config.toml lives in the

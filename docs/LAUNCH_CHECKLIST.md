@@ -157,10 +157,18 @@ file confirms the shape: one account, `"gen_txs": []`.
       Two ways out and they compose: run a separate read-only LCD/RPC service, and
       scope the header at Cloudflare, which already terminates both hostnames and
       can rewrite it per origin.
-- [ ] **Set snapshot and pruning defaults** so a new node can state-sync instead
-      of replaying from genesis: `snapshot-interval`, `snapshot-keep-recent`, and
-      a documented `pruning` profile per node role (validator, archive, public
-      RPC).
+- [x] **Set snapshot and pruning defaults.** `SNAPSHOT_INTERVAL` (1000, ~80
+      minutes at 5s) and `SNAPSHOT_KEEP_RECENT` (5) in the entrypoint, applied on
+      every start so the cadence can change with a restart. The SDK default is 0
+      — off — which means no node offers snapshots and nobody can state-sync;
+      since a snapshot cannot be produced for a height already passed, launching
+      that way is a decision that cannot be revisited.
+      Verified on a live chain: five snapshots on disk with `creating` and
+      `completed` in the log.
+      Pruning profiles per node role and the client-side state-sync procedure are
+      in `docs/JOIN.md`. This chain gains more from state sync than most —
+      replay re-executes every registration's zkSNARK verification, so sync cost
+      grows with adoption, not just with time.
 - [x] **Write the join procedure** — `docs/JOIN.md`, walked end to end against
       the real binary. Two values wait for launch day: the seed address and the
       genesis hash.

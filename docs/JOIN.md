@@ -107,7 +107,7 @@ most validators pick:
 minimum-gas-prices = "0.005uerth"
 ```
 
-**Pruning** — pick by what the node is for:
+**Pruning** — pick by what the node is for, in `app.toml`:
 
 | role | setting |
 | --- | --- |
@@ -115,9 +115,68 @@ minimum-gas-prices = "0.005uerth"
 | public RPC | `pruning = "custom"`, `pruning-keep-recent = "362880"`, `pruning-interval = "100"` |
 | archive | `pruning = "nothing"` — grows without limit |
 
+**Snapshots** — on by default, and worth leaving on:
+
+```toml
+snapshot-interval = 1000      # ~80 minutes at 5s blocks
+snapshot-keep-recent = 5
+```
+
+This is what lets *other* people state-sync from you. `0` disables it. If
+everyone disables it, nobody can join without replaying the whole chain.
+
+If you change `pruning`, check the states a snapshot needs are still kept —
+`pruning = "default"` keeps far more than the snapshot interval, so the two do
+not collide.
+
 **Don't** enable `enabled-unsafe-cors` on a validator. It lets any website read
 your node and broadcast through it. If you're serving a browser app, run a
 separate read-only node for that.
+
+---
+
+## 4b. State sync (optional, but much faster)
+
+Instead of replaying every block, fetch state at a recent height from a peer.
+
+**This chain benefits more than most.** Replaying a block re-executes its
+transactions, and every passport registration verifies a zero-knowledge proof.
+A chain that mostly moves tokens replays quickly; this one re-runs a proof per
+registration, so replay cost grows with adoption.
+
+Get a trust height and hash a little behind the tip:
+
+```bash
+RPC=https://rpc.erth.network
+LATEST=$(curl -s $RPC/block | jq -r .result.block.header.height)
+TRUST_HEIGHT=$(( LATEST - 2000 ))
+TRUST_HASH=$(curl -s "$RPC/block?height=$TRUST_HEIGHT" | jq -r .result.block_id.hash)
+echo "$TRUST_HEIGHT  $TRUST_HASH"
+```
+
+Put them in `~/.earth/config/config.toml` under `[statesync]`:
+
+```toml
+enable = true
+rpc_servers = "https://rpc.erth.network:443,https://rpc.erth.network:443"
+trust_height = <TRUST_HEIGHT>
+trust_hash = "<TRUST_HASH>"
+trust_period = "168h0m0s"
+```
+
+`rpc_servers` needs **at least two entries** — the same address twice is
+accepted, though two independent ones are better.
+
+Then start with an empty data directory:
+
+```bash
+earthd tendermint unsafe-reset-all --home ~/.earth --keep-addr-book
+earthd start
+```
+
+The log shows `Discovering snapshots`, then `Fetching snapshot chunks`. If it
+sits on `Discovering snapshots` with no progress, no peer is offering one —
+check `snapshot-interval` is non-zero on the node you are syncing from.
 
 ---
 
@@ -216,3 +275,7 @@ be able to dial you.
 
 **Stuck at a height with peers connected** — usually an upgrade you haven't
 applied. Check the releases page.
+
+**State sync stuck on "Discovering snapshots"** — no peer is offering one. The
+node you are syncing from needs a non-zero `snapshot-interval`, and a snapshot
+cannot be produced for a height already passed.
