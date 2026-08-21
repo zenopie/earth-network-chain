@@ -1,0 +1,108 @@
+{
+  "staking": {
+    "params": {
+      "bond_denom": "uerth"
+    }
+  },
+  "mint": {
+    "minter": {
+      "inflation": "0.000000000000000000"
+    },
+    "params": {
+      "mint_denom": "uerth",
+      "inflation_rate_change": "0.000000000000000000",
+      "inflation_max": "0.000000000000000000",
+      "inflation_min": "0.000000000000000000"
+    }
+  },
+  "distribution": {
+    "params": {
+      "community_tax": "0.000000000000000000"
+    }
+  },
+  "gov": {
+    "params": {
+      "min_deposit": [
+        {
+          "amount": "1000000",
+          "denom": "uerth"
+        }
+      ],
+      "max_deposit_period": "1209600s",
+      "voting_period": "604800s",
+      "quorum": "0.334",
+      "threshold": "0.5",
+      "veto_threshold": "0.334",
+      "min_initial_deposit_ratio": "0.25",
+      "expedited_min_deposit": [
+        {
+          "amount": "5000000",
+          "denom": "uerth"
+        }
+      ],
+      "expedited_threshold": "0.667"
+    }
+  },
+  "dex": {
+    "params": {
+      "lp_unbonding_seconds": "604800",
+      "swap_fee": "0.3"
+    },
+    "pool_map": [
+      {
+        "last_volume_day": "0",
+        "pool_id": "1",
+        "reserve_erth": {
+          "amount": "840960000000000",
+          "denom": "uerth"
+        },
+        "reserve_token": {
+          "amount": "7300000000",
+          "denom": "uanml"
+        },
+        "volume": "0"
+      }
+    ],
+    "liquidity_auction": {
+      "status": "AUCTION_STATUS_PENDING",
+      "bid_denom": "",
+      "end_time": "0",
+      "erth_for_bidders": {
+        "denom": "uerth",
+        "amount": "840960000000000"
+      },
+      "erth_for_pool": {
+        "denom": "uerth",
+        "amount": "840960000000000"
+      },
+      "total_raised": "0",
+      "pool_id": "0",
+      "claimed": "0"
+    },
+    "pol_burns": [
+      {
+        "pool_id": "1",
+        "total_shares": "2477702161277",
+        "shares_remaining": "2477702161277",
+        "start_time": "0",
+        "duration_seconds": "315576000",
+        "burn_token": true
+      }
+    ]
+  },
+  "personhood": {
+    "params": {
+      "current_date_index": 0,
+      "current_date_max_skew_seconds": "172800",
+      "dsc_key_index": 2,
+      "expiry_sweep_limit": "100",
+      "nullifier_index": 1,
+      "registration_validity_seconds": "31536000"
+    }
+  },
+  "allocation": {
+    "params": {
+      "address_option_fee": "1000000"
+    }
+  }
+}

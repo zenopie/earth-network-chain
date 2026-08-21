@@ -64,6 +64,14 @@ func (k Keeper) BurnDuePol(ctx context.Context) error {
 // accumulated tranche by tranche. Truncation therefore never compounds, and a
 // chain that halts for a week does not push the end date a week later: it
 // catches up in the block it resumes on.
+//
+// The same catch-up applies to a chain launched from a stale genesis_time, and
+// it is worth knowing before it surprises someone. CometBFT stamps block 1 with
+// genesis_time and gives block 2 the wall clock, so a genesis file four days old
+// anchors the schedule four days in the past and retires four days of the
+// position in a single block. This is the emission's failure mode exactly (see
+// deploy/docker/README.md on 125,485 ERTH minted at height 2) and it has the
+// same fix: launch from a genesis_time close to when the chain actually starts.
 func retirableAt(b types.PolBurn, now int64) math.Int {
 	if b.DurationSeconds <= 0 || now <= b.StartTime {
 		return math.ZeroInt()

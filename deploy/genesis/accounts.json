@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "Every balance the chain starts with. Nothing else may hold one — genesis_test.go",
+    "fails the build if it does.",
+    "",
+    "'keyed' accounts are added with `earthd genesis add-genesis-account`, which writes",
+    "auth, bank.balances and bank.supply together. That is the whole reason the tool is",
+    "used instead of editing the file: the three have to move as one, and hand-editing",
+    "them is how you ship a genesis whose supply does not equal its balances.",
+    "",
+    "'modules' are module accounts. They are NOT added with add-genesis-account, which",
+    "would write a BaseAccount at an address x/auth must later hold a ModuleAccount at.",
+    "Their balances go straight into bank, and the supply is recomputed from the sum.",
+    "x/auth creates the ModuleAccount itself on first use."
+  ],
+
+  "keyed": [
+    {
+      "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
+      "coins": "10000000000uerth",
+      "note": "ads-for-gas hot wallet. DEVNET KEY, no value — see deploy/docker/README.md. Replace before a real launch (docs/LAUNCH_CHECKLIST.md §1)."
+    }
+  ],
+
+  "modules": [
+    {
+      "name": "dex",
+      "address": "earth1n58mly6f7er0zs6swtetqgfqs36jaarqqsddqt",
+      "coins": [
+        { "denom": "dexlp/1", "amount": "2477702161277" },
+        { "denom": "uanml", "amount": "7300000000" },
+        { "denom": "uerth", "amount": "2522880000000000" }
+      ],
+      "note": "The whole pre-mine, plus pool 1's ANML and its LP shares. uerth = pool 1's reserve (840,960,000,000,000) + both auction earmarks (840,960,000,000,000 each). dexlp/1 = sqrt(reserve_erth * reserve_token). genesis_test.go re-derives both from app_state.json rather than trusting these numbers."
+    }
+  ]
+}

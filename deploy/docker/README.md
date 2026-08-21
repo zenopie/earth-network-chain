@@ -43,21 +43,29 @@ existing. The entrypoint decides which case it is purely by whether
 
 ## Genesis
 
-`deploy/genesis.json` is generated once with `ignite chain init` and committed.
-It carries everything `config.yml` describes — the 539 CSCAs, the seven register
-verifying keys, the seeded ANML/ERTH pool, the governance parameters — with two
-things removed:
+`deploy/genesis.json` is a build artifact, written by `scripts/build-genesis.sh`
+from the sources in `deploy/genesis/` and committed alongside its sha256. See
+`deploy/genesis/README.md`. It used to be `ignite chain init` followed by
+hand-stripping and a manual "recompute bank supply", which is how `config.yml`
+and the genesis file came to disagree about the pre-mine for two days without
+anyone noticing.
 
-- **the gentx**, because it is bound to a consensus key, and shipping that key in
-  a public image would let anyone sign as the validator
-- **the dev accounts**, because their keys only ever existed on the machine that
-  ran `ignite chain init`, so keeping them means genesis funds nobody can spend
+It carries the 539 CSCAs, the seven register verifying keys, the ANML/ERTH pool,
+the liquidity auction, the retirement schedules and the governance parameters —
+and no validator set, because a gentx is bound to a consensus key and shipping
+that key in a public image would let anyone sign as the validator.
 
-The entrypoint fills both back in with stock `earthd` commands —
+The entrypoint fills one in with stock `earthd` commands —
 `add-genesis-account`, `gentx`, `collect-gentxs` — against a validator key
 created on the node. `add-genesis-account` updates auth, bank balances and supply
-together, which is why the account is added with the tool rather than by editing
+together, which is why an account is added with the tool rather than by editing
 the file.
+
+**This is what stops the image joining a network.** Every node that boots it
+computes a different genesis and therefore a different app hash, so no two of
+them can share a chain. Fixing it is `docs/LAUNCH_CHECKLIST.md` §1: collect the
+gentxs into the artifact ahead of time, publish its hash, and have the entrypoint
+*verify* rather than generate.
 
 Two accounts are seeded with 100k ERTH each so a fresh deployment is testable
 without hunting for the validator's mnemonic: the development handset, and the

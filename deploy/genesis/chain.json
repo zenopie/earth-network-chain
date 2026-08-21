@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "The header values a network launch has to agree on. Each is a decision, not a",
+    "default — see docs/LAUNCH_CHECKLIST.md §0 and §1.",
+    "",
+    "genesis_time: the instant block 1 is stamped with. It must be a real UTC time in",
+    "the near future at launch, NOT the moment someone happened to run the build.",
+    "Emission is prorated against elapsed time, so a stale genesis pays the whole gap",
+    "out in one block — a day-old file once minted 125,485 ERTH at height 2. The",
+    "entrypoint currently rewrites this at boot, which is precisely why no two nodes",
+    "can share a chain; fixing that means setting a launch time here and stopping the",
+    "rewrite. The pol_burn schedules catch up the same way: a genesis four days old",
+    "retires four days of protocol-owned liquidity in one block. Measured, not",
+    "theoretical -- launching from this file today burns 2,996,952,143 LP shares at",
+    "height 2.",
+    "",
+    "app_version: 0 is a placeholder. Set it to the launch app version; it moves with",
+    "every coordinated upgrade.",
+    "",
+    "app_name / binary_version are the informational strings `earthd init` puts at the",
+    "top of the file. They are pinned here rather than taken from the build because a",
+    "genesis is only useful if it is byte-identical for everyone, and ldflags bake in",
+    "the git commit — the file would otherwise change every time anyone rebuilt it."
+  ],
+
+  "chain_id": "earth-1",
+  "genesis_time": "2026-08-16T15:56:41.808823Z",
+  "initial_height": 1,
+  "app_version": "0",
+
+  "app_name": "earthd",
+  "binary_version": "0.0.1-5b5d77d3"
+}

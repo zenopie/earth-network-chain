@@ -29,7 +29,6 @@ var PoolSeqKey = collections.NewPrefix("pool_seq")
 // enforces one pool per token and lets the router find a pool by its token.
 var PoolByTokenKey = collections.NewPrefix("pool_by_token")
 
-
 // Volume-weighted LP reward accounting. Rewards are handed to the dex as a lump
 // each block but credited to pools lazily, the same index pattern the allocation
 // streams use: the global index advances by reward/totalVolume, and a pool
@@ -68,7 +67,6 @@ const (
 	// VolumeWindowDays is the number of daily buckets in a pool's rolling volume
 	// window used to weight LP reward distribution.
 	VolumeWindowDays = 7
-
 
 	// DefaultLpUnbondingSeconds is how long a liquidity withdrawal waits before
 	// it is swept to the provider's wallet: 7 days.

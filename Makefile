@@ -76,6 +76,22 @@ proto-gen:
 .PHONY: proto-gen
 
 #################
+###  Genesis  ###
+#################
+
+# deploy/genesis.json is a build artifact, not a file anyone edits. It is written
+# from deploy/genesis/ — see deploy/genesis/README.md.
+
+genesis:
+	@scripts/build-genesis.sh
+
+# For CI: fails if the committed artifact no longer matches its sources.
+genesis-check:
+	@scripts/build-genesis.sh --check
+
+.PHONY: genesis genesis-check
+
+#################
 ###  Linting  ###
 #################
 

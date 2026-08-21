@@ -128,18 +128,28 @@ genesis:
         # It is a rounding artefact of a few uerth per block, not a funding
         # source.
         community_tax: "0"
-    # Protocol-owned ANML/ERTH liquidity, seeded at genesis. The LP shares sit in
-    # the x/dex module account itself and there is no message that can withdraw
-    # them, so this liquidity is PERMANENT — not even governance can pull it.
+    # The genesis pre-mine, all of it on the x/dex module account. Sized to 20
+    # years (365 d/y) of emissions:
+    #   4 pillars x 1 ERTH/sec x 630,720,000 s = 2,522,880,000 ERTH
+    #   (staking base, ANML buyback-and-burn, and the human and capital
+    #    allocation streams)
+    # It is *additive* to those emissions, not a substitute — the chain keeps
+    # minting on top of it.
+    #
+    # It splits three equal ways, 840,960,000 ERTH each:
+    #   - the ANML/ERTH pool below, against 1 person x 1 ANML/day x 7,300 d
+    #     = 7,300 ANML, so the pool opens at 1 ANML = 115,200 ERTH
+    #   - the liquidity auction's bidder earmark
+    #   - the liquidity auction's pool earmark
+    # Both auction earmarks are pre-funded here and merely *recorded* in the
+    # auction state; opening a window cannot create ERTH genesis did not already
+    # account for. They must be equal — see GenesisState.Validate.
+    #
+    # The LP shares sit in the x/dex module account itself and no message can
+    # withdraw them, so nobody can pull this liquidity, governance included. It
+    # leaves only by being retired on the schedule further down.
     # (The x/gov module account cannot be used: x/gov's InitGenesis panics unless
     # its balance exactly equals the sum of proposal deposits.)
-    # Sized to 20 years (365 d/y) of emissions so the opening price equals the
-    # long-run emission ratio:
-    #   ERTH  = 4 pillars x 1 ERTH/sec x 630,720,000 s = 2,522,880,000 ERTH
-    #           (staking base, ANML buyback-and-burn, and the human and
-    #            capital allocation streams)
-    #   ANML  = 1 person x 1 ANML/day x 7,300 d       =         7,300 ANML
-    #   => 1 ANML = 345,600 ERTH at open
     # LP shares are sqrt(reserve_erth * reserve_token), matching CreatePool.
     bank:
       # Only the pool seed below is declared here: ignite applies this override
@@ -148,7 +158,7 @@ genesis:
       # change here.
       supply:
       - denom: dexlp/1
-        amount: "4291506029356"
+        amount: "2477702161277"
       - denom: uanml
         amount: "7300000000"
       - denom: uerth
@@ -159,7 +169,7 @@ genesis:
       - address: earth1n58mly6f7er0zs6swtetqgfqs36jaarqqsddqt
         coins:
         - denom: dexlp/1
-          amount: "4291506029356"
+          amount: "2477702161277"
         - denom: uanml
           amount: "7300000000"
         - denom: uerth
@@ -179,12 +189,34 @@ genesis:
       - pool_id: "1"
         reserve_erth:
           denom: uerth
-          amount: "2522880000000000"
+          amount: "840960000000000"
         reserve_token:
           denom: uanml
           amount: "7300000000"
         volume: "0"
         last_volume_day: "0"
+      # The genesis liquidity auction. It starts PENDING: the two earmarks are
+      # already funded on the module account above and this only records how much
+      # of that balance is spoken for. Governance opens a window with
+      # MsgStartLiquidityAuction, choosing the bid denom then rather than here —
+      # the intended denominator is bridged and does not exist on the chain until
+      # IBC is enabled. Settlement pays bidders one earmark pro rata and pairs the
+      # other with everything they raised, so the pool opens at exactly the price
+      # the auction cleared at and there is no gap for the first trade to take.
+      liquidity_auction:
+        status: AUCTION_STATUS_PENDING
+        bid_denom: ""
+        end_time: "0"
+        erth_for_bidders:
+          denom: uerth
+          amount: "840960000000000"
+        erth_for_pool:
+          denom: uerth
+          amount: "840960000000000"
+        total_raised: "0"
+        pool_id: "0"
+        claimed: "0"
+      auction_bids: []
       # The chain owns pool 1 outright — the LP shares are minted to the dex
       # module account, which has no key — and retires that position on a
       # straight line over ten years. Running a book is active management whose
@@ -200,8 +232,8 @@ genesis:
       # cannot know the chain's first block time. duration is ten Julian years.
       pol_burns:
       - pool_id: "1"
-        total_shares: "4291506029356"
-        shares_remaining: "4291506029356"
+        total_shares: "2477702161277"
+        shares_remaining: "2477702161277"
         start_time: "0"
         duration_seconds: "315576000"
         burn_token: true

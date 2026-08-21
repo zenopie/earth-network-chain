@@ -1,10 +1,6 @@
 {
-  "app_name": "earthd",
-  "app_version": "0.0.1-5b5d77d3",
-  "genesis_time": "2026-08-16T15:56:41.808823Z",
-  "chain_id": "earth-1",
-  "initial_height": 1,
   "app_hash": null,
+  "app_name": "earthd",
   "app_state": {
     "06-solomachine": null,
     "07-tendermint": null,
@@ -14,38 +10,34 @@
       }
     },
     "auth": {
-      "params": {
-        "max_memo_characters": "256",
-        "tx_sig_limit": "7",
-        "tx_size_cost_per_byte": "10",
-        "sig_verify_cost_ed25519": "590",
-        "sig_verify_cost_secp256k1": "1000"
-      },
       "accounts": [
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "account_number": "0",
           "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
           "pub_key": null,
-          "account_number": "0",
           "sequence": "0"
         }
-      ]
+      ],
+      "params": {
+        "max_memo_characters": "256",
+        "sig_verify_cost_ed25519": "590",
+        "sig_verify_cost_secp256k1": "1000",
+        "tx_sig_limit": "7",
+        "tx_size_cost_per_byte": "10"
+      }
     },
     "authz": {
       "authorization": []
     },
     "bank": {
-      "params": {
-        "send_enabled": [],
-        "default_send_enabled": true
-      },
       "balances": [
         {
           "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
           "coins": [
             {
-              "denom": "uerth",
-              "amount": "10000000000"
+              "amount": "10000000000",
+              "denom": "uerth"
             }
           ]
         },
@@ -53,36 +45,40 @@
           "address": "earth1n58mly6f7er0zs6swtetqgfqs36jaarqqsddqt",
           "coins": [
             {
-              "denom": "dexlp/1",
-              "amount": "2477702161277"
+              "amount": "2477702161277",
+              "denom": "dexlp/1"
             },
             {
-              "denom": "uanml",
-              "amount": "7300000000"
+              "amount": "7300000000",
+              "denom": "uanml"
             },
             {
-              "denom": "uerth",
-              "amount": "2522880000000000"
+              "amount": "2522880000000000",
+              "denom": "uerth"
             }
           ]
         }
       ],
+      "denom_metadata": [],
+      "params": {
+        "default_send_enabled": true,
+        "send_enabled": []
+      },
+      "send_enabled": [],
       "supply": [
         {
-          "denom": "dexlp/1",
-          "amount": "2477702161277"
+          "amount": "2477702161277",
+          "denom": "dexlp/1"
         },
         {
-          "denom": "uanml",
-          "amount": "7300000000"
+          "amount": "7300000000",
+          "denom": "uanml"
         },
         {
-          "denom": "uerth",
-          "amount": "2522890000000000"
+          "amount": "2522890000000000",
+          "denom": "uerth"
         }
-      ],
-      "denom_metadata": [],
-      "send_enabled": []
+      ]
     },
     "circuit": {
       "account_permissions": [],
@@ -90,11 +86,38 @@
     },
     "consensus": null,
     "dex": {
+      "auction_bids": [],
+      "liquidity_auction": {
+        "bid_denom": "",
+        "claimed": "0",
+        "end_time": "0",
+        "erth_for_bidders": {
+          "amount": "840960000000000",
+          "denom": "uerth"
+        },
+        "erth_for_pool": {
+          "amount": "840960000000000",
+          "denom": "uerth"
+        },
+        "pool_id": "0",
+        "status": "AUCTION_STATUS_PENDING",
+        "total_raised": "0"
+      },
       "lp_unbondings": [],
       "params": {
         "lp_unbonding_seconds": "604800",
         "swap_fee": "0.3"
       },
+      "pol_burns": [
+        {
+          "burn_token": true,
+          "duration_seconds": "315576000",
+          "pool_id": "1",
+          "shares_remaining": "2477702161277",
+          "start_time": "0",
+          "total_shares": "2477702161277"
+        }
+      ],
       "pool_map": [
         {
           "last_volume_day": "0",
@@ -108,33 +131,6 @@
             "denom": "uanml"
           },
           "volume": "0"
-        }
-      ],
-      "liquidity_auction": {
-        "status": "AUCTION_STATUS_PENDING",
-        "bid_denom": "",
-        "end_time": "0",
-        "erth_for_bidders": {
-          "denom": "uerth",
-          "amount": "840960000000000"
-        },
-        "erth_for_pool": {
-          "denom": "uerth",
-          "amount": "840960000000000"
-        },
-        "total_raised": "0",
-        "pool_id": "0",
-        "claimed": "0"
-      },
-      "auction_bids": [],
-      "pol_burns": [
-        {
-          "pool_id": "1",
-          "total_shares": "2477702161277",
-          "shares_remaining": "2477702161277",
-          "start_time": "0",
-          "duration_seconds": "315576000",
-          "burn_token": true
         }
       ]
     },
@@ -2021,15 +2017,20 @@
     "upgrade": {},
     "vesting": {}
   },
+  "app_version": "0.0.1-5b5d77d3",
+  "chain_id": "earth-1",
   "consensus": {
     "params": {
+      "abci": {
+        "vote_extensions_enable_height": "0"
+      },
       "block": {
         "max_bytes": "22020096",
         "max_gas": "-1"
       },
       "evidence": {
-        "max_age_num_blocks": "100000",
         "max_age_duration": "172800000000000",
+        "max_age_num_blocks": "100000",
         "max_bytes": "1048576"
       },
       "validator": {
@@ -2039,10 +2040,9 @@
       },
       "version": {
         "app": "0"
-      },
-      "abci": {
-        "vote_extensions_enable_height": "0"
       }
     }
-  }
+  },
+  "genesis_time": "2026-08-16T15:56:41.808823Z",
+  "initial_height": 1
 }
