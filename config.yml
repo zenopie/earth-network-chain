@@ -185,6 +185,26 @@ genesis:
           amount: "7300000000"
         volume: "0"
         last_volume_day: "0"
+      # The chain owns pool 1 outright — the LP shares are minted to the dex
+      # module account, which has no key — and retires that position on a
+      # straight line over ten years. Running a book is active management whose
+      # incentives are not an ERTH staker's, so the protocol bootstraps the
+      # market and then gets out of the way, leaving a decade of steadily rising
+      # reward share as the reason for real LPs to take it over.
+      #
+      # burn_token: both sides are the chain's own assets, so each retired slice
+      # burns its ERTH *and* its ANML. Both reserves shrink by the same fraction,
+      # which means retirement never moves the pool's price.
+      #
+      # start_time 0 means "the first block that sees this" — a genesis file
+      # cannot know the chain's first block time. duration is ten Julian years.
+      pol_burns:
+      - pool_id: "1"
+        total_shares: "4291506029356"
+        shares_remaining: "4291506029356"
+        start_time: "0"
+        duration_seconds: "315576000"
+        burn_token: true
     # x/allocation runs both emission streams — one directed by registered
     # humans, one by bonded stake — over the same engine and shared params.
     allocation:

@@ -53,6 +53,11 @@ var (
 	AuctionBidKey = collections.NewPrefix("auction_bid")
 )
 
+// PolBurnKey is the prefix for pool id -> PolBurn, the schedules retiring the
+// protocol's own liquidity. Entries are deleted when the position reaches zero,
+// so the set is empty once every schedule has run out.
+var PolBurnKey = collections.NewPrefix("pol_burn")
+
 // LpUnbondingKey is the prefix for in-flight liquidity withdrawals, keyed
 // (completion_time, pool_id, address). Completion time leads the key so the
 // maturity sweep walks the due prefix in order and stops at the first entry that
@@ -68,6 +73,13 @@ const (
 	// DefaultLpUnbondingSeconds is how long a liquidity withdrawal waits before
 	// it is swept to the provider's wallet: 7 days.
 	DefaultLpUnbondingSeconds = 7 * 24 * 60 * 60
+
+	// PolBurnSeconds is how long a protocol-owned liquidity position takes to
+	// retire completely: ten Julian years. The genesis ANML/ERTH schedule sets
+	// this in the genesis file; the auction pool's schedule is created with it
+	// at settlement, so its ten years run from the day its pool opens rather
+	// than from block zero.
+	PolBurnSeconds = 10 * 36525 * 864 // 315,576,000
 
 	// LpUnbondSweepLimit caps how many matured unbondings are paid out in one
 	// block. Each payout settles a pool and moves two coins, so an unbounded

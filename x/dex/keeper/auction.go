@@ -88,9 +88,9 @@ func (k Keeper) settleAuction(ctx context.Context, a types.LiquidityAuction) err
 	}
 
 	// The LP shares are minted to the module account, which has no private key
-	// and so can never sign a MsgRemoveLiquidity. This liquidity is permanent in
-	// the same way the genesis ANML/ERTH pool is: nobody owns it, governance
-	// included.
+	// and so can never sign a MsgRemoveLiquidity. Nobody can withdraw this
+	// liquidity, governance included — it leaves only by being retired on the
+	// schedule registered below, the same as the genesis ANML/ERTH pool's.
 	shareAmt := initialShares(a.ErthForPool.Amount, raised.Amount)
 	if !shareAmt.IsPositive() {
 		return types.ErrZeroShares
@@ -114,6 +114,24 @@ func (k Keeper) settleAuction(ctx context.Context, a types.LiquidityAuction) err
 		return err
 	}
 	if err := k.initPoolLpIndex(ctx, poolID); err != nil {
+		return err
+	}
+
+	// Start retiring the position the moment it exists. Its ten years run from
+	// the day the pool opens rather than from block zero, because governance
+	// chooses when to hold the auction and the schedule should not be partly
+	// spent before there is anything to retire.
+	//
+	// burn_token is false: the spoke side is a bridged asset the chain cannot
+	// recreate, so only the ERTH is destroyed. See PolBurn in pool.proto.
+	if err := k.PolBurns.Set(ctx, poolID, types.PolBurn{
+		PoolId:          poolID,
+		TotalShares:     shareAmt,
+		SharesRemaining: shareAmt,
+		StartTime:       sdkCtx.BlockTime().Unix(),
+		DurationSeconds: types.PolBurnSeconds,
+		BurnToken:       false,
+	}); err != nil {
 		return err
 	}
 
@@ -141,8 +159,8 @@ func (k Keeper) settleAuction(ctx context.Context, a types.LiquidityAuction) err
 // Pro-rata division truncates, the same way the AMM's does, so the individual
 // shares sum to slightly less than the earmark — under one uerth per bidder.
 // That dust stays on the module account and is never spendable, which is the
-// same place and the same fate as the rest of the permanent liquidity; it is
-// not worth a bidder counter to chase.
+// same place and the same fate as the rest of the protocol's own liquidity; it
+// is not worth a bidder counter to chase.
 //
 // The cap is defensive rather than load-bearing: truncation cannot overshoot
 // the earmark, but a claim must never be able to reach past it into the pool

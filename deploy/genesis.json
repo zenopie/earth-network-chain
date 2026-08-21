@@ -126,7 +126,17 @@
         "pool_id": "0",
         "claimed": "0"
       },
-      "auction_bids": []
+      "auction_bids": [],
+      "pol_burns": [
+        {
+          "pool_id": "1",
+          "total_shares": "2477702161277",
+          "shares_remaining": "2477702161277",
+          "start_time": "0",
+          "duration_seconds": "315576000",
+          "burn_token": true
+        }
+      ]
     },
     "distribution": {
       "delegator_starting_infos": [],

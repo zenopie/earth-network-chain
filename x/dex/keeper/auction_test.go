@@ -104,7 +104,8 @@ func TestAuctionSettlesAtClearingPrice(t *testing.T) {
 		Equal(a.ErthForBidders.Amount.Quo(a.TotalRaised)))
 
 	// LP shares were minted but never sent to anyone, so they sit on the module
-	// account with no key to sign them away. That is what makes this permanent.
+	// account with no key to sign them away. Nothing can withdraw this position;
+	// it leaves only by being retired on its schedule (see pol_burn.go).
 	shareDenom := types.LPShareDenom(a.PoolId)
 	require.True(t, bank.GetSupply(ctx, shareDenom).Amount.IsPositive())
 	require.True(t, bank.sent.AmountOf(shareDenom).IsZero())

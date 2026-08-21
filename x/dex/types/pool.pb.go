@@ -104,36 +104,151 @@ func (m *Pool) GetLastVolumeDay() uint64 {
 	return 0
 }
 
+// PolBurn is the schedule that retires the protocol's own liquidity in a pool.
+//
+// Protocol-owned liquidity is the LP shares held by the dex module account,
+// which has no key and so can never send a MsgRemoveLiquidity. Those positions
+// are not permanent after all: this schedule burns them down to nothing on a
+// straight line, so the protocol bootstraps a market and then hands it over.
+// Providing liquidity is active management whose incentives do not line up with
+// ERTH staking, and the protocol is the worst possible manager of it; retiring
+// its own position is what leaves room for LPs who will actually run the book.
+//
+// Retiring a slice of the position withdraws that slice's share of the reserves
+// and burns it, so the pool thins without its price moving.
+type PolBurn struct {
+	PoolId uint64 `protobuf:"varint,1,opt,name=pool_id,json=poolId,proto3" json:"pool_id,omitempty"`
+	// total_shares is the size of the position when the schedule started. It is
+	// the base of the straight line and never changes, so the amount retired is
+	// total_shares * elapsed / duration_seconds -- a target computed from the
+	// clock rather than accumulated per block. Chain halts and variable block
+	// times therefore cannot make the schedule drift off its ten-year end date.
+	TotalShares cosmossdk_io_math.Int `protobuf:"bytes,2,opt,name=total_shares,json=totalShares,proto3,customtype=cosmossdk.io/math.Int" json:"total_shares"`
+	// shares_remaining is how much of the position is left. The schedule is
+	// finished, and the entry deleted, when it reaches zero.
+	SharesRemaining cosmossdk_io_math.Int `protobuf:"bytes,3,opt,name=shares_remaining,json=sharesRemaining,proto3,customtype=cosmossdk.io/math.Int" json:"shares_remaining"`
+	// start_time is when the line begins, in unix seconds. Zero means "the first
+	// block that sees this entry", which is how the genesis pool's schedule is
+	// written: the genesis file cannot know the chain's first block time.
+	StartTime int64 `protobuf:"varint,4,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
+	// duration_seconds is how long the position takes to retire completely.
+	DurationSeconds int64 `protobuf:"varint,5,opt,name=duration_seconds,json=durationSeconds,proto3" json:"duration_seconds,omitempty"`
+	// burn_token says whether the spoke side of each retired slice is burned too.
+	//
+	// True for the genesis ANML/ERTH pool: both assets are the chain's own, so
+	// both are destroyed and the pool unwinds evenly to nothing.
+	//
+	// False for the auction pool, whose spoke side is a bridged asset the chain
+	// cannot recreate. Its ERTH is burned and the spoke asset is left in the
+	// reserve, which walks the pool's price up and invites arbitrageurs to sell
+	// ERTH in and take the spoke asset out. The effect is that the auction's
+	// proceeds are spent buying ERTH off the market, and the ERTH they buy is
+	// burned by the tranches that follow. The protocol never gets a treasury it
+	// could spend, because a protocol swap against its own pool cannot move the
+	// spoke asset out -- only an outside buyer can.
+	BurnToken bool `protobuf:"varint,6,opt,name=burn_token,json=burnToken,proto3" json:"burn_token,omitempty"`
+}
+
+func (m *PolBurn) Reset()         { *m = PolBurn{} }
+func (m *PolBurn) String() string { return proto.CompactTextString(m) }
+func (*PolBurn) ProtoMessage()    {}
+func (*PolBurn) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7f5c6fe59350594e, []int{1}
+}
+func (m *PolBurn) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *PolBurn) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_PolBurn.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *PolBurn) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_PolBurn.Merge(m, src)
+}
+func (m *PolBurn) XXX_Size() int {
+	return m.Size()
+}
+func (m *PolBurn) XXX_DiscardUnknown() {
+	xxx_messageInfo_PolBurn.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_PolBurn proto.InternalMessageInfo
+
+func (m *PolBurn) GetPoolId() uint64 {
+	if m != nil {
+		return m.PoolId
+	}
+	return 0
+}
+
+func (m *PolBurn) GetStartTime() int64 {
+	if m != nil {
+		return m.StartTime
+	}
+	return 0
+}
+
+func (m *PolBurn) GetDurationSeconds() int64 {
+	if m != nil {
+		return m.DurationSeconds
+	}
+	return 0
+}
+
+func (m *PolBurn) GetBurnToken() bool {
+	if m != nil {
+		return m.BurnToken
+	}
+	return false
+}
+
 func init() {
 	proto.RegisterType((*Pool)(nil), "earth.dex.v1.Pool")
+	proto.RegisterType((*PolBurn)(nil), "earth.dex.v1.PolBurn")
 }
 
 func init() { proto.RegisterFile("earth/dex/v1/pool.proto", fileDescriptor_7f5c6fe59350594e) }
 
 var fileDescriptor_7f5c6fe59350594e = []byte{
-	// 351 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x51, 0xc1, 0x4e, 0xea, 0x40,
-	0x14, 0x6d, 0x79, 0x7d, 0xbc, 0xbc, 0x01, 0x62, 0xd2, 0x68, 0x28, 0x2c, 0x0a, 0x71, 0x61, 0x88,
-	0x86, 0x99, 0x54, 0xff, 0xa0, 0xe0, 0x82, 0x9d, 0x21, 0xc6, 0x85, 0x9b, 0xa6, 0xa5, 0x13, 0xda,
-	0xd0, 0xf6, 0x92, 0x99, 0xa1, 0xc2, 0x5f, 0xb8, 0xf2, 0x4b, 0xfc, 0x08, 0x96, 0xc4, 0x95, 0x71,
-	0x41, 0x0c, 0xfc, 0x88, 0x99, 0x99, 0xb2, 0x77, 0x37, 0xe7, 0x9c, 0x7b, 0xce, 0xbd, 0x73, 0x2f,
-	0x6a, 0xd3, 0x90, 0x89, 0x84, 0xc4, 0x74, 0x4d, 0x4a, 0x8f, 0x2c, 0x01, 0x32, 0xbc, 0x64, 0x20,
-	0xc0, 0x6e, 0x2a, 0x01, 0xc7, 0x74, 0x8d, 0x4b, 0xaf, 0xeb, 0xce, 0x80, 0xe7, 0xc0, 0x49, 0x14,
-	0x72, 0x4a, 0x4a, 0x2f, 0xa2, 0x22, 0xf4, 0xc8, 0x0c, 0xd2, 0x42, 0x57, 0x77, 0x3b, 0x5a, 0x0f,
-	0x14, 0x22, 0x1a, 0x54, 0xd2, 0xf9, 0x1c, 0xe6, 0xa0, 0x79, 0xf9, 0xd2, 0xec, 0xe5, 0x5b, 0x0d,
-	0x59, 0x0f, 0x00, 0x99, 0xdd, 0x46, 0xff, 0x64, 0xd7, 0x20, 0x8d, 0x1d, 0xb3, 0x6f, 0x0e, 0xac,
-	0x69, 0x5d, 0xc2, 0x49, 0x6c, 0xfb, 0xa8, 0xc9, 0x28, 0xa7, 0xac, 0xa4, 0x01, 0x65, 0x22, 0x71,
-	0x6a, 0x7d, 0x73, 0xd0, 0xb8, 0xed, 0xe0, 0x2a, 0x5c, 0x4e, 0x82, 0xab, 0x49, 0xf0, 0x08, 0xd2,
-	0xc2, 0xb7, 0xb6, 0xfb, 0x9e, 0x31, 0x6d, 0x54, 0xa6, 0x7b, 0x26, 0x12, 0x7b, 0x8c, 0x5a, 0xa7,
-	0x0c, 0x01, 0x0b, 0x5a, 0x38, 0x7f, 0x7e, 0x17, 0x72, 0xea, 0xfc, 0x28, 0x4d, 0xf6, 0x08, 0xd5,
-	0x4b, 0xc8, 0x56, 0x39, 0x75, 0xac, 0xbe, 0x39, 0xf8, 0xef, 0xdf, 0xc8, 0x9a, 0xaf, 0x7d, 0xef,
-	0x42, 0xa7, 0xf0, 0x78, 0x81, 0x53, 0x20, 0x79, 0x28, 0x12, 0x3c, 0x29, 0xc4, 0xc7, 0xfb, 0x10,
-	0x55, 0xf1, 0x93, 0x42, 0x4c, 0x2b, 0xab, 0x7d, 0x85, 0xce, 0xb2, 0x90, 0x8b, 0x40, 0xc3, 0x20,
-	0x0e, 0x37, 0xce, 0x5f, 0xf5, 0xdf, 0x96, 0xa4, 0x9f, 0x14, 0x3b, 0x0e, 0x37, 0xfe, 0x78, 0x7b,
-	0x70, 0xcd, 0xdd, 0xc1, 0x35, 0xbf, 0x0f, 0xae, 0xf9, 0x7a, 0x74, 0x8d, 0xdd, 0xd1, 0x35, 0x3e,
-	0x8f, 0xae, 0xf1, 0x7c, 0x3d, 0x4f, 0x45, 0xb2, 0x8a, 0xf0, 0x0c, 0x72, 0xa2, 0x8e, 0x33, 0x2c,
-	0xa8, 0x78, 0x01, 0xb6, 0xd0, 0x88, 0xac, 0xd5, 0x15, 0xc5, 0x66, 0x49, 0x79, 0x54, 0x57, 0x5b,
-	0xbe, 0xfb, 0x09, 0x00, 0x00, 0xff, 0xff, 0x18, 0x21, 0x83, 0x3e, 0xdf, 0x01, 0x00, 0x00,
+	// 470 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x92, 0xc1, 0x6e, 0xd3, 0x40,
+	0x10, 0x86, 0xe3, 0x26, 0xa4, 0x64, 0x93, 0x2a, 0x95, 0x05, 0xaa, 0x5b, 0x09, 0x37, 0xea, 0x01,
+	0x05, 0x50, 0xbd, 0x0a, 0xbc, 0x81, 0x1b, 0x0e, 0xb9, 0xa0, 0xca, 0xad, 0x7a, 0xe0, 0x62, 0xad,
+	0xe3, 0x55, 0xbc, 0x8a, 0xbd, 0x13, 0xed, 0x8e, 0x4d, 0xf2, 0x16, 0x9c, 0x78, 0x11, 0x78, 0x88,
+	0x1e, 0x2b, 0x4e, 0x88, 0x43, 0x85, 0x92, 0x17, 0x41, 0xde, 0x75, 0x8e, 0x48, 0xf4, 0xe6, 0xff,
+	0x9f, 0x9d, 0x6f, 0xc7, 0xff, 0x0e, 0x39, 0xe1, 0x4c, 0x61, 0x46, 0x53, 0xbe, 0xa6, 0xd5, 0x84,
+	0xae, 0x00, 0xf2, 0x60, 0xa5, 0x00, 0xc1, 0x1d, 0x98, 0x42, 0x90, 0xf2, 0x75, 0x50, 0x4d, 0xce,
+	0xfc, 0x39, 0xe8, 0x02, 0x34, 0x4d, 0x98, 0xe6, 0xb4, 0x9a, 0x24, 0x1c, 0xd9, 0x84, 0xce, 0x41,
+	0x48, 0x7b, 0xfa, 0xec, 0xd4, 0xd6, 0x63, 0xa3, 0xa8, 0x15, 0x4d, 0xe9, 0xc5, 0x02, 0x16, 0x60,
+	0xfd, 0xfa, 0xcb, 0xba, 0x17, 0xdf, 0x0e, 0x48, 0xe7, 0x1a, 0x20, 0x77, 0x4f, 0xc8, 0x61, 0x7d,
+	0x6b, 0x2c, 0x52, 0xcf, 0x19, 0x39, 0xe3, 0x4e, 0xd4, 0xad, 0xe5, 0x2c, 0x75, 0x43, 0x32, 0x50,
+	0x5c, 0x73, 0x55, 0xf1, 0x98, 0x2b, 0xcc, 0xbc, 0x83, 0x91, 0x33, 0xee, 0xbf, 0x3f, 0x0d, 0x1a,
+	0x78, 0x3d, 0x49, 0xd0, 0x4c, 0x12, 0x5c, 0x81, 0x90, 0x61, 0xe7, 0xfe, 0xf1, 0xbc, 0x15, 0xf5,
+	0x9b, 0xa6, 0x8f, 0x0a, 0x33, 0x77, 0x4a, 0x8e, 0xf6, 0x0c, 0x84, 0x25, 0x97, 0x5e, 0xfb, 0xff,
+	0x20, 0xfb, 0x9b, 0x6f, 0xeb, 0x26, 0xf7, 0x8a, 0x74, 0x2b, 0xc8, 0xcb, 0x82, 0x7b, 0x9d, 0x91,
+	0x33, 0xee, 0x85, 0xef, 0xea, 0x33, 0xbf, 0x1f, 0xcf, 0x5f, 0x5a, 0x8a, 0x4e, 0x97, 0x81, 0x00,
+	0x5a, 0x30, 0xcc, 0x82, 0x99, 0xc4, 0x9f, 0x3f, 0x2e, 0x49, 0x83, 0x9f, 0x49, 0x8c, 0x9a, 0x56,
+	0xf7, 0x35, 0x19, 0xe6, 0x4c, 0x63, 0x6c, 0x65, 0x9c, 0xb2, 0x8d, 0xf7, 0xcc, 0xfc, 0xef, 0x51,
+	0x6d, 0xdf, 0x19, 0x77, 0xca, 0x36, 0x17, 0xdf, 0x0f, 0xc8, 0xe1, 0x35, 0xe4, 0x61, 0xa9, 0xe4,
+	0xbf, 0xb3, 0xf9, 0x44, 0x06, 0x08, 0xc8, 0xf2, 0x58, 0x67, 0x4c, 0x71, 0x6d, 0xb2, 0x79, 0xe2,
+	0x5c, 0x7d, 0x03, 0xb8, 0x31, 0xfd, 0xee, 0x1d, 0x39, 0xb6, 0xa4, 0x58, 0xf1, 0x82, 0x09, 0x29,
+	0xe4, 0xc2, 0x44, 0xf5, 0x44, 0xe6, 0xd0, 0x42, 0xa2, 0x3d, 0xc3, 0x7d, 0x45, 0x88, 0x46, 0xa6,
+	0x30, 0x46, 0xd1, 0xa4, 0xd7, 0x8e, 0x7a, 0xc6, 0xb9, 0x15, 0x05, 0x77, 0xdf, 0x90, 0xe3, 0xb4,
+	0x54, 0x0c, 0x05, 0xc8, 0x58, 0xf3, 0x39, 0xc8, 0x54, 0x9b, 0x50, 0xda, 0xd1, 0x70, 0xef, 0xdf,
+	0x58, 0xbb, 0x26, 0x25, 0xa5, 0x92, 0xcd, 0x33, 0x76, 0x47, 0xce, 0xf8, 0x79, 0xd4, 0xab, 0x1d,
+	0xf3, 0x44, 0xe1, 0xf4, 0x7e, 0xeb, 0x3b, 0x0f, 0x5b, 0xdf, 0xf9, 0xb3, 0xf5, 0x9d, 0xaf, 0x3b,
+	0xbf, 0xf5, 0xb0, 0xf3, 0x5b, 0xbf, 0x76, 0x7e, 0xeb, 0xf3, 0xdb, 0x85, 0xc0, 0xac, 0x4c, 0x82,
+	0x39, 0x14, 0xd4, 0xac, 0xf4, 0xa5, 0xe4, 0xf8, 0x05, 0xd4, 0xd2, 0x2a, 0xba, 0x36, 0xbb, 0x8f,
+	0x9b, 0x15, 0xd7, 0x49, 0xd7, 0xec, 0xe6, 0x87, 0xbf, 0x01, 0x00, 0x00, 0xff, 0xff, 0x63, 0x88,
+	0x76, 0x02, 0x15, 0x03, 0x00, 0x00,
 }
 
 func (m *Pool) Marshal() (dAtA []byte, err error) {
@@ -199,6 +314,74 @@ func (m *Pool) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *PolBurn) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *PolBurn) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *PolBurn) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.BurnToken {
+		i--
+		if m.BurnToken {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x30
+	}
+	if m.DurationSeconds != 0 {
+		i = encodeVarintPool(dAtA, i, uint64(m.DurationSeconds))
+		i--
+		dAtA[i] = 0x28
+	}
+	if m.StartTime != 0 {
+		i = encodeVarintPool(dAtA, i, uint64(m.StartTime))
+		i--
+		dAtA[i] = 0x20
+	}
+	{
+		size := m.SharesRemaining.Size()
+		i -= size
+		if _, err := m.SharesRemaining.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintPool(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x1a
+	{
+		size := m.TotalShares.Size()
+		i -= size
+		if _, err := m.TotalShares.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintPool(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	if m.PoolId != 0 {
+		i = encodeVarintPool(dAtA, i, uint64(m.PoolId))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintPool(dAtA []byte, offset int, v uint64) int {
 	offset -= sovPool(v)
 	base := offset
@@ -227,6 +410,31 @@ func (m *Pool) Size() (n int) {
 	n += 1 + l + sovPool(uint64(l))
 	if m.LastVolumeDay != 0 {
 		n += 1 + sovPool(uint64(m.LastVolumeDay))
+	}
+	return n
+}
+
+func (m *PolBurn) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.PoolId != 0 {
+		n += 1 + sovPool(uint64(m.PoolId))
+	}
+	l = m.TotalShares.Size()
+	n += 1 + l + sovPool(uint64(l))
+	l = m.SharesRemaining.Size()
+	n += 1 + l + sovPool(uint64(l))
+	if m.StartTime != 0 {
+		n += 1 + sovPool(uint64(m.StartTime))
+	}
+	if m.DurationSeconds != 0 {
+		n += 1 + sovPool(uint64(m.DurationSeconds))
+	}
+	if m.BurnToken {
+		n += 2
 	}
 	return n
 }
@@ -404,6 +612,201 @@ func (m *Pool) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipPool(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthPool
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *PolBurn) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowPool
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: PolBurn: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: PolBurn: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PoolId", wireType)
+			}
+			m.PoolId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPool
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PoolId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TotalShares", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPool
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPool
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPool
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.TotalShares.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SharesRemaining", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPool
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPool
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPool
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.SharesRemaining.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StartTime", wireType)
+			}
+			m.StartTime = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPool
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.StartTime |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DurationSeconds", wireType)
+			}
+			m.DurationSeconds = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPool
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DurationSeconds |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BurnToken", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPool
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.BurnToken = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipPool(dAtA[iNdEx:])

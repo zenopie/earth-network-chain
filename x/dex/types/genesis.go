@@ -61,5 +61,33 @@ func (gs GenesisState) Validate() error {
 		}
 	}
 
+	// A retirement schedule with no pool, or one written twice, would either
+	// panic the EndBlocker or retire the position at double speed.
+	polSeen := make(map[uint64]struct{}, len(gs.PolBurns))
+	for _, b := range gs.PolBurns {
+		if _, ok := poolIndexMap[fmt.Sprint(b.PoolId)]; !ok {
+			return fmt.Errorf("pol burn: no pool %d", b.PoolId)
+		}
+		if _, ok := polSeen[b.PoolId]; ok {
+			return fmt.Errorf("duplicated pol burn for pool %d", b.PoolId)
+		}
+		polSeen[b.PoolId] = struct{}{}
+		if b.TotalShares.IsNil() || !b.TotalShares.IsPositive() {
+			return fmt.Errorf("pol burn for pool %d: total_shares must be positive", b.PoolId)
+		}
+		if !b.SharesRemaining.IsNil() {
+			if b.SharesRemaining.IsNegative() || b.SharesRemaining.GT(b.TotalShares) {
+				return fmt.Errorf("pol burn for pool %d: shares_remaining %s is not within total_shares %s",
+					b.PoolId, b.SharesRemaining, b.TotalShares)
+			}
+		}
+		if b.DurationSeconds <= 0 {
+			return fmt.Errorf("pol burn for pool %d: duration_seconds must be positive", b.PoolId)
+		}
+		if b.StartTime < 0 {
+			return fmt.Errorf("pol burn for pool %d: start_time must not be negative", b.PoolId)
+		}
+	}
+
 	return gs.Params.Validate()
 }

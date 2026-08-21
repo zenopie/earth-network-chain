@@ -91,6 +91,18 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		}
 	}
 
+	// Protocol-owned liquidity retirement. A schedule with start_time 0 anchors
+	// itself on the first block that walks it, which is how the genesis file
+	// writes the ANML/ERTH schedule: it cannot know the chain's first block time.
+	for _, b := range genState.PolBurns {
+		if b.SharesRemaining.IsNil() {
+			b.SharesRemaining = b.TotalShares
+		}
+		if err := k.PolBurns.Set(ctx, b.PoolId, b); err != nil {
+			return err
+		}
+	}
+
 	if err := k.Params.Set(ctx, genState.Params); err != nil {
 		return err
 	}
@@ -128,6 +140,15 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}
 	if err := k.AuctionBids.Walk(ctx, nil, func(_ []byte, val types.AuctionBid) (stop bool, err error) {
 		genesis.AuctionBids = append(genesis.AuctionBids, val)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// Exported with their resolved start times, so an upgrade resumes a schedule
+	// part-way through rather than restarting its ten years.
+	if err := k.PolBurns.Walk(ctx, nil, func(_ uint64, val types.PolBurn) (stop bool, err error) {
+		genesis.PolBurns = append(genesis.PolBurns, val)
 		return false, nil
 	}); err != nil {
 		return nil, err

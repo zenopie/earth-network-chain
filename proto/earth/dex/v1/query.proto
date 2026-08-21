@@ -50,6 +50,11 @@ service Query {
   rpc AuctionBid(QueryAuctionBidRequest) returns (QueryAuctionBidResponse) {
     option (google.api.http).get = "/earth-network/earth/dex/v1/liquidity_auction/bid/{bidder}";
   }
+
+  // PolBurns returns every live protocol-owned-liquidity retirement schedule.
+  rpc PolBurns(QueryPolBurnsRequest) returns (QueryPolBurnsResponse) {
+    option (google.api.http).get = "/earth-network/earth/dex/v1/pol_burns";
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -114,4 +119,14 @@ message QueryAuctionBidResponse {
   // claimable is the ERTH this bidder can take right now: their pro-rata share
   // after settlement, or zero before it.
   cosmos.base.v1beta1.Coin claimable = 2 [(gogoproto.nullable) = false];
+}
+
+// QueryPolBurnsRequest is the request type for Query/PolBurns.
+message QueryPolBurnsRequest {}
+
+// QueryPolBurnsResponse is the response type for Query/PolBurns. A schedule
+// that has finished is deleted, so an empty list means the protocol holds no
+// liquidity that is still being retired.
+message QueryPolBurnsResponse {
+  repeated PolBurn pol_burns = 1 [(gogoproto.nullable) = false];
 }

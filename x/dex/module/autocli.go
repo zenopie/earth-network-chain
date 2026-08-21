@@ -29,6 +29,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Alias:          []string{"show-pool"},
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "pool_id"}},
 				},
+				{
+					RpcMethod: "PolBurns",
+					Use:       "pol-burns",
+					Short:     "Show how much protocol-owned liquidity is left to retire",
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

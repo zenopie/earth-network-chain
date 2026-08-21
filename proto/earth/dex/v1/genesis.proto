@@ -32,4 +32,9 @@ message GenesisState {
 
   // auction_bids preserves bids across an export/import while a window is open.
   repeated AuctionBid auction_bids = 5 [(gogoproto.nullable) = false];
+
+  // pol_burns are the schedules retiring the protocol's own liquidity. Genesis
+  // carries one for the ANML/ERTH pool; the auction's is added when it settles,
+  // because until then there is no pool and no shares to retire.
+  repeated PolBurn pol_burns = 6 [(gogoproto.nullable) = false];
 }

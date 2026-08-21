@@ -45,6 +45,9 @@ type Keeper struct {
 	// bids are keyed by bidder address bytes.
 	LiquidityAuction collections.Item[types.LiquidityAuction]
 	AuctionBids      collections.Map[[]byte, types.AuctionBid]
+
+	// Protocol-owned liquidity retirement, keyed by pool id — see pol_burn.go.
+	PolBurns collections.Map[uint64, types.PolBurn]
 }
 
 func NewKeeper(
@@ -92,6 +95,11 @@ func NewKeeper(
 		AuctionBids: collections.NewMap(
 			sb, types.AuctionBidKey, "auction_bids",
 			collections.BytesKey, codec.CollValue[types.AuctionBid](cdc),
+		),
+
+		PolBurns: collections.NewMap(
+			sb, types.PolBurnKey, "pol_burns",
+			collections.Uint64Key, codec.CollValue[types.PolBurn](cdc),
 		),
 	}
 

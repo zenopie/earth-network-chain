@@ -77,6 +77,36 @@ through ERTH as two hops (`tokenA → ERTH → tokenB`).
 always denominated in ERTH; on every hop it is split **half to the pool** (accrues to
 LPs) and **half burned** (ERTH supply is permanently reduced).
 
+**Protocol-owned liquidity, and its ten-year exit.** The chain starts owning all of
+its own liquidity: the genesis ANML/ERTH pool's LP shares are minted to the `dex`
+module account, and the liquidity auction's pool mints its shares there too when it
+settles. That account has no key, so nothing — governance included — can withdraw
+those positions. They are not permanent, though. Each is retired on a straight line
+over **ten years**, because running a book is active management whose incentives are
+not an ERTH staker's, and a position nobody can adjust is the worst version of that
+mismatch. Retiring it makes room for providers who will actually manage the
+liquidity, and gives them a decade of steadily rising reward share as the reason to
+show up.
+
+Retirement is not a withdrawal: a slice of the position is priced against the
+reserves exactly as a real withdrawal would be, and then destroyed.
+
+- **ANML/ERTH** burns *both* sides. Both assets are the chain's own, so both are
+  destroyed; both reserves shrink by the same fraction, which means retirement never
+  moves the pool's price.
+- **The auction pool** burns only the **ERTH**. Its spoke side is a bridged asset the
+  chain cannot recreate, so it is left in the reserve. That walks the pool's price up
+  on purpose: arbitrageurs sell ERTH in and take the spoke asset out, so the auction's
+  proceeds end up buying ERTH off the market — and the ERTH they buy is burned by the
+  tranches that follow. The protocol never gets a treasury it could spend, because a
+  protocol swap against its own pool cannot move the spoke asset out; only an outside
+  buyer can.
+
+The target is recomputed from the block clock each block rather than accumulated, so a
+chain halt cannot push the end date out and truncation never compounds. Progress is
+visible at `earthd q dex pol-burns`; a finished schedule is deleted, so an empty list
+means the protocol no longer owns liquidity it is still retiring.
+
 **Parameters** (`earthd q dex params`)
 - `swap_fee` — swap fee as a percent (default `0.3` = 0.3%).
 
@@ -88,7 +118,8 @@ LPs) and **half burned** (ERTH supply is permanently reduced).
 | `remove-liquidity [pool-id] [shares]` | Burn LP shares; returns a proportional share of both reserves. |
 | `swap [token-in] [denom-out] [min-amount-out]` | Swap routed through the ERTH hub (1 or 2 hops), with per-hop fee/burn and a slippage guard. |
 
-**Queries**: `earthd q dex list-pool`, `earthd q dex get-pool [id]`, `earthd q dex params`.
+**Queries**: `earthd q dex list-pool`, `earthd q dex get-pool [id]`, `earthd q dex params`,
+`earthd q dex pol-burns`.
 
 Example against a running dev chain (accounts `alice`/`bob` are pre-funded in `config.yml`):
 ```
