@@ -118,8 +118,12 @@ jobs:
         run: |
           cd dist
           cat *.tar.gz.sha256 > checksums.txt
+          # awk, not sed: `sha256sum <path>` prints "<hash>  <path>", and a
+          # `s|.*/|...|` matches up to the LAST slash — which swallows the hash
+          # along with the directory. The first dry run published
+          # "genesis.json  genesis.json" because of exactly that.
           sha256sum "$GITHUB_WORKSPACE/deploy/genesis.json" \
-            | sed 's|.*/|genesis.json  |' >> checksums.txt
+            | awk '{print $1 "  genesis.json"}' >> checksums.txt
           echo "--- checksums.txt ---"; cat checksums.txt
           {
             echo 'GENESIS_SHA<<EOF'
@@ -131,6 +135,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          # Anything with a suffix — v1.2.3-rc1 — is a pre-release. Those never
+          # match the tag trigger either, so they only ever arrive by hand.
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
           files: |
             dist/*.tar.gz
             dist/checksums.txt
