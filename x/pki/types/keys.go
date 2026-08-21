@@ -16,7 +16,8 @@ var ParamsKey = collections.NewPrefix("p_pki")
 
 // Storage prefixes.
 var (
-	CscasKey       = collections.NewPrefix("cscas")        // cscaID -> Csca
-	CscaByDNKey    = collections.NewPrefix("csca_by_dn")   // (sha256(subjectDN), cscaID) -> present
+	CscasKey       = collections.NewPrefix("cscas")        // certID -> Csca
+	CscaBySKIKey   = collections.NewPrefix("csca_by_ski")  // (SKI, certID) -> present
+	CscaByDNKey    = collections.NewPrefix("csca_by_dn")   // (sha256(subjectDN), certID) -> present
 	RevokedDscsKey = collections.NewPrefix("revoked_dscs") // sha256(dsc pubkey) -> present
 )

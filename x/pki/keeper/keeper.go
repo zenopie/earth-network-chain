@@ -22,13 +22,28 @@ type Keeper struct {
 	Params collections.Item[types.Params]
 
 	// CSCA master list (governance-managed).
-	Cscas collections.Map[[]byte, types.Csca] // cscaID -> Csca
+	//
+	// Keyed by certID — sha256 of the certificate's own DER — so the store holds
+	// one entry per certificate. It used to be keyed by SKI, which is one entry
+	// per *signing key*, and the master list carries several certificates per key:
+	// 536 certificates under 366 SKIs, the extras being renewals and link
+	// certificates. Keying by SKI meant they overwrote each other and 170
+	// certificate bodies were dropped at InitGenesis, never reaching the chain.
+	Cscas collections.Map[[]byte, types.Csca] // certID -> Csca
+
+	// CscaBySKI is the primary issuer lookup. A DSC's AuthorityKeyIdentifier is
+	// by convention its issuer's SubjectKeyIdentifier, so this is the index that
+	// answers "which certificates carry the key that signed this". Several
+	// certificates may share one SKI; they share a public key too, so any of them
+	// verifies the signature, and the group is 2-3 entries in practice.
+	CscaBySKI collections.KeySet[collections.Pair[[]byte, []byte]] // (SKI, certID)
+
 	// Indexed by a hash of the subject DN rather than the DN itself: collections
 	// length-prefixes a non-terminal bytes key with a single byte, so a DN longer
 	// than 255 bytes cannot be encoded — and real ICAO subject DNs do exceed that.
 	// Hashing makes the key fixed-size while preserving the exact-equality
 	// matching that issuer lookup needs.
-	CscaByDN collections.KeySet[collections.Pair[[]byte, []byte]] // (sha256(subjectDN), cscaID)
+	CscaByDN collections.KeySet[collections.Pair[[]byte, []byte]] // (sha256(subjectDN), certID)
 
 	// Revoked Document Signers, keyed by sha256(canonical pubkey) — the same
 	// identity VerifyDsc checks, so revocation covers every certificate carrying
@@ -54,6 +69,7 @@ func NewKeeper(
 
 		Params:      collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		Cscas:       collections.NewMap(sb, types.CscasKey, "cscas", collections.BytesKey, codec.CollValue[types.Csca](cdc)),
+		CscaBySKI:   collections.NewKeySet(sb, types.CscaBySKIKey, "csca_by_ski", collections.PairKeyCodec(collections.BytesKey, collections.BytesKey)),
 		CscaByDN:    collections.NewKeySet(sb, types.CscaByDNKey, "csca_by_dn", collections.PairKeyCodec(collections.BytesKey, collections.BytesKey)),
 		RevokedDscs: collections.NewKeySet(sb, types.RevokedDscsKey, "revoked_dscs", collections.BytesKey),
 	}

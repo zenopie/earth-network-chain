@@ -32,6 +32,18 @@ type Csca struct {
 	// subject_dn is the raw subject Distinguished Name (for issuer matching).
 	SubjectDn []byte `protobuf:"bytes,3,opt,name=subject_dn,json=subjectDn,proto3" json:"subject_dn,omitempty"`
 	// not_after is the CSCA expiry (unix seconds).
+	//
+	// Recorded for operators and explorers. It is deliberately NOT enforced when
+	// verifying a Document Signer, and adding that check would be a bug: an ePassport
+	// CSCA signs DSCs for a few years but its certificate is valid for far longer,
+	// and a passport issued late in its DSC's life stays valid for its own full term
+	// after both have expired. Rejecting an expired issuer would therefore start
+	// refusing genuine passports as the trust store ages, country by country. The
+	// DSC's own validity *is* checked (VerifyDsc), which is the window that bounds
+	// what a compromised signer can be used for.
+	//
+	// If issuer validity is ever wanted, the question to ask is "was this CSCA valid
+	// when the DSC was issued", not "is it valid now".
 	NotAfter int64 `protobuf:"varint,4,opt,name=not_after,json=notAfter,proto3" json:"not_after,omitempty"`
 }
 

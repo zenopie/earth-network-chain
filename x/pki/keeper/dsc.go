@@ -22,6 +22,15 @@ func cscaID(c *certs.Cert) []byte {
 	return h[:]
 }
 
+// certID identifies one certificate, as distinct from cscaID which identifies
+// the signing key behind it. A CSCA that is renewed, or that issues a link
+// certificate, produces several certificates under one key; they are separate
+// records here and one entry each in CscaBySKI.
+func certID(der []byte) []byte {
+	h := sha256.Sum256(der)
+	return h[:]
+}
+
 // dnKey is the CscaByDN index key for a distinguished name. Subject DNs are
 // variable length and real ICAO CSCAs exceed the 255-byte ceiling collections
 // imposes on a non-terminal bytes key, so the DN is hashed to a fixed size.
@@ -44,6 +53,10 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 	if err != nil {
 		return nil, types.ErrInvalidCert.Wrap(err.Error())
 	}
+	// The DSC's own validity is enforced; its issuer's deliberately is not. See
+	// Csca.not_after in pki.proto — an expired CSCA still signed genuine
+	// passports that are still in their own validity period, and refusing them
+	// would break verification for a whole country as its trust store aged.
 	now := sdk.UnwrapSDKContext(ctx).BlockTime()
 	if now.Before(dsc.NotBefore) || now.After(dsc.NotAfter) {
 		return nil, types.ErrCertExpired
@@ -64,6 +77,10 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 	if len(cands) == 0 {
 		return nil, types.ErrNoIssuerCsca
 	}
+	// First candidate whose key verifies the signature wins. Candidates sharing
+	// an SKI share a public key, so in practice the first is decisive and the
+	// rest are never reached; the list matters when the AKI and the issuer DN
+	// point at genuinely different signing identities.
 	for _, csca := range cands {
 		if certs.VerifySignedBy(dsc, csca.PublicKey) == nil {
 			return pub, nil
@@ -87,7 +104,7 @@ func (k Keeper) AddCscaDER(ctx context.Context, der []byte) error {
 	if err != nil {
 		return types.ErrInvalidCert.Wrap(err.Error())
 	}
-	id := cscaID(c)
+	id := certID(der)
 	csca := types.Csca{
 		CertificateDer: der,
 		SubjectKeyId:   c.SKI,
@@ -97,11 +114,25 @@ func (k Keeper) AddCscaDER(ctx context.Context, der []byte) error {
 	if err := k.Cscas.Set(ctx, id, csca); err != nil {
 		return err
 	}
+	// Both indexes point at the certificate, not at its key: a DSC may name its
+	// issuer by AKI or by issuer DN, and either has to reach the certificate that
+	// was actually named rather than an arbitrary sibling sharing the key.
+	if err := k.CscaBySKI.Set(ctx, collections.Join(cscaID(c), id)); err != nil {
+		return err
+	}
 	return k.CscaByDN.Set(ctx, collections.Join(dnKey(c.SubjectRaw), id))
 }
 
-// issuerCandidates returns parsed CSCAs that could have issued dsc: the one whose
-// SKI matches the DSC's AKI, plus any whose subject DN equals the DSC's issuer DN.
+// issuerCandidates returns parsed CSCAs that could have issued dsc: every
+// certificate whose SKI matches the DSC's AKI, plus any whose subject DN equals
+// the DSC's issuer DN.
+//
+// Both lookups go through an index rather than a direct Get, because one key and
+// one DN can each name several certificates — renewals and link certificates for
+// the same signing identity. They share a public key, so for verification any of
+// them does; the reason to return all is that the store now holds all, and a
+// lookup that silently picked one would put the old collapse back at a different
+// layer.
 func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs.Cert, error) {
 	var out []*certs.Cert
 	seen := map[string]bool{}
@@ -116,13 +147,22 @@ func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs
 			}
 		}
 	}
-	if len(dsc.AKI) > 0 {
-		add(dsc.AKI)
+
+	collect := func(idx collections.KeySet[collections.Pair[[]byte, []byte]], prefix []byte) error {
+		rng := collections.NewPrefixedPairRange[[]byte, []byte](prefix)
+		return idx.Walk(ctx, rng, func(key collections.Pair[[]byte, []byte]) (bool, error) {
+			add(key.K2())
+			return false, nil
+		})
 	}
-	rng := collections.NewPrefixedPairRange[[]byte, []byte](dnKey(dsc.IssuerRaw))
-	err := k.CscaByDN.Walk(ctx, rng, func(key collections.Pair[[]byte, []byte]) (bool, error) {
-		add(key.K2())
-		return false, nil
-	})
-	return out, err
+
+	if len(dsc.AKI) > 0 {
+		if err := collect(k.CscaBySKI, dsc.AKI); err != nil {
+			return nil, err
+		}
+	}
+	if err := collect(k.CscaByDN, dnKey(dsc.IssuerRaw)); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
