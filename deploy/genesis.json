@@ -15,6 +15,13 @@
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
           "account_number": "0",
+          "address": "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a",
+          "pub_key": null,
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "account_number": "1",
           "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
           "pub_key": null,
           "sequence": "0"
@@ -33,6 +40,15 @@
     },
     "bank": {
       "balances": [
+        {
+          "address": "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a",
+          "coins": [
+            {
+              "amount": "1000000000",
+              "denom": "uerth"
+            }
+          ]
+        },
         {
           "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
           "coins": [
@@ -76,7 +92,7 @@
           "denom": "uanml"
         },
         {
-          "amount": "2522890000000000",
+          "amount": "2522891000000000",
           "denom": "uerth"
         }
       ]

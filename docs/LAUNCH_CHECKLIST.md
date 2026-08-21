@@ -18,12 +18,21 @@ that only ever talks to itself and a network other people can run a node on.
 These are choices, not work items. Every later phase depends on them, and none
 can be changed after the file is signed and published.
 
-- [ ] **The validator set at height 1.** Either collect gentxs from N independent
-      operators, or launch single-validator and say so in public along with the
-      plan for opening it up. Both are defensible; leaving it implicit is not.
-      Note that `x/personhood` and `x/allocation` make this more than a liveness
-      question — a single validator can censor registrations, which is the one
-      thing the chain exists to make unforgeable.
+- [ ] **The validator set at height 1.** Decided: launch single-validator, and
+      say so in public along with the plan for opening it up. The validator
+      account is in genesis — `earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a`,
+      1,000 ERTH, enough to self-delegate 100 and fund governance deposits for
+      years. No pre-allocation for anyone else: a would-be validator earns ERTH
+      by registering a passport or by bidding in the liquidity auction, which is
+      a better property than a founder allocation list.
+      **Still open:** the gentx itself, which needs the key and so happens on
+      launch day. And saying it in public.
+
+      Worth stating plainly when you do: a single validator can censor
+      registrations, which is the one thing the chain exists to make
+      unforgeable. It also collects the entire staking pillar — 1 ERTH/sec, or
+      86,400 ERTH a day — for as long as it is alone. Neither is a bug; both
+      read badly if discovered rather than disclosed.
 - [ ] **The auction bid denom.** `deploy/genesis.json` ships the liquidity
       auction as `AUCTION_STATUS_PENDING` with `bid_denom: ""` and
       `end_time: 0`, holding 840,960 ERTH in each earmark. `MsgStartLiquidityAuction`
