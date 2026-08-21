@@ -21,7 +21,7 @@ jobs:
             platform: linux_arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build deps
         run: sudo apt-get update && sudo apt-get install -y clang git curl python3
@@ -34,7 +34,7 @@ jobs:
         run: CGO_ENABLED=1 go test ./zk/ultrahonk/ -run TestVerifyOracle -count=1 -v
 
       - name: Upload lib artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libbarretenberg-${{ matrix.platform }}
           path: third_party/barretenberg-go/lib/${{ matrix.platform }}/libbarretenberg.a

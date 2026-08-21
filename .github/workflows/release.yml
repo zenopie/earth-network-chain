@@ -42,11 +42,11 @@ jobs:
             goarch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           # Pinned, not "stable": the compiler is an input to the binary, and it
           # must match the Dockerfile's toolchain or the image and the download
@@ -90,7 +90,7 @@ jobs:
           ( cd dist && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
           cat "dist/$NAME.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: earthd-linux-${{ matrix.goarch }}
           path: dist/*.tar.gz*
@@ -101,11 +101,11 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true

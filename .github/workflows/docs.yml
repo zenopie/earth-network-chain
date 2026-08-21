@@ -18,6 +18,11 @@ on:
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
+# Action versions are the current node24 majors. GitHub deprecated node20 and now
+# force-runs those actions on node24 anyway, which is a warning today and will be
+# a failure later. upload-artifact@v7 and download-artifact@v8 are the pairing
+# GitHub's own README documents; they are on different majors deliberately.
+
 permissions:
   contents: read
   pages: write
@@ -36,9 +41,9 @@ jobs:
       run:
         working-directory: docs-site
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: npm
@@ -47,7 +52,7 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         with:
           path: docs-site/build
@@ -61,4 +66,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
