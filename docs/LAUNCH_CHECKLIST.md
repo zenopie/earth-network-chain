@@ -251,17 +251,39 @@ An untested upgrade path is discovered during the upgrade.
       stubs, so the sim never created a registration, an option or a revocation —
       empty state round-trips perfectly. That is a concrete argument for the sim
       ops above.
-- [ ] **`x/pki` still cannot round-trip its trust store.** `deploy/genesis.json`
-      carries 539 CSCAs; an export returns 369. `Cscas` is a map keyed by SKI
-      (`x/pki/keeper/dsc.go:90,97`), so certificates that share a signing key —
-      renewals and link certificates — overwrite each other, and only the last
-      one's bytes survive. The live chain keeps a `CscaByDN` entry for all 539,
-      but an export carries only the 369 surviving certificates, so re-importing
-      indexes 369 DNs and loses the rest. This is precisely what `csca/README.md`
-      warns about for the generation tool ("collapsing on SKI would silently drop
-      DN index entries and shrink the set of DSCs the chain can verify") — the
-      tool avoids it, the export does not. Fixing it means CSCAs can no longer be
-      stored in a map keyed by SKI, which is a data-model change, not a patch.
+- [ ] **`x/pki` stores one certificate per signing key, not one per
+      certificate.** `deploy/genesis.json` carries 539 CSCAs; an export returns
+      369, and the chain only ever held 369. `Cscas` is keyed by `cscaID`, which
+      is the SKI (`x/pki/keeper/dsc.go:17-23,90-100`), so certificates sharing a
+      key overwrite each other and 170 certificate bodies are dropped at
+      InitGenesis.
+
+      Measured against the real trust store, this is smaller than it sounds:
+      536 certificates, 366 distinct SKIs, 337 sharing one — and **all 337 share
+      a public key**, none is a genuine collision. They are renewals and link
+      certificates, exactly as `csca/README.md` describes, and any of them
+      verifies a given signature because the key is the same. Only **one** SKI
+      group spans more than one subject DN, so at most one issuer DN is affected.
+
+      Keying by SKI is therefore right, not wrong: a DSC's AKI *is* its issuer's
+      SKI, which makes issuer lookup an O(1) `Get`, and the `cscaID` fallback
+      (sha256 of the public key when the SKI is absent) says outright that the id
+      is meant to be the signing identity. Every SKI survives an export, so the
+      AKI path round-trips perfectly.
+
+      What is wrong is that one map is doing two jobs — lookup index (per key)
+      and record store (per certificate). The fix is to split them:
+
+          Cscas      cert-id (sha256 of DER) -> Csca
+          CscaBySKI  (ski, cert-id)
+          CscaByDN   (sha256(DN), cert-id)      // unchanged
+
+      `issuerCandidates` then walks `CscaBySKI` under `dsc.AKI` rather than doing
+      one `Get` — still cheap at 2-3 certificates per group. Export carries all
+      536, and validity-period checks see the certificate that was actually
+      named instead of an arbitrary sibling. This is a store-layout change and so
+      needs a migration; it is not urgent, because the path it fixes is the DN
+      fallback for a single issuer.
 
 ---
 
