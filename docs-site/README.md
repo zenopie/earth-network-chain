@@ -40,7 +40,7 @@ npm start          # http://localhost:3000
 
 ```bash
 npm run build      # production build, fails on a broken link
-npm run serve      # preview that build at the real /docs/ base path
+npm run serve      # preview the production build
 ```
 
 ## Deploying
