@@ -12,7 +12,26 @@
 // domain natively, whereas a path would need a rule in front of the app — and the
 // app is a single-page router that would otherwise swallow /docs itself.
 
+import fs from "node:fs";
+
 import { themes as prismThemes } from "prism-react-renderer";
+
+// Where the site is served from, derived from static/CNAME — the same file
+// GitHub Pages reads to decide the custom domain. Deriving both from one place
+// means they cannot disagree, and disagreeing is not subtle: the wrong baseUrl
+// 404s every stylesheet and script, leaving a page of unstyled text.
+//
+// No CNAME  -> project Pages at zenopie.github.io/earth-network-chain/
+// CNAME     -> that domain at the root
+//
+// So publishing to docs.erth.network is one step: create static/CNAME containing
+// the domain, once its DNS record resolves. Creating it earlier only breaks the
+// github.io URL, because Pages refuses a domain that does not point at it.
+const cname = fs.existsSync("./static/CNAME")
+  ? fs.readFileSync("./static/CNAME", "utf8").trim()
+  : null;
+const siteUrl = cname ? `https://${cname}` : "https://zenopie.github.io";
+const siteBaseUrl = cname ? "/" : "/earth-network-chain/";
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -20,8 +39,8 @@ const config = {
   tagline: "One human, one account",
   favicon: "img/favicon.ico",
 
-  url: "https://docs.erth.network",
-  baseUrl: "/",
+  url: siteUrl,
+  baseUrl: siteBaseUrl,
 
   organizationName: "zenopie",
   projectName: "earth-network-chain",

@@ -5,7 +5,8 @@ the Cosmos SDK, Osmosis and most Cosmos chains use. Standard shape on purpose:
 someone who has read another chain's documentation already knows how to move
 around this one.
 
-Published at **https://docs.erth.network**.
+Published at **https://zenopie.github.io/earth-network-chain/**, and at
+**https://docs.erth.network** once that DNS record exists — see Deploying.
 
 ## Contributing
 
@@ -51,10 +52,16 @@ Pages. Two things have to be set up once, outside this repo:
 1. **DNS** — a `CNAME` record for `docs` pointing at `zenopie.github.io`. If it
    is proxied through Cloudflare, SSL mode must be **Full**; Flexible loops
    against Pages, which always serves HTTPS.
-2. **GitHub** — Settings → Pages → Source: *GitHub Actions*, and Custom domain:
-   `docs.erth.network`. The `static/CNAME` file in this directory is what tells
-   Pages to keep that domain across deploys; deleting it resets the setting on
-   the next publish.
+2. **Then create `static/CNAME`** containing `docs.erth.network`, and push.
+
+That second file does two jobs at once: Pages reads it to set the custom domain,
+and `docusaurus.config.js` reads it to decide `url` and `baseUrl`. One file, so
+they cannot disagree — and disagreeing is not subtle. A site built for `/` but
+served under `/earth-network-chain/` 404s every stylesheet and script and renders
+as unstyled text.
+
+Do them in that order. Creating the file before DNS resolves only breaks the
+github.io URL, because Pages refuses a domain that does not point at it.
 
 A subdomain rather than `erth.network/docs` because it is the Cosmos convention
 (`docs.cosmos.network`, `docs.osmosis.zone`, `docs.celestia.org`) and because it
