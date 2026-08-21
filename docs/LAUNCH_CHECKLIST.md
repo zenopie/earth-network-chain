@@ -163,10 +163,12 @@ file confirms the shape: one account, `"gen_txs": []`.
 
 ## 3. Binary release engineering
 
-- [ ] **Publish binaries at all.** `.github/workflows/release.yml` is
-      `on: workflow_dispatch` — it was disabled because it fired on every push,
-      and the consequence is that tagging `v0.1.6` produces a Docker image and
-      nothing else. A chain release needs per-platform binaries with checksums.
+- [x] **Publish binaries at all.** `release.yml` now fires on a version tag and
+      builds `earthd` natively on Linux amd64 and arm64 — natively because the
+      Barretenberg verifier is cgo, so Ignite's cross-compile could never have
+      worked. Publishes tarballs, a `checksums.txt` that also covers
+      `deploy/genesis.json`, and the genesis file itself, with the genesis sha256
+      in the release notes.
 - [x] **Build the image with the version ldflags.** `VERSION` and `COMMIT` are
       build args passed from the tag and `github.sha`, and the build is
       `-trimpath`ed so the binary does not vary with the checkout path. The
@@ -309,7 +311,11 @@ An untested upgrade path is discovered during the upgrade.
 
 ## 6. Documentation the launch produces
 
-- [ ] `docs/JOIN.md` — the operator page from phase 2.
+- [x] `docs/JOIN.md` — written, and walked end to end against the real binary.
+      Doing that found a step the page was missing: the node refuses to start
+      until `minimum-gas-prices` is set, with an error that does not name the
+      file. Three values stay `TBD` until launch — seed address, genesis hash,
+      gas price.
 - [ ] Release notes per tag: binary checksums, genesis sha256 (launch tag only),
       upgrade name and height (upgrade tags only).
 - [ ] Replace the Ignite boilerplate in `readme.md:210-228`. It currently tells

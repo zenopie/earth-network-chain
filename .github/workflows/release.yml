@@ -1,62 +1,160 @@
-# This workflow is useful if you want to automate the process of:
+# Publishes downloadable `earthd` binaries when a version tag is pushed.
 #
-# a) Creating a new prelease when you push a new tag with a "v" prefix (version).
+# An operator has to be able to get the binary without building it. Before this,
+# tagging produced a Docker image and nothing else.
 #
-#    This type of prerelease is meant to be used for production: alpha, beta, rc, etc. types of releases.
-#    After the prerelease is created, you need to make your changes on the release page at the relevant
-#    Github page and publish your release.
+# Built natively per platform, not cross-compiled. earthd links the Barretenberg
+# proof verifier through cgo, and cross-compiling cgo means cross-compiling that
+# too — so each platform builds on its own runner and fetches its own
+# libbarretenberg.a, checksum-verified against third_party/barretenberg-go/checksums.json.
 #
-# b) Creating/updating the "latest" prerelease when you push to your default branch.
+# Linux only. Validators run Linux; a macOS build would need two more runners and
+# nobody would validate on it. `make install` still works anywhere.
 #
-#    This type of prelease is useful to make your bleeding-edge binaries available to advanced users.
-#
-# The workflow will not run if there is no tag pushed with a "v" prefix and no change pushed to your
-# default branch.
-#
-# Disabled: this fired on every push and published "latest" prerelease binaries
-# nobody is consuming. Left in place rather than deleted because the Ignite
-# release tooling it wraps is worth having if the binaries are ever distributed.
-# To re-enable, restore `on: push` — and note that bare `push` means every
-# branch, not just the default one.
-on: workflow_dispatch
+# Tags only, and the pattern is deliberate: listing `branches` alongside `tags`
+# makes them alternatives rather than a conjunction, which is how the old version
+# of this workflow ended up firing on every push and was disabled.
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
 
 jobs:
-  might_release:
-    runs-on: ubuntu-latest
+  build:
+    name: earthd ${{ matrix.goarch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - name: Prepare Release Variables
-        id: vars
-        uses: ignite/cli/actions/release/vars@main
-
-      - name: Issue Release Assets
-        uses: ignite/cli/actions/cli@main
-        if: ${{ steps.vars.outputs.should_release == 'true' }}
+      - uses: actions/setup-go@v5
         with:
-          args: chain build --release --release.prefix ${{ steps.vars.outputs.tarball_prefix }} -t linux:amd64 -t darwin:amd64 -t darwin:arm64 -y
+          # Pinned, not "stable": the compiler is an input to the binary, and it
+          # must match the Dockerfile's toolchain or the image and the download
+          # are two different builds.
+          go-version: "1.25.10"
+          cache: true
+
+      # libc++ specifically, not libstdc++ — build-wrapper.sh compiles the
+      # verifier shim with -stdlib=libc++ to match Aztec's prebuilt archive.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang python3 binutils libc++-dev libc++abi-dev
+
+      - name: Build the UltraHonk verifier library
+        run: |
+          cd third_party/barretenberg-go
+          ./scripts/build-wrapper.sh --platform "linux_${{ matrix.goarch }}"
+
+      - name: Build earthd
+        id: build
         env:
-          DO_NOT_TRACK: 1
-          GOFLAGS: "-buildvcs=false"
+          VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          # -trimpath so the binary does not vary with the checkout path, and the
+          # same ldflags the Dockerfile uses so `earthd version` reports the tag.
+          CGO_ENABLED=1 go build -trimpath \
+            -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=earth \
+                      -X github.com/cosmos/cosmos-sdk/version.AppName=earthd \
+                      -X github.com/cosmos/cosmos-sdk/version.Version=${VERSION} \
+                      -X github.com/cosmos/cosmos-sdk/version.Commit=${GITHUB_SHA}" \
+            -o earthd ./cmd/earthd
 
-      - name: Delete the "latest" Release
-        uses: dev-drprasad/delete-tag-and-release@v0.2.1
-        if: ${{ steps.vars.outputs.is_release_type_latest == 'true' }}
-        with:
-          tag_name: ${{ steps.vars.outputs.tag_name }}
-          delete_release: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ./earthd version --long | head -20
 
-      - name: Publish the Release
-        uses: softprops/action-gh-release@v1
-        if: ${{ steps.vars.outputs.should_release == 'true' }}
+          NAME="earthd_${VERSION}_linux_${{ matrix.goarch }}"
+          mkdir -p "dist/$NAME"
+          cp earthd LICENSE "dist/$NAME/"
+          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          ( cd dist && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
+          cat "dist/$NAME.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.vars.outputs.tag_name }}
-          files: release/*
-          prerelease: true
+          name: earthd-linux-${{ matrix.goarch }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # One file an operator can check everything against, including the genesis.
+      # The genesis hash is what decides whether a node joins this chain or forks
+      # its own, so it belongs in the release, not just in the repo.
+      - name: Assemble checksums
+        id: sums
+        run: |
+          cd dist
+          cat *.tar.gz.sha256 > checksums.txt
+          sha256sum "$GITHUB_WORKSPACE/deploy/genesis.json" \
+            | sed 's|.*/|genesis.json  |' >> checksums.txt
+          echo "--- checksums.txt ---"; cat checksums.txt
+          {
+            echo 'GENESIS_SHA<<EOF'
+            awk '{print $1}' "$GITHUB_WORKSPACE/deploy/genesis.json.sha256"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            deploy/genesis.json
+          body: |
+            ## Running a node
+
+            See [docs/JOIN.md](https://github.com/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/docs/JOIN.md).
+
+            **Genesis sha256** — a node whose genesis does not match this one is
+            on a different chain:
+
+            ```
+            ${{ steps.sums.outputs.GENESIS_SHA }}
+            ```
+
+            Verify a download against `checksums.txt`:
+
+            ```
+            sha256sum -c checksums.txt --ignore-missing
+            ```
+
+            Binaries are built natively on Linux amd64 and arm64 with
+            `-trimpath` and a pinned Go toolchain. The container image for the
+            same tag is at `ghcr.io/${{ github.repository }}`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
