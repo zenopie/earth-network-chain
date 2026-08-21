@@ -275,3 +275,7 @@ curl https://get.ignite.com/earth-network/earth@latest! | sudo bash
 - [Ignite CLI docs](https://docs.ignite.com)
 - [Cosmos SDK docs](https://docs.cosmos.network)
 - [Developer Chat](https://discord.com/invite/ignitecli)
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).

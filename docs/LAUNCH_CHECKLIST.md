@@ -185,8 +185,8 @@ file confirms the shape: one account, `"gen_txs": []`.
       is 52 MB of object code for a platform no validator runs. `poafixtures` is
       regenerable from `tools/poafixtures` via `scripts/regen-poa-fixtures.sh`
       and should not be tracked.
-- [ ] **Add a `LICENSE`.** There is none. Without one the default is "nobody may
-      use this", which is an odd position for a public chain.
+- [x] **Add a `LICENSE`.** Apache 2.0, chosen over MIT for the patent grant and
+      because the Cosmos SDK this is built on uses it.
 - [ ] **Add a `CHANGELOG.md`** with a real entry per tag. The commit log is good
       but it is not what an operator reads before restarting a validator.
 
