@@ -35,6 +35,9 @@ nothing to join.
 - **Genesis export carries the state it used to drop** — every registration and
   its nullifier, every revoked Document Signer, every allocation option and vote.
 - **Block gas limit set to 100,000,000.** It was `-1`, meaning none.
+- **Governance needs two thirds, not a simple majority.** `threshold` 0.5 → 0.667,
+  and `expedited_threshold` 0.667 → 0.75 because the SDK requires the expedited
+  bar to be strictly higher. Quorum and veto are unchanged at 33.4%.
 - **Downtime tolerance raised to 10,000 blocks / 5%**, from the SDK defaults of
   100 / 50% — about four minutes, which with one validator meant a container
   restart halted the chain.

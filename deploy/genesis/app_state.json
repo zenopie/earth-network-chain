@@ -37,7 +37,7 @@
       "max_deposit_period": "1209600s",
       "voting_period": "604800s",
       "quorum": "0.334",
-      "threshold": "0.5",
+      "threshold": "0.667",
       "veto_threshold": "0.334",
       "min_initial_deposit_ratio": "0.25",
       "expedited_min_deposit": [
@@ -46,7 +46,7 @@
           "denom": "uerth"
         }
       ],
-      "expedited_threshold": "0.667"
+      "expedited_threshold": "0.75"
     }
   },
   "dex": {

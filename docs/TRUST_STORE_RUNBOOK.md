@@ -77,7 +77,8 @@ earthd tx gov vote <id> yes --from <key> --chain-id earth-1
 earthd query gov proposal <id>
 ```
 
-Passes at 33.4% quorum and 50% yes.
+Passes at 33.4% quorum and three quarters yes — the expedited bar is higher than
+the normal two thirds, because it buys a one-day vote instead of a week.
 
 ### 5. After it passes
 
@@ -126,7 +127,8 @@ export.
 | Expedited — revocation | 5 ERTH | 1 day | ~1 day |
 | Normal — adding a CSCA | 1 ERTH | 7 days | ~7 days |
 
-Quorum 33.4%, threshold 50%. While there is one validator, every vote passes —
+Quorum 33.4% either way. Two thirds yes to pass a normal proposal, three quarters
+for an expedited one. While there is one validator, every vote passes —
 the delay is the voting period itself, not the outcome.
 
 ---

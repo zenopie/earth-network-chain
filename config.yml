@@ -49,10 +49,10 @@ genesis:
         voting_period: "604800s"
         # 14 days to reach the deposit threshold (Hub/Osmosis convention).
         max_deposit_period: "1209600s"
-        # Expedited proposals: 1 day, a two-thirds bar, and 5x the deposit.
+        # Expedited proposals: 1 day, a three-quarters bar, and 5x the deposit.
         # This is the track a security-critical chain upgrade would use.
         expedited_voting_period: "86400s"
-        expedited_threshold: "0.667"
+        expedited_threshold: "0.75"
         # TODO: raise before mainnet. min_deposit is the one value that cannot be
         # copied from another chain — it should be a meaningful fiat amount at
         # ERTH's market price (peers sit in the $500-$5,000 range). Deliberately
@@ -72,7 +72,7 @@ genesis:
         # 33.4% of bonded stake must vote; a simple majority passes; a 33.4% veto
         # blocks and burns the deposit. Near-universal across Cosmos chains.
         quorum: "0.334"
-        threshold: "0.5"
+        threshold: "0.667"
         veto_threshold: "0.334"
         # Burn the deposit on a successful veto only — not for failing quorum or
         # for a proposal that simply loses. Matches SDK/Hub behaviour.
