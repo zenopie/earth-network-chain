@@ -278,6 +278,12 @@ Upgrading a running chain is a different thing entirely — see
 
 ## Documentation
 
+**[erth.network/docs](https://erth.network/docs)** — what Earth is, registering,
+emission, using the app, governance. Built with Docusaurus from
+[`docs-site/`](docs-site/); every page has an edit link.
+
+Operational guides stay next to the code:
+
 | | |
 | --- | --- |
 | [docs/JOIN.md](docs/JOIN.md) | running a node |
