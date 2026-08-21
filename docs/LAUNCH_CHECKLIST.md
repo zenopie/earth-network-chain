@@ -362,11 +362,15 @@ An untested upgrade path is discovered during the upgrade.
       upgrade name and height (upgrade tags only).
 - [x] **A documentation site.** `docs-site/` — Docusaurus, the same thing the
       Cosmos SDK and most Cosmos chains use, published to
-      `erth.network/docs` by `.github/workflows/docs.yml`. Six pages covering
+      `docs.erth.network` by `.github/workflows/docs.yml`. Six pages covering
       what Earth is, registering, emission, using the app, governance and running
       a node. Every page has an edit link to its markdown, and the build fails on
       a broken link. Operational guides stay in `docs/` next to the code and are
       linked rather than copied, so they cannot drift within a release.
+      **Two one-time setup steps remain, both outside this repo:** a `CNAME` DNS
+      record for `docs` pointing at `zenopie.github.io` (Cloudflare SSL mode
+      **Full**, not Flexible — Flexible loops against Pages), and GitHub
+      Settings → Pages with source *GitHub Actions* and the custom domain set.
 - [x] Replace the Ignite boilerplate in the readme. Gone: the `git tag v0.1`
       instructions for a workflow that no longer works that way, the
       `get.ignite.com` install line pointing at the wrong repo, and the Vue

@@ -4,7 +4,13 @@
 // another chain's documentation already knows how to move around this one.
 //
 // Docs-only mode — no blog, no separate landing page. The site *is* the docs, and
-// `/` redirects to the introduction.
+// `/` is the introduction.
+//
+// Served from its own subdomain rather than erth.network/docs. That is the Cosmos
+// convention (docs.cosmos.network, docs.osmosis.zone, docs.celestia.org) and it is
+// also the only one that deploys without a proxy: GitHub Pages takes a custom
+// domain natively, whereas a path would need a rule in front of the app — and the
+// app is a single-page router that would otherwise swallow /docs itself.
 
 import { themes as prismThemes } from "prism-react-renderer";
 
@@ -14,10 +20,8 @@ const config = {
   tagline: "One human, one account",
   favicon: "img/favicon.ico",
 
-  // Served under /docs rather than at the root, so it can sit alongside the app
-  // on the same domain.
-  url: "https://erth.network",
-  baseUrl: "/docs/",
+  url: "https://docs.erth.network",
+  baseUrl: "/",
 
   organizationName: "zenopie",
   projectName: "earth-network-chain",
@@ -57,7 +61,7 @@ const config = {
         title: "Earth Network",
         logo: { alt: "Earth Network", src: "img/logo.png" },
         items: [
-          { to: "/", label: "Docs", position: "left", activeBaseRegex: "^/docs/$" },
+          { to: "/", label: "Docs", position: "left", activeBaseRegex: "^/$" },
           { href: "https://erth.network", label: "App", position: "right" },
           {
             href: "https://github.com/zenopie/earth-network-chain",
