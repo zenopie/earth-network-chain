@@ -214,13 +214,25 @@ file confirms the shape: one account, `"gen_txs": []`.
 handling — and `var Upgrades = []Upgrade{}` is empty, so none of it has ever run.
 An untested upgrade path is discovered during the upgrade.
 
-- [ ] **Rehearse a no-op upgrade end to end** on a testnet: submit
-      `MsgSoftwareUpgrade`, halt at height, swap the binary, resume.
+- [x] **Rehearse a no-op upgrade end to end.**
+      `scripts/rehearse-upgrade.sh` does it on a throwaway chain: passes a real
+      proposal, waits for the halt, checks the old binary *refuses* to continue,
+      rebuilds with a matching handler, checks the chain resumes. All three
+      behave.
+      It found the mistake that costs a week: the plan height must be beyond the
+      **end of the voting period**, not beyond now. A plan whose height has
+      passed by the time the proposal executes is rejected, and the proposal
+      reads `PROPOSAL_STATUS_FAILED` — passed the vote, failed to apply. With a
+      7-day voting period that is ~120,000 blocks of margin. The first run of the
+      script failed exactly this way.
 - [ ] **Ship cosmovisor** in the image with the standard layout
       (`$DAEMON_HOME/cosmovisor/genesis/bin/earthd`), so operators can stage the
       next binary rather than racing a halt at 3am.
-- [ ] **Document the halt-height procedure**, including `--unsafe-skip-upgrades`
-      and what to do when a validator restarts into the wrong binary.
+- [x] **Document the halt-height procedure** — `docs/UPGRADES.md`, written from
+      the rehearsal rather than from the SDK docs. Covers the plan-height
+      arithmetic, `StoreUpgrades` when the module set changes,
+      `--unsafe-skip-upgrades` and why it must be coordinated, and what a
+      halted-again node means.
 - [ ] **Decide the store-migration policy** for the modules most likely to change
       shape — `x/personhood` params (verifying keys, signal indices) and
       `x/dex` auction state.
