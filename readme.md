@@ -236,45 +236,55 @@ The registration nullifier is derived deterministically in-circuit from the pass
 registration) and the issuing state gets no extra exposure. See
 [`docs/DSC_REGISTRY_OPTION_C.md`](docs/DSC_REGISTRY_OPTION_C.md) for the DSC-registry design.
 
-### Configure
+## Running a node
 
-Your blockchain in development can be configured with `config.yml`. To learn more, see the [Ignite CLI docs](https://docs.ignite.com).
+See **[docs/JOIN.md](docs/JOIN.md)** — binary, genesis and its hash, seeds, gas
+price, pruning, hardware, and becoming a validator.
 
-### Web Frontend
+Binaries and checksums are on the
+[releases page](https://github.com/zenopie/earth-network-chain/releases). The
+container image is `ghcr.io/zenopie/earth-network-chain`, pinned by digest.
 
-Additionally, Ignite CLI offers a frontend scaffolding feature (based on Vue) to help you quickly build a web frontend for your blockchain:
+## Development
 
-Use: `ignite scaffold vue`
-This command can be run within your scaffolded blockchain project.
+```bash
+# the proof verifier is cgo — build its native library first
+cd third_party/barretenberg-go && ./scripts/build-wrapper.sh --platform darwin_arm64
+cd ../.. && make install
 
-
-For more information see the [monorepo for Ignite front-end development](https://github.com/ignite/web).
-
-## Release
-To release a new version of your blockchain, create and push a new tag with `v` prefix. A new draft release with the configured targets will be created.
-
-```
-git tag v0.1
-git push origin v0.1
+ignite chain serve          # local devnet from config.yml
+go test ./...
 ```
 
-After a draft release is created, make your final changes from the release page and publish it.
+`config.yml` drives the local devnet only. The launch genesis is built from
+`deploy/genesis/` — see [its README](deploy/genesis/README.md) — and a test fails
+if the two disagree about anything they both state.
 
-### Install
-To install the latest version of your blockchain node's binary, execute the following command on your machine:
+| | |
+| --- | --- |
+| `make genesis` | rebuild `deploy/genesis.json` from its sources |
+| `make genesis-check` | fail if the artifact has drifted |
+| `scripts/rehearse-upgrade.sh` | run a governance upgrade end to end locally |
+| `deploy/docker/entrypoint_test.sh` | exercise the container's three boot paths |
 
-```
-curl https://get.ignite.com/earth-network/earth@latest! | sudo bash
-```
-`earth-network/earth` should match the `username` and `repo_name` of the Github repository to which the source code was pushed. Learn more about [the install process](https://github.com/ignite/installer).
+## Releasing
 
-## Learn more
+Push a tag matching `v[0-9]+.[0-9]+.[0-9]+`. That builds and publishes the
+container image, and builds `earthd` natively for Linux amd64 and arm64 with
+checksums and the genesis file.
 
-- [Ignite CLI](https://ignite.com/cli)
-- [Tutorials](https://docs.ignite.com/guide)
-- [Ignite CLI docs](https://docs.ignite.com)
-- [Cosmos SDK docs](https://docs.cosmos.network)
-- [Developer Chat](https://discord.com/invite/ignitecli)
+Upgrading a running chain is a different thing entirely — see
+[docs/UPGRADES.md](docs/UPGRADES.md).
+
+## Documentation
+
+| | |
+| --- | --- |
+| [docs/JOIN.md](docs/JOIN.md) | running a node |
+| [docs/UPGRADES.md](docs/UPGRADES.md) | coordinated upgrades, and what goes wrong |
+| [docs/TRUST_STORE_RUNBOOK.md](docs/TRUST_STORE_RUNBOOK.md) | revoking or adding passport certificates |
+| [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md) | what still stands between here and a launch |
+| [deploy/genesis/README.md](deploy/genesis/README.md) | how the genesis is built |
 
 ## License
 

@@ -196,15 +196,23 @@ file confirms the shape: one account, `"gen_txs": []`.
       toolchain, publish per-platform sha256, and make `verifier-libs.yml` the
       only source of `libbarretenberg.a` — verified against
       `third_party/barretenberg-go/checksums.json` at build time.
-- [ ] **Get compiled artifacts out of the tree.** `poafixtures` (4.6 MB, a built
-      binary) sits at the repo root, and `third_party/barretenberg-go/lib/darwin_arm64/libbarretenberg.a`
-      is 52 MB of object code for a platform no validator runs. `poafixtures` is
-      regenerable from `tools/poafixtures` via `scripts/regen-poa-fixtures.sh`
-      and should not be tracked.
+- [x] **Get compiled artifacts out of the tree.** `poafixtures` is gone — a
+      built binary nothing referenced, committed by accident, regenerable with
+      `go run ./tools/poafixtures`. `.gitignore` now covers it and stray
+      `earthd` builds.
+      **`lib/darwin_arm64/libbarretenberg.a` stays, deliberately.** It is the
+      development platform, so removing it means a fresh clone cannot build until
+      it fetches ~100MB from Aztec — and because the blob is already in history,
+      removing it would not shrink a clone anyway (`.git` is 35MB total; object
+      code packs well). What *is* now ignored is every other platform's library,
+      so a local `build-wrapper.sh --platform linux_amd64` cannot add another
+      50MB by accident.
 - [x] **Add a `LICENSE`.** Apache 2.0, chosen over MIT for the patent grant and
       because the Cosmos SDK this is built on uses it.
-- [ ] **Add a `CHANGELOG.md`** with a real entry per tag. The commit log is good
-      but it is not what an operator reads before restarting a validator.
+- [x] **Add a `CHANGELOG.md`.** Written for operators rather than as a commit
+      digest, with consensus-affecting changes called out separately — for a
+      chain those are breaking whatever the diff looks like. The release workflow
+      links it.
 
 ---
 
@@ -344,10 +352,11 @@ An untested upgrade path is discovered during the upgrade.
       gas price.
 - [ ] Release notes per tag: binary checksums, genesis sha256 (launch tag only),
       upgrade name and height (upgrade tags only).
-- [ ] Replace the Ignite boilerplate in `readme.md:210-228`. It currently tells
-      readers to `git tag v0.1` for a draft release that the disabled workflow
-      will not create, and to install via `get.ignite.com/earth-network/earth`,
-      which is not where this repo lives.
+- [x] Replace the Ignite boilerplate in the readme. Gone: the `git tag v0.1`
+      instructions for a workflow that no longer works that way, the
+      `get.ignite.com` install line pointing at the wrong repo, and the Vue
+      scaffolding section. Replaced with running a node, developing, releasing,
+      and an index of the docs.
 
 ---
 

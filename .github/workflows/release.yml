@@ -136,6 +136,9 @@ jobs:
             dist/checksums.txt
             deploy/genesis.json
           body: |
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/CHANGELOG.md)
+            for what changed, including anything consensus-affecting.
+
             ## Running a node
 
             See [docs/JOIN.md](https://github.com/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/docs/JOIN.md).

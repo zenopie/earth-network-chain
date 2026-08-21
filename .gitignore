@@ -16,3 +16,17 @@ release/
 # `.env.local` carrying a wallet mnemonic reached a public repository through the
 # gap. `.env*` covers the family.
 .env*
+
+# Built binaries. `go build ./tools/poafixtures` drops one at the repo root; it is
+# regenerable with `go run ./tools/poafixtures` and was only ever committed by
+# accident.
+/poafixtures
+/earthd
+
+# Native verifier libraries built by third_party/barretenberg-go/scripts/build-wrapper.sh.
+# darwin_arm64 stays tracked — it is the development platform, and a fresh clone
+# would otherwise have to fetch ~100MB from Aztec before it could build at all.
+# Everything else is produced by CI per platform and must not be committed: each
+# is ~50MB of object code.
+third_party/barretenberg-go/lib/*
+!third_party/barretenberg-go/lib/darwin_arm64/
