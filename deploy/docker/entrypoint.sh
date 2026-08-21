@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
 #
-# Starts a single-validator earth node, initialising on first boot.
+# Starts an earth node against a genesis it verifies rather than one it invents.
 #
-# Only stock earthd is used here. deploy/genesis.json carries the custom genesis
-# state that config.yml describes — the CSCA trust store, the register verifying
-# keys, the seeded ANML/ERTH pool, the governance parameters — with no gentx and
-# no dev accounts, so the validator is created fresh on this machine and its key
-# never leaves the volume.
+# There are three paths and the difference between them is the difference
+# between joining a network and creating one:
+#
+#   resume     $EARTH_HOME/config/genesis.json already exists. Start.
+#   join       It does not. Copy the genesis baked into the image, check it
+#              against the sha256 published with the release, start. No key is
+#              created, no timestamp is rewritten, and every node that boots this
+#              image computes the same genesis and the same app hash. This is
+#              the default.
+#   DEV_INIT=1 It does not, and you asked for a throwaway chain. Generate a
+#              validator, stamp genesis_time to now, collect a gentx. Every node
+#              doing this makes a DIFFERENT chain, which is exactly what a local
+#              devnet wants and exactly what a network cannot tolerate.
+#
+# The join path is the whole point. The old behaviour was DEV_INIT with no way
+# to turn it off: each node stamped its own genesis_time and minted its own
+# validator, so two containers from the same image could never share a chain.
 #
 # State lives entirely under $EARTH_HOME, which is a mounted volume. The genesis
 # check is what makes a redeploy resume the existing chain rather than silently
@@ -17,39 +29,73 @@ EARTH_HOME="${EARTH_HOME:-/data}"
 CHAIN_ID="${CHAIN_ID:-earth-1}"
 MONIKER="${MONIKER:-earth-node}"
 MIN_GAS_PRICES="${MIN_GAS_PRICES:-0uerth}"
-# What the validator account holds, and how much of it is bonded. The default
-# bond matches config.yml's genesis validator.
+
+# Open CORS lets any origin read the LCD *and broadcast through it*. That belongs
+# on a public read-only node, not on something producing blocks, so it is off
+# unless asked for. The wallet apps need it wherever they point; point them at an
+# LCD node rather than at a validator.
+API_UNSAFE_CORS="${API_UNSAFE_CORS:-0}"
+
+# Where the release genesis and its hash live in the image. Overridable only so
+# the three paths below can be exercised without building a container — see
+# deploy/docker/entrypoint_test.sh.
+GENESIS_SRC="${GENESIS_SRC:-/etc/earth/genesis.json}"
+GENESIS_SHA="${GENESIS_SHA:-${GENESIS_SRC}.sha256}"
+
+# Devnet-only. See the header: this makes a new chain, not a node on yours.
+DEV_INIT="${DEV_INIT:-0}"
+# What the devnet validator holds, and how much of it is bonded. Ignored unless
+# DEV_INIT=1, because the join path creates no accounts.
 VALIDATOR_COINS="${VALIDATOR_COINS:-1000000000000uerth}"
 VALIDATOR_BONDED="${VALIDATOR_BONDED:-100000000uerth}"
-KEYRING="--keyring-backend test --home $EARTH_HOME"
 
 say() { printf '[entrypoint] %s\n' "$*"; }
+die() { printf '[entrypoint] FATAL: %s\n' "$*" >&2; exit 1; }
 
-if [ ! -f "$EARTH_HOME/config/genesis.json" ]; then
-  say "no genesis at $EARTH_HOME — initialising a fresh chain"
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+# `sed -i` takes a mandatory suffix on BSD and a forbidden one on GNU, so the
+# same invocation cannot work on both. The image is Linux, but this script is
+# also run directly by its tests and by anyone debugging on a Mac.
+sed_inplace() {
+  local expr="$1" file="$2"
+  sed "$expr" "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+if [ -f "$EARTH_HOME/config/genesis.json" ]; then
+  say "existing genesis found — resuming chain at $EARTH_HOME"
+  say "genesis sha256 $(sha256_of "$EARTH_HOME/config/genesis.json")"
+
+elif [ "$DEV_INIT" = "1" ]; then
+  # ── devnet ───────────────────────────────────────────────────────────────
+  say "DEV_INIT=1 — creating a NEW throwaway chain (not joining one)"
   earthd init "$MONIKER" --chain-id "$CHAIN_ID" --home "$EARTH_HOME" >/dev/null 2>&1
+  cp "$GENESIS_SRC" "$EARTH_HOME/config/genesis.json"
 
-  # Replace the stock genesis with the one carrying this chain's state.
-  cp /etc/earth/genesis.json "$EARTH_HOME/config/genesis.json"
-
-  # Stamp genesis_time to now.
-  #
-  # The committed genesis carries the timestamp of whichever machine ran
-  # `ignite chain init`, and CometBFT gives block 1 exactly that time while
-  # block 2 gets the wall clock. The emission is prorated against elapsed time,
-  # so the whole gap is paid out in a single block: a genesis committed a day
-  # ago mints a day of ERTH at height 2, and the lump grows for as long as the
-  # file sits in the repo unchanged.
+  # Stamp genesis_time to now. CometBFT gives block 1 exactly this time while
+  # block 2 gets the wall clock, and the emission — plus the protocol-owned
+  # liquidity retirement — is prorated against elapsed time, so a stale file
+  # pays out the whole gap in a single block. Rewriting it is why this path
+  # cannot be used for a real network: it changes the file, so the hash no
+  # longer matches and no two nodes agree.
   NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  sed -i "s|\"genesis_time\":[[:space:]]*\"[^\"]*\"|\"genesis_time\": \"$NOW\"|" \
+  sed_inplace "s|\"genesis_time\":[[:space:]]*\"[^\"]*\"|\"genesis_time\": \"$NOW\"|" \
     "$EARTH_HOME/config/genesis.json"
   say "genesis_time stamped to $NOW"
 
+  # --keyring-backend test writes the key unencrypted into the volume. That is
+  # acceptable here and only here: this chain is disposable by construction. The
+  # join path creates no keys at all, and a real validator's consensus key
+  # belongs behind PRIV_VALIDATOR_LADDR.
+  KEYRING="--keyring-backend test --home $EARTH_HOME"
   if [ -n "${VALIDATOR_MNEMONIC:-}" ]; then
-    say "recovering the validator key from VALIDATOR_MNEMONIC"
+    say "recovering the devnet validator key from VALIDATOR_MNEMONIC"
     printf '%s\n' "$VALIDATOR_MNEMONIC" | earthd keys add validator --recover $KEYRING >/dev/null
   else
-    say "generating a validator key — the mnemonic is printed once, below"
+    say "generating a devnet validator key — the mnemonic is printed once, below"
     earthd keys add validator $KEYRING --output json | tee /dev/stderr >/dev/null
     say "store that mnemonic: it is the only copy outside this volume"
   fi
@@ -59,9 +105,32 @@ if [ ! -f "$EARTH_HOME/config/genesis.json" ]; then
   earthd genesis add-genesis-account validator "$VALIDATOR_COINS" $KEYRING
   earthd genesis gentx validator "$VALIDATOR_BONDED" --chain-id "$CHAIN_ID" $KEYRING >/dev/null
   earthd genesis collect-gentxs --home "$EARTH_HOME" >/dev/null 2>&1
-  say "genesis ready: validator bonded $VALIDATOR_BONDED"
+  say "devnet genesis ready: validator bonded $VALIDATOR_BONDED"
+
 else
-  say "existing genesis found — resuming chain at $EARTH_HOME"
+  # ── join ─────────────────────────────────────────────────────────────────
+  say "no genesis at $EARTH_HOME — installing the release genesis"
+  [ -f "$GENESIS_SRC" ] || die "$GENESIS_SRC is missing from the image"
+  [ -f "$GENESIS_SHA" ] || die "$GENESIS_SHA is missing from the image"
+
+  WANT="$(awk '{print $1}' "$GENESIS_SHA")"
+  GOT="$(sha256_of "$GENESIS_SRC")"
+  if [ "$WANT" != "$GOT" ]; then
+    die "genesis sha256 mismatch — refusing to start
+      expected $WANT
+      got      $GOT
+    The genesis in this image is not the one it was built with. Do not work
+    around this; get an image whose genesis matches the published hash."
+  fi
+  say "genesis sha256 $GOT — matches the release"
+
+  earthd init "$MONIKER" --chain-id "$CHAIN_ID" --home "$EARTH_HOME" >/dev/null 2>&1
+  cp "$GENESIS_SRC" "$EARTH_HOME/config/genesis.json"
+
+  # Deliberately absent from this path: no genesis_time rewrite (it would change
+  # the file the hash just vouched for), and no key generation (a validator joins
+  # with MsgCreateValidator after height 1, or its gentx is already in the file).
+  say "ready to join $CHAIN_ID — no keys created, genesis unmodified"
 fi
 
 # Remote signer, if one is configured.
@@ -82,24 +151,25 @@ fi
 # removes it from this host afterwards — leaving it behind means the key you
 # just moved is still sitting on the machine you moved it off.
 if [ -n "${PRIV_VALIDATOR_LADDR:-}" ]; then
-  sed -i "s|^priv_validator_laddr = .*|priv_validator_laddr = \"$PRIV_VALIDATOR_LADDR\"|" \
+  sed_inplace "s|^priv_validator_laddr = .*|priv_validator_laddr = \"$PRIV_VALIDATOR_LADDR\"|" \
     "$EARTH_HOME/config/config.toml"
   say "remote signer expected at $PRIV_VALIDATOR_LADDR"
 fi
 
 # Bind to every interface. The defaults listen on loopback, which inside a
-# container means nothing outside it can reach the node — including the
-# ads-for-gas backend and the wallet apps.
-#
-# CORS is open because the web app talks to the LCD straight from a browser.
-# That is a devnet posture: any origin can read and broadcast.
-exec earthd start \
-  --home "$EARTH_HOME" \
-  --moniker "$MONIKER" \
-  --minimum-gas-prices "$MIN_GAS_PRICES" \
-  --rpc.laddr tcp://0.0.0.0:26657 \
-  --p2p.laddr tcp://0.0.0.0:26656 \
-  --api.enable \
-  --api.address tcp://0.0.0.0:1317 \
-  --api.enabled-unsafe-cors \
-  "$@"
+# container means nothing outside it can reach the node.
+START_ARGS=(
+  --home "$EARTH_HOME"
+  --moniker "$MONIKER"
+  --minimum-gas-prices "$MIN_GAS_PRICES"
+  --rpc.laddr tcp://0.0.0.0:26657
+  --p2p.laddr tcp://0.0.0.0:26656
+  --api.enable
+  --api.address tcp://0.0.0.0:1317
+)
+if [ "$API_UNSAFE_CORS" = "1" ]; then
+  say "WARNING: API_UNSAFE_CORS=1 — any origin can read this LCD and broadcast through it"
+  START_ARGS+=(--api.enabled-unsafe-cors)
+fi
+
+exec earthd start "${START_ARGS[@]}" "$@"

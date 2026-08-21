@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+#
+# Exercises entrypoint.sh's three paths without building a container.
+#
+# This script decides whether a node joins your network or forks off its own, and
+# the failure is silent: a node that invents its own genesis starts, produces
+# blocks, and looks healthy right up until you notice it shares a chain with
+# nobody. That is worth a test even though it is shell.
+#
+# earthd is stubbed rather than real. What is under test is the branching, the
+# hash check and the flags — not whether the SDK can init a node, which it can.
+#
+#   deploy/docker/entrypoint_test.sh
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
+ENTRYPOINT="$HERE/entrypoint.sh"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+pass=0; fail=0
+ok()  { printf '  \033[32mok\033[0m   %s\n' "$1"; pass=$((pass+1)); }
+bad() { printf '  \033[31mFAIL\033[0m %s\n     %s\n' "$1" "${2:-}"; fail=$((fail+1)); }
+
+# ── a stub earthd that records what it was asked to do ─────────────────────
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/earthd" <<'STUB'
+#!/usr/bin/env bash
+echo "earthd $*" >> "$EARTHD_LOG"
+case "$1" in
+  init)
+    home=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--home" ] && j=$((i+1)) && home="${!j}"; done
+    mkdir -p "$home/config"
+    printf 'priv_validator_laddr = ""\n' > "$home/config/config.toml"
+    printf '{"stock":true}\n' > "$home/config/genesis.json"
+    ;;
+  start) echo "STARTED $*" >> "$EARTHD_LOG" ;;
+esac
+exit 0
+STUB
+chmod +x "$WORK/bin/earthd"
+export PATH="$WORK/bin:$PATH"
+
+# ── a genesis and a matching hash, standing in for the image's ─────────────
+GEN="$WORK/genesis.json"
+cp "$REPO/deploy/genesis.json" "$GEN"
+if command -v sha256sum >/dev/null 2>&1; then sha256sum "$GEN" | awk '{print $1}' > "$GEN.sha256"
+else shasum -a 256 "$GEN" | awk '{print $1}' > "$GEN.sha256"; fi
+
+run() { # run <home> [env...] -> writes $LOG, returns entrypoint's exit code
+  local home="$1"; shift
+  export EARTHD_LOG="$WORK/earthd.log"; : > "$EARTHD_LOG"
+  LOG="$WORK/out.log"
+  env EARTH_HOME="$home" GENESIS_SRC="$GEN" "$@" bash "$ENTRYPOINT" >"$LOG" 2>&1
+}
+
+# ── 1. join: the default, and the whole point ──────────────────────────────
+H="$WORK/join"; mkdir -p "$H"
+if run "$H" ; then
+  grep -q "matches the release" "$LOG" \
+    && ok "join: verifies the genesis hash" \
+    || bad "join: did not report a hash match" "$(tail -2 "$LOG")"
+
+  if cmp -s "$GEN" "$H/config/genesis.json"; then
+    ok "join: genesis is installed byte-identical"
+  else
+    bad "join: genesis was modified" "a rewritten file no longer matches its published hash"
+  fi
+
+  grep -q "keys add" "$EARTHD_LOG" \
+    && bad "join: created a key" "the join path must not mint a validator" \
+    || ok "join: creates no keys"
+
+  grep -q "genesis gentx\|collect-gentxs" "$EARTHD_LOG" \
+    && bad "join: made its own gentx" "every node would compute a different genesis" \
+    || ok "join: makes no gentx"
+
+  grep -q "api.enabled-unsafe-cors" "$EARTHD_LOG" \
+    && bad "join: CORS left open" "any origin could read and broadcast" \
+    || ok "join: unsafe CORS is off by default"
+
+  grep -q "p2p.laddr tcp://0.0.0.0:26656" "$EARTHD_LOG" \
+    && ok "join: p2p binds on all interfaces" \
+    || bad "join: p2p not bound" "$(grep STARTED "$EARTHD_LOG" | head -1)"
+else
+  bad "join: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# ── 2. join with a tampered genesis: must refuse ───────────────────────────
+H="$WORK/tampered"; mkdir -p "$H"
+BAD_GEN="$WORK/bad.json"; cp "$GEN" "$BAD_GEN"; printf '\n' >> "$BAD_GEN"
+cp "$GEN.sha256" "$BAD_GEN.sha256"     # hash of the ORIGINAL, deliberately
+export EARTHD_LOG="$WORK/earthd.log"; : > "$EARTHD_LOG"
+if env EARTH_HOME="$H" GENESIS_SRC="$BAD_GEN" bash "$ENTRYPOINT" >"$WORK/out.log" 2>&1; then
+  bad "tampered: started anyway" "a swapped genesis must not boot"
+else
+  grep -q "sha256 mismatch" "$WORK/out.log" \
+    && ok "tampered: refuses to start, and says why" \
+    || bad "tampered: failed for the wrong reason" "$(tail -3 "$WORK/out.log")"
+  grep -q "STARTED" "$EARTHD_LOG" \
+    && bad "tampered: reached earthd start" "it must fail before starting" \
+    || ok "tampered: never reaches start"
+fi
+
+# ── 3. DEV_INIT=1: the old behaviour, now opt-in ───────────────────────────
+H="$WORK/dev"; mkdir -p "$H"
+if run "$H" DEV_INIT=1; then
+  grep -q "keys add validator" "$EARTHD_LOG" \
+    && ok "dev: creates a validator key" \
+    || bad "dev: no key created" "$(tail -3 "$LOG")"
+  grep -q "collect-gentxs" "$EARTHD_LOG" \
+    && ok "dev: collects a gentx" \
+    || bad "dev: no gentx" "$(tail -3 "$LOG")"
+  grep -q '"genesis_time": "' "$H/config/genesis.json" \
+    && ok "dev: stamps genesis_time" \
+    || bad "dev: genesis_time not stamped" "emission would pay out the whole gap"
+  cmp -s "$GEN" "$H/config/genesis.json" \
+    && bad "dev: genesis unchanged" "the timestamp should have been rewritten" \
+    || ok "dev: genesis is modified, so it cannot be mistaken for the release"
+else
+  bad "dev: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# ── 4. resume: an existing genesis is never replaced ───────────────────────
+H="$WORK/resume"; mkdir -p "$H/config"
+printf '{"mine":true}\n' > "$H/config/genesis.json"
+if run "$H"; then
+  grep -q "resuming chain" "$LOG" && ok "resume: detects existing state" \
+    || bad "resume: did not resume" "$(tail -2 "$LOG")"
+  grep -q '"mine":true' "$H/config/genesis.json" \
+    && ok "resume: leaves the existing genesis alone" \
+    || bad "resume: overwrote the chain's genesis" "this would fork an existing node"
+else
+  bad "resume: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# ── 5. CORS is reachable when actually asked for ───────────────────────────
+H="$WORK/cors"; mkdir -p "$H"
+if run "$H" API_UNSAFE_CORS=1; then
+  grep -q "api.enabled-unsafe-cors" "$EARTHD_LOG" \
+    && ok "cors: opt-in works" || bad "cors: opt-in ignored" "$(grep STARTED "$EARTHD_LOG")"
+  grep -q "WARNING" "$LOG" \
+    && ok "cors: warns when enabled" || bad "cors: enabled silently" ""
+else
+  bad "cors: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+printf '\n  %d passed, %d failed\n' "$pass" "$fail"
+[ "$fail" -eq 0 ]

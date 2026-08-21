@@ -32,6 +32,25 @@ services:
       - MONIKER=earth-akash-devnet
       # Zero-fee transactions. Devnet posture — see README.
       - MIN_GAS_PRICES=0uerth
+      #
+      # DEV_INIT=1 makes this a NEW throwaway chain on every fresh volume: its
+      # own genesis_time, its own validator, its own genesis hash. That is what
+      # this deployment has always done, and it is now something you have to ask
+      # for. Without it the node installs the release genesis, verifies it
+      # against the published sha256, creates no keys, and waits — which is what
+      # joining a network looks like, and which produces no blocks until there is
+      # a validator set.
+      #
+      # Deliberately NOT set here. This file describes a node on a network, not a
+      # chain of its own, and a devnet is one uncomment away when wanted:
+      #
+      #   - DEV_INIT=1
+      #   - API_UNSAFE_CORS=1       # any origin may read AND broadcast
+      #
+      # Turn both on together — a devnet the wallet apps talk to needs the second
+      # as much as the first. Neither belongs on a validator.
+      #
+      # Both ignored unless DEV_INIT=1 — the join path creates no accounts.
       - VALIDATOR_COINS=1000000000000uerth
       - VALIDATOR_BONDED=100000000uerth
       #

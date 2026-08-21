@@ -36,20 +36,28 @@ jobs:
       - name: Build Docker image
         id: build
         run: |
-          docker build -t ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:latest -f Dockerfile .
+          # VERSION and COMMIT are passed in rather than derived inside the
+          # build: .git is not in the build context, so a value invented there
+          # would be a guess. They end up in `earthd version`, which is how an
+          # operator answers "am I running what everyone else is running".
+          #
+          # Tagged with the version only. :latest is deliberately not built or
+          # pushed — the SDL pins by digest, and a mutable tag alongside it is
+          # just a way for someone to skip that.
+          docker build \
+            --build-arg VERSION=${{ steps.get_version.outputs.VERSION }} \
+            --build-arg COMMIT=${{ github.sha }} \
+            -t ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:${{ steps.get_version.outputs.VERSION }} \
+            -f Dockerfile .
 
 
       - name: Push Docker image
         id: push
         run: |
-          # Push latest first
-          docker push ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:latest
-          # Tag with version and push
-          docker tag ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:latest ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:${{ steps.get_version.outputs.VERSION }}
           docker push ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:${{ steps.get_version.outputs.VERSION }}
 
           # Get the manifest digest after pushing
-          MANIFEST_DIGEST=$(docker inspect ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:latest --format='{{index .RepoDigests 0}}' | cut -d'@' -f2 | cut -d':' -f2)
+          MANIFEST_DIGEST=$(docker inspect ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:${{ steps.get_version.outputs.VERSION }} --format='{{index .RepoDigests 0}}' | cut -d'@' -f2 | cut -d':' -f2)
           echo "IMAGE_HASH=${MANIFEST_DIGEST}" >> $GITHUB_OUTPUT          
 
       - name: Generate docker-compose.yaml

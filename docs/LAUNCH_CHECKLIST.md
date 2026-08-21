@@ -79,18 +79,19 @@ file confirms the shape: one account, `"gen_txs": []`.
       from `deploy/genesis.json` for anything real". They are still there.
       Replace with whatever the real operational funding is, from a key that
       exists in a signer nobody's laptop has seen.
-- [ ] **Publish the sha256 of the final genesis** in the release notes, and have
-      the entrypoint *verify* it rather than generate anything. New entrypoint
-      logic: if `$EARTH_HOME/config/genesis.json` is absent, copy
-      `/etc/earth/genesis.json`, check its hash against a baked-in constant,
-      start. Otherwise start. Keep the current self-init path behind an explicit
-      `DEV_INIT=1` so `scripts/testnet-3val.sh` and local devnets still work.
-- [ ] **Stop using `--keyring-backend test` on the init path**
-      (`deploy/docker/entrypoint.sh:24`). It writes the validator's operator key
-      unencrypted into the volume. Related: `VALIDATOR_MNEMONIC` is injected into
-      the submitted SDL and therefore reaches whoever hosts the lease
-      (`deploy/akash/deploy.yaml:38-48` documents this as a deliberate devnet
-      trade). Neither survives contact with a real validator key.
+- [x] **Publish the sha256 of the final genesis** ~~in the release notes, and
+      have the entrypoint *verify* it rather than generate anything.~~ Done for
+      the entrypoint: join is the default, a hash mismatch against
+      `/etc/earth/genesis.json.sha256` is fatal, and the old self-init sits
+      behind `DEV_INIT=1`. `deploy/docker/entrypoint_test.sh` covers all three
+      paths — 16 assertions, verified by mutating the entrypoint three ways.
+      **Still open:** putting the hash in the release notes, which needs a
+      release to exist.
+- [x] **Stop using `--keyring-backend test` on the init path.** The join path
+      creates no keys at all, so the test keyring — and `VALIDATOR_MNEMONIC` —
+      now exist only under `DEV_INIT=1`, where the chain is disposable by
+      construction. A real validator's consensus key goes behind
+      `PRIV_VALIDATOR_LADDR`.
 - [x] **Make genesis generation reproducible.** ~~Today it is `ignite chain init`
       followed by hand-stripping gentxs and dev accounts and "recompute bank
       supply".~~ Done: `scripts/build-genesis.sh` builds `deploy/genesis.json`
@@ -118,9 +119,11 @@ file confirms the shape: one account, `"gen_txs": []`.
       genesis cutover, not after.
 - [ ] **Publish seeds.** At least one seed node's `nodeid@host:26656`, in the
       README and in the release notes.
-- [ ] **Turn off `--api.enabled-unsafe-cors`** for validator nodes. Any origin
-      can currently read and broadcast. Keep it on a separate public LCD/RPC node
-      if the web app needs it; it does not belong on a block producer.
+- [x] **Turn off `--api.enabled-unsafe-cors`** for validator nodes. Now
+      `API_UNSAFE_CORS`, defaulting to off, logging a warning when enabled, and
+      not set in the SDL or the compose file. **Consequence to plan for:** the
+      wallet apps talk to the LCD from a browser, so they need either a public
+      LCD node or the flag turned on deliberately wherever they point.
 - [ ] **Set snapshot and pruning defaults** so a new node can state-sync instead
       of replaying from genesis: `snapshot-interval`, `snapshot-keep-recent`, and
       a documented `pruning` profile per node role (validator, archive, public
@@ -143,14 +146,13 @@ file confirms the shape: one account, `"gen_txs": []`.
       `on: workflow_dispatch` — it was disabled because it fired on every push,
       and the consequence is that tagging `v0.1.6` produces a Docker image and
       nothing else. A chain release needs per-platform binaries with checksums.
-- [ ] **Build the image with the version ldflags.** The Dockerfile runs plain
-      `go build ./cmd/earthd`, so `earthd version` in the shipped image reports
-      nothing. The Makefile already computes the right `-ldflags`; the image does
-      not use them. Operators use that string to answer "am I running what
-      everyone else is running", which during an upgrade is the only question.
-- [ ] **Stop pushing `:latest`.** `.github/workflows/docker-build.yml` pushes a
-      mutable tag alongside the version. The SDL correctly pins digests; `latest`
-      is a way for someone to skip that.
+- [x] **Build the image with the version ldflags.** `VERSION` and `COMMIT` are
+      build args passed from the tag and `github.sha`, and the build is
+      `-trimpath`ed so the binary does not vary with the checkout path. The
+      toolchain is pinned to `golang:1.25.10-trixie` rather than floating on
+      `1.25`.
+- [x] **Stop pushing `:latest`.** The image is built and pushed under the
+      version tag only, and the digest is read back from that tag.
 - [ ] **Reproducible builds.** cgo plus a prebuilt Aztec archive means two
       operators can plausibly end up with differently-behaving verifiers, which
       is a consensus fault, not a packaging annoyance. Add `-trimpath`, pin the

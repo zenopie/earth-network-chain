@@ -55,17 +55,38 @@ the liquidity auction, the retirement schedules and the governance parameters �
 and no validator set, because a gentx is bound to a consensus key and shipping
 that key in a public image would let anyone sign as the validator.
 
-The entrypoint fills one in with stock `earthd` commands —
-`add-genesis-account`, `gentx`, `collect-gentxs` — against a validator key
-created on the node. `add-genesis-account` updates auth, bank balances and supply
-together, which is why an account is added with the tool rather than by editing
-the file.
+## Three boot paths
 
-**This is what stops the image joining a network.** Every node that boots it
-computes a different genesis and therefore a different app hash, so no two of
-them can share a chain. Fixing it is `docs/LAUNCH_CHECKLIST.md` §1: collect the
-gentxs into the artifact ahead of time, publish its hash, and have the entrypoint
-*verify* rather than generate.
+The entrypoint picks one and says which. The difference between the first two is
+the difference between joining a network and creating one.
+
+| condition | what happens |
+| --- | --- |
+| `/data/config/genesis.json` exists | **resume** — start on the chain already in the volume |
+| otherwise (default) | **join** — install `/etc/earth/genesis.json`, verify it against `/etc/earth/genesis.json.sha256`, start. No key created, no timestamp rewritten |
+| `DEV_INIT=1` | **devnet** — generate a validator, stamp `genesis_time` to now, collect a gentx. A *new chain* every time |
+
+The join path is the default because the old behaviour had no way to turn it off:
+every node stamped its own `genesis_time` and minted its own validator, so two
+containers from the same image could never share a chain. A hash mismatch is
+fatal — a genesis swapped into the image after the fact fails loudly instead of
+quietly forking whoever runs it.
+
+`DEV_INIT=1` is the old behaviour, unchanged, and it is what you want for a
+throwaway devnet. It is deliberately not set in the SDL or the compose file. It
+also rewrites the genesis, so a devnet's genesis can never be mistaken for the
+release: the hash no longer matches.
+
+Two flags are now off unless asked for:
+
+- **`API_UNSAFE_CORS=1`** — any origin may read the LCD *and broadcast through
+  it*. Fine on a public read-only node, wrong on a block producer.
+- **`--keyring-backend test`** only appears on the `DEV_INIT` path now. The join
+  path creates no keys at all, and a real validator's consensus key belongs
+  behind `PRIV_VALIDATOR_LADDR`.
+
+Run `deploy/docker/entrypoint_test.sh` to exercise all of it without building a
+container.
 
 Two accounts are seeded with 100k ERTH each so a fresh deployment is testable
 without hunting for the validator's mnemonic: the development handset, and the

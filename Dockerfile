@@ -25,7 +25,10 @@
 # ---- build ----------------------------------------------------------------
 # trixie for the compiler: Aztec's C++20 headers do not compile with bookworm's
 # clang 14, which rejects the constexpr constructors in field2_declarations.hpp.
-FROM golang:1.25-trixie AS build
+# Pinned to a patch release, not the floating 1.25 tag: the compiler version is
+# an input to the binary, and "whatever 1.25 resolves to today" is not a
+# reproducible input. Bump deliberately.
+FROM golang:1.25.10-trixie AS build
 
 # libc++ specifically, not libstdc++: build-wrapper.sh compiles the verifier shim
 # with -stdlib=libc++ to match Aztec's prebuilt archive, and the cgo LDFLAGS link
@@ -53,7 +56,22 @@ ARG TARGETARCH
 RUN cd third_party/barretenberg-go \
     && ./scripts/build-wrapper.sh --platform "linux_${TARGETARCH:-amd64}"
 
-RUN CGO_ENABLED=1 go build -o /out/earthd ./cmd/earthd
+# -trimpath and pinned ldflags, both for the same reason: two operators building
+# this image must get the same binary. Without -trimpath the build embeds absolute
+# source paths, so the output differs by where it was checked out. Without the
+# ldflags `earthd version` reports nothing, which is the only way an operator can
+# answer "am I running what everyone else is running" during an upgrade.
+#
+# VERSION and COMMIT are build args rather than derived from git, because .git is
+# not in the build context and a value invented here would be a lie.
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN CGO_ENABLED=1 go build -trimpath \
+        -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=earth \
+                  -X github.com/cosmos/cosmos-sdk/version.AppName=earthd \
+                  -X github.com/cosmos/cosmos-sdk/version.Version=${VERSION} \
+                  -X github.com/cosmos/cosmos-sdk/version.Commit=${COMMIT}" \
+        -o /out/earthd ./cmd/earthd
 
 # The IBC relayer ships in the same image rather than its own. One image means
 # one digest for CI to pin and one artefact to reason about, and the relayer is
@@ -84,7 +102,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=build /out/earthd /usr/local/bin/earthd
 COPY --from=build /out/rly /usr/local/bin/rly
 COPY deploy/docker/relayer.sh /usr/local/bin/relayer.sh
+# Genesis and the hash it is checked against. The entrypoint refuses to start if
+# they disagree, so a genesis swapped into the image after the fact fails loudly
+# rather than quietly forking whoever runs it.
 COPY deploy/genesis.json /etc/earth/genesis.json
+COPY deploy/genesis.json.sha256 /etc/earth/genesis.json.sha256
 COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/relayer.sh
 
@@ -93,8 +115,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/relayer.sh
 ENV EARTH_HOME=/data
 VOLUME ["/data"]
 
-# LCD and RPC. gRPC and p2p are not published: everything here speaks REST, and
-# a single validator has no peers.
-EXPOSE 1317 26657
+# LCD, RPC and p2p. p2p is what lets this node have peers at all; without it the
+# container can only ever be its own network.
+EXPOSE 1317 26656 26657
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
