@@ -80,6 +80,20 @@ const (
 	// carries the same weight, which is what makes this stream one-human-one-vote.
 	HumanVoterWeight = 100
 
+	// MaxDescriptionLen caps an option's description, in bytes.
+	//
+	// Bytes rather than characters, because bytes are what state costs. The
+	// description is a label — enough for "Fund the docs site", not for a
+	// manifesto. Anything longer belongs off chain, keyed by option id.
+	//
+	// It needs a hard bound because adding an ADDRESS option is permissionless
+	// and its cost is charged once: the fee is burned, the gas is paid at the
+	// block that stores it, and after that every node decodes the record in
+	// every EndBlock forever, since CheckStreamWeight walks every option in the
+	// stream. Unbounded, roughly one ERTH of fee plus a fifth of one in gas buys
+	// a megabyte of description that is re-read for the life of the chain.
+	MaxDescriptionLen = 256
+
 	// MaxVoterOptions caps how many options one voter may split across.
 	//
 	// This has to be a hard bound rather than a convention, because resyncing a
@@ -94,6 +108,17 @@ const (
 // Streams is every valid stream id, in id order. Used by genesis and BeginBlock,
 // which have to touch both streams and must do so in a fixed order.
 var Streams = []StreamId{STREAM_ID_CARETAKER, STREAM_ID_GROUNDWORKS}
+
+// ValidateDescription bounds an option's description. Shared by the message
+// server and by genesis validation, so an import cannot carry what a message
+// could not have created.
+func ValidateDescription(description string) error {
+	if len(description) > MaxDescriptionLen {
+		return ErrDescriptionTooLong.Wrapf("%d bytes exceeds the maximum of %d",
+			len(description), MaxDescriptionLen)
+	}
+	return nil
+}
 
 // ValidateStreamId rejects a message or a genesis entry that names no stream or
 // an unknown one. It lives here rather than in the keeper so genesis validation

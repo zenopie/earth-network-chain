@@ -68,6 +68,12 @@ nothing to join.
   The SDK default is off, and a snapshot cannot be made for a height already
   passed, so a chain launched without them leaves everyone who joins later
   replaying from genesis. `SNAPSHOT_INTERVAL=0` disables them, loudly.
+- **An option's description is capped at 256 bytes.** It had no bound of any
+  kind, and adding an ADDRESS option is permissionless: about one ERTH of fee
+  plus a fifth of one in gas bought a megabyte of text that every node then
+  decoded in every block, since the weight invariant walks every option. The
+  same bound applies to genesis import, so an exported file cannot carry what a
+  message could not have created.
 - **`tx allocation` names the streams correctly.** Its help said the stream
   argument was `human` or `capital`; both were renamed and neither is accepted,
   so anyone following it got a flag error. It is `caretaker` or `groundworks`.

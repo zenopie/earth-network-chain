@@ -62,6 +62,9 @@ func (gs GenesisState) Validate() error {
 			}
 			seenOption[opt.Id] = struct{}{}
 
+			if err := ValidateDescription(opt.Description); err != nil {
+				return fmt.Errorf("stream %s: option %d: %w", st.Stream, opt.Id, err)
+			}
 			if opt.Stream != st.Stream {
 				return fmt.Errorf("stream %s: option %d claims stream %s",
 					st.Stream, opt.Id, opt.Stream)

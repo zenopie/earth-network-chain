@@ -75,6 +75,9 @@ func TestPerBlockWorkBudget(t *testing.T) {
 //	                          a user
 //	x/allocation  BeginBlock  stream upkeep -> O(streams x integrated options),
 //	                          both governance-controlled
+//	              EndBlock    weight invariant -> O(all options in both streams),
+//	                          and ADDRESS options are permissionless. NOT bounded.
+//	                          See docs/LAUNCH_CHECKLIST.md section 5.
 //	x/earth       EndBlock    fee split -> O(fee denoms in one block)
 //	x/mint        BeginBlock  emission -> O(1)
 //

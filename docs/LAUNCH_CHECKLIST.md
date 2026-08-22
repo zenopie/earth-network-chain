@@ -296,6 +296,26 @@ An untested upgrade path is discovered during the upgrade.
       anyone could halt the chain with a `MsgSend`, and the check would have to
       weaken to "holds at least what it owes", which stops catching the second
       class of bug entirely.
+- [ ] **`x/allocation`'s invariant walks every option, every block.**
+      `AssertInvariants` runs in the EndBlocker and `CheckStreamWeight` sums a
+      stream by walking all of its options, decoding each record in full. Adding
+      an ADDRESS option is permissionless, so that walk grows for a one-time fee:
+      one ERTH burned, gas paid in the block that stores the row, and after that
+      every node re-reads it in every block for the life of the chain.
+      This is the shape `x/dex` had before `TestPoolSetIsNoLongerUnbounded` — a
+      permissionless one-time payment buying unmetered per-block work — and the
+      budget in `app/block_budget_test.go` does not cover it: it records
+      allocation's per-block work as "O(streams x integrated options), both
+      governance-controlled", which is true of the BeginBlock upkeep and not of
+      this.
+      Capping the description (`MaxDescriptionLen`, added with the emergency
+      fund) shrinks the constant, not the order: 100,000 options at one ERTH each
+      is still a 100,000-row walk. Two ways out — maintain the aggregate at a
+      second write site so the check is O(1) and the two can still disagree, or
+      check a rotating slice per block the way `x/dex` settled on. Not blocking
+      at genesis, where the option count is three and an attacker needs ERTH to
+      raise it, but it must be closed before `address_option_fee` is ever
+      lowered.
 - [ ] **Pin the public-input schema.** `docs/PROOF_OF_PERSONHOOD_TODO.md:27`
       records that `verifyRegistrationProof` still uses placeholder indices
       (`nullifierSignalIndex=0`, `dscRootSignalIndex=2`). These are consensus

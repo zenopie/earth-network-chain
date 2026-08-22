@@ -18,6 +18,9 @@ func (k msgServer) AddIntegratedOption(ctx context.Context, msg *types.MsgAddInt
 	if err := ValidateStream(msg.Stream); err != nil {
 		return nil, err
 	}
+	if err := types.ValidateDescription(msg.Description); err != nil {
+		return nil, err
+	}
 	authBz, err := k.addressCodec.StringToBytes(msg.Authority)
 	if err != nil {
 		return nil, errorsmod.Wrap(err, "invalid authority address")
@@ -58,6 +61,11 @@ func (k msgServer) AddIntegratedOption(ctx context.Context, msg *types.MsgAddInt
 // (ERTH).
 func (k msgServer) AddAddressOption(ctx context.Context, msg *types.MsgAddAddressOption) (*types.MsgAddAddressOptionResponse, error) {
 	if err := ValidateStream(msg.Stream); err != nil {
+		return nil, err
+	}
+	// Bounded before the fee is taken, so a rejected option costs its submitter
+	// only the gas rather than a burned ERTH.
+	if err := types.ValidateDescription(msg.Description); err != nil {
 		return nil, err
 	}
 	subBz, err := k.addressCodec.StringToBytes(msg.Submitter)
