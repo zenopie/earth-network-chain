@@ -293,11 +293,14 @@ genesis:
         # 0 is rejected: it does not mean "no tolerance", it means the check never
         # runs, and every backdated proof gets in.
         current_date_max_skew_seconds: "172800"
-        # expiry_sweep_limit caps how many lapsed registrations BeginBlocker
-        # retires per block. Exceeding it is safe — the backlog drains over the
-        # following blocks and emits registration_sweep_capped — so raise this if
-        # that event persists. 0 uses the compiled-in default (100).
-        expiry_sweep_limit: "100"
+        # registration_sweep_limit caps how many registrations BeginBlocker
+        # retires per block, across every reason for retiring one: lapsed, and
+        # belonging to a revoked Document Signer. One budget rather than one per
+        # sweep, because BeginBlock consumes no block gas and nothing else bounds
+        # that work. Exceeding it is safe — the backlog drains over the following
+        # blocks and emits registration_sweep_capped — so raise this if that
+        # event persists. 0 uses the compiled-in default (100).
+        registration_sweep_limit: "100"
     pki:
       # cscas is the trusted CSCA master list: the root of trust for passport
       # verification. Without it no DSC can be submitted, so no registry root ever

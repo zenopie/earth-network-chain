@@ -101,7 +101,7 @@
       "current_date_index": 0,
       "current_date_max_skew_seconds": "172800",
       "dsc_key_index": 2,
-      "expiry_sweep_limit": "100",
+      "registration_sweep_limit": "100",
       "nullifier_index": 1,
       "registration_validity_seconds": "31536000"
     }
