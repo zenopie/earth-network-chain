@@ -47,6 +47,7 @@ import (
 
 	"github.com/earth-network/earth/docs"
 	allocationmodulekeeper "github.com/earth-network/earth/x/allocation/keeper"
+	allocationmoduletypes "github.com/earth-network/earth/x/allocation/types"
 	dexmodulekeeper "github.com/earth-network/earth/x/dex/keeper"
 	earthmodulekeeper "github.com/earth-network/earth/x/earth/keeper"
 	personhoodmodulekeeper "github.com/earth-network/earth/x/personhood/keeper"
@@ -191,6 +192,20 @@ func New(
 	); err != nil {
 		panic(err)
 	}
+
+	// The capital stream's emergency fund pays the SDK community pool, so its
+	// handler is registered here rather than from the owning module's wiring the
+	// way x/dex registers lp_rewards: x/distribution is an SDK module and cannot
+	// register itself, and x/allocation cannot ask the container for the
+	// distribution keeper without closing a cycle through the staking hooks it
+	// provides. Registering after Inject is safe — the handler map is a reference
+	// type shared by every copy of the keeper, and nothing reads it until the
+	// first BeginBlock.
+	app.AllocationKeeper.RegisterIntegratedHandler(
+		allocationmoduletypes.STREAM_ID_GROUNDWORKS,
+		allocationmoduletypes.HandlerCommunityPool,
+		allocationmodulekeeper.CommunityPoolHandler(app.AllocationKeeper, app.DistrKeeper),
+	)
 
 	// add to default baseapp options
 	// enable optimistic execution

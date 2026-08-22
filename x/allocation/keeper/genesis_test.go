@@ -44,7 +44,7 @@ func TestGenesisRoundTripsPopulatedStreams(t *testing.T) {
 		Recipient:   recipientStr,
 	})
 	require.NoError(t, err)
-	require.Equal(t, uint64(2), id, "option #1 is the seeded one")
+	require.Equal(t, uint64(3), id, "options #1 and #2 are the seeded ones")
 
 	// Give the stream some weight pointed at it, then let the index advance so
 	// the option is owed something that has not been claimed.
@@ -64,11 +64,11 @@ func TestGenesisRoundTripsPopulatedStreams(t *testing.T) {
 
 	// Everything that matters actually left the module.
 	gw := streamState(t, exported, types.STREAM_ID_GROUNDWORKS)
-	require.Len(t, gw.Options, 2, "the seeded option and the added one")
+	require.Len(t, gw.Options, 3, "the two seeded options and the added one")
 	require.Len(t, gw.Voters, 1)
 	require.True(t, gw.TotalWeight.IsPositive(), "the stream's weight must survive")
 	require.True(t, gw.RewardIndex.IsPositive(), "the reward index must survive")
-	require.Equal(t, uint64(2), gw.OptionSeq, "the id sequence must not go backwards")
+	require.Equal(t, uint64(3), gw.OptionSeq, "the id sequence must not go backwards")
 
 	// And it comes back the same.
 	fresh := newTestEnv(t)

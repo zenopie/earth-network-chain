@@ -68,6 +68,9 @@ nothing to join.
   The SDK default is off, and a snapshot cannot be made for a height already
   passed, so a chain launched without them leaves everyone who joins later
   replaying from genesis. `SNAPSHOT_INTERVAL=0` disables them, loudly.
+- **`tx allocation` names the streams correctly.** Its help said the stream
+  argument was `human` or `capital`; both were renamed and neither is accepted,
+  so anyone following it got a flag error. It is `caretaker` or `groundworks`.
 - **Genesis funds no devnet account.** The ads-for-gas hot wallet is out; its key
   had been on a laptop. **It therefore has no funds at height 1** and must be
   funded after launch from the validator. Only the genesis validator and the dex
@@ -75,6 +78,15 @@ nothing to join.
 
 ### Added
 
+- **An emergency fund in the Groundworks stream.** A second genesis option
+  (`#2`, `community_pool`) that credits its accrued ERTH to the SDK community
+  pool every block, so stake can build a governance-spendable reserve. It has to
+  be an INTEGRATED option: the community pool is x/distribution's `FeePool`, not
+  a wallet, so an ADDRESS option paying the distribution account would raise a
+  balance nobody can spend — and that account is blocked to payouts besides.
+  Seeded at genesis rather than left to a proposal, so it is votable from height
+  1. Chains importing an existing genesis do not get it and need a
+  `MsgAddIntegratedOption`.
 - `docs/JOIN.md` — running a node.
 - `docs/UPGRADES.md` — coordinated upgrades, written from a rehearsal.
 - `docs/TRUST_STORE_RUNBOOK.md` — revoking a compromised passport certificate.

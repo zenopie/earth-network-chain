@@ -72,11 +72,25 @@ func (s *stubHumans) Weight(_ context.Context, addr []byte) (math.Int, error) {
 // stubDex stands in for the LP-rewards handler x/dex registers in the app.
 type stubDex struct{ distributed math.Int }
 
+// stubPool stands in for x/distribution's community pool, recording what was
+// credited and who paid it in.
+type stubPool struct {
+	funded sdk.Coins
+	sender sdk.AccAddress
+}
+
+func (p *stubPool) FundCommunityPool(_ context.Context, amount sdk.Coins, sender sdk.AccAddress) error {
+	p.funded = p.funded.Add(amount...)
+	p.sender = sender
+	return nil
+}
+
 type testEnv struct {
 	k       Keeper
 	ctx     sdk.Context
 	bank    *stubBank
 	dex     *stubDex
+	pool    *stubPool
 	staking *stubStaking
 	humans  *stubHumans
 }
@@ -90,6 +104,7 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	bank := &stubBank{burned: sdk.NewCoins()}
 	dex := &stubDex{distributed: math.ZeroInt()}
+	pool := &stubPool{funded: sdk.NewCoins()}
 	staking := newStubStaking()
 	humans := newStubHumans()
 
@@ -107,8 +122,11 @@ func newTestEnv(t *testing.T) *testEnv {
 		func(context.Context, math.Int) (math.Int, error) {
 			return math.ZeroInt(), nil // stacks; drawn down on registration
 		})
+	// The registration the app performs in app.go, with x/distribution stubbed.
+	k.RegisterIntegratedHandler(types.STREAM_ID_GROUNDWORKS, types.HandlerCommunityPool,
+		CommunityPoolHandler(k, pool))
 
-	return &testEnv{k: k, ctx: ctx, bank: bank, dex: dex, staking: staking, humans: humans}
+	return &testEnv{k: k, ctx: ctx, bank: bank, dex: dex, pool: pool, staking: staking, humans: humans}
 }
 
 func (e *testEnv) addr(name string) (sdk.AccAddress, string) {
@@ -161,18 +179,19 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 	}
 
 	// AddAddressOption is permissionless and burns the fee; option is NOT integrated.
-	if _, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
+	added, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
 		Submitter: alice, Stream: types.STREAM_ID_GROUNDWORKS, Recipient: alice, Description: "grant",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("AddAddressOption: %v", err)
 	}
 	if got := e.bank.burned.AmountOf("uerth"); !got.Equal(math.NewInt(types.DefaultAddressOptionFee)) {
 		t.Fatalf("fee burned = %s, want %d", got, types.DefaultAddressOptionFee)
 	}
-	if opt2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 2)); opt2.Kind != types.ALLOCATION_KIND_ADDRESS {
-		t.Fatalf("option #2 kind = %v, want ADDRESS", opt2.Kind)
+	if opt, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, added.Id)); opt.Kind != types.ALLOCATION_KIND_ADDRESS {
+		t.Fatalf("option #%d kind = %v, want ADDRESS", added.Id, opt.Kind)
 	}
-	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 2)); has {
+	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, added.Id)); has {
 		t.Fatal("ADDRESS option must NOT be in the integrated set")
 	}
 
@@ -193,13 +212,14 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 	}); err == nil {
 		t.Fatal("expected rejection: capital handler attached to the human stream")
 	}
-	if _, err := ms.AddIntegratedOption(ctx, &types.MsgAddIntegratedOption{
+	moreLP, err := ms.AddIntegratedOption(ctx, &types.MsgAddIntegratedOption{
 		Authority: authority, Stream: types.STREAM_ID_GROUNDWORKS, Handler: types.HandlerLPRewards, Description: "more lp",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("valid AddIntegratedOption: %v", err)
 	}
-	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 3)); !has {
-		t.Fatal("option #3 should be in the integrated set")
+	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, moreLP.Id)); !has {
+		t.Fatalf("option #%d should be in the integrated set", moreLP.Id)
 	}
 
 	// BeginBlocker resolves integrated options via their handler; address is untouched.
@@ -208,9 +228,9 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 		o.Accumulated = math.NewInt(amt)
 		_ = k.Options.Set(ctx, optionKey(stream, id), o)
 	}
-	set(types.STREAM_ID_GROUNDWORKS, 1, 500) // integrated (lp_rewards)
-	set(types.STREAM_ID_GROUNDWORKS, 2, 300) // address
-	set(types.STREAM_ID_CARETAKER, 1, 700)   // integrated, but its handler resolves nothing
+	set(types.STREAM_ID_GROUNDWORKS, 1, 500)        // integrated (lp_rewards)
+	set(types.STREAM_ID_GROUNDWORKS, added.Id, 300) // address
+	set(types.STREAM_ID_CARETAKER, 1, 700)          // integrated, but its handler resolves nothing
 	ctx = ctx.WithBlockTime(time.Unix(1000, 0))
 	if err := k.BeginBlocker(ctx); err != nil {
 		t.Fatalf("BeginBlocker: %v", err)
@@ -221,7 +241,7 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 	if o1, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 1)); !o1.Accumulated.IsZero() {
 		t.Fatalf("integrated option accumulated = %s, want 0 (resolved)", o1.Accumulated)
 	}
-	if o2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 2)); !o2.Accumulated.Equal(math.NewInt(300)) {
+	if o2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, added.Id)); !o2.Accumulated.Equal(math.NewInt(300)) {
 		t.Fatalf("ADDRESS option accumulated = %s, want 300 (untouched, lazy)", o2.Accumulated)
 	}
 	if h1, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_CARETAKER, 1)); !h1.Accumulated.Equal(math.NewInt(700)) {

@@ -45,3 +45,15 @@ type BankKeeper interface {
 	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 }
+
+// CommunityPoolKeeper is the SDK's community pool, satisfied by x/distribution's
+// keeper. It is deliberately the funding call and nothing else.
+//
+// FundCommunityPool does two things that must happen together: it moves the
+// coins into the distribution module account and it adds them to FeePool, which
+// is what governance actually spends from. A bank transfer alone would leave the
+// coins in the account and invisible to the pool, so they could never be paid
+// out again.
+type CommunityPoolKeeper interface {
+	FundCommunityPool(ctx context.Context, amount sdk.Coins, sender sdk.AccAddress) error
+}

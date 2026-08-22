@@ -47,6 +47,10 @@ const (
 	// "volume-weighted LP rewards" option (#1).
 	LPRewardsOptionID = 1
 
+	// CommunityPoolOptionID is the id of the capital stream's genesis
+	// "emergency fund" option (#2), which pays into the SDK community pool.
+	CommunityPoolOptionID = 2
+
 	// EmissionPerSecond is what each stream emits, in uerth (1 ERTH/sec). Both
 	// streams run at the same rate: one pillar of the four is directed by humans
 	// and one by stake.
@@ -61,6 +65,16 @@ const (
 	// HandlerRegistrationRewards accrues a pool paid out on registration
 	// (human stream). It resolves nothing per block; x/personhood draws it down.
 	HandlerRegistrationRewards = "registration_rewards"
+
+	// HandlerCommunityPool credits the accrued ERTH to the SDK community pool
+	// (capital stream) — the emergency fund. It has to be INTEGRATED rather than
+	// an ADDRESS option anyone could add: the community pool is x/distribution's
+	// FeePool, not a wallet, so a plain transfer to the distribution module
+	// account would raise its balance without crediting the pool, and the coins
+	// could never be spent by a MsgCommunityPoolSpend. (The account is blocked
+	// besides, so the claim would not even land.) Only
+	// distribution.FundCommunityPool moves the coins and the FeePool together.
+	HandlerCommunityPool = "community_pool"
 
 	// HumanVoterWeight is the fixed weight of one registered human. Every human
 	// carries the same weight, which is what makes this stream one-human-one-vote.

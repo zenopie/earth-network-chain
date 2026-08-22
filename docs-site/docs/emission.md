@@ -51,6 +51,11 @@ Anyone can add an option to either fund for a small fee. You split your vote
 across options by percentage and change it whenever you like; rewards accrue
 continuously to whatever you are currently pointing at.
 
+Groundworks ships with an **emergency fund** option that pays the chain's
+community pool. Stake pointed at it accrues ERTH into the pool every block, and
+governance decides what the pool is spent on — so stakers can build a reserve
+without knowing in advance what it will be needed for.
+
 ## The pre-mine
 
 The chain started with **2,522,880,000 ERTH** — exactly twenty years of the

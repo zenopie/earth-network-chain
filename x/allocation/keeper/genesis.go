@@ -51,7 +51,8 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 
 	// Option #1 of each stream. Both are INTEGRATED and both are id 1 — ids are
 	// per stream, so they do not collide, and each is resolved only by the
-	// handler registered for its own stream.
+	// handler registered for its own stream. The capital stream carries a second
+	// seeded option: the emergency fund, which pays the community pool.
 	if _, err := k.appendOption(ctx, types.STREAM_ID_CARETAKER, types.AllocationOption{
 		Description: "Registration rewards",
 		Kind:        types.ALLOCATION_KIND_INTEGRATED,
@@ -63,6 +64,20 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		Description: "Volume-weighted LP rewards",
 		Kind:        types.ALLOCATION_KIND_INTEGRATED,
 		Handler:     types.HandlerLPRewards,
+	}); err != nil {
+		return err
+	}
+	// The emergency fund. Seeded here rather than left to a governance proposal
+	// so the option exists from height 1 and stakers can direct weight at it
+	// without waiting on one; INTEGRATED options are authority-gated to add, so
+	// the alternative is a gov vote before the fund can receive anything.
+	//
+	// It carries no weight until someone votes for it, so seeding costs the other
+	// options nothing.
+	if _, err := k.appendOption(ctx, types.STREAM_ID_GROUNDWORKS, types.AllocationOption{
+		Description: "Emergency fund (community pool)",
+		Kind:        types.ALLOCATION_KIND_INTEGRATED,
+		Handler:     types.HandlerCommunityPool,
 	}); err != nil {
 		return err
 	}
