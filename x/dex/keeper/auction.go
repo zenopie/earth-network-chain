@@ -40,6 +40,36 @@ func (k Keeper) getAuction(ctx context.Context) (types.LiquidityAuction, error) 
 	return a, nil
 }
 
+// PoolCreationLocked reports whether MsgCreatePool is currently refused.
+//
+// Pool creation is closed until the genesis liquidity auction settles, and open
+// permanently afterwards. The lock exists because the auction has to be able to
+// claim its bid denom, and it cannot defend that denom itself: the dex allows
+// one pool per spoke token, StartLiquidityAuction refuses to open when a pool
+// already exists for the denom, and nothing can ever delete a pool. So a dust
+// pool created before the window opens would block the auction for good — and
+// the governance proposal to open it names the denom a full voting period in
+// advance, which is ample warning to whoever wants to do that.
+//
+// It lifts itself. Settlement creates the pool for the bid denom, at which point
+// the ordinary one-pool-per-token guard protects it and the lock has nothing
+// left to do. Nothing has to be configured, set or remembered — which is the
+// reason this is a lock on a state transition rather than a reserved-denom
+// parameter that someone has to get right.
+//
+// A chain with no auction configured is never locked, so devnets and tests that
+// skip the auction keep permissionless pool creation.
+func (k Keeper) PoolCreationLocked(ctx context.Context) (bool, error) {
+	a, err := k.getAuction(ctx)
+	if err != nil {
+		if errors.Is(err, types.ErrAuctionUnavailable) {
+			return false, nil
+		}
+		return false, err
+	}
+	return a.Status != types.AUCTION_STATUS_SETTLED, nil
+}
+
 // SettleDueAuction creates the pool if an open auction has reached its deadline.
 // It is a no-op in every other case, including when no auction is configured.
 func (k Keeper) SettleDueAuction(ctx context.Context) error {

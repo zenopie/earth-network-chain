@@ -15,7 +15,18 @@ import (
 // assets must be the hub asset (ERTH); the other is the spoke token. Only one
 // pool may exist per spoke token. The initial LP shares (sqrt(erth*token)) are
 // minted to the creator.
+//
+// Permissionless, but not until the genesis liquidity auction has settled — see
+// Keeper.PoolCreationLocked for why the auction cannot defend its own bid denom.
 func (k msgServer) CreatePool(ctx context.Context, msg *types.MsgCreatePool) (*types.MsgCreatePoolResponse, error) {
+	// Checked before anything else: this is a "not yet", not a judgement about
+	// the message, and it should read that way in the error.
+	if locked, err := k.PoolCreationLocked(ctx); err != nil {
+		return nil, err
+	} else if locked {
+		return nil, types.ErrPoolCreationLocked
+	}
+
 	creatorBz, err := k.addressCodec.StringToBytes(msg.Creator)
 	if err != nil {
 		return nil, errorsmod.Wrap(err, "invalid creator address")

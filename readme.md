@@ -125,7 +125,7 @@ bug.
 **Messages / CLI** (`earthd tx dex ...`)
 | Command | Effect |
 | --- | --- |
-| `create-pool [erth-amount] [token-amount]` | Create an ERTH↔token pool (one side must be ERTH); mints `sqrt(erth*token)` LP shares. Amounts may be given in either order. |
+| `create-pool [erth-amount] [token-amount]` | Create an ERTH↔token pool (one side must be ERTH); mints `sqrt(erth*token)` LP shares. Amounts may be given in either order. **Refused until the liquidity auction settles** — see below. |
 | `add-liquidity [pool-id] [amount-a] [amount-b]` | Deposit ERTH + token in the pool ratio; mints proportional LP shares (excess is not pulled). |
 | `remove-liquidity [pool-id] [shares]` | Burn LP shares; returns a proportional share of both reserves. |
 | `swap [token-in] [denom-out] [min-amount-out]` | Swap routed through the ERTH hub (1 or 2 hops), with per-hop fee/burn and a slippage guard. |
@@ -133,15 +133,32 @@ bug.
 **Queries**: `earthd q dex list-pool`, `earthd q dex get-pool [id]`, `earthd q dex params`,
 `earthd q dex pol-burns`.
 
-Example against a running dev chain (accounts `alice`/`bob` are pre-funded in `config.yml`):
+**Pool creation is locked until the liquidity auction settles.** The auction has
+to be able to claim its bid denom and cannot defend it on its own: there is one
+pool per spoke token, `start-liquidity-auction` refuses a denom that already has
+a pool, and no pool can ever be deleted — so a dust pool created beforehand would
+block the auction for good, and the proposal to open it publishes the denom a
+voting period ahead of time. The lock is blanket rather than denom-specific,
+needs nothing configured, and lifts itself the moment settlement creates the
+pool; after that the ordinary one-pool-per-token rule protects that denom and
+creation is permissionless for good. `MsgCreatePool` returns
+`pool creation is locked until the genesis liquidity auction settles` while it
+is on. A chain with no auction in genesis is never locked.
+
+Because `config.yml` seeds the auction as `PENDING`, a dev chain starts locked
+too, with the genesis ANML/ERTH pool (pool 1) as its only market:
 ```
-# two spokes on the wheel
-earthd tx dex create-pool 1000000uerth 1000000uusdc --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
-earthd tx dex create-pool 1000000uerth 500000uatom  --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
-# token -> token, routed uusdc -> ERTH -> uatom (burns ERTH on both hops)
-earthd tx dex swap 100000uusdc uatom 40000 --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
 earthd q dex list-pool
+# spoke -> hub against the genesis pool (burns ERTH on the hop)
+earthd tx dex swap 1000000uanml uerth 1 --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
+# deposit into it, then start the 7-day unbonding to leave
+earthd tx dex add-liquidity 1 1000000uerth 10uanml --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
+earthd q dex get-pool 1
 ```
+To exercise a second spoke or a token→token route locally, settle an auction
+first (`start-liquidity-auction`, bid, wait out the deadline), or drop the
+`liquidity_auction` block from `config.yml` — with no auction configured the
+lock is never on.
 
 ## Allocation streams — `x/allocation` (2 ERTH/sec)
 

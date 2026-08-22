@@ -25,6 +25,15 @@ nothing to join.
   pre-mine is not.
 - **`x/allocation` verifies each stream's weight every block**, with the same
   halting behaviour.
+- **Creating a dex pool is refused until the genesis liquidity auction settles.**
+  The auction has to be able to claim its bid denom and cannot defend it: the dex
+  allows one pool per spoke token, `MsgStartLiquidityAuction` refuses to open when
+  that denom already has a pool, and nothing can delete a pool — so a dust pool
+  created beforehand would have blocked the auction permanently, and the proposal
+  to open it publishes the denom a voting period in advance. The lock is blanket
+  rather than denom-specific, needs nothing configured, and lifts itself when
+  settlement creates the pool; from then on the ordinary one-pool-per-token guard
+  protects that denom. A chain with no auction configured is never locked.
 - **Protocol-owned liquidity is retired over ten years.** The genesis ANML/ERTH
   pool and the liquidity auction's pool were permanent; they now burn down on a
   straight line. ANML/ERTH burns both assets, the auction pool burns only ERTH.

@@ -979,7 +979,11 @@ type MsgClient interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
-	// CreatePool defines the CreatePool RPC.
+	// CreatePool opens a new ERTH<->token pool. Permissionless, but refused until
+	// the genesis liquidity auction has settled: the auction must be able to claim
+	// its bid denom, and one pool per spoke token plus no way to delete a pool
+	// means a dust pool created beforehand would block it permanently. The lock
+	// lifts itself at settlement.
 	CreatePool(ctx context.Context, in *MsgCreatePool, opts ...grpc.CallOption) (*MsgCreatePoolResponse, error)
 	// AddLiquidity defines the AddLiquidity RPC.
 	AddLiquidity(ctx context.Context, in *MsgAddLiquidity, opts ...grpc.CallOption) (*MsgAddLiquidityResponse, error)
@@ -1084,7 +1088,11 @@ type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
-	// CreatePool defines the CreatePool RPC.
+	// CreatePool opens a new ERTH<->token pool. Permissionless, but refused until
+	// the genesis liquidity auction has settled: the auction must be able to claim
+	// its bid denom, and one pool per spoke token plus no way to delete a pool
+	// means a dust pool created beforehand would block it permanently. The lock
+	// lifts itself at settlement.
 	CreatePool(context.Context, *MsgCreatePool) (*MsgCreatePoolResponse, error)
 	// AddLiquidity defines the AddLiquidity RPC.
 	AddLiquidity(context.Context, *MsgAddLiquidity) (*MsgAddLiquidityResponse, error)

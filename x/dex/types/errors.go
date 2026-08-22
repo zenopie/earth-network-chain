@@ -29,4 +29,9 @@ var (
 	// coins it holds. Returned from the EndBlocker, so it halts the chain — see
 	// keeper/invariants.go for why that is the intended outcome.
 	ErrInvariantBroken = errors.Register(ModuleName, 1114, "dex invariant broken")
+
+	// ErrPoolCreationLocked means the genesis liquidity auction has not settled
+	// yet. See Keeper.PoolCreationLocked.
+	ErrPoolCreationLocked = errors.Register(ModuleName, 1115,
+		"pool creation is locked until the genesis liquidity auction settles")
 )
