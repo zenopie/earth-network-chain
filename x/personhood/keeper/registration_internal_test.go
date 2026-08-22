@@ -133,7 +133,7 @@ type stubDex struct{}
 
 func (stubDex) HubDenom(context.Context) (string, error)              { return "uerth", nil }
 func (stubDex) HasPoolForToken(context.Context, string) (bool, error) { return false, nil }
-func (stubDex) SwapExactIn(context.Context, sdk.AccAddress, sdk.Coin, string, math.Int) (sdk.Coin, error) {
+func (stubDex) SwapExactInForModule(context.Context, string, sdk.Coin, string, math.Int) (sdk.Coin, error) {
 	return sdk.Coin{}, nil
 }
 func (stubDex) TwapObservation(context.Context, string) (math.LegacyDec, math.LegacyDec, int64, error) {

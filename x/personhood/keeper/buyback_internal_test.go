@@ -61,7 +61,7 @@ func (d *oracleDex) QuoteHubToToken(context.Context, string, math.Int) (math.Int
 	return d.quote, nil
 }
 
-func (d *oracleDex) SwapExactIn(_ context.Context, _ sdk.AccAddress, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
+func (d *oracleDex) SwapExactInForModule(_ context.Context, _ string, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
 	if d.swapErr != nil {
 		return sdk.Coin{}, d.swapErr
 	}

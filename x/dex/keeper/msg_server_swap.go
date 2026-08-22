@@ -34,10 +34,61 @@ func (k msgServer) Swap(ctx context.Context, msg *types.MsgSwap) (*types.MsgSwap
 	return &types.MsgSwapResponse{TokenOut: tokenOut}, nil
 }
 
-// SwapExactIn swaps tokenIn for denomOut on behalf of trader, routing through the
-// ERTH hub (1 or 2 hops), charging the per-hop fee/burn and enforcing minOut. It
-// is exported so other modules (e.g. the x/personhood ANML buyback) can trade via the dex.
+// swapParty is whoever the dex is trading for: an ordinary account, or another
+// module.
+//
+// The distinction exists because the two cannot be paid the same way. Module
+// accounts are on the bank's blocked list (blockAccAddrs, app/app_config.go) and
+// SendCoinsFromModuleToAccount honours that list, so paying a module through the
+// account path fails with "not allowed to receive funds". Module-to-module
+// transfers are not subject to it, which is the correct primitive for one module
+// trading against another.
+type swapParty struct {
+	addr   sdk.AccAddress // set for an ordinary trader
+	module string         // set when the counterparty is a module account
+}
+
+func (p swapParty) escrow(ctx context.Context, k Keeper, amt sdk.Coins) error {
+	if p.module != "" {
+		return k.bankKeeper.SendCoinsFromModuleToModule(ctx, p.module, types.ModuleName, amt)
+	}
+	return k.bankKeeper.SendCoinsFromAccountToModule(ctx, p.addr, types.ModuleName, amt)
+}
+
+func (p swapParty) pay(ctx context.Context, k Keeper, amt sdk.Coins) error {
+	if p.module != "" {
+		return k.bankKeeper.SendCoinsFromModuleToModule(ctx, types.ModuleName, p.module, amt)
+	}
+	return k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, p.addr, amt)
+}
+
+func (p swapParty) String() string {
+	if p.module != "" {
+		return p.module
+	}
+	return p.addr.String()
+}
+
+// SwapExactIn swaps tokenIn for denomOut on behalf of an ordinary account.
 func (k Keeper) SwapExactIn(ctx context.Context, trader sdk.AccAddress, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
+	return k.swapExactIn(ctx, swapParty{addr: trader}, tokenIn, denomOut, minOut)
+}
+
+// SwapExactInForModule is SwapExactIn for another module trading against the
+// dex — the x/personhood ANML buyback being the one that matters.
+//
+// It exists because the buyback silently did nothing without it. The payout ran
+// through SendCoinsFromModuleToAccount into a module account the bank blocks
+// from receiving funds, so every buyback failed with "unauthorized" and was
+// discarded by design, on every block, without an event. The pillar looked like
+// it was running and was emitting nothing.
+func (k Keeper) SwapExactInForModule(ctx context.Context, moduleName string, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
+	return k.swapExactIn(ctx, swapParty{module: moduleName}, tokenIn, denomOut, minOut)
+}
+
+// swapExactIn routes tokenIn for denomOut through the ERTH hub (1 or 2 hops),
+// charging the per-hop fee/burn and enforcing minOut.
+func (k Keeper) swapExactIn(ctx context.Context, trader swapParty, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
 	if !tokenIn.Amount.IsPositive() {
 		return sdk.Coin{}, errorsmod.Wrap(types.ErrInvalidAmount, "token_in must be positive")
 	}
@@ -56,7 +107,7 @@ func (k Keeper) SwapExactIn(ctx context.Context, trader sdk.AccAddress, tokenIn 
 	fee := params.SwapFee
 
 	// Escrow the input.
-	if err := k.bankKeeper.SendCoinsFromAccountToModule(ctx, trader, types.ModuleName, sdk.NewCoins(tokenIn)); err != nil {
+	if err := trader.escrow(ctx, k, sdk.NewCoins(tokenIn)); err != nil {
 		return sdk.Coin{}, err
 	}
 
@@ -104,7 +155,7 @@ func (k Keeper) SwapExactIn(ctx context.Context, trader sdk.AccAddress, tokenIn 
 	}
 
 	tokenOut := sdk.NewCoin(denomOut, outAmt)
-	if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, trader, sdk.NewCoins(tokenOut)); err != nil {
+	if err := trader.pay(ctx, k, sdk.NewCoins(tokenOut)); err != nil {
 		return sdk.Coin{}, err
 	}
 	if totalBurn.IsPositive() {

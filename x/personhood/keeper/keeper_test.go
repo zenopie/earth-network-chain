@@ -62,7 +62,7 @@ func (stubDexKeeper) HubDenom(context.Context) (string, error) { return "uerth",
 func (stubDexKeeper) HasPoolForToken(context.Context, string) (bool, error) {
 	return false, nil
 }
-func (stubDexKeeper) SwapExactIn(context.Context, sdk.AccAddress, sdk.Coin, string, math.Int) (sdk.Coin, error) {
+func (stubDexKeeper) SwapExactInForModule(context.Context, string, sdk.Coin, string, math.Int) (sdk.Coin, error) {
 	return sdk.Coin{}, nil
 }
 func (stubDexKeeper) TwapObservation(context.Context, string) (math.LegacyDec, math.LegacyDec, int64, error) {

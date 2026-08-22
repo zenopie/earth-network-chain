@@ -116,9 +116,13 @@ var (
 	// or force the invariant to be weakened to "at least", which stops catching
 	// coins that should have been burned and were not.
 	//
-	// This does not affect the modules' own transfers: BlockedAddr is consulted
-	// only by the bank msg server, so keeper-level moves — deposits, swaps, bids,
-	// buybacks — are unaffected.
+	// This does NOT leave keeper-level moves untouched, which an earlier version
+	// of this comment claimed and which cost the ANML buyback every trade it ever
+	// tried to make. SendCoinsFromModuleToAccount consults BlockedAddr too, so
+	// paying a blocked module account fails with "not allowed to receive funds"
+	// wherever the call is made from. A module trading against the dex has to go
+	// through SendCoinsFromModuleToModule, which does not consult the list — see
+	// swapParty in x/dex/keeper/msg_server_swap.go.
 	blockAccAddrs = []string{
 		authtypes.FeeCollectorName,
 		distrtypes.ModuleName,

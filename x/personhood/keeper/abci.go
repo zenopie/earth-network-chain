@@ -219,7 +219,7 @@ func (k Keeper) buybackAndBurn(ctx context.Context) error {
 	if err := k.bankKeeper.MintCoins(cacheCtx, types.ModuleName, sdk.NewCoins(erthIn)); err != nil {
 		return nil // discard
 	}
-	out, err := k.dexKeeper.SwapExactIn(cacheCtx, k.moduleAddress(), erthIn, types.AnmlDenom, minOut)
+	out, err := k.dexKeeper.SwapExactInForModule(cacheCtx, types.ModuleName, erthIn, types.AnmlDenom, minOut)
 	if err != nil {
 		return nil // discard: no write, emission stays accrued for the next window
 	}

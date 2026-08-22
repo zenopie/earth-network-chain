@@ -47,7 +47,12 @@ type BankKeeper interface {
 type DexKeeper interface {
 	HubDenom(ctx context.Context) (string, error)
 	HasPoolForToken(ctx context.Context, tokenDenom string) (bool, error)
-	SwapExactIn(ctx context.Context, trader sdk.AccAddress, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error)
+	// SwapExactInForModule trades on behalf of a module account. The ordinary
+	// SwapExactIn cannot be used here: it pays out with
+	// SendCoinsFromModuleToAccount, and this module's account is on the bank's
+	// blocked list, so every buyback failed with "not allowed to receive funds"
+	// and was silently discarded.
+	SwapExactInForModule(ctx context.Context, moduleName string, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error)
 	// TwapObservation reads the pool's time-weighted price accumulator and its
 	// current spot price. The buyback stores one reading, takes another a window
 	// later, and prices against the average between them instead of against
