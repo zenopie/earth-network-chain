@@ -20,7 +20,7 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		if elem.Volume.IsNil() {
 			elem.Volume = math.ZeroInt()
 		}
-		if err := k.Pool.Set(ctx, elem.PoolId, elem); err != nil {
+		if err := k.SetPool(ctx, elem.PoolId, elem); err != nil {
 			return err
 		}
 		if err := k.PoolByToken.Set(ctx, elem.ReserveToken.Denom, elem.PoolId); err != nil {

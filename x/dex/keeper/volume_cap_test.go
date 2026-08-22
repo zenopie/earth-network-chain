@@ -105,7 +105,7 @@ func TestVolumeCapFollowsDepthDown(t *testing.T) {
 	// records, so this test does not assert solvency — the cases above and below
 	// it do, through paths that keep the two together.
 	pool.ReserveErth = sdk.NewInt64Coin("uerth", 100_000)
-	require.NoError(t, k.Pool.Set(ctx, 1, pool))
+	require.NoError(t, k.SetPool(ctx, 1, pool))
 	roundTrip(t, k, ctx, 1_000)
 
 	pool, err = k.Pool.Get(ctx, 1)

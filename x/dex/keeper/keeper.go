@@ -49,6 +49,11 @@ type Keeper struct {
 	// Protocol-owned liquidity retirement, keyed by pool id — see pol_burn.go.
 	PolBurns collections.Map[uint64, types.PolBurn]
 
+	// Bounded solvency accounting — see solvency.go.
+	TotalPoolErth  collections.Item[math.Int]
+	DirtyPools     collections.KeySet[uint64]
+	SolvencyCursor collections.Item[uint64]
+
 	// Time-weighted price accumulator, keyed by pool id — see twap.go.
 	PriceCumulative collections.Map[uint64, math.LegacyDec]
 	PriceObservedAt collections.Map[uint64, int64]
@@ -100,6 +105,10 @@ func NewKeeper(
 			sb, types.AuctionBidKey, "auction_bids",
 			collections.BytesKey, codec.CollValue[types.AuctionBid](cdc),
 		),
+
+		TotalPoolErth:  collections.NewItem(sb, types.TotalPoolErthKey, "total_pool_erth", sdk.IntValue),
+		DirtyPools:     collections.NewKeySet(sb, types.DirtyPoolsKey, "dirty_pools", collections.Uint64Key),
+		SolvencyCursor: collections.NewItem(sb, types.SolvencyCursorKey, "solvency_cursor", collections.Uint64Value),
 
 		PriceCumulative: collections.NewMap(sb, types.PriceCumulativeKey, "price_cumulative", collections.Uint64Key, sdk.LegacyDecValue),
 		PriceObservedAt: collections.NewMap(sb, types.PriceObservedAtKey, "price_observed_at", collections.Uint64Key, collections.Int64Value),

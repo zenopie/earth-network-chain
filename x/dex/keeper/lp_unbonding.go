@@ -117,7 +117,7 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 
 	pool.ReserveErth = pool.ReserveErth.Sub(outErth)
 	pool.ReserveToken = pool.ReserveToken.Sub(outToken)
-	if err := k.Pool.Set(ctx, entry.PoolId, pool); err != nil {
+	if err := k.SetPool(ctx, entry.PoolId, pool); err != nil {
 		return err
 	}
 

@@ -179,7 +179,7 @@ func TestPolBurnClawsBackTheRewardsItEarned(t *testing.T) {
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
 	pool.Volume = math.NewInt(1_000)
-	require.NoError(t, k.Pool.Set(ctx, 1, pool))
+	require.NoError(t, k.SetPool(ctx, 1, pool))
 	require.NoError(t, k.LpTotalVolume.Set(ctx, math.NewInt(1_000)))
 	_, err = k.DistributeLPRewards(ctx, math.NewInt(100_000))
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestPolBurnPricesAgainstThirdPartyShares(t *testing.T) {
 	require.NoError(t, err)
 	pool.ReserveErth = pool.ReserveErth.AddAmount(math.NewInt(1_000_000))
 	pool.ReserveToken = pool.ReserveToken.AddAmount(math.NewInt(1_000_000))
-	require.NoError(t, k.Pool.Set(ctx, 1, pool))
+	require.NoError(t, k.SetPool(ctx, 1, pool))
 
 	ctx = ctx.WithBlockTime(start.Add(time.Duration(types.PolBurnSeconds) * time.Second))
 	require.NoError(t, k.BurnDuePol(ctx))

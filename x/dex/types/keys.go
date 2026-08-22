@@ -72,6 +72,41 @@ var (
 	PriceObservedAtKey = collections.NewPrefix("price_observed_at")
 )
 
+// Bounded solvency accounting — see keeper/solvency.go.
+//
+// The module's obligations decompose by asset, and the decomposition is what
+// lets the per-block check cost the same at ten pools and at ten million:
+//
+//	ERTH   commingled across every pool, so it needs a running total
+//	token  one pool per denom, so each pool's own reserve is the whole story
+//
+// Both are compared against the bank, which is an independent witness: a drift
+// in either figure shows up as a mismatch rather than as a number quietly
+// agreeing with itself.
+var (
+	// TotalPoolErthKey is the running sum of every pool's ERTH reserve.
+	TotalPoolErthKey = collections.NewPrefix("total_pool_erth")
+	// DirtyPoolsKey holds the pools written during the current block.
+	//
+	// Only these can have moved, because the dex module account is blocked from
+	// receiving outside transfers (see blockAccAddrs in app/app_config.go), so a
+	// pool nobody touched cannot have become insolvent. Checking the touched set
+	// rather than every pool is what bounds the work, and the set is bounded by
+	// block gas because touching a pool takes a transaction.
+	DirtyPoolsKey = collections.NewPrefix("dirty_pools")
+	// SolvencyCursorKey is where the background rotation resumes.
+	SolvencyCursorKey = collections.NewPrefix("solvency_cursor")
+)
+
+// SolvencyRotationPerBlock is how many untouched pools are re-checked per block.
+//
+// The dirty set catches anything a block moved, which is every realistic bug.
+// This exists for the unrealistic one: code that moves a pool's tokens without
+// writing the pool, which would never mark it dirty and so would never be
+// caught. Rotating a few pools a block covers the whole set eventually, at a
+// fixed cost per block rather than one proportional to how many pools exist.
+const SolvencyRotationPerBlock = 8
+
 // PolBurnKey is the prefix for pool id -> PolBurn, the schedules retiring the
 // protocol's own liquidity. Entries are deleted when the position reaches zero,
 // so the set is empty once every schedule has run out.

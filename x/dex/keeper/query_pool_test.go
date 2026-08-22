@@ -22,7 +22,7 @@ func createNPool(keeper keeper.Keeper, ctx context.Context, n int) []types.Pool 
 		items[i].ReserveErth = sdk.NewInt64Coin(`uerth`, int64(i+100))
 		items[i].ReserveToken = sdk.NewInt64Coin(`token`, int64(i+100))
 		items[i].Volume = math.ZeroInt()
-		_ = keeper.Pool.Set(ctx, items[i].PoolId, items[i])
+		_ = keeper.SetPool(ctx, items[i].PoolId, items[i])
 	}
 	return items
 }

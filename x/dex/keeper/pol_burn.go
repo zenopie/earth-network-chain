@@ -168,7 +168,7 @@ func (k Keeper) retirePolShares(ctx context.Context, b types.PolBurn, slice math
 
 	pool.ReserveErth = pool.ReserveErth.Sub(outErth)
 	pool.ReserveToken = pool.ReserveToken.Sub(outToken)
-	if err := k.Pool.Set(ctx, b.PoolId, pool); err != nil {
+	if err := k.SetPool(ctx, b.PoolId, pool); err != nil {
 		return sdk.Coin{}, sdk.Coin{}, err
 	}
 

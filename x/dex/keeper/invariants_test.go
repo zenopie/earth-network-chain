@@ -45,7 +45,7 @@ func TestBalanceCatchesAReserveWithNoCoinsBehindIt(t *testing.T) {
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
 	pool.ReserveErth = pool.ReserveErth.AddAmount(math.NewInt(500_000))
-	require.NoError(t, k.Pool.Set(ctx, 1, pool))
+	require.NoError(t, k.SetPool(ctx, 1, pool))
 
 	rep, err := k.CheckBalances(ctx)
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestBalanceCatchesCoinsThatShouldHaveBeenBurned(t *testing.T) {
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
 	pool.ReserveErth = pool.ReserveErth.SubAmount(math.NewInt(400_000))
-	require.NoError(t, k.Pool.Set(ctx, 1, pool))
+	require.NoError(t, k.SetPool(ctx, 1, pool))
 
 	rep, err := k.CheckBalances(ctx)
 	require.NoError(t, err)
@@ -181,11 +181,17 @@ func TestVolumeDenominatorMustMatchTheSumOfPools(t *testing.T) {
 	stored, summed, err := k.CheckVolumeAccounting(ctx)
 	require.NoError(t, err)
 	require.Equal(t, summed, stored)
-	require.NoError(t, k.AssertHotInvariants(ctx))
+	require.NoError(t, k.AssertInvariants(ctx))
 
 	// Move the denominator without moving a pool.
+	//
+	// Checked through AssertInvariants rather than AssertHotInvariants: this
+	// comparison is O(pools) and has no witness outside the module's own books,
+	// so it left the per-block path when solvency was made bounded. It still runs
+	// after every operation the tests perform, which is where a drift introduced
+	// by a code change would surface.
 	require.NoError(t, k.LpTotalVolume.Set(ctx, stored.AddRaw(250)))
-	err = k.AssertHotInvariants(ctx)
+	err = k.AssertInvariants(ctx)
 	require.ErrorIs(t, err, types.ErrInvariantBroken)
 	require.Contains(t, err.Error(), "lp reward denominator")
 }

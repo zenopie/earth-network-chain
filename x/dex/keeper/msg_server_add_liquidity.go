@@ -81,7 +81,7 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 
 	pool.ReserveErth = pool.ReserveErth.Add(depositErt)
 	pool.ReserveToken = pool.ReserveToken.Add(depositTok)
-	if err := k.Pool.Set(ctx, msg.PoolId, pool); err != nil {
+	if err := k.SetPool(ctx, msg.PoolId, pool); err != nil {
 		return nil, err
 	}
 

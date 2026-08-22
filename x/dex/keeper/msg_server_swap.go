@@ -153,7 +153,7 @@ func (k Keeper) hopTokenToHub(ctx context.Context, tokenDenom string, amountIn m
 	if err := k.applyVolume(ctx, &pool, r.volumeErth, sdk.UnwrapSDKContext(ctx).BlockTime()); err != nil {
 		return math.Int{}, math.Int{}, err
 	}
-	if err := k.Pool.Set(ctx, pool.PoolId, pool); err != nil {
+	if err := k.SetPool(ctx, pool.PoolId, pool); err != nil {
 		return math.Int{}, math.Int{}, err
 	}
 	return r.amountOut, r.burnErth, nil
@@ -186,7 +186,7 @@ func (k Keeper) hopHubToToken(ctx context.Context, tokenDenom string, amountErth
 	if err := k.applyVolume(ctx, &pool, r.volumeErth, sdk.UnwrapSDKContext(ctx).BlockTime()); err != nil {
 		return math.Int{}, math.Int{}, err
 	}
-	if err := k.Pool.Set(ctx, pool.PoolId, pool); err != nil {
+	if err := k.SetPool(ctx, pool.PoolId, pool); err != nil {
 		return math.Int{}, math.Int{}, err
 	}
 	return r.amountOut, r.burnErth, nil

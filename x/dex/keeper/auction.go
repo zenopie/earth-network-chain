@@ -137,7 +137,7 @@ func (k Keeper) settleAuction(ctx context.Context, a types.LiquidityAuction) err
 		Volume:        math.ZeroInt(),
 		LastVolumeDay: uint64(sdkCtx.BlockTime().Unix()) / 86400,
 	}
-	if err := k.Pool.Set(ctx, poolID, pool); err != nil {
+	if err := k.SetPool(ctx, poolID, pool); err != nil {
 		return err
 	}
 	if err := k.PoolByToken.Set(ctx, raised.Denom, poolID); err != nil {

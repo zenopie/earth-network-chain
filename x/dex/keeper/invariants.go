@@ -279,6 +279,19 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertHotInvariants(ctx); err != nil {
 		return err
 	}
+	if err := k.CheckErthTotalAccounting(ctx); err != nil {
+		return err
+	}
+	// O(pools), and with no witness outside the module's own books — which is
+	// why it is here and not in the EndBlocker. See assertHotInvariants.
+	stored, summed, err := k.CheckVolumeAccounting(ctx)
+	if err != nil {
+		return err
+	}
+	if !stored.Equal(summed) {
+		return types.ErrInvariantBroken.Wrapf(
+			"lp reward denominator is %s but the pools' volume sums to %s", stored, summed)
+	}
 	rep, err := k.CheckShareBacking(ctx)
 	if err != nil {
 		return err
@@ -289,32 +302,19 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 	return nil
 }
 
-// assertHotInvariants is the subset cheap enough to run in the EndBlocker: both
-// checks are O(pools) and neither touches the unbonding queue.
+// assertHotInvariants is what the EndBlocker runs, and every part of it is
+// bounded independently of how many pools exist — see solvency.go.
+//
+// CheckVolumeAccounting is deliberately not here any more. It compares
+// LpTotalVolume against the sum of the pools' volume, which is O(pools), and
+// unlike the balance checks it has no independent witness: both sides are the
+// module's own bookkeeping, so an incremental version would be a number agreeing
+// with itself. Since every write to a pool's volume now funnels through
+// setPoolVolume, a drift can only come from a bug in that one function, which is
+// a job for tests rather than for a check that halts a live chain. It stays in
+// AssertInvariants, which the tests call after each operation.
 func (k Keeper) assertHotInvariants(ctx context.Context) error {
-	rep, err := k.CheckBalances(ctx)
-	if err != nil {
-		return err
-	}
-	switch {
-	case !rep.Short.IsZero():
-		return types.ErrInvariantBroken.Wrapf(
-			"dex module is short %s: it owes %s and holds %s", rep.Short, rep.Owed, rep.Held)
-	case !rep.Surplus.IsZero():
-		return types.ErrInvariantBroken.Wrapf(
-			"dex module holds %s it cannot account for: it owes %s and holds %s",
-			rep.Surplus, rep.Owed, rep.Held)
-	}
-
-	stored, summed, err := k.CheckVolumeAccounting(ctx)
-	if err != nil {
-		return err
-	}
-	if !stored.Equal(summed) {
-		return types.ErrInvariantBroken.Wrapf(
-			"lp reward denominator is %s but the pools' volume sums to %s", stored, summed)
-	}
-	return nil
+	return k.AssertBoundedSolvency(ctx)
 }
 
 // AssertHotInvariants is the EndBlocker's check. Returning an error from an
@@ -328,6 +328,37 @@ func (k Keeper) AssertHotInvariants(ctx context.Context) error {
 			"dex invariant broken — halting", "err", err,
 			"height", sdk.UnwrapSDKContext(ctx).BlockHeight())
 		return err
+	}
+	return nil
+}
+
+// CheckErthTotalAccounting verifies the running ERTH total against the pools it
+// claims to sum.
+//
+// This is the check the per-block one cannot do for itself. TotalPoolErth is
+// maintained incrementally by SetPool, and the EndBlocker compares it against
+// the bank — which catches coins going missing, but not the total being wrong in
+// the same direction as the coins. Walking the pools is the only way to know the
+// figure still means what it says, so it lives here, off the hot path, where the
+// tests run it after every operation.
+func (k Keeper) CheckErthTotalAccounting(ctx context.Context) error {
+	stored, err := k.getTotalPoolErth(ctx)
+	if err != nil {
+		return err
+	}
+	summed := math.ZeroInt()
+	if err := k.Pool.Walk(ctx, nil, func(_ uint64, p types.Pool) (bool, error) {
+		if !p.ReserveErth.Amount.IsNil() {
+			summed = summed.Add(p.ReserveErth.Amount)
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	if !stored.Equal(summed) {
+		return types.ErrInvariantBroken.Wrapf(
+			"total_pool_erth is %s but the pools' erth reserves sum to %s — "+
+				"something wrote a pool without going through SetPool", stored, summed)
 	}
 	return nil
 }

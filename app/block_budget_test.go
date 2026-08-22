@@ -78,36 +78,32 @@ func TestPerBlockWorkBudget(t *testing.T) {
 //	x/earth       EndBlock    fee split -> O(fee denoms in one block)
 //	x/mint        BeginBlock  emission -> O(1)
 //
-// NOT bounded, and known:
-//
-//	x/dex         EndBlock    AssertHotInvariants -> O(pools), and pools are
-//	                          permissionless. See TestPoolSetIsTheOneUnboundedLoop.
+//	x/dex         EndBlock    solvency -> O(1) for ERTH, plus the pools this
+//	                          block wrote and a fixed rotation of a few others.
+//	                          See TestPoolSetIsNoLongerUnbounded.
 func TestEveryPerBlockLoopHasACap(t *testing.T) {
 	t.Log("see the comment above: this is a checklist, reviewed when a per-block loop is added")
 }
 
-// TestPoolSetIsTheOneUnboundedLoop records the single per-block loop on this
-// chain whose size a user can grow.
+// TestPoolSetIsNoLongerUnbounded records why the pool set stopped mattering.
 //
-// x/dex's EndBlocker asserts its solvency and volume invariants every block, and
-// both walk the whole pool set. That is deliberate and the reasoning in
-// invariants.go is sound — the check is what stands between a mispriced pool and
-// a silent drain, and it is correctly kept to the two O(pools) checks with the
-// unbonding walk left off the hot path.
+// x/dex asserts solvency every block, and that check used to walk every pool —
+// twice, since comparing against GetAllBalances is O(denoms held) as well. With
+// CreatePool permissionless, one pool per denom, no minimum liquidity and no
+// scarcity of denoms behind IBC, a pool was a one-time gas-metered cost that
+// bought permanent unmetered work on every future block, including after its
+// creator withdrew and left.
 //
-// What is not bounded is the pool set. CreatePool is permissionless once the
-// auction has settled, one pool per token denom, with no minimum liquidity — so
-// a pool costs two units of dust plus gas. Denoms are not scarce either: IBC
-// vouchers mint a fresh denom per base denom, and a counterparty chain the
-// attacker controls can supply as many as they like.
+// It now decomposes by asset instead: ERTH is commingled so it carries a running
+// total compared against one bank balance, and every other denom belongs to
+// exactly one pool, so a pool's own reserve is the whole obligation for it. Only
+// the pools a block actually wrote are checked, which is sound because the dex
+// module account is blocked from receiving outside transfers — nothing but the
+// module can move its coins, so an untouched pool cannot have drifted. A fixed
+// rotation re-checks a few others per block as a backstop.
 //
-// The asymmetry is the problem. Creating a pool is a one-time, gas-metered cost.
-// The work it adds to the EndBlocker is permanent, unmetered, and paid by every
-// validator on every block thereafter, including after the creator withdraws
-// their liquidity and walks away.
-//
-// This test does not fail. It exists so the assumption is written down next to
-// the budget rather than living in one person's head.
-func TestPoolSetIsTheOneUnboundedLoop(t *testing.T) {
-	t.Log("pool count is bounded only by denom availability and dust; see comment above")
+// The measurement lives in x/dex/keeper/solvency_test.go, which pins the cost as
+// flat in the pool count rather than merely small today.
+func TestPoolSetIsNoLongerUnbounded(t *testing.T) {
+	t.Log("solvency is O(1) plus pools-written-this-block; see x/dex/keeper/solvency.go")
 }

@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -138,16 +139,27 @@ func initRewardFixture(t *testing.T) (keeper.Keeper, sdk.Context, *mintingBank) 
 // separately because most tests here care about reward arithmetic and not about
 // whether the coins are really there, while the invariant tests care about
 // exactly that.
+// seedTokenDenom mirrors the one-pool-per-token rule PoolByToken enforces. The
+// fixture used to give every pool the same denom, which no real chain state can
+// reach and which quietly made two pools claim the same coins.
+func seedTokenDenom(id uint64) string {
+	if id == 1 {
+		return "utok"
+	}
+	return fmt.Sprintf("utok%d", id)
+}
+
 func seedPool(t *testing.T, k keeper.Keeper, ctx sdk.Context, id uint64, erth, token, volume int64) {
 	t.Helper()
-	require.NoError(t, k.Pool.Set(ctx, id, types.Pool{
+	denom := seedTokenDenom(id)
+	require.NoError(t, k.SetPool(ctx, id, types.Pool{
 		PoolId:        id,
 		ReserveErth:   sdk.NewInt64Coin("uerth", erth),
-		ReserveToken:  sdk.NewInt64Coin("utok", token),
+		ReserveToken:  sdk.NewInt64Coin(denom, token),
 		Volume:        math.NewInt(volume),
 		LastVolumeDay: uint64(ctx.BlockTime().Unix()) / 86400,
 	}))
-	require.NoError(t, k.PoolByToken.Set(ctx, "utok", id))
+	require.NoError(t, k.PoolByToken.Set(ctx, denom, id))
 
 	total, err := k.LpTotalVolume.Get(ctx)
 	if err != nil {
@@ -163,7 +175,7 @@ func seedFundedPool(t *testing.T, k keeper.Keeper, ctx sdk.Context, bank *mintin
 	id uint64, erth, token, volume int64) {
 	t.Helper()
 	seedPool(t, k, ctx, id, erth, token, volume)
-	bank.fundModule(sdk.NewInt64Coin("uerth", erth), sdk.NewInt64Coin("utok", token))
+	bank.fundModule(sdk.NewInt64Coin("uerth", erth), sdk.NewInt64Coin(seedTokenDenom(id), token))
 }
 
 // TestDistributeLPRewards_IsLazy is the point of the whole refactor: handing

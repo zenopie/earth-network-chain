@@ -89,7 +89,7 @@ func (k msgServer) CreatePool(ctx context.Context, msg *types.MsgCreatePool) (*t
 		Volume:        math.ZeroInt(),
 		LastVolumeDay: uint64(sdk.UnwrapSDKContext(ctx).BlockTime().Unix()) / 86400,
 	}
-	if err := k.Pool.Set(ctx, poolID, pool); err != nil {
+	if err := k.SetPool(ctx, poolID, pool); err != nil {
 		return nil, err
 	}
 	if err := k.PoolByToken.Set(ctx, token.Denom, poolID); err != nil {
