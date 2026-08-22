@@ -145,7 +145,21 @@ elif [ "$DEV_INIT" = "1" ]; then
 
   # add-genesis-account updates auth, bank balances and supply together, which
   # is why this is done with earthd rather than by editing the file.
-  earthd genesis add-genesis-account validator "$VALIDATOR_COINS" $KEYRING
+  #
+  # --append when the address is already funded, which it is whenever
+  # VALIDATOR_MNEMONIC recovers the account the release genesis already carries.
+  # Without this the command fails with "account already exists", the entrypoint
+  # exits, and the container sits there running with nothing listening — the pod
+  # reports available but never ready, and the tunnel serves 502 with no clue
+  # why. That is a latent break: this path only runs on a fresh volume, so a
+  # deployment that keeps resuming an existing chain never reaches it.
+  VAL_ADDR="$(earthd keys show validator -a $KEYRING)"
+  if grep -q "$VAL_ADDR" "$EARTH_HOME/config/genesis.json"; then
+    say "validator $VAL_ADDR is already funded in the release genesis — appending"
+    earthd genesis add-genesis-account validator "$VALIDATOR_COINS" --append $KEYRING
+  else
+    earthd genesis add-genesis-account validator "$VALIDATOR_COINS" $KEYRING
+  fi
   earthd genesis gentx validator "$VALIDATOR_BONDED" --chain-id "$CHAIN_ID" $KEYRING >/dev/null
   earthd genesis collect-gentxs --home "$EARTH_HOME" >/dev/null 2>&1
   say "devnet genesis ready: validator bonded $VALIDATOR_BONDED"
