@@ -53,6 +53,25 @@ var (
 	AuctionBidKey = collections.NewPrefix("auction_bid")
 )
 
+// The price oracle behind every TWAP this chain reads — see keeper/twap.go.
+//
+// PriceCumulative holds a running sum of each pool's spot price multiplied by
+// the seconds that price was in effect (Uniswap-v2's accumulator). No history is
+// kept: a consumer stores its own earlier reading, and the average price between
+// the two is their difference divided by the seconds between them. That makes a
+// TWAP cost two numbers per pool no matter how long the window, and it makes the
+// average expensive to move — an attacker has to hold the price away from its
+// average for real time, not merely at the instant somebody looks.
+var (
+	// PriceCumulativeKey is pool id -> the accumulator (LegacyDec, ERTH per
+	// token, multiplied by seconds).
+	PriceCumulativeKey = collections.NewPrefix("price_cumulative")
+	// PriceObservedAtKey is pool id -> the unix second the accumulator was last
+	// brought forward. Stored alongside because the accumulator is meaningless
+	// without knowing how much time it already covers.
+	PriceObservedAtKey = collections.NewPrefix("price_observed_at")
+)
+
 // PolBurnKey is the prefix for pool id -> PolBurn, the schedules retiring the
 // protocol's own liquidity. Entries are deleted when the position reaches zero,
 // so the set is empty once every schedule has run out.

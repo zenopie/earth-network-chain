@@ -48,6 +48,10 @@ type Keeper struct {
 
 	// Protocol-owned liquidity retirement, keyed by pool id — see pol_burn.go.
 	PolBurns collections.Map[uint64, types.PolBurn]
+
+	// Time-weighted price accumulator, keyed by pool id — see twap.go.
+	PriceCumulative collections.Map[uint64, math.LegacyDec]
+	PriceObservedAt collections.Map[uint64, int64]
 }
 
 func NewKeeper(
@@ -96,6 +100,9 @@ func NewKeeper(
 			sb, types.AuctionBidKey, "auction_bids",
 			collections.BytesKey, codec.CollValue[types.AuctionBid](cdc),
 		),
+
+		PriceCumulative: collections.NewMap(sb, types.PriceCumulativeKey, "price_cumulative", collections.Uint64Key, sdk.LegacyDecValue),
+		PriceObservedAt: collections.NewMap(sb, types.PriceObservedAtKey, "price_observed_at", collections.Uint64Key, collections.Int64Value),
 
 		PolBurns: collections.NewMap(
 			sb, types.PolBurnKey, "pol_burns",
