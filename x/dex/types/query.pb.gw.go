@@ -637,19 +637,19 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 }
 
 var (
-	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"earth-network", "earth", "dex", "v1", "params"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"earth", "dex", "v1", "params"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_GetPool_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"earth-network", "earth", "dex", "v1", "pool", "pool_id"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_GetPool_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"earth", "dex", "v1", "pool", "pool_id"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_ListPool_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"earth-network", "earth", "dex", "v1", "pool"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_ListPool_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"earth", "dex", "v1", "pool"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_LpUnbondings_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"earth-network", "earth", "dex", "v1", "unbondings", "address"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_LpUnbondings_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"earth", "dex", "v1", "unbondings", "address"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_LiquidityAuction_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"earth-network", "earth", "dex", "v1", "liquidity_auction"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_LiquidityAuction_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"earth", "dex", "v1", "liquidity_auction"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_AuctionBid_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 2, 5, 1, 0, 4, 1, 5, 6}, []string{"earth-network", "earth", "dex", "v1", "liquidity_auction", "bid", "bidder"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_AuctionBid_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"earth", "dex", "v1", "liquidity_auction", "bid", "bidder"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_PolBurns_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"earth-network", "earth", "dex", "v1", "pol_burns"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_PolBurns_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"earth", "dex", "v1", "pol_burns"}, "", runtime.AssumeColonVerbOpt(false)))
 )
 
 var (

@@ -498,13 +498,13 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 }
 
 var (
-	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"earth-network", "earth", "allocation", "v1", "params"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"earth", "allocation", "v1", "params"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_Option_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 1, 0, 4, 1, 5, 6}, []string{"earth-network", "earth", "allocation", "v1", "option", "stream", "id"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Option_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"earth", "allocation", "v1", "option", "stream", "id"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_Options_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"earth-network", "earth", "allocation", "v1", "options", "stream"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Options_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"earth", "allocation", "v1", "options", "stream"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_Voter_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 1, 0, 4, 1, 5, 6}, []string{"earth-network", "earth", "allocation", "v1", "voter", "stream", "address"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Voter_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"earth", "allocation", "v1", "voter", "stream", "address"}, "", runtime.AssumeColonVerbOpt(false)))
 )
 
 var (

@@ -461,15 +461,15 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 }
 
 var (
-	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"earth-network", "earth", "personhood", "v1", "params"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Params_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"earth", "personhood", "v1", "params"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_Registration_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"earth-network", "earth", "personhood", "v1", "registration", "address"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_Registration_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"earth", "personhood", "v1", "registration", "address"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_RegistrationCount_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"earth-network", "earth", "personhood", "v1", "registration_count"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_RegistrationCount_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"earth", "personhood", "v1", "registration_count"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_RegistrationsByDsc_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"earth-network", "earth", "personhood", "v1", "registrations_by_dsc", "dsc_key"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_RegistrationsByDsc_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 1, 0, 4, 1, 5, 4}, []string{"earth", "personhood", "v1", "registrations_by_dsc", "dsc_key"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_RegistrationCountries_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3, 2, 4}, []string{"earth-network", "earth", "personhood", "v1", "registration_countries"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_RegistrationCountries_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"earth", "personhood", "v1", "registration_countries"}, "", runtime.AssumeColonVerbOpt(false)))
 )
 
 var (

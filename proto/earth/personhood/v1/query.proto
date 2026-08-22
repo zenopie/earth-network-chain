@@ -15,27 +15,27 @@ option go_package = "github.com/earth-network/earth/x/personhood/types";
 service Query {
   // Parameters queries the parameters of the module.
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
-    option (google.api.http).get = "/earth-network/earth/personhood/v1/params";
+    option (google.api.http).get = "/earth/personhood/v1/params";
   }
 
   // Registration queries a wallet's registration status.
   rpc Registration(QueryRegistrationRequest) returns (QueryRegistrationResponse) {
-    option (google.api.http).get = "/earth-network/earth/personhood/v1/registration/{address}";
+    option (google.api.http).get = "/earth/personhood/v1/registration/{address}";
   }
 
   // RegistrationCount returns how many humans are currently registered.
   rpc RegistrationCount(QueryRegistrationCountRequest) returns (QueryRegistrationCountResponse) {
-    option (google.api.http).get = "/earth-network/earth/personhood/v1/registration_count";
+    option (google.api.http).get = "/earth/personhood/v1/registration_count";
   }
 
   // RegistrationsByDsc counts registrations produced by one Document Signer.
   rpc RegistrationsByDsc(QueryRegistrationsByDscRequest) returns (QueryRegistrationsByDscResponse) {
-    option (google.api.http).get = "/earth-network/earth/personhood/v1/registrations_by_dsc/{dsc_key}";
+    option (google.api.http).get = "/earth/personhood/v1/registrations_by_dsc/{dsc_key}";
   }
 
   // RegistrationCountries returns the registration count per issuing country.
   rpc RegistrationCountries(QueryRegistrationCountriesRequest) returns (QueryRegistrationCountriesResponse) {
-    option (google.api.http).get = "/earth-network/earth/personhood/v1/registration_countries";
+    option (google.api.http).get = "/earth/personhood/v1/registration_countries";
   }
 }
 

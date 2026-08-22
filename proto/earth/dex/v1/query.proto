@@ -19,17 +19,17 @@ option go_package = "github.com/earth-network/earth/x/dex/types";
 service Query {
   // Parameters queries the parameters of the module.
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
-    option (google.api.http).get = "/earth-network/earth/dex/v1/params";
+    option (google.api.http).get = "/earth/dex/v1/params";
   }
 
   // ListPool Queries a list of Pool items.
   rpc GetPool(QueryGetPoolRequest) returns (QueryGetPoolResponse) {
-    option (google.api.http).get = "/earth-network/earth/dex/v1/pool/{pool_id}";
+    option (google.api.http).get = "/earth/dex/v1/pool/{pool_id}";
   }
 
   // ListPool defines the ListPool RPC.
   rpc ListPool(QueryAllPoolRequest) returns (QueryAllPoolResponse) {
-    option (google.api.http).get = "/earth-network/earth/dex/v1/pool";
+    option (google.api.http).get = "/earth/dex/v1/pool";
   }
 
   // LpUnbondings lists a provider's withdrawals still waiting to mature.
@@ -38,22 +38,22 @@ service Query {
   // sign, so without this a provider has no way to see that it is coming or
   // when — the shares have left their balance and the assets have not arrived.
   rpc LpUnbondings(QueryLpUnbondingsRequest) returns (QueryLpUnbondingsResponse) {
-    option (google.api.http).get = "/earth-network/earth/dex/v1/unbondings/{address}";
+    option (google.api.http).get = "/earth/dex/v1/unbondings/{address}";
   }
 
   // LiquidityAuction returns the genesis liquidity auction's current state.
   rpc LiquidityAuction(QueryLiquidityAuctionRequest) returns (QueryLiquidityAuctionResponse) {
-    option (google.api.http).get = "/earth-network/earth/dex/v1/liquidity_auction";
+    option (google.api.http).get = "/earth/dex/v1/liquidity_auction";
   }
 
   // AuctionBid returns one bidder's contribution and whether they have claimed.
   rpc AuctionBid(QueryAuctionBidRequest) returns (QueryAuctionBidResponse) {
-    option (google.api.http).get = "/earth-network/earth/dex/v1/liquidity_auction/bid/{bidder}";
+    option (google.api.http).get = "/earth/dex/v1/liquidity_auction/bid/{bidder}";
   }
 
   // PolBurns returns every live protocol-owned-liquidity retirement schedule.
   rpc PolBurns(QueryPolBurnsRequest) returns (QueryPolBurnsResponse) {
-    option (google.api.http).get = "/earth-network/earth/dex/v1/pol_burns";
+    option (google.api.http).get = "/earth/dex/v1/pol_burns";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.

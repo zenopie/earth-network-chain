@@ -14,23 +14,23 @@ option go_package = "github.com/earth-network/earth/x/allocation/types";
 service Query {
   // Parameters queries the parameters of the module.
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
-    option (google.api.http).get = "/earth-network/earth/allocation/v1/params";
+    option (google.api.http).get = "/earth/allocation/v1/params";
   }
 
   // Option queries a single allocation option within a stream.
   rpc Option(QueryOptionRequest) returns (QueryOptionResponse) {
-    option (google.api.http).get = "/earth-network/earth/allocation/v1/option/{stream}/{id}";
+    option (google.api.http).get = "/earth/allocation/v1/option/{stream}/{id}";
   }
 
   // Options queries every allocation option in a stream, with the stream's
   // reward index, total weight and epoch.
   rpc Options(QueryOptionsRequest) returns (QueryOptionsResponse) {
-    option (google.api.http).get = "/earth-network/earth/allocation/v1/options/{stream}";
+    option (google.api.http).get = "/earth/allocation/v1/options/{stream}";
   }
 
   // Voter queries one address's split within a stream.
   rpc Voter(QueryVoterRequest) returns (QueryVoterResponse) {
-    option (google.api.http).get = "/earth-network/earth/allocation/v1/voter/{stream}/{address}";
+    option (google.api.http).get = "/earth/allocation/v1/voter/{stream}/{address}";
   }
 }
 
