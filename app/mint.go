@@ -14,8 +14,9 @@ import (
 // minted coins into the fee collector, so x/distribution splits them by voting
 // power under the standard rules and delegators claim with
 // MsgWithdrawDelegatorReward as they would on any other Cosmos chain. Gas fees
-// also reach the fee collector, and are burned by the earth EndBlocker after
-// distribution has already swept the emission.
+// also reach the fee collector, and are split by the earth EndBlocker — half
+// burned, half left for the next block's distribution sweep — after distribution
+// has already taken the emission.
 //
 // This wrapper exists only because x/mint owns the per-block hook; all the logic
 // lives in x/earth, which owns tokenomics.

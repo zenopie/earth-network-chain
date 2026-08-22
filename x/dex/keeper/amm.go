@@ -39,10 +39,15 @@ type hopResult struct {
 	newReserveToken math.Int
 }
 
-// splitFee splits an ERTH fee into the burned half and the pool (LP) half. The
-// pool keeps any odd unit so that burn + pool == fee exactly.
+// splitFee splits an ERTH fee into the burned half and the pool (LP) half.
+//
+// The burn takes any odd unit, so burn + pool == fee exactly and a fee that
+// cannot be split evenly resolves toward destroying supply rather than toward
+// keeping it. The gas fee split in x/earth/keeper/fees.go rounds the same way,
+// for the same reason: one rule for every fee on the chain, and the rounding
+// never quietly favours a recipient over the burn.
 func splitFee(feeErth math.Int) (burn, pool math.Int) {
-	burn = feeErth.Quo(math.NewInt(2))
+	burn = feeErth.Add(math.OneInt()).Quo(math.NewInt(2))
 	pool = feeErth.Sub(burn)
 	return burn, pool
 }
