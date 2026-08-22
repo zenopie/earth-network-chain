@@ -7,7 +7,7 @@ import (
 )
 
 // streamUsage documents the stream argument once; every command takes it.
-const streamUsage = "stream is `human` (one-human-one-vote) or `capital` (stake-weighted)."
+const streamUsage = "stream is `caretaker` (one-human-one-vote) or `groundworks` (stake-weighted)."
 
 // AutoCLIOptions implements the autocli.HasAutoCLIConfig interface.
 func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
