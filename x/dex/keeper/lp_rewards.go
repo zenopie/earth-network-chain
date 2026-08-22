@@ -63,12 +63,70 @@ func decayedVolume(pool types.Pool, day uint64) math.Int {
 
 func dayOf(blockTime time.Time) uint64 { return uint64(blockTime.Unix()) / 86400 }
 
-// addPoolVolume decays a pool's volume to the current day, then adds new
-// ERTH-denominated swap volume.
-func addPoolVolume(pool *types.Pool, erthAmount math.Int, blockTime time.Time) {
-	day := dayOf(blockTime)
-	pool.Volume = decayedVolume(*pool, day).Add(erthAmount)
+// volumeCap is the most volume a pool may count toward LP rewards: a multiple of
+// its own ERTH reserve.
+//
+// The multiple is per day, but the value it bounds is the decaying accumulator,
+// which carries about VolumeWindowDays of volume once it settles (each day keeps
+// (n-1)/n of the total and adds a fresh day, so a steady d per day converges to
+// n*d). Scaling by the window is what makes "2 per day" mean two per day rather
+// than two per week.
+//
+// A pool with no ERTH reserve caps at zero: there is no depth to justify any
+// weight, and a pool in that state cannot be traded against anyway.
+func volumeCap(pool types.Pool, perDay uint64) math.Int {
+	r := pool.ReserveErth.Amount
+	if r.IsNil() || !r.IsPositive() {
+		return math.ZeroInt()
+	}
+	return r.MulRaw(int64(perDay)).MulRaw(types.VolumeWindowDays)
+}
+
+// capVolume clamps a candidate volume to what the pool's depth supports.
+func (k Keeper) capVolume(ctx context.Context, pool types.Pool, v math.Int) (math.Int, error) {
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return math.Int{}, err
+	}
+	cap := volumeCap(pool, params.VolumeDepthCapPerDayOrDefault())
+	if v.GT(cap) {
+		return cap, nil
+	}
+	return v, nil
+}
+
+// setPoolVolume writes a pool's counted volume and moves the global denominator
+// by exactly the same delta.
+//
+// Every write to a pool's Volume goes through here. LpTotalVolume has to stay
+// equal to the sum of every pool's stored Volume — DistributeLPRewards divides
+// by it, so a drift either mints more than the allocation released or strands
+// part of it — and that equality was previously re-established by hand at each
+// write site. One funnel means a new write site cannot forget it.
+func (k Keeper) setPoolVolume(ctx context.Context, pool *types.Pool, v math.Int, day uint64) error {
+	old := pool.Volume
+	if old.IsNil() {
+		old = math.ZeroInt()
+	}
+	if v.IsNegative() {
+		v = math.ZeroInt()
+	}
+	pool.Volume = v
 	pool.LastVolumeDay = day
+
+	delta := v.Sub(old)
+	if delta.IsZero() {
+		return nil
+	}
+	total, err := k.getLpTotalVolume(ctx)
+	if err != nil {
+		return err
+	}
+	total = total.Add(delta)
+	if total.IsNegative() {
+		total = math.ZeroInt()
+	}
+	return k.LpTotalVolume.Set(ctx, total)
 }
 
 // --- index getters with zero defaults ---
@@ -139,31 +197,27 @@ func (k Keeper) DistributeLPRewards(ctx context.Context, amount math.Int) (math.
 	return delta.Mul(total).Quo(lpIndexPrecision), nil
 }
 
-// decayPoolVolume ages a pool's stored volume to blockTime's day and moves the
-// global denominator by the same amount, keeping the two in step.
+// decayPoolVolume ages a pool's stored volume to blockTime's day and re-applies
+// the depth cap, moving the global denominator in step.
+//
+// The cap is re-applied on ageing, not only on new volume, because depth can
+// fall after volume was earned. Without it a pool could build weight while deep,
+// withdraw the liquidity, and keep drawing rewards against depth that is no
+// longer there — which is the same wash-trade the cap exists to stop, run in two
+// steps instead of one.
 func (k Keeper) decayPoolVolume(ctx context.Context, pool *types.Pool, blockTime time.Time) error {
 	if pool.Volume.IsNil() || !pool.Volume.IsPositive() {
 		return nil
 	}
 	day := dayOf(blockTime)
-	decayed := decayedVolume(*pool, day)
-	if decayed.Equal(pool.Volume) {
-		return nil
-	}
-
-	shrink := pool.Volume.Sub(decayed)
-	pool.Volume = decayed
-	pool.LastVolumeDay = day
-
-	total, err := k.getLpTotalVolume(ctx)
+	decayed, err := k.capVolume(ctx, *pool, decayedVolume(*pool, day))
 	if err != nil {
 		return err
 	}
-	total = total.Sub(shrink)
-	if total.IsNegative() {
-		total = math.ZeroInt()
+	if decayed.Equal(pool.Volume) {
+		return nil
 	}
-	return k.LpTotalVolume.Set(ctx, total)
+	return k.setPoolVolume(ctx, pool, decayed, day)
 }
 
 // settlePoolRewards credits a pool the LP rewards accrued against its volume
@@ -217,28 +271,15 @@ func (k Keeper) settlePoolRewards(ctx context.Context, poolID uint64, pool *type
 	return k.PoolLpIndex.Set(ctx, poolID, idx)
 }
 
-// applyVolume decays a pool's volume to today and adds new ERTH swap volume,
-// keeping the global denominator in step with the change.
+// applyVolume decays a pool's volume to today, adds new ERTH swap volume, and
+// clamps the result to what the pool's depth supports.
 func (k Keeper) applyVolume(ctx context.Context, pool *types.Pool, erthAmount math.Int, blockTime time.Time) error {
-	old := pool.Volume
-	if old.IsNil() {
-		old = math.ZeroInt()
-	}
-	addPoolVolume(pool, erthAmount, blockTime)
-
-	delta := pool.Volume.Sub(old)
-	if delta.IsZero() {
-		return nil
-	}
-	total, err := k.getLpTotalVolume(ctx)
+	day := dayOf(blockTime)
+	v, err := k.capVolume(ctx, *pool, decayedVolume(*pool, day).Add(erthAmount))
 	if err != nil {
 		return err
 	}
-	total = total.Add(delta)
-	if total.IsNegative() {
-		total = math.ZeroInt()
-	}
-	return k.LpTotalVolume.Set(ctx, total)
+	return k.setPoolVolume(ctx, pool, v, day)
 }
 
 // initPoolLpIndex starts a new pool at the current index so it cannot collect

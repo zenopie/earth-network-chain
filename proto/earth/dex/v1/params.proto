@@ -25,4 +25,26 @@ message Params {
   // swept to the provider's wallet. Liquidity keeps working for the pool for the
   // whole period, so this is what makes depth sticky rather than flight-prone.
   uint64 lp_unbonding_seconds = 2;
+
+  // volume_depth_cap_per_day caps how much volume a pool may count toward LP
+  // rewards, as a multiple of its ERTH reserve per day.
+  //
+  // Volume alone is a gameable proxy for the thing the reward is buying. Half of
+  // every swap fee returns to the pool, so an LP trading against their own pool
+  // recovers that half and pays only the burned half — cheap enough that, left
+  // uncapped, the reward share goes to whoever is willing to manufacture the most
+  // throughput rather than to whoever is carrying real liquidity. Capping the
+  // counted volume against the pool's own depth means manufacturing weight
+  // requires posting the depth first, which is the thing worth subsidising: the
+  // cheapest way to earn the reward becomes providing the liquidity.
+  //
+  // It is a cap and not a switch to depth-weighting, because volume is still
+  // what separates a pool people trade from a pool holding dead liquidity. Both
+  // now have to be true.
+  //
+  // Applied against the decaying volume accumulator, which holds roughly
+  // VolumeWindowDays of volume in the steady state, so the stored ceiling is this
+  // multiple times that window. Zero falls back to the compiled-in default; an
+  // unset cap must not mean an absent one.
+  uint64 volume_depth_cap_per_day = 3;
 }
