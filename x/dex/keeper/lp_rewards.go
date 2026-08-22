@@ -229,6 +229,23 @@ func (k Keeper) decayPoolVolume(ctx context.Context, pool *types.Pool, blockTime
 // a latecomer could add liquidity, wait for the next swap to settle them in, and
 // withdraw a share of rewards earned before they arrived.
 func (k Keeper) settlePoolRewards(ctx context.Context, poolID uint64, pool *types.Pool) error {
+	// Book the price the pool has been holding before this call changes it.
+	//
+	// Compounding rewards adds ERTH to the reserve and nothing to the other
+	// side, so it moves the price. The interval that just elapsed belongs to the
+	// price the pool actually had over it, and crediting it afterwards would
+	// attribute the new price to time that had already passed.
+	//
+	// It lives here rather than at the call sites because this is the thing that
+	// moves the price. Guarding the callers instead left add-liquidity, the
+	// unbonding payout and the POL burn unguarded -- price-neutral operations
+	// themselves, but each one calls this, and this is not price-neutral. Every
+	// entry point that touches a pool already has to call settle first, so
+	// putting the advance inside it is what makes the guard impossible to omit.
+	if err := k.advancePriceCumulative(ctx, poolID, *pool); err != nil {
+		return err
+	}
+
 	// Age the volume before anything is credited against it. A pool that has been
 	// quiet must not collect the whole dormant stretch at the volume it last
 	// recorded: that over-pays it, and it leaves a wash-trade opening where a

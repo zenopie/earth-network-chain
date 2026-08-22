@@ -184,13 +184,9 @@ func (k Keeper) hopTokenToHub(ctx context.Context, tokenDenom string, amountIn m
 	if err != nil {
 		return math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolNotFound, "no pool for %s", tokenDenom)
 	}
-	// Credit the price that has held since the last observation before this swap
-	// moves it. Must precede settlePoolRewards as well as the swap itself:
-	// compounding rewards into the reserve changes the price too, and the
-	// interval that just elapsed belongs to the price the pool actually had.
-	if err := k.advancePriceCumulative(ctx, pool.PoolId, pool); err != nil {
-		return math.Int{}, math.Int{}, err
-	}
+	// The price accumulator is advanced inside settlePoolRewards below, which
+	// runs before the swap maths, so the interval that just elapsed is booked at
+	// the pre-trade price without this path having to remember to do it.
 	// Compound pending LP rewards into the reserve before pricing against it.
 	if err := k.settlePoolRewards(ctx, pool.PoolId, &pool); err != nil {
 		return math.Int{}, math.Int{}, err
@@ -217,13 +213,9 @@ func (k Keeper) hopHubToToken(ctx context.Context, tokenDenom string, amountErth
 	if err != nil {
 		return math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolNotFound, "no pool for %s", tokenDenom)
 	}
-	// Credit the price that has held since the last observation before this swap
-	// moves it. Must precede settlePoolRewards as well as the swap itself:
-	// compounding rewards into the reserve changes the price too, and the
-	// interval that just elapsed belongs to the price the pool actually had.
-	if err := k.advancePriceCumulative(ctx, pool.PoolId, pool); err != nil {
-		return math.Int{}, math.Int{}, err
-	}
+	// The price accumulator is advanced inside settlePoolRewards below, which
+	// runs before the swap maths, so the interval that just elapsed is booked at
+	// the pre-trade price without this path having to remember to do it.
 	// Compound pending LP rewards into the reserve before pricing against it.
 	if err := k.settlePoolRewards(ctx, pool.PoolId, &pool); err != nil {
 		return math.Int{}, math.Int{}, err

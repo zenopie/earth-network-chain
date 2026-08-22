@@ -141,3 +141,47 @@ func TestQuoteMatchesSwapAndDoesNotMutate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, quoted, got.Amount, "the quote must be exactly what the swap returns")
 }
+
+// TestRewardCompoundingBooksThePriorPriceFirst covers the second thing that
+// moves a pool's price, which is easy to miss because it is not a trade.
+//
+// Compounding LP rewards adds ERTH to the reserve and nothing to the other
+// side, so the price shifts. If the accumulator is not brought forward before
+// that happens, the interval that just elapsed gets credited at the new price
+// instead of the price the pool actually held over it.
+//
+// It matters here specifically because settlement runs on paths that are
+// themselves price-neutral -- adding liquidity, paying out an unbonding,
+// retiring protocol liquidity -- so guarding the trade paths alone leaves it
+// unguarded exactly where nothing looks like a price change.
+func TestRewardCompoundingBooksThePriorPriceFirst(t *testing.T) {
+	k, ctx, bank := initRewardFixture(t)
+	seedFundedPool(t, k, ctx, bank, 1, 1_000_000, 1_000_000, 1_000) // price 1.0
+
+	cum0, spot0, t0, err := k.TwapObservation(ctx, "utok")
+	require.NoError(t, err)
+	require.Equal(t, math.LegacyOneDec(), spot0)
+
+	// Rewards are owed but not yet compounded into the reserve.
+	_, err = k.DistributeLPRewards(ctx, math.NewInt(200_000))
+	require.NoError(t, err)
+
+	// An hour passes at 1.0, then something settles the pool WITHOUT trading.
+	later := at(ctx, time.Hour)
+	pool, err := k.Pool.Get(later, 1)
+	require.NoError(t, err)
+	require.NoError(t, k.SettleForTest(later, 1, &pool))
+	require.NoError(t, k.SetPool(later, 1, pool))
+
+	// The reward really did move the price, or this test proves nothing.
+	_, spot1, _, err := k.TwapObservation(later, "utok")
+	require.NoError(t, err)
+	require.True(t, spot1.GT(spot0), "reward compounding should raise the price, got %s", spot1)
+
+	cum1, _, t1, err := k.TwapObservation(later, "utok")
+	require.NoError(t, err)
+	twap := cum1.Sub(cum0).QuoInt64(t1 - t0)
+
+	require.Equal(t, math.LegacyOneDec(), twap,
+		"the hour before the reward landed must be averaged at 1.0, not at the post-reward price %s", spot1)
+}
