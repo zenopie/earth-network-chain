@@ -44,8 +44,13 @@ const oracleDir = "../../../zk/ultrahonk/testdata"
 // stubPki is a test PkiKeeper: it either rejects the DSC outright or returns a
 // fixed canonical public key for it.
 type stubPki struct {
-	pubkey []byte
-	err    error
+	pubkey  []byte
+	err     error
+	revoked bool
+}
+
+func (s stubPki) IsCommitmentRevoked(context.Context, []byte) (bool, error) {
+	return s.revoked, nil
 }
 
 func (s stubPki) VerifyDsc(_ context.Context, _ []byte) ([]byte, error) {
@@ -131,6 +136,16 @@ func (stubDex) HasPoolForToken(context.Context, string) (bool, error) { return f
 func (stubDex) SwapExactIn(context.Context, sdk.AccAddress, sdk.Coin, string, math.Int) (sdk.Coin, error) {
 	return sdk.Coin{}, nil
 }
+func (stubDex) TwapObservation(context.Context, string) (math.LegacyDec, math.LegacyDec, int64, error) {
+	return math.LegacyDec{}, math.LegacyDec{}, 0, errNoStubPool
+}
+func (stubDex) QuoteHubToToken(context.Context, string, math.Int) (math.Int, error) {
+	return math.Int{}, errNoStubPool
+}
+
+// errNoStubPool stands in for "this stub has no pool", the state HasPoolForToken
+// above already reports. The buyback never reaches either method in these tests.
+var errNoStubPool = errors.New("stub dex: no pool")
 
 func newKeeperForTest(t *testing.T) (Keeper, context.Context) {
 	t.Helper()

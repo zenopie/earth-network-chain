@@ -16,8 +16,10 @@ var ParamsKey = collections.NewPrefix("p_pki")
 
 // Storage prefixes.
 var (
-	CscasKey       = collections.NewPrefix("cscas")        // certID -> Csca
-	CscaBySKIKey   = collections.NewPrefix("csca_by_ski")  // (SKI, certID) -> present
-	CscaByDNKey    = collections.NewPrefix("csca_by_dn")   // (sha256(subjectDN), certID) -> present
-	RevokedDscsKey = collections.NewPrefix("revoked_dscs") // sha256(dsc pubkey) -> present
+	CscasKey       = collections.NewPrefix("cscas")       // certID -> Csca
+	CscaBySKIKey   = collections.NewPrefix("csca_by_ski") // (SKI, certID) -> present
+	CscaByDNKey    = collections.NewPrefix("csca_by_dn")  // (sha256(subjectDN), certID) -> present
+	RevokedDscsKey = collections.NewPrefix("revoked_dscs")
+	// RevokedDscCommitmentsKey is the same set keyed by Poseidon2 commitment.
+	RevokedDscCommitmentsKey = collections.NewPrefix("revoked_dsc_commitments") // sha256(dsc pubkey) -> present
 )

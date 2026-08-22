@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"cosmossdk.io/core/address"
@@ -64,6 +65,16 @@ func (stubDexKeeper) HasPoolForToken(context.Context, string) (bool, error) {
 func (stubDexKeeper) SwapExactIn(context.Context, sdk.AccAddress, sdk.Coin, string, math.Int) (sdk.Coin, error) {
 	return sdk.Coin{}, nil
 }
+func (stubDexKeeper) TwapObservation(context.Context, string) (math.LegacyDec, math.LegacyDec, int64, error) {
+	return math.LegacyDec{}, math.LegacyDec{}, 0, errStubNoPool
+}
+func (stubDexKeeper) QuoteHubToToken(context.Context, string, math.Int) (math.Int, error) {
+	return math.Int{}, errStubNoPool
+}
+
+// errStubNoPool mirrors HasPoolForToken above returning false: with no pool the
+// buyback stops before it ever prices anything.
+var errStubNoPool = errors.New("stub dex: no pool")
 
 // stubStaking feeds the allocation keeper's capital stream, which these tests
 // never touch — the human stream's weight comes from the personhood keeper

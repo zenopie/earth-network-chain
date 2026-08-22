@@ -24,3 +24,24 @@ message Registration {
   // certificate carries no country attribute.
   string country = 6;
 }
+
+// RateCounter is a self-resetting daily counter, used to bound how many
+// registrations one Document Signer or one issuing country may produce in a day.
+//
+// Stored as a (day, count) pair rather than as a row per day so it costs one
+// entry per subject no matter how long the chain runs: when the day rolls the
+// count resets in place, and there is nothing to prune. The cost of that is
+// that history is not kept — only the current day, and the one before it.
+message RateCounter {
+  // day is the unix day (block time / 86400) the count belongs to.
+  uint64 day = 1;
+  // count is how many registrations have landed during that day.
+  uint64 count = 2;
+  // previous_count is the completed previous day's total.
+  //
+  // Only the network-wide counter uses it, and it is what the per-signer caps
+  // scale against. Scaling against the current day instead would be circular:
+  // the day starts at zero, so every cap would start the day at its floor and
+  // widen as registrations arrived — tightest exactly when a burst begins.
+  uint64 previous_count = 3;
+}

@@ -48,6 +48,15 @@ type DexKeeper interface {
 	HubDenom(ctx context.Context) (string, error)
 	HasPoolForToken(ctx context.Context, tokenDenom string) (bool, error)
 	SwapExactIn(ctx context.Context, trader sdk.AccAddress, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error)
+	// TwapObservation reads the pool's time-weighted price accumulator and its
+	// current spot price. The buyback stores one reading, takes another a window
+	// later, and prices against the average between them instead of against
+	// whatever the last trade left behind.
+	TwapObservation(ctx context.Context, tokenDenom string) (cumulative, spot math.LegacyDec, observedAt int64, err error)
+	// QuoteHubToToken reports what an ERTH -> token swap would return right now
+	// without executing it, so the buyback can set a min_out that already
+	// accounts for its own price impact against the current depth.
+	QuoteHubToToken(ctx context.Context, tokenDenom string, amountErthIn math.Int) (math.Int, error)
 }
 
 // PkiKeeper defines the expected interface for the x/pki module: it owns the
@@ -61,4 +70,8 @@ type PkiKeeper interface {
 	// big-endian), from which this module recomputes the commitment the
 	// register circuit exposes as a public input.
 	VerifyDsc(ctx context.Context, der []byte) ([]byte, error)
+	// IsCommitmentRevoked answers the same question for a signer this module has
+	// already recorded, which knows it only by the Poseidon2 commitment stored
+	// on the Registration — not by the certificate VerifyDsc takes.
+	IsCommitmentRevoked(ctx context.Context, commitment []byte) (bool, error)
 }

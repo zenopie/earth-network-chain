@@ -19,6 +19,11 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	// Revocations are restored after the CSCAs, and are not derived from them:
 	// nothing about a certificate records that governance stopped trusting a
 	// signer it chains to.
+	for _, id := range genState.RevokedDscCommitments {
+		if err := k.RevokedDscCommitments.Set(ctx, id); err != nil {
+			return err
+		}
+	}
 	for _, id := range genState.RevokedDscs {
 		if err := k.RevokedDscs.Set(ctx, id); err != nil {
 			return err
@@ -39,6 +44,12 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return false, nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := k.RevokedDscCommitments.Walk(ctx, nil, func(id []byte) (bool, error) {
+		gs.RevokedDscCommitments = append(gs.RevokedDscCommitments, id)
+		return false, nil
+	}); err != nil {
 		return nil, err
 	}
 	err = k.RevokedDscs.Walk(ctx, nil, func(id []byte) (bool, error) {

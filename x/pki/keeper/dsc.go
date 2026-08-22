@@ -89,13 +89,49 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 	return nil, types.ErrCertVerify
 }
 
-// RevokeDsc marks a Document Signer's public key as untrusted, by the same
-// sha256(canonical pubkey) identity VerifyDsc checks. Registrations already
-// recorded are unaffected; because each registration names its DSC publicly,
-// they can be enumerated and dealt with separately.
+// RevokeDsc marks a Document Signer's public key as untrusted.
+//
+// The signer is recorded under both identities it has on this chain: the
+// sha256(canonical pubkey) that VerifyDsc checks when a certificate is
+// presented, and the Poseidon2 commitment that the register circuit exposes and
+// that every Registration stores. Only the first stops new registrations; the
+// second is what lets registrations already on the books be recognised as
+// coming from a signer no longer trusted, which is the difference between
+// revocation that stops the bleeding and revocation that only closes the door.
 func (k Keeper) RevokeDsc(ctx context.Context, pubkey []byte) error {
 	hash := sha256.Sum256(pubkey)
-	return k.RevokedDscs.Set(ctx, hash[:])
+	if err := k.RevokedDscs.Set(ctx, hash[:]); err != nil {
+		return err
+	}
+	c := certs.DscCommitment(pubkey)
+	commitment := c.Bytes()
+	if err := k.RevokedDscCommitments.Set(ctx, commitment[:]); err != nil {
+		return err
+	}
+	// Tell whoever holds records made under this signer, so retiring them starts
+	// now rather than on a second governance vote a week from now.
+	for _, l := range *k.revocationListeners {
+		if err := l.OnDscRevoked(ctx, commitment[:]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RegisterRevocationListener attaches a listener. Called once, from module
+// wiring, by whichever module holds records tied to a Document Signer.
+func (k Keeper) RegisterRevocationListener(l types.DscRevocationListener) {
+	*k.revocationListeners = append(*k.revocationListeners, l)
+}
+
+// IsCommitmentRevoked reports whether the Document Signer behind a Poseidon2
+// commitment has been revoked. It is how x/personhood asks about a registration
+// it has already recorded, which knows its signer only by that commitment.
+func (k Keeper) IsCommitmentRevoked(ctx context.Context, commitment []byte) (bool, error) {
+	if len(commitment) == 0 {
+		return false, nil
+	}
+	return k.RevokedDscCommitments.Has(ctx, commitment)
 }
 
 // AddCscaDER parses, records, and indexes a trusted CSCA certificate.

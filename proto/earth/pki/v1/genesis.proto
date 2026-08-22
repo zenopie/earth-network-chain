@@ -25,4 +25,17 @@ message GenesisState {
   // dropped it would silently re-trust every certificate governance had
   // revoked.
   repeated bytes revoked_dscs = 3;
+
+  // revoked_dsc_commitments is the same revocation set under the other identity
+  // a Document Signer has on this chain: the Poseidon2 commitment to its public
+  // key, which is what the register circuit exposes and what each Registration
+  // stores.
+  //
+  // Carried rather than derived because it cannot be derived. revoked_dscs above
+  // holds sha256(canonical pubkey), and neither hash can be computed from the
+  // other without the key itself, which the revocation set does not keep. Both
+  // are written together by RevokeDsc and both have to survive an export, or a
+  // restarted chain would keep refusing a revoked certificate at registration
+  // while quietly paying the registrations it had already produced.
+  repeated bytes revoked_dsc_commitments = 4;
 }

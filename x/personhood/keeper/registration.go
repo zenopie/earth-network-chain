@@ -3,6 +3,7 @@ package keeper
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"math/big"
 	"strconv"
@@ -31,6 +32,7 @@ type dscFacts struct {
 }
 
 func (k Keeper) verifyRegistrationProof(ctx context.Context, proof []byte, publicSignals []string, algorithm string, dscDER []byte) ([]byte, dscFacts, error) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	params, err := k.Params.Get(ctx)
 	if err != nil {
 		return nil, dscFacts{}, err
@@ -56,42 +58,21 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, proof []byte, publi
 		pubInputs[i] = b
 	}
 
-	valid, err := ultrahonk.Verify(vk, proof, pubInputs)
-	if err != nil {
-		return nil, dscFacts{}, types.ErrInvalidProof.Wrap(err.Error())
-	}
-	if !valid {
-		return nil, dscFacts{}, types.ErrInvalidProof
-	}
-
-	// Bind the proof to the Document Signer that actually signed the passport.
-	// The circuit proved the SOD was signed by the key committed to at
-	// dsc_key_index; the chain independently verifies the accompanying
-	// certificate chains to a trusted CSCA and is unrevoked, then requires the
-	// commitment it derives to equal that public input. Without this equality a
-	// prover could sign with any key while naming a trusted one.
-	if k.pkiKeeper != nil {
-		dscIndex := int(params.DscKeyIndex)
-		if dscIndex >= len(pubInputs) {
-			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrapf("dsc key index %d out of range", dscIndex)
-		}
-		if len(dscDER) == 0 {
-			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrap("dsc certificate is required")
-		}
-		pubkey, err := k.pkiKeeper.VerifyDsc(ctx, dscDER)
-		if err != nil {
-			return nil, dscFacts{}, err
-		}
-		commitment := certs.DscCommitment(pubkey)
-		want := commitment.Bytes()
-		if !bytes.Equal(pubInputs[dscIndex], want[:]) {
-			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrap("proof is not bound to the supplied DSC")
-		}
-		facts.key = append([]byte(nil), want[:]...)
-		if cert, err := certs.ParseCert(dscDER); err == nil {
-			facts.country = cert.Country()
-		}
-	}
+	// Everything from here to the verifier is ordered cheapest-first, and that
+	// ordering is a defence rather than an optimisation.
+	//
+	// Verifying an UltraHonk proof costs milliseconds of CPU; every check below
+	// costs microseconds. Running the verifier first means a submission that any
+	// of these would have rejected still costs every validator the full price
+	// before it is thrown away, which is exactly the asymmetry a spam attack
+	// wants. Running them first means junk is discarded for almost nothing.
+	//
+	// This is sound because all of them are checks on the public inputs, and the
+	// proof is verified against those same public inputs immediately afterwards.
+	// Checking a value before proving it was committed to is the same as checking
+	// it after: a proof that disagrees with any of these never gets to matter,
+	// because the verification it must still pass runs over the array these were
+	// read from. What changes is only who pays for a rejection.
 
 	// Pin the prover-supplied current_date to the block time. The circuit proves
 	// the passport's expiry >= current_date, but current_date is a prover input,
@@ -117,7 +98,7 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, proof []byte, publi
 	if err != nil {
 		return nil, dscFacts{}, types.ErrBadPublicInputs.Wrap(err.Error())
 	}
-	blockUnix := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	blockUnix := sdkCtx.BlockTime().Unix()
 	skew := blockUnix - proofUnix
 	if skew < 0 {
 		skew = -skew
@@ -126,6 +107,86 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, proof []byte, publi
 		return nil, dscFacts{}, types.ErrBadPublicInputs.Wrapf(
 			"current_date out of range: proof skew %ds exceeds max %ds",
 			skew, params.CurrentDateMaxSkewSeconds)
+	}
+
+	// Reject a replay before paying to verify it.
+	//
+	// A registration whose nullifier is already held by a live human is going to
+	// be refused by Register regardless, so there is no reason to verify its
+	// proof first. This is the cheapest possible rejection — one keyed read —
+	// and it is the one that matters most, because replaying a real, valid proof
+	// is the least effort an attacker has to go to in order to make a validator
+	// run the verifier.
+	//
+	// Read-only, deliberately. The lapsed-registration case is handled in
+	// Register, which clears the old record and lets the new one through; doing
+	// that here would mutate state on the strength of a proof that has not been
+	// verified yet. So this rejects only what is certain — a nullifier that is
+	// currently live — and leaves every other case to the verified path.
+	if reg, err := k.Registrations.Get(ctx, pubInputs[nullifierIndex]); err == nil {
+		expired, err := k.isExpired(ctx, reg)
+		if err != nil {
+			return nil, dscFacts{}, err
+		}
+		if !expired {
+			return nil, dscFacts{}, types.ErrAlreadyReg.Wrapf(
+				"nullifier %s", hex.EncodeToString(pubInputs[nullifierIndex]))
+		}
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, dscFacts{}, err
+	}
+
+	// Bind the proof to the Document Signer that actually signed the passport.
+	// The circuit proved the SOD was signed by the key committed to at
+	// dsc_key_index; the chain independently verifies the accompanying
+	// certificate chains to a trusted CSCA and is unrevoked, then requires the
+	// commitment it derives to equal that public input. Without this equality a
+	// prover could sign with any key while naming a trusted one.
+	if k.pkiKeeper != nil {
+		dscIndex := int(params.DscKeyIndex)
+		if dscIndex >= len(pubInputs) {
+			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrapf("dsc key index %d out of range", dscIndex)
+		}
+		if len(dscDER) == 0 {
+			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrap("dsc certificate is required")
+		}
+		// Metered: DER parsing and public-key operations over attacker-supplied
+		// bytes, cheap next to the SNARK but not free.
+		sdkCtx.GasMeter().ConsumeGas(params.DscVerificationGasOrDefault(), "personhood: dsc chain verification")
+		pubkey, err := k.pkiKeeper.VerifyDsc(ctx, dscDER)
+		if err != nil {
+			return nil, dscFacts{}, err
+		}
+		commitment := certs.DscCommitment(pubkey)
+		want := commitment.Bytes()
+		if !bytes.Equal(pubInputs[dscIndex], want[:]) {
+			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrap("proof is not bound to the supplied DSC")
+		}
+		facts.key = append([]byte(nil), want[:]...)
+		if cert, err := certs.ParseCert(dscDER); err == nil {
+			facts.country = cert.Country()
+		}
+	}
+
+	// Charge for the verification before running it.
+	//
+	// This is the only thing bounding how much proof CPU one block can be made
+	// to do. Unmetered, a block of deliberately-invalid proofs sits far under
+	// the block gas limit while costing every validator seconds of wall clock,
+	// and blocks start missing their target — a liveness failure that no
+	// minimum gas price prevents, because a fee bounds what the sender spends
+	// and never what the block costs to execute.
+	//
+	// Charged before the call, not after, so the transaction runs out of gas
+	// instead of running the verifier it cannot afford.
+	sdkCtx.GasMeter().ConsumeGas(params.ProofVerificationGasOrDefault(), "personhood: ultrahonk proof verification")
+
+	valid, err := ultrahonk.Verify(vk, proof, pubInputs)
+	if err != nil {
+		return nil, dscFacts{}, types.ErrInvalidProof.Wrap(err.Error())
+	}
+	if !valid {
+		return nil, dscFacts{}, types.ErrInvalidProof
 	}
 
 	return pubInputs[nullifierIndex], facts, nil
@@ -167,6 +228,9 @@ func signalToBytes32(s string) ([]byte, error) {
 	n.FillBytes(buf[:])
 	return buf[:], nil
 }
+
+// hexOf renders an id for an event attribute.
+func hexOf(b []byte) string { return hex.EncodeToString(b) }
 
 // getRegistrationByAddr returns the registration for a wallet, if any.
 func (k Keeper) getRegistrationByAddr(ctx context.Context, addr sdk.AccAddress) (types.Registration, bool, error) {
@@ -240,6 +304,11 @@ func (k Keeper) removeRegistration(ctx context.Context, reg types.Registration) 
 	if err := k.RegByRegisteredAt.Remove(ctx, collections.Join(reg.RegisteredAt, reg.Nullifier)); err != nil {
 		return err
 	}
+	if len(reg.DscKey) > 0 {
+		if err := k.RegByDsc.Remove(ctx, collections.Join(reg.DscKey, reg.Nullifier)); err != nil {
+			return err
+		}
+	}
 	// These tallies are bumped per registration, so they have to come back down
 	// per removal or they drift into counting lifetime registrations rather than
 	// live ones.
@@ -268,20 +337,23 @@ func (k Keeper) removeRegistration(ctx context.Context, reg types.Registration) 
 //
 // The registered-at index is ordered, so this walks only the lapsed prefix and
 // stops at the first live registration rather than scanning the whole set.
-func (k Keeper) sweepExpiredRegistrations(ctx context.Context) error {
+// budget is the share of this block's shared retirement budget left for the
+// expiry sweep after the revoked-signer purge has taken what it needed. It
+// returns how many it used.
+func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int, error) {
+	if budget <= 0 {
+		return 0, nil
+	}
 	params, err := k.Params.Get(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
 	cutoff := now - int64(params.RegistrationValiditySeconds)
 	if cutoff <= 0 {
-		return nil
+		return 0, nil
 	}
-	limit := int(params.ExpirySweepLimit)
-	if limit <= 0 {
-		limit = types.DefaultExpirySweepLimit
-	}
+	limit := budget
 
 	// Collect first: removeRegistration writes to the index being walked.
 	var expired []collections.Pair[int64, []byte]
@@ -293,16 +365,16 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context) error {
 		return len(expired) >= limit, nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(expired) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// Advance once for the whole batch rather than per removal: the settle is to
 	// the same block time either way, and every ClearVoter reads the same index.
 	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
-		return err
+		return 0, err
 	}
 
 	for _, key := range expired {
@@ -311,14 +383,14 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context) error {
 			if errors.Is(err, collections.ErrNotFound) {
 				// Index entry outlived its registration; drop the orphaned key.
 				if err := k.RegByRegisteredAt.Remove(ctx, key); err != nil {
-					return err
+					return 0, err
 				}
 				continue
 			}
-			return err
+			return 0, err
 		}
 		if err := k.removeRegistration(ctx, reg); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -331,10 +403,11 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context) error {
 				"registration_sweep_capped",
 				sdk.NewAttribute("retired", strconv.Itoa(len(expired))),
 				sdk.NewAttribute("limit", strconv.Itoa(limit)),
+				sdk.NewAttribute("reason", "expired"),
 			),
 		)
 	}
-	return nil
+	return len(expired), nil
 }
 
 // requireValidHuman returns the registration for addr, erroring if it is missing
@@ -353,6 +426,21 @@ func (k Keeper) requireValidHuman(ctx context.Context, addr sdk.AccAddress) (typ
 	}
 	if expired {
 		return types.Registration{}, types.ErrRegExpired
+	}
+	// A registration is only as good as the Document Signer behind it. Once
+	// governance revokes that signer this stops being a human the chain will
+	// pay, immediately and without waiting for the purge sweep to reach it —
+	// which matters because the sweep is bounded per block and a large signer
+	// takes many blocks to work through, every one of which would otherwise be
+	// another day's ANML.
+	if k.pkiKeeper != nil && len(reg.DscKey) > 0 {
+		revoked, err := k.pkiKeeper.IsCommitmentRevoked(ctx, reg.DscKey)
+		if err != nil {
+			return types.Registration{}, err
+		}
+		if revoked {
+			return types.Registration{}, types.ErrDscRevoked
+		}
 	}
 	return reg, nil
 }

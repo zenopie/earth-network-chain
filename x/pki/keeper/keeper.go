@@ -49,6 +49,23 @@ type Keeper struct {
 	// identity VerifyDsc checks, so revocation covers every certificate carrying
 	// that key.
 	RevokedDscs collections.KeySet[[]byte]
+	// The same revocations keyed by Poseidon2 commitment — the identity a
+	// Registration stores and the register circuit exposes. Written alongside
+	// RevokedDscs so a revoked signer can be recognised from either direction:
+	// by certificate at registration time, and by commitment for registrations
+	// already on the books.
+	RevokedDscCommitments collections.KeySet[[]byte]
+
+	// revocationListeners are notified when a Document Signer is revoked, so the
+	// modules holding records made under it can act without this module needing
+	// to know they exist.
+	//
+	// A registry rather than a direct call because the dependency only runs one
+	// way: x/personhood imports this module to verify certificates, so this
+	// module cannot import it back to retire its registrations. The listener is
+	// attached at wiring time by whoever owns those records — the same pattern
+	// x/allocation uses for its weight sources, and for the same reason.
+	revocationListeners *[]types.DscRevocationListener
 }
 
 func NewKeeper(
@@ -67,11 +84,13 @@ func NewKeeper(
 		addressCodec: addressCodec,
 		authority:    authority,
 
-		Params:      collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
-		Cscas:       collections.NewMap(sb, types.CscasKey, "cscas", collections.BytesKey, codec.CollValue[types.Csca](cdc)),
-		CscaBySKI:   collections.NewKeySet(sb, types.CscaBySKIKey, "csca_by_ski", collections.PairKeyCodec(collections.BytesKey, collections.BytesKey)),
-		CscaByDN:    collections.NewKeySet(sb, types.CscaByDNKey, "csca_by_dn", collections.PairKeyCodec(collections.BytesKey, collections.BytesKey)),
-		RevokedDscs: collections.NewKeySet(sb, types.RevokedDscsKey, "revoked_dscs", collections.BytesKey),
+		Params:                collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+		Cscas:                 collections.NewMap(sb, types.CscasKey, "cscas", collections.BytesKey, codec.CollValue[types.Csca](cdc)),
+		CscaBySKI:             collections.NewKeySet(sb, types.CscaBySKIKey, "csca_by_ski", collections.PairKeyCodec(collections.BytesKey, collections.BytesKey)),
+		CscaByDN:              collections.NewKeySet(sb, types.CscaByDNKey, "csca_by_dn", collections.PairKeyCodec(collections.BytesKey, collections.BytesKey)),
+		revocationListeners:   &[]types.DscRevocationListener{},
+		RevokedDscs:           collections.NewKeySet(sb, types.RevokedDscsKey, "revoked_dscs", collections.BytesKey),
+		RevokedDscCommitments: collections.NewKeySet(sb, types.RevokedDscCommitmentsKey, "revoked_dsc_commitments", collections.BytesKey),
 	}
 	schema, err := sb.Build()
 	if err != nil {

@@ -59,12 +59,119 @@ type Params struct {
 	// prover-supplied current_date to real time, so skipping it lets any expired
 	// passport prove out against a backdated date.
 	CurrentDateMaxSkewSeconds uint64 `protobuf:"varint,7,opt,name=current_date_max_skew_seconds,json=currentDateMaxSkewSeconds,proto3" json:"current_date_max_skew_seconds,omitempty"`
-	// expiry_sweep_limit caps how many lapsed registrations BeginBlocker retires
-	// per block, bounding the work a cohort that all registered together can land
-	// on a single block. Exceeding it is safe — the backlog drains over following
-	// blocks and emits registration_sweep_capped — so this is the dial to raise if
-	// that event persists. Zero falls back to the compiled-in default.
-	ExpirySweepLimit uint64 `protobuf:"varint,9,opt,name=expiry_sweep_limit,json=expirySweepLimit,proto3" json:"expiry_sweep_limit,omitempty"`
+	// proof_verification_gas is the gas charged for one UltraHonk registration
+	// proof verification, consumed immediately before the verifier runs.
+	//
+	// Without it the most expensive operation on this chain is free. The block gas
+	// limit is the only bound on how much CPU one block may demand, and it can
+	// only bound work that is metered: an unmetered verifier lets a block full of
+	// deliberately-invalid proofs stay far under the gas limit while taking
+	// seconds of wall-clock time on every validator, which is a liveness failure
+	// rather than a fee problem. A minimum gas price does not substitute — it
+	// bounds what the attacker spends, never what a block costs to execute.
+	//
+	// Governance-tunable because the cost tracks the circuit: a larger register
+	// circuit verifies more slowly, and the charge has to follow it. Re-benchmark
+	// (BenchmarkVerify in zk/ultrahonk) whenever the verifying keys change.
+	// Zero falls back to the compiled-in default rather than disabling the charge,
+	// since "unset" must never be the cheapest configuration.
+	ProofVerificationGas uint64 `protobuf:"varint,10,opt,name=proof_verification_gas,json=proofVerificationGas,proto3" json:"proof_verification_gas,omitempty"`
+	// dsc_verification_gas is the gas charged for one Document Signer certificate
+	// chain verification, consumed immediately before it runs. Cheaper than the
+	// SNARK by orders of magnitude, but it is still an unmetered public-key
+	// operation on attacker-supplied bytes. Zero falls back to the default.
+	DscVerificationGas uint64 `protobuf:"varint,11,opt,name=dsc_verification_gas,json=dscVerificationGas,proto3" json:"dsc_verification_gas,omitempty"`
+	// buyback_twap_window_seconds is the minimum age of the price observation the
+	// ANML buyback prices against, and therefore also its cadence: emission
+	// accrues until the window has elapsed, then buys in one trade.
+	//
+	// A per-block buyback cannot be protected by a TWAP, because a window one
+	// block long is the spot price. Accruing between trades is what creates a
+	// window to average over; nothing is lost by waiting, since the accrued
+	// amount is minted in full when the trade fires. Zero falls back to the
+	// default.
+	BuybackTwapWindowSeconds uint64 `protobuf:"varint,12,opt,name=buyback_twap_window_seconds,json=buybackTwapWindowSeconds,proto3" json:"buyback_twap_window_seconds,omitempty"`
+	// buyback_max_deviation_bps is how far above the time-weighted average price
+	// the pool's spot price may sit and still be traded into, in basis points.
+	//
+	// This is the anti-sandwich control. The buyback is a predictable, fixed-size
+	// market buy from a known address, which is the ideal target: push the price
+	// up, let the protocol buy high, sell back. Refusing to trade when spot has
+	// been pushed above the average defeats that — the manipulated buy simply
+	// does not happen, and the emission accrues to the next window instead of
+	// being spent at the manipulated price.
+	//
+	// Deliberately one-sided. Spot *below* the average means the buyback gets more
+	// ANML per ERTH, which is the outcome the mechanism wants; gating on it would
+	// only stall emission for no gain. An attacker who pushes the price down is
+	// selling ANML cheaply to a protocol that is trying to buy it.
+	//
+	// Zero falls back to the default: an unset deviation bound must not mean "any
+	// deviation is acceptable", which is the same failure mode documented on
+	// current_date_max_skew_seconds above.
+	BuybackMaxDeviationBps uint64 `protobuf:"varint,13,opt,name=buyback_max_deviation_bps,json=buybackMaxDeviationBps,proto3" json:"buyback_max_deviation_bps,omitempty"`
+	// buyback_max_accrual_seconds caps how much elapsed time one buyback may mint
+	// for, bounding the catch-up after a halt or a long run of skipped windows.
+	//
+	// It is the same concern that keeps last_buyback out of genesis exports: time
+	// during which the buyback did not run is not emission that was earned, and
+	// minting it in a single trade would dump an arbitrarily large ERTH order into
+	// the ANML pool. Zero falls back to the default.
+	BuybackMaxAccrualSeconds uint64 `protobuf:"varint,14,opt,name=buyback_max_accrual_seconds,json=buybackMaxAccrualSeconds,proto3" json:"buyback_max_accrual_seconds,omitempty"`
+	// registration_sweep_limit caps how many registrations BeginBlocker may retire
+	// per block, across every reason for retiring one.
+	//
+	// A single budget, not one per sweep, because nothing meters this work. Block
+	// gas bounds transactions; BeginBlock runs on an infinite gas meter and
+	// consumes no block gas, so the only ceiling on automatic per-block work is
+	// the one written here. Two sweeps with separate caps would each look
+	// reasonable while their sum — the number that actually decides how long a
+	// block takes — was never chosen by anyone.
+	//
+	// Exceeding it is safe: the backlog drains over following blocks and a
+	// registration_sweep_capped event is emitted. That event persisting is the
+	// signal to raise this. Zero falls back to the compiled-in default.
+	RegistrationSweepLimit uint64 `protobuf:"varint,15,opt,name=registration_sweep_limit,json=registrationSweepLimit,proto3" json:"registration_sweep_limit,omitempty"`
+	// dsc_daily_registration_floor and dsc_daily_registration_share_bps bound how
+	// many registrations one Document Signer may produce in a day:
+	//
+	//	cap = max(floor, share_bps * yesterday's network registrations / 10000)
+	//
+	// This is the automatic brake on a compromised or complicit signer. A signer
+	// whose key is stolen can mint unlimited valid passport proofs, and until
+	// there is a cap the only thing standing between that and unlimited
+	// registrations — each drawing ANML daily and carrying democratic-pillar vote
+	// weight — is a human noticing a counter and governance voting to revoke,
+	// which takes days. The cap cannot prevent the compromise; it bounds what the
+	// compromise is worth before anyone acts.
+	//
+	// Two terms because neither works alone. A fixed floor is either too tight for
+	// a country whose adoption takes off or too loose to matter once the network
+	// is large. A pure share is meaningless at genesis, when a handful of
+	// registrations make any signer look dominant. Taking the larger means the cap
+	// never falls below the floor and widens on its own as the network grows,
+	// instead of waiting on governance to keep raising a constant.
+	//
+	// Scaled against yesterday's completed day, not today's running total: see
+	// previous_count in RateCounter.
+	//
+	// Hitting the cap is a deferral, not a ban. The registration is refused with
+	// an error saying to retry, and the day rolls. Suspending the signer outright
+	// would mean one compromised key can lock every genuine holder of that
+	// country's passports out until a governance vote completes — a worse failure
+	// than the one being prevented. Zero on either falls back to the default.
+	DscDailyRegistrationFloor    uint64 `protobuf:"varint,16,opt,name=dsc_daily_registration_floor,json=dscDailyRegistrationFloor,proto3" json:"dsc_daily_registration_floor,omitempty"`
+	DscDailyRegistrationShareBps uint64 `protobuf:"varint,17,opt,name=dsc_daily_registration_share_bps,json=dscDailyRegistrationShareBps,proto3" json:"dsc_daily_registration_share_bps,omitempty"`
+	// country_daily_registration_floor and country_daily_registration_share_bps
+	// are the same bound one level up, per ISO 3166-1 issuing country.
+	//
+	// The per-signer cap alone is bypassable by exactly the attacker it is aimed
+	// at: a compromised CSCA can mint fresh Document Signers at will, and each new
+	// one arrives with a full unused daily allowance. Bounding the country is what
+	// makes the number of signers stop mattering. Necessarily looser, since a
+	// country legitimately has several signers active at once.
+	CountryDailyRegistrationFloor    uint64 `protobuf:"varint,18,opt,name=country_daily_registration_floor,json=countryDailyRegistrationFloor,proto3" json:"country_daily_registration_floor,omitempty"`
+	CountryDailyRegistrationShareBps uint64 `protobuf:"varint,19,opt,name=country_daily_registration_share_bps,json=countryDailyRegistrationShareBps,proto3" json:"country_daily_registration_share_bps,omitempty"`
 }
 
 func (m *Params) Reset()         { *m = Params{} }
@@ -138,9 +245,72 @@ func (m *Params) GetCurrentDateMaxSkewSeconds() uint64 {
 	return 0
 }
 
-func (m *Params) GetExpirySweepLimit() uint64 {
+func (m *Params) GetProofVerificationGas() uint64 {
 	if m != nil {
-		return m.ExpirySweepLimit
+		return m.ProofVerificationGas
+	}
+	return 0
+}
+
+func (m *Params) GetDscVerificationGas() uint64 {
+	if m != nil {
+		return m.DscVerificationGas
+	}
+	return 0
+}
+
+func (m *Params) GetBuybackTwapWindowSeconds() uint64 {
+	if m != nil {
+		return m.BuybackTwapWindowSeconds
+	}
+	return 0
+}
+
+func (m *Params) GetBuybackMaxDeviationBps() uint64 {
+	if m != nil {
+		return m.BuybackMaxDeviationBps
+	}
+	return 0
+}
+
+func (m *Params) GetBuybackMaxAccrualSeconds() uint64 {
+	if m != nil {
+		return m.BuybackMaxAccrualSeconds
+	}
+	return 0
+}
+
+func (m *Params) GetRegistrationSweepLimit() uint64 {
+	if m != nil {
+		return m.RegistrationSweepLimit
+	}
+	return 0
+}
+
+func (m *Params) GetDscDailyRegistrationFloor() uint64 {
+	if m != nil {
+		return m.DscDailyRegistrationFloor
+	}
+	return 0
+}
+
+func (m *Params) GetDscDailyRegistrationShareBps() uint64 {
+	if m != nil {
+		return m.DscDailyRegistrationShareBps
+	}
+	return 0
+}
+
+func (m *Params) GetCountryDailyRegistrationFloor() uint64 {
+	if m != nil {
+		return m.CountryDailyRegistrationFloor
+	}
+	return 0
+}
+
+func (m *Params) GetCountryDailyRegistrationShareBps() uint64 {
+	if m != nil {
+		return m.CountryDailyRegistrationShareBps
 	}
 	return 0
 }
@@ -153,38 +323,52 @@ func init() {
 func init() { proto.RegisterFile("earth/personhood/v1/params.proto", fileDescriptor_5658283c6f146ef1) }
 
 var fileDescriptor_5658283c6f146ef1 = []byte{
-	// 492 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x6c, 0x92, 0x31, 0x6f, 0xd3, 0x40,
-	0x14, 0xc7, 0x73, 0x49, 0x1a, 0x92, 0x2b, 0x29, 0xe1, 0xe8, 0xe0, 0x06, 0xd5, 0xb5, 0x3a, 0x40,
-	0x84, 0x8a, 0xad, 0xc0, 0x82, 0x3a, 0x55, 0x15, 0x0c, 0x34, 0x20, 0x21, 0x47, 0x74, 0x60, 0xb1,
-	0xae, 0xf1, 0x4b, 0x72, 0x4a, 0x72, 0x67, 0xdd, 0x5d, 0x1c, 0xfb, 0x2b, 0x30, 0x31, 0x32, 0x02,
-	0x9f, 0x80, 0x8f, 0xc1, 0xd8, 0x91, 0x11, 0x25, 0x03, 0x7c, 0x0c, 0xe4, 0xbb, 0xb4, 0x04, 0xb5,
-	0x8b, 0xf5, 0xfc, 0x7f, 0xbf, 0xff, 0xbd, 0xbf, 0xee, 0x1e, 0xf6, 0x80, 0x4a, 0x3d, 0x0e, 0x12,
-	0x90, 0x4a, 0xf0, 0xb1, 0x10, 0x71, 0x90, 0x76, 0x83, 0x84, 0x4a, 0x3a, 0x53, 0x7e, 0x22, 0x85,
-	0x16, 0xe4, 0x81, 0x21, 0xfc, 0x7f, 0x84, 0x9f, 0x76, 0xdb, 0xf7, 0xe9, 0x8c, 0x71, 0x11, 0x98,
-	0xaf, 0xe5, 0xda, 0xbb, 0x23, 0x31, 0x12, 0xa6, 0x0c, 0x8a, 0xca, 0xaa, 0x87, 0xdf, 0xaa, 0xb8,
-	0xf6, 0xce, 0x1c, 0x47, 0xde, 0xe3, 0x9d, 0x14, 0x24, 0x1b, 0xe6, 0x8c, 0x8f, 0xa2, 0x09, 0xe4,
-	0xca, 0x41, 0x5e, 0xa5, 0xb3, 0xfd, 0xcc, 0xf7, 0x6f, 0x99, 0xe0, 0x5b, 0x93, 0x7f, 0x7e, 0xe5,
-	0xe8, 0x41, 0xae, 0x5e, 0x71, 0x2d, 0xf3, 0xb0, 0x99, 0x6e, 0x6a, 0xe4, 0x14, 0xef, 0x4b, 0x18,
-	0x31, 0xa5, 0x25, 0xd5, 0x4c, 0xf0, 0x28, 0xa5, 0x53, 0x16, 0x33, 0x9d, 0x47, 0x0a, 0x06, 0x82,
-	0xc7, 0xca, 0xa9, 0x78, 0xa8, 0x53, 0x0d, 0x1f, 0x6e, 0x42, 0xe7, 0x6b, 0xa6, 0x6f, 0x11, 0xf2,
-	0x18, 0xdf, 0xe3, 0xf3, 0xe9, 0x94, 0x0d, 0x19, 0xc8, 0x88, 0xf1, 0x18, 0x32, 0xa7, 0xea, 0xa1,
-	0x4e, 0x33, 0xdc, 0xb9, 0x96, 0x5f, 0x17, 0x2a, 0x39, 0xc4, 0xcd, 0x58, 0x0d, 0x8a, 0xf4, 0x6b,
-	0x6c, 0xcb, 0x60, 0xdb, 0xb1, 0x1a, 0xf4, 0x20, 0xb7, 0xcc, 0x11, 0x26, 0x83, 0xb9, 0x94, 0xc0,
-	0x75, 0x14, 0x53, 0x0d, 0x6b, 0xb0, 0x66, 0xc0, 0xd6, 0xba, 0xf3, 0x92, 0x6a, 0xb0, 0xf4, 0x09,
-	0xde, 0xff, 0x8f, 0x9e, 0xd1, 0x2c, 0x52, 0x13, 0x58, 0x5c, 0xc7, 0xbf, 0x63, 0xe2, 0xef, 0x6d,
-	0x18, 0xdf, 0xd2, 0xac, 0x3f, 0x81, 0xc5, 0x55, 0xf8, 0x23, 0x4c, 0x20, 0x4b, 0x98, 0xcc, 0x23,
-	0xb5, 0x00, 0x48, 0xa2, 0x29, 0x9b, 0x31, 0xed, 0x34, 0x8c, 0xad, 0x65, 0x3b, 0xfd, 0xa2, 0xf1,
-	0xa6, 0xd0, 0xdb, 0x27, 0x98, 0xdc, 0xbc, 0x53, 0xd2, 0xc2, 0x95, 0x09, 0xe4, 0x0e, 0xf2, 0x50,
-	0xa7, 0x11, 0x16, 0x25, 0xd9, 0xc5, 0x5b, 0x29, 0x9d, 0xce, 0xc1, 0x29, 0x7b, 0xa8, 0x73, 0x37,
-	0xb4, 0x3f, 0xc7, 0xe5, 0x17, 0xe8, 0xf8, 0xd1, 0x9f, 0x2f, 0x07, 0xe8, 0xf3, 0xd7, 0x03, 0xf4,
-	0xf1, 0xf7, 0xf7, 0x27, 0x7b, 0x76, 0x7f, 0xb2, 0xcd, 0x0d, 0xb2, 0x4f, 0x77, 0x56, 0xad, 0x97,
-	0x5b, 0x95, 0xb3, 0x6a, 0xbd, 0xde, 0x6a, 0x84, 0xf5, 0xe2, 0xd6, 0xa4, 0x10, 0x3a, 0x24, 0x34,
-	0x8e, 0x25, 0x28, 0x15, 0x89, 0xc4, 0x3c, 0xd7, 0x10, 0xe0, 0xb4, 0xf7, 0x63, 0xe9, 0xa2, 0xcb,
-	0xa5, 0x8b, 0x7e, 0x2d, 0x5d, 0xf4, 0x69, 0xe5, 0x96, 0x2e, 0x57, 0x6e, 0xe9, 0xe7, 0xca, 0x2d,
-	0x7d, 0xe8, 0x8e, 0x98, 0x1e, 0xcf, 0x2f, 0xfc, 0x81, 0x98, 0x05, 0x66, 0xd2, 0x53, 0x0e, 0x7a,
-	0x21, 0xe4, 0x24, 0xb8, 0x65, 0xae, 0xce, 0x13, 0x50, 0x17, 0x35, 0xb3, 0x78, 0xcf, 0xff, 0x06,
-	0x00, 0x00, 0xff, 0xff, 0x47, 0x55, 0x18, 0x78, 0xda, 0x02, 0x00, 0x00,
+	// 713 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x7c, 0x94, 0x4f, 0x4f, 0x13, 0x4f,
+	0x18, 0xc7, 0x59, 0x5a, 0xf8, 0xb5, 0x03, 0x85, 0x32, 0x34, 0x64, 0xf9, 0x57, 0x36, 0xe4, 0x17,
+	0x6d, 0x8c, 0x6e, 0x45, 0x3d, 0x20, 0x89, 0x11, 0x09, 0x42, 0x04, 0x31, 0x66, 0xab, 0x98, 0x78,
+	0xd9, 0x4c, 0x77, 0xa7, 0xed, 0xa4, 0xdb, 0x9d, 0xcd, 0xcc, 0xf4, 0xcf, 0xbe, 0x05, 0xbd, 0x78,
+	0xf4, 0xa8, 0xef, 0xc0, 0x97, 0xe1, 0x91, 0xa3, 0x47, 0x03, 0x07, 0x7d, 0x19, 0x66, 0x66, 0xba,
+	0xb0, 0x15, 0xea, 0xa5, 0x99, 0xce, 0xf3, 0xf9, 0x7e, 0x9f, 0xef, 0x3c, 0xbb, 0x3b, 0xc0, 0xc2,
+	0x88, 0x89, 0x56, 0x35, 0xc2, 0x8c, 0xd3, 0xb0, 0x45, 0xa9, 0x5f, 0xed, 0x6d, 0x55, 0x23, 0xc4,
+	0x50, 0x87, 0xdb, 0x11, 0xa3, 0x82, 0xc2, 0x45, 0x45, 0xd8, 0x57, 0x84, 0xdd, 0xdb, 0x5a, 0x59,
+	0x40, 0x1d, 0x12, 0xd2, 0xaa, 0xfa, 0xd5, 0xdc, 0x4a, 0xa9, 0x49, 0x9b, 0x54, 0x2d, 0xab, 0x72,
+	0xa5, 0x77, 0x37, 0x3f, 0xe6, 0xc1, 0xf4, 0x6b, 0x65, 0x07, 0xdf, 0x82, 0xb9, 0x1e, 0x66, 0xa4,
+	0x11, 0x93, 0xb0, 0xe9, 0xb6, 0x71, 0xcc, 0x4d, 0xc3, 0xca, 0x54, 0x66, 0x1e, 0xd8, 0xf6, 0x0d,
+	0x1d, 0x6c, 0x2d, 0xb2, 0x4f, 0x13, 0xc5, 0x31, 0x8e, 0xf9, 0xf3, 0x50, 0xb0, 0xd8, 0x29, 0xf4,
+	0xd2, 0x7b, 0x70, 0x0f, 0xac, 0x33, 0xdc, 0x24, 0x5c, 0x30, 0x24, 0x08, 0x0d, 0xdd, 0x1e, 0x0a,
+	0x88, 0x4f, 0x44, 0xec, 0x72, 0xec, 0xd1, 0xd0, 0xe7, 0x66, 0xc6, 0x32, 0x2a, 0x59, 0x67, 0x35,
+	0x0d, 0x9d, 0x0e, 0x99, 0x9a, 0x46, 0xe0, 0x6d, 0x30, 0x1f, 0x76, 0x83, 0x80, 0x34, 0x08, 0x66,
+	0x2e, 0x09, 0x7d, 0x3c, 0x30, 0xb3, 0x96, 0x51, 0x29, 0x38, 0x73, 0x97, 0xdb, 0x2f, 0xe4, 0x2e,
+	0xdc, 0x04, 0x05, 0x9f, 0x7b, 0x32, 0xfd, 0x10, 0x9b, 0x52, 0xd8, 0x8c, 0xcf, 0xbd, 0x63, 0x1c,
+	0x6b, 0xe6, 0x2e, 0x80, 0x5e, 0x97, 0x31, 0x1c, 0x0a, 0xd7, 0x47, 0x02, 0x0f, 0xc1, 0x69, 0x05,
+	0x16, 0x87, 0x95, 0x7d, 0x24, 0xb0, 0xa6, 0x77, 0xc1, 0xfa, 0x08, 0xdd, 0x41, 0x03, 0x97, 0xb7,
+	0x71, 0xff, 0x32, 0xfe, 0x7f, 0x2a, 0xfe, 0x72, 0x4a, 0x78, 0x82, 0x06, 0xb5, 0x36, 0xee, 0x27,
+	0xe1, 0x1f, 0x81, 0xa5, 0x88, 0x51, 0xda, 0x70, 0xd5, 0x5c, 0x88, 0xa7, 0xc7, 0xd0, 0x44, 0xdc,
+	0x04, 0x4a, 0x5a, 0x52, 0xd5, 0xd3, 0x54, 0xf1, 0x10, 0x71, 0x78, 0x1f, 0x94, 0xe4, 0x49, 0xae,
+	0x69, 0x66, 0x94, 0x06, 0xfa, 0xdc, 0xfb, 0x5b, 0xf1, 0x04, 0xac, 0xd6, 0xbb, 0x71, 0x1d, 0x79,
+	0x6d, 0x57, 0xf4, 0x51, 0xe4, 0xf6, 0x49, 0xe8, 0xd3, 0xab, 0x9c, 0xb3, 0x4a, 0x68, 0x0e, 0x91,
+	0x37, 0x7d, 0x14, 0xbd, 0x53, 0x40, 0x12, 0xf3, 0x31, 0x58, 0x4e, 0xe4, 0xf2, 0x8c, 0x3e, 0xee,
+	0x11, 0xdd, 0xb5, 0x1e, 0x71, 0xb3, 0xa0, 0xc4, 0x4b, 0x43, 0xe0, 0x04, 0x0d, 0xf6, 0x93, 0xf2,
+	0x5e, 0x34, 0xd2, 0x59, 0x4a, 0x91, 0xe7, 0xb1, 0x2e, 0x0a, 0x2e, 0x3b, 0xcf, 0x8d, 0x74, 0x3e,
+	0x41, 0x83, 0x67, 0x1a, 0x48, 0x3a, 0x6f, 0x03, 0x73, 0xe4, 0x0d, 0xe1, 0x7d, 0x8c, 0x23, 0x37,
+	0x20, 0x1d, 0x22, 0xcc, 0x79, 0xdd, 0x38, 0x5d, 0xaf, 0xc9, 0xf2, 0x4b, 0x59, 0x85, 0x4f, 0xc1,
+	0x9a, 0x1c, 0x92, 0x8f, 0x48, 0x10, 0xbb, 0x23, 0x1e, 0x8d, 0x80, 0x52, 0x66, 0x16, 0xf5, 0xb3,
+	0xf1, 0xb9, 0xb7, 0x2f, 0x11, 0x27, 0x45, 0x1c, 0x48, 0x00, 0x1e, 0x00, 0x6b, 0x8c, 0x01, 0x6f,
+	0x21, 0x86, 0xd5, 0xd9, 0x17, 0x94, 0xc9, 0xda, 0x4d, 0x26, 0x35, 0x09, 0xc9, 0x09, 0x1c, 0x02,
+	0xcb, 0xa3, 0x5d, 0xf9, 0xfa, 0x8f, 0x0f, 0x03, 0x95, 0xcf, 0xfa, 0x90, 0x1b, 0x13, 0xe8, 0x15,
+	0xf8, 0xff, 0x1f, 0x46, 0x57, 0xa1, 0x16, 0x95, 0x99, 0x35, 0xce, 0x2c, 0x09, 0xb6, 0xb2, 0x0b,
+	0xe0, 0xf5, 0x4f, 0x14, 0x16, 0x41, 0xa6, 0x8d, 0x63, 0xd3, 0xb0, 0x8c, 0x4a, 0xde, 0x91, 0x4b,
+	0x58, 0x02, 0x53, 0x3d, 0x14, 0x74, 0xb1, 0x39, 0x69, 0x19, 0x95, 0x59, 0x47, 0xff, 0xd9, 0x99,
+	0xdc, 0x36, 0x76, 0x6e, 0xfd, 0xfe, 0xb2, 0x61, 0x7c, 0xfe, 0xba, 0x61, 0x7c, 0xf8, 0xf5, 0xed,
+	0xce, 0xb2, 0xbe, 0x8e, 0x06, 0xe9, 0x0b, 0x49, 0xdf, 0x04, 0x47, 0xd9, 0xdc, 0x64, 0x31, 0x73,
+	0x94, 0xcd, 0xe5, 0x8a, 0xf9, 0xa3, 0x6c, 0x2e, 0x5f, 0x04, 0x4e, 0x4e, 0x8e, 0x96, 0x51, 0x2a,
+	0x1c, 0x88, 0x7c, 0x9f, 0x61, 0xce, 0x5d, 0x1a, 0xe9, 0x81, 0x60, 0xec, 0x40, 0x3c, 0x88, 0x08,
+	0x8b, 0xd3, 0x4f, 0x7b, 0xef, 0xf8, 0xfb, 0x79, 0xd9, 0x38, 0x3b, 0x2f, 0x1b, 0x3f, 0xcf, 0xcb,
+	0xc6, 0xa7, 0x8b, 0xf2, 0xc4, 0xd9, 0x45, 0x79, 0xe2, 0xc7, 0x45, 0x79, 0xe2, 0xfd, 0x56, 0x93,
+	0x88, 0x56, 0xb7, 0x6e, 0x7b, 0xb4, 0x53, 0x55, 0x19, 0xee, 0x85, 0x58, 0xf4, 0x29, 0x6b, 0x57,
+	0x6f, 0x48, 0x24, 0xe2, 0x08, 0xf3, 0xfa, 0xb4, 0xba, 0xe1, 0x1e, 0xfe, 0x09, 0x00, 0x00, 0xff,
+	0xff, 0x33, 0x8a, 0x44, 0x05, 0x43, 0x05, 0x00, 0x00,
 }
 
 func (this *Params) Equal(that interface{}) bool {
@@ -229,7 +413,34 @@ func (this *Params) Equal(that interface{}) bool {
 	if this.CurrentDateMaxSkewSeconds != that1.CurrentDateMaxSkewSeconds {
 		return false
 	}
-	if this.ExpirySweepLimit != that1.ExpirySweepLimit {
+	if this.ProofVerificationGas != that1.ProofVerificationGas {
+		return false
+	}
+	if this.DscVerificationGas != that1.DscVerificationGas {
+		return false
+	}
+	if this.BuybackTwapWindowSeconds != that1.BuybackTwapWindowSeconds {
+		return false
+	}
+	if this.BuybackMaxDeviationBps != that1.BuybackMaxDeviationBps {
+		return false
+	}
+	if this.BuybackMaxAccrualSeconds != that1.BuybackMaxAccrualSeconds {
+		return false
+	}
+	if this.RegistrationSweepLimit != that1.RegistrationSweepLimit {
+		return false
+	}
+	if this.DscDailyRegistrationFloor != that1.DscDailyRegistrationFloor {
+		return false
+	}
+	if this.DscDailyRegistrationShareBps != that1.DscDailyRegistrationShareBps {
+		return false
+	}
+	if this.CountryDailyRegistrationFloor != that1.CountryDailyRegistrationFloor {
+		return false
+	}
+	if this.CountryDailyRegistrationShareBps != that1.CountryDailyRegistrationShareBps {
 		return false
 	}
 	return true
@@ -254,10 +465,63 @@ func (m *Params) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if m.ExpirySweepLimit != 0 {
-		i = encodeVarintParams(dAtA, i, uint64(m.ExpirySweepLimit))
+	if m.CountryDailyRegistrationShareBps != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.CountryDailyRegistrationShareBps))
 		i--
-		dAtA[i] = 0x48
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0x98
+	}
+	if m.CountryDailyRegistrationFloor != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.CountryDailyRegistrationFloor))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0x90
+	}
+	if m.DscDailyRegistrationShareBps != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.DscDailyRegistrationShareBps))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0x88
+	}
+	if m.DscDailyRegistrationFloor != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.DscDailyRegistrationFloor))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0x80
+	}
+	if m.RegistrationSweepLimit != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.RegistrationSweepLimit))
+		i--
+		dAtA[i] = 0x78
+	}
+	if m.BuybackMaxAccrualSeconds != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.BuybackMaxAccrualSeconds))
+		i--
+		dAtA[i] = 0x70
+	}
+	if m.BuybackMaxDeviationBps != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.BuybackMaxDeviationBps))
+		i--
+		dAtA[i] = 0x68
+	}
+	if m.BuybackTwapWindowSeconds != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.BuybackTwapWindowSeconds))
+		i--
+		dAtA[i] = 0x60
+	}
+	if m.DscVerificationGas != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.DscVerificationGas))
+		i--
+		dAtA[i] = 0x58
+	}
+	if m.ProofVerificationGas != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.ProofVerificationGas))
+		i--
+		dAtA[i] = 0x50
 	}
 	if m.CurrentDateMaxSkewSeconds != 0 {
 		i = encodeVarintParams(dAtA, i, uint64(m.CurrentDateMaxSkewSeconds))
@@ -357,8 +621,35 @@ func (m *Params) Size() (n int) {
 	if m.CurrentDateMaxSkewSeconds != 0 {
 		n += 1 + sovParams(uint64(m.CurrentDateMaxSkewSeconds))
 	}
-	if m.ExpirySweepLimit != 0 {
-		n += 1 + sovParams(uint64(m.ExpirySweepLimit))
+	if m.ProofVerificationGas != 0 {
+		n += 1 + sovParams(uint64(m.ProofVerificationGas))
+	}
+	if m.DscVerificationGas != 0 {
+		n += 1 + sovParams(uint64(m.DscVerificationGas))
+	}
+	if m.BuybackTwapWindowSeconds != 0 {
+		n += 1 + sovParams(uint64(m.BuybackTwapWindowSeconds))
+	}
+	if m.BuybackMaxDeviationBps != 0 {
+		n += 1 + sovParams(uint64(m.BuybackMaxDeviationBps))
+	}
+	if m.BuybackMaxAccrualSeconds != 0 {
+		n += 1 + sovParams(uint64(m.BuybackMaxAccrualSeconds))
+	}
+	if m.RegistrationSweepLimit != 0 {
+		n += 1 + sovParams(uint64(m.RegistrationSweepLimit))
+	}
+	if m.DscDailyRegistrationFloor != 0 {
+		n += 2 + sovParams(uint64(m.DscDailyRegistrationFloor))
+	}
+	if m.DscDailyRegistrationShareBps != 0 {
+		n += 2 + sovParams(uint64(m.DscDailyRegistrationShareBps))
+	}
+	if m.CountryDailyRegistrationFloor != 0 {
+		n += 2 + sovParams(uint64(m.CountryDailyRegistrationFloor))
+	}
+	if m.CountryDailyRegistrationShareBps != 0 {
+		n += 2 + sovParams(uint64(m.CountryDailyRegistrationShareBps))
 	}
 	return n
 }
@@ -621,11 +912,11 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 9:
+		case 10:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ExpirySweepLimit", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field ProofVerificationGas", wireType)
 			}
-			m.ExpirySweepLimit = 0
+			m.ProofVerificationGas = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowParams
@@ -635,7 +926,178 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.ExpirySweepLimit |= uint64(b&0x7F) << shift
+				m.ProofVerificationGas |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DscVerificationGas", wireType)
+			}
+			m.DscVerificationGas = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DscVerificationGas |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 12:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BuybackTwapWindowSeconds", wireType)
+			}
+			m.BuybackTwapWindowSeconds = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.BuybackTwapWindowSeconds |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 13:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BuybackMaxDeviationBps", wireType)
+			}
+			m.BuybackMaxDeviationBps = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.BuybackMaxDeviationBps |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 14:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BuybackMaxAccrualSeconds", wireType)
+			}
+			m.BuybackMaxAccrualSeconds = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.BuybackMaxAccrualSeconds |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 15:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RegistrationSweepLimit", wireType)
+			}
+			m.RegistrationSweepLimit = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.RegistrationSweepLimit |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 16:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DscDailyRegistrationFloor", wireType)
+			}
+			m.DscDailyRegistrationFloor = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DscDailyRegistrationFloor |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 17:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DscDailyRegistrationShareBps", wireType)
+			}
+			m.DscDailyRegistrationShareBps = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DscDailyRegistrationShareBps |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 18:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CountryDailyRegistrationFloor", wireType)
+			}
+			m.CountryDailyRegistrationFloor = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CountryDailyRegistrationFloor |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 19:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CountryDailyRegistrationShareBps", wireType)
+			}
+			m.CountryDailyRegistrationShareBps = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CountryDailyRegistrationShareBps |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

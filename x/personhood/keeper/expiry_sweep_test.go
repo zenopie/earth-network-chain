@@ -137,7 +137,7 @@ func TestExpirySweepIsBounded(t *testing.T) {
 	params.RegistrationValiditySeconds = 1000
 	require.NoError(t, f.keeper.Params.Set(f.ctx, params))
 
-	const cohort = types.DefaultExpirySweepLimit + 25
+	const cohort = types.DefaultRegistrationSweepLimit + 25
 	for i := 0; i < cohort; i++ {
 		nullifier := []byte{byte(i / 256), byte(i % 256), 'n'}
 		addr := sdk.AccAddress(append([]byte("human"), byte(i/256), byte(i%256), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
@@ -149,7 +149,7 @@ func TestExpirySweepIsBounded(t *testing.T) {
 
 	count, err := f.keeper.RegCount.Get(deadCtx)
 	require.NoError(t, err)
-	require.Equal(t, uint64(cohort-types.DefaultExpirySweepLimit), count,
+	require.Equal(t, uint64(cohort-types.DefaultRegistrationSweepLimit), count,
 		"one block should retire at most the sweep limit")
 
 	// The remainder is not stranded — the next block picks it up.

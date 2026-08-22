@@ -28,6 +28,15 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		return nil, err
 	}
 
+	// Bound how fast one Document Signer, or one country, can register people.
+	// Checked only once the proof has verified and been bound to the
+	// certificate: before that the signer named here is merely claimed, and
+	// counting a claim would let anyone exhaust a legitimate signer's daily
+	// allowance with junk that names it.
+	if err := k.checkRegistrationRate(ctx, dsc.key, dsc.country); err != nil {
+		return nil, err
+	}
+
 	// Settle the human stream up front: clearing a lapsed registration below
 	// retires its vote weight, and that has to be credited against a current
 	// index. Doing it once here also covers payRegistrationReward at the end.
@@ -116,6 +125,16 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		return nil, err
 	}
 	if err := bumpCount(ctx, k.RegCountByCountry, dsc.country); err != nil {
+		return nil, err
+	}
+	// Index by signer so a revocation can find these again without scanning
+	// every registration on the chain.
+	if len(dsc.key) > 0 {
+		if err := k.RegByDsc.Set(ctx, collections.Join(dsc.key, nullifier)); err != nil {
+			return nil, err
+		}
+	}
+	if err := k.recordRegistrationRate(ctx, dsc.key, dsc.country); err != nil {
 		return nil, err
 	}
 

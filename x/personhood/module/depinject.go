@@ -77,6 +77,8 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// Teach the human stream who may vote and with how much weight. Only this
 	// module can answer that — it is the one holding the registrations.
 	in.AllocationKeeper.RegisterWeightSource(types.AllocationStream, k)
+	// Revoking a Document Signer starts retiring the registrations made under it.
+	in.PkiKeeper.RegisterRevocationListener(k)
 
 	// The registration-rewards pool resolves nothing per block: it stacks, and is
 	// drawn down when a human registers (see payRegistrationReward). Registering
