@@ -129,6 +129,21 @@ func newTestEnv(t *testing.T) *testEnv {
 	return &testEnv{k: k, ctx: ctx, bank: bank, dex: dex, pool: pool, staking: staking, humans: humans}
 }
 
+// addDeadOption adds a permissionless ADDRESS option that nobody votes for.
+func addDeadOption(t *testing.T, e *testEnv, description string) uint64 {
+	t.Helper()
+	_, recipient := e.addr("recipient")
+	id, err := e.k.appendOption(e.ctx, types.STREAM_ID_GROUNDWORKS, types.AllocationOption{
+		Description: description,
+		Kind:        types.ALLOCATION_KIND_ADDRESS,
+		Recipient:   recipient,
+	})
+	if err != nil {
+		t.Fatalf("appendOption: %v", err)
+	}
+	return id
+}
+
 func (e *testEnv) addr(name string) (sdk.AccAddress, string) {
 	acc := sdk.AccAddress(authtypes.NewModuleAddress(name))
 	s, _ := e.k.addressCodec.BytesToString(acc)

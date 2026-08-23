@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"cosmossdk.io/collections"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -35,14 +36,26 @@ func (q queryServer) Options(ctx context.Context, req *types.QueryOptionsRequest
 	if err := ValidateStream(req.Stream); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	var options []types.AllocationOption
-	rng := collections.NewPrefixedPairRange[uint32, uint64](key(req.Stream))
-	if err := q.k.Options.Walk(ctx, rng, func(_ collections.Pair[uint32, uint64], opt types.AllocationOption) (bool, error) {
-		options = append(options, opt)
-		return false, nil
-	}); err != nil {
+	// One page at a time. Anyone may add an ADDRESS option for a fee, so the size
+	// of this table is set by whoever is paying; a response carrying all of it
+	// would grow with them, on a route that costs the caller nothing.
+	page := req.Pagination
+	if page != nil && page.Limit > types.MaxOptionsPageSize {
+		clamped := *page
+		clamped.Limit = types.MaxOptionsPageSize
+		page = &clamped
+	}
+	options, pageRes, err := query.CollectionPaginate(ctx, q.k.Options, page,
+		func(_ collections.Pair[uint32, uint64], opt types.AllocationOption) (types.AllocationOption, error) {
+			return opt, nil
+		},
+		query.WithCollectionPaginationPairPrefix[uint32, uint64](key(req.Stream)),
+	)
+	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	// The aggregates below describe the whole stream rather than this page: they
+	// are what a client needs to price any one option's share of the emission.
 	rewardIndex, err := q.k.getRewardIndex(ctx, req.Stream)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -60,6 +73,7 @@ func (q queryServer) Options(ctx context.Context, req *types.QueryOptionsRequest
 		RewardIndex: rewardIndex,
 		TotalWeight: totalWeight,
 		Epoch:       epoch,
+		Pagination:  pageRes,
 	}, nil
 }
 

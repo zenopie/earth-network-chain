@@ -68,6 +68,10 @@ nothing to join.
   The SDK default is off, and a snapshot cannot be made for a height already
   passed, so a chain launched without them leaves everyone who joins later
   replaying from genesis. `SNAPSHOT_INTERVAL=0` disables them, loudly.
+- **The `Options` query is paged.** It returned every option in a stream on a
+  route that costs the caller nothing, while the number of options is set by
+  whoever pays the fee to add them. One request now returns at most 100. Clients
+  that read the whole list must follow `pagination.next_key`.
 - **The allocation invariant no longer walks every option.** It ran in the
   EndBlocker and summed each stream by decoding every option in it, while adding
   an option is permissionless — so the per-block cost of every node was

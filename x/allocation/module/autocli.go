@@ -21,10 +21,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:     "Shows the parameters of the module",
 				},
 				{
-					RpcMethod:      "Options",
-					Use:            "options [stream]",
-					Short:          "List a stream's allocation options with its reward index, total weight and epoch",
-					Long:           "List a stream's allocation options.\n\n" + streamUsage,
+					RpcMethod: "Options",
+					Use:       "options [stream]",
+					Short:     "List a page of a stream's allocation options, with its reward index, total weight and epoch",
+					Long: "List a stream's allocation options, a page at a time.\n\n" +
+						"Anyone may add an option for a fee, so the list is paged: one request returns at most 100. " +
+						"Use --page-key from the previous response to continue.\n\n" + streamUsage,
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "stream"}},
 				},
 				{

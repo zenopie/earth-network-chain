@@ -2,6 +2,7 @@ syntax = "proto3";
 package earth.allocation.v1;
 
 import "amino/amino.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
 import "cosmos_proto/cosmos.proto";
 import "earth/allocation/v1/allocation.proto";
 import "earth/allocation/v1/params.proto";
@@ -22,8 +23,13 @@ service Query {
     option (google.api.http).get = "/earth/allocation/v1/option/{stream}/{id}";
   }
 
-  // Options queries every allocation option in a stream, with the stream's
-  // reward index, total weight and epoch.
+  // Options queries a stream's allocation options a page at a time, with the
+  // stream's reward index, total weight and epoch.
+  //
+  // Paged rather than whole because adding an ADDRESS option is permissionless:
+  // the number of them is set by whoever is willing to pay the fee, and this
+  // route costs the caller nothing. One request returns at most
+  // MaxOptionsPageSize of them however large the table grows.
   rpc Options(QueryOptionsRequest) returns (QueryOptionsResponse) {
     option (google.api.http).get = "/earth/allocation/v1/options/{stream}";
   }
@@ -57,12 +63,14 @@ message QueryOptionResponse {
   AllocationOption option = 1 [(gogoproto.nullable) = false];
 }
 
-// QueryOptionsRequest requests every option in one stream.
+// QueryOptionsRequest requests one page of a stream's options.
 message QueryOptionsRequest {
   StreamId stream = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
 }
 
-// QueryOptionsResponse returns every option in one stream.
+// QueryOptionsResponse returns one page of a stream's options. The stream
+// aggregates below describe the whole stream, not the page.
 message QueryOptionsResponse {
   repeated AllocationOption options = 1 [(gogoproto.nullable) = false];
   // reward_index is the stream's current reward index.
@@ -79,6 +87,7 @@ message QueryOptionsResponse {
   ];
   // epoch is the stream's allocation epoch; votes older than it carry no weight.
   uint64 epoch = 4;
+  cosmos.base.query.v1beta1.PageResponse pagination = 5;
 }
 
 // QueryVoterRequest requests a voter's split within a stream.

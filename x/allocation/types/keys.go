@@ -89,6 +89,15 @@ const (
 	// carries the same weight, which is what makes this stream one-human-one-vote.
 	HumanVoterWeight = 100
 
+	// MaxOptionsPageSize caps how many options one Options query returns.
+	//
+	// The query is free to call and the option table is permissionless, so
+	// without a ceiling one request could be made to read the whole of it. A
+	// caller asking for more than this gets this many; a caller asking for none
+	// gets the SDK default. Walking the table is still possible page by page,
+	// but each page is a separate request that a node can meter and rate-limit.
+	MaxOptionsPageSize = 100
+
 	// MaxDescriptionLen caps an option's description, in bytes.
 	//
 	// Bytes rather than characters, because bytes are what state costs. The
