@@ -1,0 +1,83 @@
+# Runs the Go test suite on every push to master and every pull request.
+#
+# Until this existed, no workflow ran `go test`: docker-build and release fire on
+# tags only, docs builds the site, and verifier-libs runs exactly one test
+# (TestVerifyOracle) against the native lib it just built. So the solvency
+# invariants, the genesis drift test and the emission budget test were enforced
+# by whoever remembered to run them locally.
+#
+# The suite needs cgo. earthd links the Barretenberg UltraHonk verifier, and
+# x/personhood's keeper tests verify real proofs through it, so the native
+# libbarretenberg.a has to exist before anything compiles. Only darwin_arm64 is
+# checked in (.gitignore), which is why this job builds the linux_amd64 one and
+# caches it — the archive is a pinned Aztec download plus our shim, so it only
+# changes when checksums.json or the wrapper does.
+#
+# Not included here, deliberately: golangci-lint. The repo has no .golangci.yml
+# and has never been linted, so turning it on in the same change would land a red
+# gate that says nothing about whether the code works. It wants its own pass.
+name: test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# A superseded run tells you nothing, and the suite is long enough to be worth
+# not paying for twice.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          # The same pin release.yml uses. CI that passes on a different
+          # compiler than the one that builds the release is testing something
+          # other than the release.
+          go-version: "1.25.10"
+          cache: true
+
+      # libc++ specifically, not libstdc++ — build-wrapper.sh compiles the shim
+      # with -stdlib=libc++ to match Aztec's prebuilt archive, and the cgo
+      # LDFLAGS link -lc++.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang python3 binutils libc++-dev libc++abi-dev
+
+      - name: Restore the UltraHonk verifier library
+        id: verifier-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party/barretenberg-go/lib/linux_amd64
+          key: libbarretenberg-linux_amd64-${{ hashFiles('third_party/barretenberg-go/checksums.json', 'third_party/barretenberg-go/scripts/build-wrapper.sh', 'third_party/barretenberg-go/wrapper/**', 'third_party/barretenberg-go/include/**') }}
+
+      - name: Build the UltraHonk verifier library
+        if: steps.verifier-cache.outputs.cache-hit != 'true'
+        working-directory: third_party/barretenberg-go
+        run: ./scripts/build-wrapper.sh --platform linux_amd64
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -mod=readonly -timeout 30m ./...
+
+      # Runs last because it builds earthd, which needs the verifier lib above.
+      # deploy/genesis.json is an artifact: this fails if it has drifted from the
+      # sources in deploy/genesis/ that produce it.
+      - name: make genesis-check
+        run: make genesis-check
