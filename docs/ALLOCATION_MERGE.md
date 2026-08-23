@@ -31,8 +31,9 @@ type WeightSource interface {
 }
 ```
 
-`x/personhood` registers the human source (live registration → `HumanVoterWeight`);
-the capital source is internal to `x/allocation` (`GetDelegatorBonded`), since
+`x/personhood` registers the caretaker source (live registration →
+`HumanVoterWeight`); the groundworks source is internal to `x/allocation`
+(`GetDelegatorBonded`), since
 that module already holds the staking hooks that keep the weight in sync.
 
 `x/deflation` is gone. Its `lp_rewards` integrated handler is registered by
@@ -58,8 +59,8 @@ allocation keeper.
   expiry sweep clears a lapsed human's vote from BeginBlock, unwinding their
   split one option at a time with nobody paying gas — multiplied by the sweep
   limit in a single block.
-- **The human stream's weight is flat.** Bonded stake belongs to the capital
-  weight source and the staking hooks, never to the shared engine.
+- **The caretaker stream's weight is flat.** Bonded stake belongs to the
+  groundworks weight source and the staking hooks, never to the shared engine.
 - **Option ids are per stream.** `RegistrationRewardOptionID` and
   `LPRewardsOptionID` are both 1; under one module they would collide if ids were
   global.

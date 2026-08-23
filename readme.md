@@ -15,9 +15,9 @@ ERTH is emitted at a **fixed 4 ERTH/sec** (prorated by block time), as four inde
 | Pillar | Stream (1 ERTH/sec each) | Directed by | Where |
 | --- | --- | --- | --- |
 | **Investor** | Base staking → stakers | validators/delegators (standard `x/distribution`) | `x/earth` |
-| | Capital allocation stream | **plutocratic** vote (bonded stake) | `x/allocation` |
+| | Groundworks allocation stream | **plutocratic** vote (bonded stake) | `x/allocation` |
 | **Democratic** | ANML buyback-and-burn | — (protocol) | `x/personhood/keeper/abci.go` |
-| | Human allocation stream | **one-human-one-vote** (registered humans) | `x/allocation` |
+| | Caretaker allocation stream | **one-human-one-vote** (registered humans) | `x/allocation` |
 
 The **base staking** stream is the only part of issuance that touches the SDK's own
 reward machinery, and it uses it unmodified: `x/earth` mints its 1 ERTH/sec into the fee
@@ -34,9 +34,9 @@ staking stream reaches stakers whole, and the emission table above is the comple
 to where ERTH goes.
 
 Both allocation streams are one engine in **`x/allocation`**, keyed by a stream id
-(`human` / `capital`). They share the options, the reward-index maths, the epoch reset
-and the claim path; they differ only in where a voter's weight comes from and who is
-allowed to vote at all.
+(`caretaker` / `groundworks`). They share the options, the reward-index maths,
+the epoch reset and the claim path; they differ only in where a voter's weight
+comes from and who is allowed to vote at all.
 
 The two allocation streams don't mint continuously — they accrue via a reward index and
 are minted when realized (LP auto-compound, an option claim, or a registration payout), so
@@ -167,19 +167,19 @@ run the same engine in **`x/allocation`**:
 
 | Stream | Who may vote | Weight |
 | --- | --- | --- |
-| `human` | anyone with a live proof-of-personhood registration | flat, identical for every human |
-| `capital` | anyone with bonded stake | their bonded stake |
+| `caretaker` | anyone with a live proof-of-personhood registration | flat, identical for every human |
+| `groundworks` | anyone with bonded stake | their bonded stake |
 
 Voters set percentages (summing to 100) across that stream's *allocation options*; each
 option accrues ERTH pro-rata to the weight pointed at it, tracked with a reward index
 (`x/allocation/keeper/allocation.go`). All state is keyed by stream first, so option ids,
-totals and epochs are per stream — the human stream's option #1 and the capital stream's
-option #1 are two different options, and a governance reset of one slate leaves the other
-standing.
+totals and epochs are per stream — the caretaker stream's option #1 and the
+groundworks stream's option #1 are two different options, and a governance
+reset of one slate leaves the other standing.
 
-Capital-stream weights are kept in sync with live bonded stake via staking hooks
+Groundworks-stream weights are kept in sync with live bonded stake via staking hooks
 (`x/allocation/keeper/hooks.go`) — delegating/undelegating re-weights your vote
-automatically, no re-vote needed. Human-stream weights are cleared when a registration
+automatically, no re-vote needed. Caretaker-stream weights are cleared when a registration
 lapses, by `x/personhood`'s expiry sweep.
 
 There are two kinds of allocation option, differing in how they deliver their ERTH:
@@ -189,12 +189,12 @@ There are two kinds of allocation option, differing in how they deliver their ER
   each handler is code that ships with the chain; unknown handler names, and handlers
   belonging to the other stream, are rejected at add-time. Integrated options are tracked
   in a dedicated key set, so `BeginBlocker` only ever iterates this bounded set.
-  - **capital option #1 (`lp_rewards`, seeded at genesis)** — "volume-weighted LP rewards".
+  - **groundworks option #1 (`lp_rewards`, seeded at genesis)** — "volume-weighted LP rewards".
     Its ERTH is split across dex pools by each pool's decaying trading volume
     (ERTH-denominated, ~7-day window) and **auto-compounded into each pool's
     `reserve_erth`**, raising every LP's redemption value pro-rata. Zero-volume pools get
     nothing. The handler lives in `x/dex`, which registers it with `x/allocation`.
-  - **human option #1 (`registration_rewards`, seeded at genesis)** — resolves nothing per
+  - **caretaker option #1 (`registration_rewards`, seeded at genesis)** — resolves nothing per
     block; the pool stacks and is drawn down on each new registration, **50% registree /
     50% referrer**. Registered by `x/personhood`.
 - **`ALLOCATION_KIND_ADDRESS`** — accrues ERTH claimable by a fixed `recipient` via
@@ -205,7 +205,7 @@ There are two kinds of allocation option, differing in how they deliver their ER
   default) and anyone can trigger it. The payout always goes to `recipient` either way — a
   triggerer only spends the gas.
 
-**Messages / CLI** — every command names the stream (`human` or `capital`):
+**Messages / CLI** — every command names the stream (`caretaker` or `groundworks`):
 
 | Command | Effect |
 | --- | --- |
@@ -220,9 +220,9 @@ There are two kinds of allocation option, differing in how they deliver their ER
 
 ```
 # vote 100% of your stake weight to volume-weighted LP rewards
-earthd tx allocation set-allocations capital --percentages '{"option_id":1,"percent":100}' \
+earthd tx allocation set-allocations groundworks --percentages '{"option_id":1,"percent":100}' \
   --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
-earthd q allocation option capital 1   # amount_allocated tracks your bonded stake
+earthd q allocation option groundworks 1   # amount_allocated tracks your bonded stake
 ```
 
 ## Democratic pillar — `x/personhood` (proof-of-personhood)
@@ -240,7 +240,7 @@ the DSC registry and its CSCA trust anchor are `x/pki` — see
 - **ANML token** (`uanml`, 1 ANML = 1e6 uanml) — minted 1/day per registered human.
 - **Buyback-and-burn (1 ERTH/sec)** — `BeginBlock` mints ERTH, swaps it for ANML on the
   dex (`dexKeeper.SwapExactIn`), and burns the ANML (deflationary for ANML).
-- **The human allocation stream (1 ERTH/sec)** lives in `x/allocation`; this module only
+- **The caretaker allocation stream (1 ERTH/sec)** lives in `x/allocation`; this module only
   supplies its weight source (one live registration = one vote), clears a lapsed human's
   vote, and draws down the registration-reward pool.
 
