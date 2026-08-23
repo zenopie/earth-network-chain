@@ -338,13 +338,41 @@ An untested upgrade path is discovered during the upgrade.
       per-block budget in `app/block_budget_test.go`.
       The query is paged at 100. Walking the whole table is still possible, but
       page by page, as separate requests a node can meter.
-- [ ] **Pin the public-input schema.** `docs/PROOF_OF_PERSONHOOD_TODO.md:27`
-      records that `verifyRegistrationProof` still uses placeholder indices
-      (`nullifierSignalIndex=0`, `dscRootSignalIndex=2`). These are consensus
-      values baked into how every registration is checked; they cannot be
-      "adjusted later" without invalidating everyone already registered.
-- [ ] **Seed the real verifying keys and `dsc_root`** in genesis, per supported
-      signature algorithm, from the final circuits.
+- [x] **The public-input schema is pinned, and the values are right.** This
+      entry used to say `verifyRegistrationProof` carried placeholder indices
+      that could not be adjusted later without invalidating every registration.
+      Both halves are out of date, and the entry was repeated as a launch
+      blocker long after the work was done.
+      The positions are governance parameters —  `params.NullifierIndex`,
+      `params.DscKeyIndex`, `params.CurrentDateIndex`, seeded 1, 2 and 0 — and
+      they match the circuits: `main.nr` takes one public input, `current_date`,
+      and returns `(nullifier, dsc_key)`, giving `[current_date, nullifier,
+      dsc_key]`. All seven signature variants share that public surface, so one
+      set of indices serves every algorithm.
+      Checked against a real proof rather than by reading the source:
+      `x/personhood/keeper/testdata/lean_poa/public_inputs` holds exactly three
+      field elements — `250101`, then `expected_nullifier`, then
+      `expected_dsc_key` — and the handset splits three in the same order.
+- [x] **The verifying keys are seeded, and `dsc_root` no longer exists.** Seven
+      distinct keys ship in `deploy/genesis/verifying-keys/`, one per algorithm,
+      and the `lean_poa` key is byte-identical to the one the keeper test
+      verifies a real bb proof against — `bb write_vk` output from the real
+      circuits, not demo keys. `dsc_root` is `reserved` in the params proto: a
+      registration now carries the Document Signer certificate, checked against
+      the 539 CSCAs genesis seeds from `csca/`.
+- [ ] **Build the Linux verifier libraries.** `third_party/barretenberg-go/lib/`
+      contains `darwin_arm64` and nothing else, so no Linux validator can build
+      the chain — the chain build needs `CGO_ENABLED=1` and the platform lib.
+      Build `linux_amd64` and `linux_arm64` against bb v5.0.0 in CI or at
+      release, via `scripts/build-wrapper.sh --platform linux_amd64` (runs on
+      Linux, SHA-pinned). **This blocks launch**, and it is a CI job rather than
+      research.
+- [ ] **Prove on real hardware, end to end.** The on-device path is written —
+      `PassportProver` → `NoirProver` → bb v5.0.0 poseidon2 proof of `lean_poa`,
+      split into the chain's `(proof, public_signals)` form — but no real
+      passport has been scanned on a real handset into a real node. Keep
+      noir_android's bb version in lockstep with the chain's v5.0.0, or
+      large-circuit proofs are rejected on arrival.
 - [x] **Write the trust-store runbook.** `docs/TRUST_STORE_RUNBOOK.md`.
       Revocation goes expedited. It also names two gaps rather than hiding them:
       there is no `MsgRevokeCsca`, so a country's root going bad has no fast
