@@ -92,7 +92,15 @@ Two things destroy ERTH continuously:
 
 - **Half of every swap fee.** The fee is 0.3% per hop, charged in ERTH; half
   stays with the liquidity providers and half is destroyed.
-- **Every transaction fee.** Gas is burned outright rather than paid to anyone.
+- **Half of every transaction fee.** Gas is split the same way: half is
+  destroyed, half is paid to validators and their delegators through the normal
+  staking payout. Where the split cannot be even, the extra unit is burned.
 
 So activity shrinks supply while issuance grows it, at a rate that does not
 change.
+
+The half that is paid out is the only part of a validator's revenue that
+responds to how much the chain is used — the staking pillar is a fixed 1
+ERTH/sec however busy the network is. That matters most for registration:
+verifying a passport proof costs real CPU, and validators bear it on every
+registration.
