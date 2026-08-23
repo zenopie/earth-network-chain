@@ -68,8 +68,16 @@ GEN="$WORK/home/config/genesis.json"
 # on disk and the one in genesis cannot disagree about which passports the chain
 # will accept.
 say "generating pki.cscas from csca/"
+# additional/ is allowed to be empty — the ICAO master list is the whole trust
+# store unless a CSCA has been added by hand. Without nullglob an empty
+# directory passes the literal `*.cer` through as a filename and the build dies
+# on a file that does not exist; the `[@]+` form is because `set -u` treats an
+# empty array as unbound on bash 3.2, which is what macOS ships.
+shopt -s nullglob
+extra_cscas=("$REPO"/csca/additional/*.cer)
+shopt -u nullglob
 go run "$REPO/tools/pki-genesis" \
-  "$REPO/csca/masterlist/allowlist.ml" "$REPO"/csca/additional/*.cer \
+  "$REPO/csca/masterlist/allowlist.ml" ${extra_cscas[@]+"${extra_cscas[@]}"} \
   > "$WORK/cscas.json" 2>"$WORK/pki.log" || { cat "$WORK/pki.log" >&2; exit 1; }
 say "$(tail -n1 "$WORK/pki.log")"
 

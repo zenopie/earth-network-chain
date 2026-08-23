@@ -70,12 +70,9 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 		return nil, types.ErrDscRevoked
 	}
 
-	cands, err := k.issuerCandidates(ctx, dsc)
+	cands, sawRevoked, err := k.issuerCandidates(ctx, dsc)
 	if err != nil {
 		return nil, err
-	}
-	if len(cands) == 0 {
-		return nil, types.ErrNoIssuerCsca
 	}
 	// First candidate whose key verifies the signature wins. Candidates sharing
 	// an SKI share a public key, so in practice the first is decisive and the
@@ -85,6 +82,17 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 		if certs.VerifySignedBy(dsc, csca.PublicKey) == nil {
 			return pub, nil
 		}
+	}
+	// A revoked issuer is the more specific answer than "nothing here verified
+	// it", and the one an operator needs to see: it says the chain refused a
+	// certificate it can still verify, rather than one it cannot place. Checked
+	// after the loop so a DSC that a *different*, still-trusted issuer verifies
+	// is unaffected by a revocation elsewhere in the candidate set.
+	if sawRevoked {
+		return nil, types.ErrCscaRevoked
+	}
+	if len(cands) == 0 {
+		return nil, types.ErrNoIssuerCsca
 	}
 	return nil, types.ErrCertVerify
 }
@@ -156,12 +164,52 @@ func (k Keeper) AddCscaDER(ctx context.Context, der []byte) error {
 	if err := k.CscaBySKI.Set(ctx, collections.Join(cscaID(c), id)); err != nil {
 		return err
 	}
-	return k.CscaByDN.Set(ctx, collections.Join(dnKey(c.SubjectRaw), id))
+	if err := k.CscaByDN.Set(ctx, collections.Join(dnKey(c.SubjectRaw), id)); err != nil {
+		return err
+	}
+	// Adding a certificate re-trusts its signing key. This is the only way back
+	// from RevokeCsca — there is no un-revoke message — and it keeps "a
+	// certificate in this store is one the chain will verify against" true.
+	// Without it the store could hold a certificate that silently verifies
+	// nothing, which is the state that wastes an afternoon to diagnose.
+	//
+	// InitGenesis depends on this: it replays every CSCA through here, so the
+	// revoked set has to be restored *after* that loop rather than before.
+	keyHash := sha256.Sum256(c.PublicKey.CanonicalBytes())
+	return k.RevokedCscas.Remove(ctx, keyHash[:])
+}
+
+// RevokeCsca marks a CSCA's signing key as untrusted, so no Document Signer
+// chaining to it verifies from here on.
+//
+// Keyed by the signing key rather than the certificate presented: a CSCA
+// renewal or link certificate is a separate record sharing one public key, and
+// any of them verifies a child signature, so revoking one certificate would
+// leave its siblings doing exactly what the revocation meant to stop.
+//
+// Deliberately prospective, and deliberately quieter than RevokeDsc. No
+// listener fires and no purge starts, so registrations already made under this
+// CSCA keep their weight and keep claiming. Retiring those is the per-DSC path:
+// RevokeDsc names a signer, and the purge it triggers unwinds the registrations
+// that signer produced. Left alone they lapse on their own within one
+// registration_validity_seconds, because renewing a registration re-verifies
+// the Document Signer and that verification now fails here.
+func (k Keeper) RevokeCsca(ctx context.Context, pubkey []byte) error {
+	hash := sha256.Sum256(pubkey)
+	return k.RevokedCscas.Set(ctx, hash[:])
+}
+
+// IsCscaRevoked reports whether a CSCA signing key has been revoked.
+func (k Keeper) IsCscaRevoked(ctx context.Context, pubkey []byte) (bool, error) {
+	hash := sha256.Sum256(pubkey)
+	return k.RevokedCscas.Has(ctx, hash[:])
 }
 
 // issuerCandidates returns parsed CSCAs that could have issued dsc: every
 // certificate whose SKI matches the DSC's AKI, plus any whose subject DN equals
-// the DSC's issuer DN.
+// the DSC's issuer DN. Revoked issuers are left out, and the second return
+// reports whether any were, so the caller can say "revoked" rather than the
+// vaguer "nothing verified this".
 //
 // Both lookups go through an index rather than a direct Get, because one key and
 // one DN can each name several certificates — renewals and link certificates for
@@ -169,36 +217,56 @@ func (k Keeper) AddCscaDER(ctx context.Context, der []byte) error {
 // them does; the reason to return all is that the store now holds all, and a
 // lookup that silently picked one would put the old collapse back at a different
 // layer.
-func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs.Cert, error) {
+//
+// The revocation filter belongs here rather than in VerifyDsc because this is
+// the one place every trust decision about an issuer passes through. Filtering
+// at the call site would leave the next caller of issuerCandidates verifying
+// against certificates governance has withdrawn.
+func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs.Cert, bool, error) {
 	var out []*certs.Cert
+	sawRevoked := false
 	seen := map[string]bool{}
-	add := func(id []byte) {
+	add := func(id []byte) error {
 		if seen[string(id)] {
-			return
+			return nil
 		}
 		seen[string(id)] = true
-		if csca, err := k.Cscas.Get(ctx, id); err == nil {
-			if pc, err := certs.ParseCert(csca.CertificateDer); err == nil {
-				out = append(out, pc)
-			}
+		csca, err := k.Cscas.Get(ctx, id)
+		if err != nil {
+			return nil // an index entry with no record verifies nothing
 		}
+		pc, err := certs.ParseCert(csca.CertificateDer)
+		if err != nil {
+			return nil
+		}
+		// By key, not by certificate: siblings sharing this key are revoked with
+		// it, which is the whole point of keying the set that way.
+		revoked, err := k.IsCscaRevoked(ctx, pc.PublicKey.CanonicalBytes())
+		if err != nil {
+			return err
+		}
+		if revoked {
+			sawRevoked = true
+			return nil
+		}
+		out = append(out, pc)
+		return nil
 	}
 
 	collect := func(idx collections.KeySet[collections.Pair[[]byte, []byte]], prefix []byte) error {
 		rng := collections.NewPrefixedPairRange[[]byte, []byte](prefix)
 		return idx.Walk(ctx, rng, func(key collections.Pair[[]byte, []byte]) (bool, error) {
-			add(key.K2())
-			return false, nil
+			return false, add(key.K2())
 		})
 	}
 
 	if len(dsc.AKI) > 0 {
 		if err := collect(k.CscaBySKI, dsc.AKI); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	if err := collect(k.CscaByDN, dnKey(dsc.IssuerRaw)); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return out, nil
+	return out, sawRevoked, nil
 }

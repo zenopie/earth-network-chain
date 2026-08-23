@@ -38,4 +38,17 @@ message GenesisState {
   // restarted chain would keep refusing a revoked certificate at registration
   // while quietly paying the registrations it had already produced.
   repeated bytes revoked_dsc_commitments = 4;
+
+  // revoked_cscas is the set of revoked CSCA signing keys, as
+  // sha256(canonical public key) — the same identity revoked_dscs uses, and for
+  // the same reason: a signing key may appear under several certificates and a
+  // revocation has to cover all of them.
+  //
+  // Carried for the reason revoked_dscs is, with one extra edge. InitGenesis
+  // replays `cscas` through AddCscaDER, and adding a certificate clears any
+  // revocation on its key — that is the only path back to trusting a CSCA. So
+  // these must be restored *after* the cscas loop, or a chain would re-trust on
+  // restart every CSCA governance had revoked. The ordering in InitGenesis is
+  // load-bearing, not incidental.
+  repeated bytes revoked_cscas = 5;
 }

@@ -19,6 +19,28 @@ nothing to join.
 
 ### Breaking — consensus
 
+- **`x/pki` can revoke a CSCA.** `MsgRevokeCsca` (governance) withdraws trust
+  from a Country Signing CA, so no Document Signer chaining to it verifies from
+  then on. `AddCsca` used to be a one-way door: a state in the trust store can
+  sign as many Document Signers as it likes and each mints identities the chain
+  counts as distinct humans, and the only answer was revoking those signers one
+  at a time, after each was already in use.
+  - What is revoked is the **signing key**, not the certificate handed in.
+    Countries carry several CSCA certificates sharing one key — renewals, link
+    certificates — and any of them verifies a child signature, so revoking a
+    single certificate would have changed nothing.
+  - **Prospective only.** Registrations already made keep claiming; retire them
+    with `MsgRevokeDsc`, which carries the purge, or let them lapse within one
+    `registration_validity_seconds`.
+  - Re-adding the certificate with `MsgAddCsca` clears the revocation. That is
+    the only way back — there is no un-revoke message.
+  - New genesis field `pki.revoked_cscas`. Restored *after* the CSCA list,
+    because replaying a CSCA clears its own revocation.
+- **The trust store no longer carries Israel.** The three Israeli CSCAs ICAO does
+  not distribute were removed from genesis, leaving the ICAO master list alone:
+  539 CSCAs down to 536. Israeli passports cannot register — there is no
+  ICAO-distributed Israeli CSCA to fall back on. Governance can add them back
+  with `MsgAddCsca`; genesis was the only point at which they could be taken out.
 - **`x/dex` checks its own books every block.** The EndBlocker asserts that what
   the module records and what it holds are exactly equal, and halts the node if
   not. Deliberate: a halt is recoverable by upgrade, a silent drain of the
@@ -117,6 +139,11 @@ nothing to join.
 - `docs/JOIN.md` — running a node.
 - `docs/UPGRADES.md` — coordinated upgrades, written from a rehearsal.
 - `docs/TRUST_STORE_RUNBOOK.md` — revoking a compromised passport certificate.
+  Now also covers revoking a CSCA. Three things in it were wrong and are fixed:
+  the revocation proposal named a `pubkey` field `MsgRevokeDsc` does not have,
+  it pointed at an `earthd query pki dsc` command that does not exist, and it
+  said revocation was not retroactive when it queues a purge that retires the
+  signer's registrations.
 - `scripts/build-genesis.sh` — the genesis is a build artifact now, not a file
   anyone edits.
 - `scripts/rehearse-upgrade.sh` — runs a governance upgrade end to end locally.

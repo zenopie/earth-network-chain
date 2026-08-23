@@ -20,6 +20,8 @@ service Msg {
 
   // RevokeDsc marks a Document Signer as untrusted (governance-gated).
   rpc RevokeDsc(MsgRevokeDsc) returns (MsgRevokeDscResponse);
+  // RevokeCsca withdraws trust from a CSCA signing key (governance-gated).
+  rpc RevokeCsca(MsgRevokeCsca) returns (MsgRevokeCscaResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -53,3 +55,29 @@ message MsgRevokeDsc {
   bytes certificate_der = 2;
 }
 message MsgRevokeDscResponse {}
+
+// MsgRevokeCsca withdraws trust from a Country Signing CA, closing the door on
+// any further Document Signer that chains to it. Without this, AddCsca is a
+// one-way door: a state admitted to the trust store can issue passport
+// identities this chain accepts as distinct humans, and the only response would
+// be revoking its Document Signers one at a time, after each is already in use.
+//
+// Identified by a certificate, like MsgRevokeDsc, but what is revoked is the
+// *signing key* behind it, not that one certificate. A CSCA renewal or link
+// certificate is a separate record here sharing one public key, and any of them
+// verifies a child signature — so revoking a single certificate would leave its
+// siblings verifying exactly what the revocation meant to stop. Presenting any
+// certificate carrying the key revokes the key, and so all of them.
+//
+// Prospective only. Registrations already made under this CSCA keep claiming
+// until they lapse: they are retired by revoking the individual Document
+// Signers, which is the existing MsgRevokeDsc path and carries the purge that
+// unwinds them. Untouched, they drain on their own within one
+// registration_validity_seconds, because renewing a registration re-verifies
+// the Document Signer and that verification now fails.
+message MsgRevokeCsca {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  bytes certificate_der = 2;
+}
+message MsgRevokeCscaResponse {}

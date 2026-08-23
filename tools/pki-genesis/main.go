@@ -4,8 +4,8 @@
 //
 // Inputs may be ICAO CSCA Master Lists (.ml) and/or individual DER/CER
 // certificate files. Master lists cover what ICAO distributes; individual files
-// cover countries whose CSCAs are absent from the master list (e.g. Israel) or
-// are newer than the last distribution.
+// cover countries whose CSCAs are absent from the master list or are newer than
+// the last distribution.
 //
 //	go run ./tools/pki-genesis path/to/allowlist.ml extra/*.cer > cscas.json
 //

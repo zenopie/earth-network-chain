@@ -56,6 +56,16 @@ type Keeper struct {
 	// already on the books.
 	RevokedDscCommitments collections.KeySet[[]byte]
 
+	// Revoked CSCA signing keys, keyed by sha256(canonical pubkey).
+	//
+	// Keyed by the signing key and not by certificate for the reason RevokedDscs
+	// is: the store holds several certificates per key — renewals and link
+	// certificates — and any of them verifies a child signature, so a revocation
+	// naming one certificate would be undone by its siblings. Consulted in
+	// issuerCandidates, which is the single point every trust decision about an
+	// issuer passes through.
+	RevokedCscas collections.KeySet[[]byte]
+
 	// revocationListeners are notified when a Document Signer is revoked, so the
 	// modules holding records made under it can act without this module needing
 	// to know they exist.
@@ -91,6 +101,7 @@ func NewKeeper(
 		revocationListeners:   &[]types.DscRevocationListener{},
 		RevokedDscs:           collections.NewKeySet(sb, types.RevokedDscsKey, "revoked_dscs", collections.BytesKey),
 		RevokedDscCommitments: collections.NewKeySet(sb, types.RevokedDscCommitmentsKey, "revoked_dsc_commitments", collections.BytesKey),
+		RevokedCscas:          collections.NewKeySet(sb, types.RevokedCscasKey, "revoked_cscas", collections.BytesKey),
 	}
 	schema, err := sb.Build()
 	if err != nil {

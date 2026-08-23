@@ -9,7 +9,14 @@ accept a DSC that chains to one of these, so this directory decides which
 passports can ever register. Nothing else the chain does is as load-bearing.
 
     masterlist/allowlist.ml   ICAO master list — 536 CSCAs
-    additional/*.cer          3 Israeli CSCAs ICAO does not distribute
+    additional/*.cer          hand-added CSCAs ICAO does not distribute (none)
+
+`additional/` is currently empty, so the ICAO master list is the entire trust
+store. It held three Israeli CSCAs until they were removed on purpose — a CSCA
+is a key that can mint passport identities this chain accepts, so which states
+are on this list is a sybil-resistance decision, not a formality. The cost of
+that particular removal is that Israeli passport holders cannot register at all,
+since ICAO does not distribute an Israeli CSCA to fall back to.
 
 Regenerate the genesis block with:
 

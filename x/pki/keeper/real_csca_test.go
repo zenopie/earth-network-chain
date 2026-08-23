@@ -42,7 +42,7 @@ func TestAddCscaLongSubjectDN(t *testing.T) {
 	}
 
 	// The DN index must still resolve this CSCA as an issuer candidate.
-	cands, err := k.issuerCandidates(ctx, &certs.Cert{IssuerRaw: parsed.SubjectRaw})
+	cands, _, err := k.issuerCandidates(ctx, &certs.Cert{IssuerRaw: parsed.SubjectRaw})
 	if err != nil {
 		t.Fatalf("issuerCandidates: %v", err)
 	}

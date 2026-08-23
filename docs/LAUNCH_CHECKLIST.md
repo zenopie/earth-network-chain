@@ -391,10 +391,12 @@ An untested upgrade path is discovered during the upgrade.
       noir_android's bb version in lockstep with the chain's v5.0.0, or
       large-circuit proofs are rejected on arrival.
 - [x] **Write the trust-store runbook.** `docs/TRUST_STORE_RUNBOOK.md`.
-      Revocation goes expedited. It also names two gaps rather than hiding them:
-      there is no `MsgRevokeCsca`, so a country's root going bad has no fast
-      path, and the same is true for a CSCA issuing certificates it should
-      not.
+      Revocation goes expedited. Both gaps it used to name are closed:
+      `MsgRevokeCsca` gives a country's root a one-day path, and it revokes the
+      signing key rather than the certificate, so it also answers a CSCA issuing
+      certificates it should not. What remains open is deliberate — revoking a
+      CSCA is prospective, and there is no country-wide purge of registrations
+      already made.
 - [ ] **External audit** of `x/dex` (auction settlement and LP accounting),
       `x/allocation` (the reward index, shared by two streams) and the verifier
       shim in `zk/ultrahonk`. These are the three places where a bug is

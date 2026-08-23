@@ -72,3 +72,25 @@ func (k msgServer) RevokeDsc(ctx context.Context, req *types.MsgRevokeDsc) (*typ
 	}
 	return &types.MsgRevokeDscResponse{}, nil
 }
+
+// RevokeCsca withdraws trust from a Country Signing CA, so nothing it signs
+// verifies from here on. Governance-gated, and the counterweight to AddCsca:
+// without it, admitting a state to the trust store is irreversible, and a state
+// in the trust store can mint passport identities this chain counts as distinct
+// humans.
+//
+// Takes a certificate and revokes the key inside it — see Keeper.RevokeCsca for
+// why the key is the unit and not the certificate.
+func (k msgServer) RevokeCsca(ctx context.Context, req *types.MsgRevokeCsca) (*types.MsgRevokeCscaResponse, error) {
+	if err := k.checkAuthority(req.Authority); err != nil {
+		return nil, err
+	}
+	cert, err := certs.ParseCert(req.CertificateDer)
+	if err != nil {
+		return nil, types.ErrInvalidCert.Wrap(err.Error())
+	}
+	if err := k.Keeper.RevokeCsca(ctx, cert.PublicKey.CanonicalBytes()); err != nil {
+		return nil, err
+	}
+	return &types.MsgRevokeCscaResponse{}, nil
+}

@@ -12,4 +12,5 @@ var (
 	ErrUnauthorized = errorsmod.Register(ModuleName, 8, "unauthorized")
 	ErrUnknownDsc   = errorsmod.Register(ModuleName, 9, "DSC not found in registry")
 	ErrDscRevoked   = errorsmod.Register(ModuleName, 10, "DSC has been revoked")
+	ErrCscaRevoked  = errorsmod.Register(ModuleName, 11, "issuing CSCA has been revoked")
 )

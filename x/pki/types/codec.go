@@ -10,5 +10,6 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 	registrar.RegisterImplementations((*sdk.Msg)(nil), &MsgUpdateParams{})
 	registrar.RegisterImplementations((*sdk.Msg)(nil), &MsgAddCsca{})
 	registrar.RegisterImplementations((*sdk.Msg)(nil), &MsgRevokeDsc{})
+	registrar.RegisterImplementations((*sdk.Msg)(nil), &MsgRevokeCsca{})
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)
 }

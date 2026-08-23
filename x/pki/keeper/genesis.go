@@ -29,6 +29,16 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 	}
+	// After the CSCA loop above, not before: AddCscaDER clears a revocation on
+	// the key it adds, since re-adding a certificate is the only way back to
+	// trusting one. Restoring these first would mean every CSCA replayed above
+	// silently un-revoked itself, and a chain restarted from its own export
+	// would trust exactly what governance had thrown out.
+	for _, id := range genState.RevokedCscas {
+		if err := k.RevokedCscas.Set(ctx, id); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -57,6 +67,12 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return false, nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := k.RevokedCscas.Walk(ctx, nil, func(id []byte) (bool, error) {
+		gs.RevokedCscas = append(gs.RevokedCscas, id)
+		return false, nil
+	}); err != nil {
 		return nil, err
 	}
 	return gs, nil
