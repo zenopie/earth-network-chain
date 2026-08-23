@@ -12,6 +12,11 @@ services:
       # a fixed address. The short form publishes on a random host port.
       - '1317:1317'   # LCD  — wallet apps and the ads-for-gas backend
       - '26657:26657' # RPC  — the explorer's block-range queries
+      # p2p. Without this the node listens for peers inside the container and
+      # nothing can reach it, which is the difference between a network and a
+      # chain running by itself. Set EXTERNAL_ADDRESS to the address peers
+      # should dial, or they are handed one that does not resolve outside here.
+      - '26656:26656' # p2p  — other nodes
     volumes:
       # Genesis, the validator's consensus key and all chain state.
       # Without this a redeploy does not restart the chain, it creates a

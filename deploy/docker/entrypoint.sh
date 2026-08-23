@@ -57,6 +57,26 @@ RPC_CORS_ORIGINS="${RPC_CORS_ORIGINS:-}"
 # REST surface from a page.
 API_UNSAFE_CORS="${API_UNSAFE_CORS:-0}"
 
+# Peering. The node already listens for p2p on 0.0.0.0:26656; these are what
+# make it reachable and what give it somewhere to dial.
+#
+# EXTERNAL_ADDRESS is the address other nodes should use to reach this one,
+# host:port. It matters more than it looks: without it CometBFT advertises the
+# address it sees on itself, which inside a container is a private address, and
+# it hands that to every peer through PEX. The node then appears in the network
+# under an address nobody outside can dial. On Akash the provider maps 26656 to
+# a port it chooses, so this has to be the provider's hostname and *that* port,
+# which is only known once the lease is up.
+EXTERNAL_ADDRESS="${EXTERNAL_ADDRESS:-}"
+#
+# SEEDS are crawlers that hand out peer addresses and then disconnect;
+# PERSISTENT_PEERS are nodes to hold a connection to and redial. Both are
+# comma-separated `nodeid@host:port`. A node with neither and no peer book has
+# no way to find the network — the address book is the only other source, and on
+# a fresh volume it is empty.
+SEEDS="${SEEDS:-}"
+PERSISTENT_PEERS="${PERSISTENT_PEERS:-}"
+
 # Where the release genesis and its hash live in the image. Overridable only so
 # the three paths below can be exercised without building a container — see
 # deploy/docker/entrypoint_test.sh.
@@ -245,6 +265,26 @@ if [ -n "$RPC_CORS_ORIGINS" ]; then
   sed_inplace "s|^cors_allowed_origins = .*|cors_allowed_origins = $RPC_CORS_TOML|" \
     "$EARTH_HOME/config/config.toml"
   say "rpc cors_allowed_origins = $RPC_CORS_TOML"
+fi
+
+# Peering, applied on every start like the settings above: config.toml is in the
+# volume, so a seed can be added or an external address corrected with a restart
+# rather than a wipe.
+if [ -n "$EXTERNAL_ADDRESS" ]; then
+  sed_inplace "s|^external_address = .*|external_address = \"$EXTERNAL_ADDRESS\"|" \
+    "$EARTH_HOME/config/config.toml"
+  say "advertising $EXTERNAL_ADDRESS to peers"
+else
+  say "EXTERNAL_ADDRESS unset — peers will be handed whatever address this node sees on itself, which in a container is usually unreachable"
+fi
+if [ -n "$SEEDS" ]; then
+  sed_inplace "s|^seeds = .*|seeds = \"$SEEDS\"|" "$EARTH_HOME/config/config.toml"
+  say "seeds = $SEEDS"
+fi
+if [ -n "$PERSISTENT_PEERS" ]; then
+  sed_inplace "s|^persistent_peers = .*|persistent_peers = \"$PERSISTENT_PEERS\"|" \
+    "$EARTH_HOME/config/config.toml"
+  say "persistent_peers = $PERSISTENT_PEERS"
 fi
 
 # Bind to every interface. The defaults listen on loopback, which inside a

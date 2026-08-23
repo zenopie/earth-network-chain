@@ -125,8 +125,26 @@ services:
       #   to:
       #     - service: cloudflared
       #
-      # p2p (26656) and gRPC (9090) stay unexposed: a single validator has no
-      # peers, and everything here speaks REST.
+      # p2p. `global: true` and a provider port, not the tunnel: peers speak
+      # CometBFT's own protocol over raw TCP, and cloudflared serves HTTP to
+      # browsers. A tunnelled 26656 would be reachable and useless.
+      #
+      # The provider maps this to a port of its choosing, so once the lease is
+      # up, read the assigned host:port from the lease status and set
+      # EXTERNAL_ADDRESS to it. Skip that and the node advertises its pod
+      # address to every peer it meets, which no one outside the cluster can
+      # dial — it will connect out and never be connectable.
+      #
+      # Adding this port is a structural change: it cannot be applied to a
+      # running lease with PUT, so it costs a lease replacement, and closing
+      # this lease destroys the volume — genesis, the validator's consensus key,
+      # every account. Do it as part of the genesis cutover, while there is no
+      # state worth keeping.
+      - port: 26656
+        as: 26656
+        to:
+          - global: true
+      # gRPC (9090) stays unexposed: everything here speaks REST.
 
     params:
       storage:

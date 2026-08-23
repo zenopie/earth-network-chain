@@ -86,11 +86,25 @@ earthd genesis validate-genesis
 
 ## 4. Configure
 
-**Seeds** — in `~/.earth/config/config.toml`:
+**Seeds and reachability** — in `~/.earth/config/config.toml`:
 
 ```toml
 seeds = "TBD@seed.erth.network:26656"
+# The address other nodes should dial to reach you. Set it if this node is
+# behind NAT, a container, or a cloud provider that maps ports — otherwise
+# CometBFT advertises the address it sees on itself, hands that to every peer
+# it meets, and nobody can dial you back.
+external_address = "your.host.or.ip:26656"
 ```
+
+Port **26656** has to be reachable from outside for peers to connect to you. A
+node can sync without that — it dials out — but it will never be dialled, which
+means it contributes nothing to the network's connectivity and cannot serve
+state sync to anyone.
+
+Running from the Docker image, these are `SEEDS`, `PERSISTENT_PEERS` and
+`EXTERNAL_ADDRESS` environment variables; the entrypoint writes them into
+`config.toml` on every start, so a restart is enough to change one.
 
 **Minimum gas price** — in `~/.earth/config/app.toml`. **Required. The node will
 not start without it**, and the error doesn't say which file to edit:

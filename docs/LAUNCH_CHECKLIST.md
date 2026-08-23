@@ -131,11 +131,24 @@ file confirms the shape: one account, `"gen_txs": []`.
 
 ## 2. There has to be a way to join
 
-- [ ] **Expose p2p.** `Dockerfile` exposes only 1317 and 26657;
-      `docker-compose.yaml` publishes neither 26656 nor gRPC. The entrypoint
-      binds p2p on `0.0.0.0` but nothing can reach it. On Akash this is a
-      structural SDL change and therefore a lease replacement — plan it with the
-      genesis cutover, not after.
+- [x] **Expose p2p.** The `Dockerfile` already exposed 26656 — the earlier
+      version of this entry said otherwise and was wrong. What was actually
+      missing was everything around it: `docker-compose.yaml` published only
+      1317 and 26657, the Akash SDL deliberately exposed no p2p port at all, and
+      the entrypoint set no `external_address`, so a containerised node
+      advertised its pod address to every peer it met and could never be dialled
+      back.
+      Now: compose publishes 26656; the SDL exposes it `global: true` on a
+      provider port rather than through the tunnel, since peers speak raw TCP
+      and cloudflared serves HTTP; and the entrypoint takes `EXTERNAL_ADDRESS`,
+      `SEEDS` and `PERSISTENT_PEERS`, applied on every start, saying so in the
+      log when the external address is unset.
+      **Still to do on Akash:** adding the port is a structural SDL change, so
+      it needs a lease replacement, and closing the lease destroys the volume —
+      genesis, the consensus key, every account. Do it as part of the genesis
+      cutover while there is no state worth keeping. The provider assigns the
+      external port, so read it from the lease and set `EXTERNAL_ADDRESS` to the
+      provider's host and *that* port.
 - [ ] **Publish seeds.** At least one seed node's `nodeid@host:26656`, in the
       README and in the release notes.
 - [x] **Turn off `--api.enabled-unsafe-cors`** for validator nodes. Now
@@ -248,9 +261,10 @@ An untested upgrade path is discovered during the upgrade.
       reads `PROPOSAL_STATUS_FAILED` — passed the vote, failed to apply. With a
       7-day voting period that is ~120,000 blocks of margin. The first run of the
       script failed exactly this way.
-- [ ] **Ship cosmovisor** in the image with the standard layout
-      (`$DAEMON_HOME/cosmovisor/genesis/bin/earthd`), so operators can stage the
-      next binary rather than racing a halt at 3am.
+- [x] **Cosmovisor: decided against.** Not bundled, deliberately. Upgrades are
+      a binary swap at a halt height, and `docs/UPGRADES.md` is written from a
+      rehearsal of exactly that. An operator who wants cosmovisor can run it
+      around the released binary; nothing here prevents it.
 - [x] **Document the halt-height procedure** — `docs/UPGRADES.md`, written from
       the rehearsal rather than from the SDK docs. Covers the plan-height
       arithmetic, `StoreUpgrades` when the module set changes,

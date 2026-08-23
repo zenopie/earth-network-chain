@@ -26,12 +26,20 @@ everything else you put there survives.
 ## Ports
 
     1317   LCD    the wallet apps and the ads-for-gas backend
+    26656  p2p    other nodes
     26657  RPC    the explorer's block-range queries
 
-Both are published with explicit host mappings so the addresses are predictable —
-`EARTH_NODE_URL` and the apps need to point somewhere fixed. gRPC (9090) and p2p
-(26656) are bound inside the container but not published: everything here speaks
-REST, and a single validator has no peers to gossip with.
+All three are published with explicit host mappings so the addresses are
+predictable — `EARTH_NODE_URL` and the apps need to point somewhere fixed.
+
+p2p needs one thing beyond the mapping: set `EXTERNAL_ADDRESS` to the address
+peers should dial. Without it CometBFT advertises the address it sees on itself,
+which in a container is a private one, and hands that to every peer through PEX
+— the node dials out fine and can never be dialled back. `SEEDS` and
+`PERSISTENT_PEERS` give it somewhere to start; all three are written into
+`config.toml` on every start, so a restart is enough to change one.
+
+gRPC (9090) stays unpublished: everything here speaks REST.
 
 ## The volume is not optional
 
