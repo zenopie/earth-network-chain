@@ -24,20 +24,18 @@ library (`noir_android`), not the circuit.
 
 ## Remaining
 
-1. **Validator native libs** — only `darwin_arm64` is checked in (dev). Build
-   `lib/linux_amd64/` and `lib/linux_arm64/` against v5.0.0 in CI/release via
-   `third_party/barretenberg-go/scripts/build-wrapper.sh --platform linux_amd64`
-   (runs on Linux; SHA-pinned). The chain build needs `CGO_ENABLED=1` + the
-   platform lib. **This is the one thing here that blocks launch:** without it
-   no Linux validator can build the chain.
-
-2. **On-device proving, end to end on real hardware.** The code is in place —
+1. **On-device proving, end to end on real hardware.** The code is in place —
    `PassportProver` calls `NoirProver` for a bb v5.0.0 poseidon2 UltraHonk proof
    of the `lean_poa` circuit and splits it into the chain's
    `(proof, public_signals)` form. What has not been done is a real passport,
    scanned on a real handset, registering against a real node. Note the version
    lockstep the file warns about: noir_android's bb must match the chain's
    v5.0.0 lib or large-circuit proofs are rejected.
+
+   This is the only open item here. The validator native libs are **not** one:
+   `lib/` carries `darwin_arm64` for dev, and the Linux libs are built per
+   architecture on native runners by `release.yml`, attached to releases by
+   `verifier-libs.yml`, and built in-image by the Dockerfile.
 
 ## Settled — do not reopen
 

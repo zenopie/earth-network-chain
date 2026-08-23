@@ -360,13 +360,16 @@ An untested upgrade path is discovered during the upgrade.
       circuits, not demo keys. `dsc_root` is `reserved` in the params proto: a
       registration now carries the Document Signer certificate, checked against
       the 539 CSCAs genesis seeds from `csca/`.
-- [ ] **Build the Linux verifier libraries.** `third_party/barretenberg-go/lib/`
-      contains `darwin_arm64` and nothing else, so no Linux validator can build
-      the chain — the chain build needs `CGO_ENABLED=1` and the platform lib.
-      Build `linux_amd64` and `linux_arm64` against bb v5.0.0 in CI or at
-      release, via `scripts/build-wrapper.sh --platform linux_amd64` (runs on
-      Linux, SHA-pinned). **This blocks launch**, and it is a CI job rather than
-      research.
+- [x] **The Linux verifier libraries are built by CI, not checked in.**
+      `third_party/barretenberg-go/lib/` holds `darwin_arm64` and nothing else,
+      which reads like a gap and is not one. `release.yml` builds
+      `libbarretenberg.a` on a native runner per architecture — no
+      cross-compiling, since earthd links the verifier through cgo — before
+      building `earthd`, checksum-verified against `checksums.json` at bb
+      v5.0.0. `verifier-libs.yml` builds the same libs on release and attaches
+      them. The Dockerfile builds it in-image. The checked-in macOS lib is a dev
+      convenience; committing multi-megabyte archives for every platform is the
+      thing being avoided.
 - [ ] **Prove on real hardware, end to end.** The on-device path is written —
       `PassportProver` → `NoirProver` → bb v5.0.0 poseidon2 proof of `lean_poa`,
       split into the chain's `(proof, public_signals)` form — but no real
