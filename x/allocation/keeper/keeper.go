@@ -54,6 +54,10 @@ type Keeper struct {
 	LastUpkeep        collections.Map[uint32, int64]
 	Epoch             collections.Map[uint32, uint64]
 	IntegratedOptions collections.KeySet[collections.Pair[uint32, uint64]]
+	// PruneQueue orders dead options by when they may be removed; PruneDue is
+	// the reverse lookup that lets one cancel itself when it comes back to life.
+	PruneQueue collections.KeySet[collections.Triple[int64, uint32, uint64]]
+	PruneDue   collections.Map[collections.Pair[uint32, uint64], int64]
 
 	// weightSources and integratedHandlers are maps rather than fields because
 	// they are populated after construction, by the modules that own the
@@ -101,6 +105,9 @@ func NewKeeper(
 		LastUpkeep:        collections.NewMap(sb, types.LastUpkeepKey, "last_upkeep", collections.Uint32Key, collections.Int64Value),
 		Epoch:             collections.NewMap(sb, types.EpochKey, "epoch", collections.Uint32Key, collections.Uint64Value),
 		IntegratedOptions: collections.NewKeySet(sb, types.IntegratedOptionsKey, "integrated_options", streamOption),
+		PruneQueue: collections.NewKeySet(sb, types.PruneQueueKey, "prune_queue",
+			collections.TripleKeyCodec(collections.Int64Key, collections.Uint32Key, collections.Uint64Key)),
+		PruneDue: collections.NewMap(sb, types.PruneDueKey, "prune_due", streamOption, collections.Int64Value),
 
 		weightSources:      map[types.StreamId]types.WeightSource{},
 		integratedHandlers: map[string]integratedHandler{},

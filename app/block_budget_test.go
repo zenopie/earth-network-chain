@@ -3,6 +3,7 @@ package app_test
 import (
 	"testing"
 
+	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	dextypes "github.com/earth-network/earth/x/dex/types"
 	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
 )
@@ -28,12 +29,16 @@ import (
 //	                              revoked-signer purge (one budget, spent
 //	                              purge-first)
 //	unbondings      x/dex         EndBlock    matured liquidity withdrawals
+//	dead options    x/allocation  BeginBlock  permissionlessly-added options that
+//	                              have carried no weight and owed nothing for the
+//	                              whole grace period
 //
 // Each unit is roughly a dozen store operations plus a settle, so this is a
 // small fraction of a block at the numbers below. It is stated as a sum because
 // the two land in the same block and neither module knows about the other.
 const maxRetirementsPerBlock = personhoodtypes.DefaultRegistrationSweepLimit +
-	dextypes.LpUnbondSweepLimit
+	dextypes.LpUnbondSweepLimit +
+	allocationtypes.OptionPruneSweepLimit
 
 func TestPerBlockWorkBudget(t *testing.T) {
 	// The individual caps. Changing one of these is fine; changing it without
@@ -44,10 +49,13 @@ func TestPerBlockWorkBudget(t *testing.T) {
 	if got := dextypes.LpUnbondSweepLimit; got != 50 {
 		t.Errorf("lp unbonding sweep cap is %d, expected 50 — update the total below", got)
 	}
+	if got := allocationtypes.OptionPruneSweepLimit; got != 20 {
+		t.Errorf("option prune sweep cap is %d, expected 20 — update the total below", got)
+	}
 
 	// The sum, which is the number that matters and which nothing else states.
 	//
-	// 150 retirements is on the order of a couple of thousand store operations,
+	// 170 retirements is on the order of a couple of thousand store operations,
 	// comfortably inside a block. The point of the bound is not that 150 is
 	// special — it is that the figure exists at all, and that a future sweep
 	// cannot quietly push it up by adding a cap of its own.

@@ -105,7 +105,13 @@ func (k Keeper) setOption(ctx context.Context, stream types.StreamId, opt types.
 		}
 	}
 
-	return k.Options.Set(ctx, optionKey(stream, opt.Id), opt)
+	if err := k.Options.Set(ctx, optionKey(stream, opt.Id), opt); err != nil {
+		return err
+	}
+	// The removal schedule is maintained here rather than anywhere else for the
+	// same reason the sum is: one writer, so the schedule cannot describe a
+	// record that has since changed underneath it. See prune.go.
+	return k.refreshPruneSchedule(ctx, stream, opt)
 }
 
 func (k Keeper) getLastUpkeep(ctx context.Context, stream types.StreamId) (int64, error) {

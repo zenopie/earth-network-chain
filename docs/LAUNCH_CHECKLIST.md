@@ -321,6 +321,23 @@ An untested upgrade path is discovered during the upgrade.
       operation and an operator can run against a halted node to learn which of
       the two numbers is wrong. Genesis validation walks the options on every
       import, and the running sum is rebuilt from them there.
+- [x] **Permissionless options grew the state and the query with no way back.**
+      Fixed, in the two places it showed. Adding an ADDRESS option is
+      permissionless and its fee is paid once, so every option ever added was a
+      row stored forever whether or not a single voter pointed at it, and the
+      `Options` query returned all of them on a route that costs the caller
+      nothing.
+      Options now expire: thirty days carrying no weight and the option is
+      removed, along with any rewards it earned and nobody claimed. Nothing is
+      burned — an option's accrued ERTH is minted at claim, so a forfeited
+      balance is issuance that never happens — and anyone may trigger a claim on
+      an ADDRESS option, with the payout going to the recipient whoever sends it.
+      Governance's INTEGRATED options are never swept. The schedule is a queue
+      ordered by due date maintained on every option write, so a quiet block
+      reads one key and a busy one removes at most 20; the cap is in the
+      per-block budget in `app/block_budget_test.go`.
+      The query is paged at 100. Walking the whole table is still possible, but
+      page by page, as separate requests a node can meter.
 - [ ] **Pin the public-input schema.** `docs/PROOF_OF_PERSONHOOD_TODO.md:27`
       records that `verifyRegistrationProof` still uses placeholder indices
       (`nullifierSignalIndex=0`, `dscRootSignalIndex=2`). These are consensus

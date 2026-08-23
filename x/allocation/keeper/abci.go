@@ -13,13 +13,19 @@ import (
 // compounding LP rewards into the dex pools). ADDRESS options are settled lazily
 // on claim / vote change, so permissionless address options cost nothing per
 // block.
+//
+// It then removes the options that have been dead long enough to go, capped so
+// that a cohort falling due together cannot land unbounded work on one block.
 func (k Keeper) BeginBlocker(ctx context.Context) error {
 	for _, stream := range types.Streams {
 		if err := k.resolveIntegrated(ctx, stream); err != nil {
 			return err
 		}
 	}
-	return nil
+	// Emission first, housekeeping after: a dead option is removed only once it
+	// has been dead for the whole grace period, so there is never anything owed
+	// to it that this block's resolve would have paid.
+	return k.SweepPrunableOptions(ctx)
 }
 
 func (k Keeper) resolveIntegrated(ctx context.Context, stream types.StreamId) error {

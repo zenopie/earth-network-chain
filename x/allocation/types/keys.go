@@ -40,6 +40,14 @@ var (
 	SummedWeightKey      = collections.NewPrefix("summed_weight")      // stream -> Int
 	LastUpkeepKey        = collections.NewPrefix("last_upkeep")        // stream -> int64 (unix nanos)
 	IntegratedOptionsKey = collections.NewPrefix("integrated_options") // (stream, id)
+	// PruneQueueKey orders dead options by when they may be removed, so the
+	// sweep can stop at the first entry that is not due yet instead of looking
+	// at the rest. Keyed by time first for exactly that reason.
+	PruneQueueKey = collections.NewPrefix("prune_queue") // (due unix, stream, id)
+	// PruneDueKey is the reverse lookup, so an option that comes back to life
+	// can cancel its own removal without searching the queue for itself.
+	PruneDueKey = collections.NewPrefix("prune_due") // (stream, id) -> due unix
+
 	// EpochKey is the per-stream allocation epoch. Bumped by a governance reset;
 	// votes recorded under an older epoch carry no live weight. Per stream rather
 	// than global, so resetting one slate leaves the other one standing.
@@ -88,6 +96,35 @@ const (
 	// HumanVoterWeight is the fixed weight of one registered human. Every human
 	// carries the same weight, which is what makes this stream one-human-one-vote.
 	HumanVoterWeight = 100
+
+	// OptionIdleGrace is how long a dead option is kept before it is removed:
+	// thirty days without a single voter.
+	//
+	// Rewards it had earned and nobody claimed go with it. Anyone may trigger a
+	// claim on an ADDRESS option — the payout goes to the recipient whoever
+	// sends it — so thirty days is a long time for a live recipient to leave
+	// money on the table, and the alternative is that a sliver of unclaimed dust
+	// makes a row immortal.
+	//
+	// Adding an option is permissionless and its fee is paid once, so without a
+	// way out every option ever added is a row the chain stores forever, whether
+	// or not a single voter ever pointed at it. The fee makes that expensive
+	// rather than free, which is why this is a grace period and not a tight one:
+	// the goal is to let genuinely dead entries go, not to police them.
+	//
+	// A constant rather than a parameter. It is a housekeeping interval, not a
+	// lever anyone should need to pull under pressure, and a governance vote can
+	// change it by upgrade like any other constant here.
+	OptionIdleGrace = 30 * 24 * 60 * 60 // seconds
+
+	// OptionPruneSweepLimit caps how many options are removed in one block.
+	//
+	// Removals are cheap individually, but the queue can hold an arbitrary
+	// number of entries that fall due together — options added in a burst come
+	// due in a burst thirty days later. The remainder is not stranded: the next
+	// block resumes from the oldest entry. Counted in the per-block budget, see
+	// app/block_budget_test.go.
+	OptionPruneSweepLimit = 20
 
 	// MaxOptionsPageSize caps how many options one Options query returns.
 	//

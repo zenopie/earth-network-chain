@@ -68,6 +68,14 @@ nothing to join.
   The SDK default is off, and a snapshot cannot be made for a height already
   passed, so a chain launched without them leaves everyone who joins later
   replaying from genesis. `SNAPSHOT_INTERVAL=0` disables them, loudly.
+- **Dead allocation options are removed.** An ADDRESS option that carries no
+  weight for thirty days is deleted, and any ERTH it earned and nobody claimed
+  goes with it — not burned, since an option's rewards are only minted when they
+  are claimed. Anyone may trigger a claim on such an option and the payout goes
+  to its recipient regardless of who sent it, so a live recipient has thirty days
+  and a permissionless way to take what is theirs. Governance's INTEGRATED
+  options are never touched. Capped at 20 removals a block; a quiet block reads
+  one key.
 - **The `Options` query is paged.** It returned every option in a stream on a
   route that costs the caller nothing, while the number of options is set by
   whoever pays the fee to add them. One request now returns at most 100. Clients

@@ -127,6 +127,13 @@ func (k Keeper) restoreStream(ctx context.Context, st types.StreamState) error {
 				return err
 			}
 		}
+		// The removal schedule is derived, like the running sum, so it is rebuilt
+		// here rather than carried. An option that was already dead at export
+		// starts its grace period again from the genesis time, which is the only
+		// clock a restarted chain has and errs towards keeping things.
+		if err := k.refreshPruneSchedule(ctx, st.Stream, opt); err != nil {
+			return err
+		}
 	}
 
 	if err := k.SummedWeight.Set(ctx, kk, summed); err != nil {
