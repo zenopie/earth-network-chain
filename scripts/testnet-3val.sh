@@ -18,7 +18,15 @@ set -euo pipefail
 
 CHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EARTHD="${EARTHD:-$HOME/go/bin/earthd}"
-CHAIN_ID=earth-1
+# Read from the genesis ignite builds, never assumed.
+#
+# It was hardcoded to earth-1, which is what deploy/genesis.json carries — but
+# `ignite chain init` names the chain from config.yml, config.yml sets no chain
+# id, and ignite then defaults to `earth`. Every transaction below was signed
+# for a chain that was not this one and came back "signature verification
+# failed", which the script discarded. Nodes 1 and 2 synced and silently never
+# joined the validator set, and `up` reported success.
+CHAIN_ID=
 BASE=/tmp/earth-3val
 
 # node index -> RPC / P2P / API / gRPC ports
@@ -31,6 +39,26 @@ STAKES=(0 300000000 50000000)
 
 say() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
+# tx runs a transaction and fails the script if the chain rejected it.
+#
+# These used to end in `>/dev/null`. A transaction can be delivered and still
+# fail — CheckTx reports a non-zero `code` in a JSON body on stdout with exit
+# status 0 — so discarding the output discards the only report of what happened.
+# That is how a wrong chain id became a script that finished happily with one
+# validator instead of three.
+tx() {
+  local out code
+  out="$("$@" -y -o json 2>&1)" || {
+    echo "error: transaction could not be sent:" >&2; echo "$out" >&2; exit 1; }
+  code="$(printf '%s' "$out" | python3 -c "import json,sys
+try:
+    print(json.loads(sys.stdin.read().strip().splitlines()[-1])['code'])
+except Exception:
+    print('unparseable')" 2>/dev/null)"
+  [ "$code" = "0" ] || {
+    echo "error: transaction rejected (code $code):" >&2; echo "$out" >&2; exit 1; }
+}
+
 up() {
   command -v ignite >/dev/null || { echo "error: ignite not on PATH" >&2; exit 1; }
   [ -x "$EARTHD" ] || { echo "error: no earthd at $EARTHD" >&2; exit 1; }
@@ -40,7 +68,9 @@ up() {
   say "node0: building genesis via ignite chain init (~1 min, silent)"
   ( cd "$CHAIN_DIR" && ignite chain init --home "$BASE/n0" >"$BASE/init.log" 2>&1 ) \
     || { echo "ignite chain init failed; see $BASE/init.log" >&2; exit 1; }
-  say "node0: genesis ready"
+  CHAIN_ID="$(python3 -c "import json;print(json.load(open('$BASE/n0/config/genesis.json'))['chain_id'])")"
+  [ -n "$CHAIN_ID" ] || { echo "error: no chain_id in the genesis ignite just built" >&2; exit 1; }
+  say "node0: genesis ready, chain id $CHAIN_ID"
 
   node0_id=$("$EARTHD" tendermint show-node-id --home "$BASE/n0")
 
@@ -85,10 +115,10 @@ up() {
   for i in 1 2; do
     "$EARTHD" keys add "val$i" --keyring-backend test --home "$BASE/n$i" >/dev/null 2>&1
     addr=$("$EARTHD" keys show "val$i" -a --keyring-backend test --home "$BASE/n$i")
-    "$EARTHD" tx bank send "$alice" "$addr" $(( ${STAKES[$i]} + 10000000 ))uerth \
+    tx "$EARTHD" tx bank send "$alice" "$addr" $(( ${STAKES[$i]} + 10000000 ))uerth \
       --from alice --keyring-backend test --home "$BASE/n0" \
       --node "tcp://127.0.0.1:${RPC[0]}" --chain-id "$CHAIN_ID" \
-      --gas auto --gas-adjustment 1.5 --fees 5000uerth -y >/dev/null
+      --gas auto --gas-adjustment 1.5 --fees 5000uerth
     sleep 4
   done
 
@@ -105,10 +135,10 @@ up() {
   "min-self-delegation": "1"
 }
 EOF
-    "$EARTHD" tx staking create-validator "$BASE/n$i/val.json" \
+    tx "$EARTHD" tx staking create-validator "$BASE/n$i/val.json" \
       --from "val$i" --keyring-backend test --home "$BASE/n$i" \
       --node "tcp://127.0.0.1:${RPC[0]}" --chain-id "$CHAIN_ID" \
-      --gas auto --gas-adjustment 1.5 --fees 5000uerth -y >/dev/null
+      --gas auto --gas-adjustment 1.5 --fees 5000uerth
     sleep 4
   done
 
