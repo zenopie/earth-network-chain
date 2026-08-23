@@ -33,7 +33,11 @@ case "$1" in
   init)
     home=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--home" ] && j=$((i+1)) && home="${!j}"; done
     mkdir -p "$home/config"
-    printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$home/config/config.toml"
+    # Enough of a real config.toml for the settings the entrypoint writes,
+    # persistent_peers_max_dial_period included: it shares a prefix with
+    # persistent_peers, and a pattern loose enough to hit both would leave
+    # CometBFT unable to parse its own config.
+    printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\nexternal_address = ""\nseeds = ""\npersistent_peers = ""\npersistent_peers_max_dial_period = "0s"\n' > "$home/config/config.toml"
     printf 'snapshot-interval = 0\nsnapshot-keep-recent = 2\n' > "$home/config/app.toml"
     printf '{"stock":true}\n' > "$home/config/genesis.json"
     ;;
@@ -234,6 +238,62 @@ if run "$H" SNAPSHOT_INTERVAL=500; then
     || bad "snapshots: stale on restart" "$(grep '^snapshot-interval' "$H/config/app.toml")"
 else
   bad "snapshots resume: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# ── 8. peering ─────────────────────────────────────────────────────────────
+#
+# The failure this covers is invisible from inside the container: without
+# external_address CometBFT advertises the address it sees on itself, which here
+# is a private one, and hands it to every peer through PEX. The node dials out,
+# looks healthy, and can never be dialled back.
+H="$WORK/peers"; mkdir -p "$H"
+if run "$H" EXTERNAL_ADDRESS="203.0.113.7:26656" \
+       SEEDS="aaaa@seed.erth.network:26656" \
+       PERSISTENT_PEERS="bbbb@peer.one:26656,cccc@peer.two:26656"; then
+  grep -q '^external_address = "203.0.113.7:26656"$' "$H/config/config.toml" \
+    && ok "peers: advertises the address it was given" \
+    || bad "peers: external_address not written" "$(grep '^external_address' "$H/config/config.toml")"
+  grep -q '^seeds = "aaaa@seed.erth.network:26656"$' "$H/config/config.toml" \
+    && ok "peers: seeds written" || bad "peers: seeds not written" "$(grep '^seeds' "$H/config/config.toml")"
+  grep -q '^persistent_peers = "bbbb@peer.one:26656,cccc@peer.two:26656"$' "$H/config/config.toml" \
+    && ok "peers: persistent_peers written" \
+    || bad "peers: persistent_peers not written" "$(grep '^persistent_peers = ' "$H/config/config.toml")"
+  # The name is a prefix of persistent_peers_max_dial_period, which a looser
+  # pattern would overwrite with a peer list and leave CometBFT refusing to load.
+  grep -q '^persistent_peers_max_dial_period = "0s"$' "$H/config/config.toml" \
+    && ok "peers: leaves persistent_peers_max_dial_period alone" \
+    || bad "peers: clobbered a neighbouring key" "$(grep '^persistent_peers_max' "$H/config/config.toml")"
+  grep -q "advertising 203.0.113.7:26656" "$LOG" \
+    && ok "peers: says what it advertises" || bad "peers: silent about its address" ""
+else
+  bad "peers: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# Unset is the dangerous default, so it has to be loud rather than absent.
+H="$WORK/peers-off"; mkdir -p "$H"
+if run "$H"; then
+  grep -q '^external_address = ""$' "$H/config/config.toml" \
+    && ok "peers: no address invented when none is given" \
+    || bad "peers: external_address changed unasked" "$(grep '^external_address' "$H/config/config.toml")"
+  grep -q "EXTERNAL_ADDRESS unset" "$LOG" \
+    && ok "peers: warns that it will be unreachable" \
+    || bad "peers: unreachable silently" "the whole failure is that it looks fine"
+else
+  bad "peers off: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# Applied on restart, so a seed can be added or a wrong address corrected
+# without destroying the volume — which on this deployment is the chain.
+H="$WORK/peers-resume"; mkdir -p "$H/config"
+printf '{"mine":true}\n' > "$H/config/genesis.json"
+printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\nexternal_address = "wrong:1"\nseeds = ""\npersistent_peers = ""\n' > "$H/config/config.toml"
+printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
+if run "$H" EXTERNAL_ADDRESS="198.51.100.4:26656" SEEDS="dddd@seed.two:26656"; then
+  grep -q '^external_address = "198.51.100.4:26656"$' "$H/config/config.toml" \
+    && ok "peers: re-applied on an existing volume" \
+    || bad "peers: stale on restart" "$(grep '^external_address' "$H/config/config.toml")"
+else
+  bad "peers resume: entrypoint exited non-zero" "$(tail -3 "$LOG")"
 fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"

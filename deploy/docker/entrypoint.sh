@@ -120,6 +120,22 @@ sha256_of() {
 # `sed -i` takes a mandatory suffix on BSD and a forbidden one on GNU, so the
 # same invocation cannot work on both. The image is Linux, but this script is
 # also run directly by its tests and by anyone debugging on a Mac.
+# set_config writes `key = "value"` into a TOML file and checks that it landed.
+#
+# sed does nothing when its pattern misses, and says nothing about it. For the
+# peering settings that silence is the worst outcome available: the node starts,
+# logs that it is advertising an address, and is unreachable — which is the
+# exact failure those settings exist to prevent. So the write is verified, and a
+# miss stops the node instead of producing one that looks healthy from inside.
+set_config() {
+  local key="$1" value="$2" file="$3"
+  sed_inplace "s|^$key = .*|$key = \"$value\"|" "$file"
+  grep -q "^$key = \"$value\"$" "$file" || die "could not set $key in $file.
+    There is no '$key = ' line to replace, which means this config was written
+    by a version of CometBFT that spells it differently. Refusing to start
+    rather than run with the setting silently ignored."
+}
+
 sed_inplace() {
   local expr="$1" file="$2"
   [ -f "$file" ] || die "$file is missing — the node home at $EARTH_HOME is not
@@ -271,19 +287,17 @@ fi
 # volume, so a seed can be added or an external address corrected with a restart
 # rather than a wipe.
 if [ -n "$EXTERNAL_ADDRESS" ]; then
-  sed_inplace "s|^external_address = .*|external_address = \"$EXTERNAL_ADDRESS\"|" \
-    "$EARTH_HOME/config/config.toml"
+  set_config external_address "$EXTERNAL_ADDRESS" "$EARTH_HOME/config/config.toml"
   say "advertising $EXTERNAL_ADDRESS to peers"
 else
   say "EXTERNAL_ADDRESS unset — peers will be handed whatever address this node sees on itself, which in a container is usually unreachable"
 fi
 if [ -n "$SEEDS" ]; then
-  sed_inplace "s|^seeds = .*|seeds = \"$SEEDS\"|" "$EARTH_HOME/config/config.toml"
+  set_config seeds "$SEEDS" "$EARTH_HOME/config/config.toml"
   say "seeds = $SEEDS"
 fi
 if [ -n "$PERSISTENT_PEERS" ]; then
-  sed_inplace "s|^persistent_peers = .*|persistent_peers = \"$PERSISTENT_PEERS\"|" \
-    "$EARTH_HOME/config/config.toml"
+  set_config persistent_peers "$PERSISTENT_PEERS" "$EARTH_HOME/config/config.toml"
   say "persistent_peers = $PERSISTENT_PEERS"
 fi
 
