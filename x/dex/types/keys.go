@@ -42,6 +42,11 @@ var (
 	LpTotalVolumeKey = collections.NewPrefix("lp_total_volume")
 	// PoolLpIndexKey is each pool's last settled index (pool id -> Int).
 	PoolLpIndexKey = collections.NewPrefix("pool_lp_index")
+
+	// PendingLpRewardsKey is ERTH the allocation stream has already paid into
+	// this module for LPs but which no pool has settled into its reserve yet.
+	// An obligation like a reserve is: held, spoken for, not yet placed.
+	PendingLpRewardsKey = collections.NewPrefix("pending_lp_rewards")
 )
 
 // Genesis liquidity auction — see auction.proto. The auction itself is a
@@ -118,21 +123,82 @@ var PolBurnKey = collections.NewPrefix("pol_burn")
 // is not ready, instead of scanning every unbonding on the chain.
 var LpUnbondingKey = collections.NewPrefix("lp_unbonding")
 
+// Volume scaling and the staleness sweep. See lp_rewards.go for the scheme.
+var (
+	// VolumeIndexKey is the global scaling index applied to recorded volume, and
+	// VolumeIndexDayKey the day it was last advanced.
+	VolumeIndexKey    = collections.NewPrefix("vol_index")
+	VolumeIndexDayKey = collections.NewPrefix("vol_last_day")
+	// PoolStaleQueueKey orders pools by when their volume expires, so the sweep
+	// can stop at the first entry that is not due. Keyed by time first for that.
+	PoolStaleQueueKey = collections.NewPrefix("pool_stale_queue") // (due unix, pool id)
+	// PoolStaleDueKey is the reverse lookup, so a pool that trades again can find
+	// and move its own due date without searching the queue.
+	PoolStaleDueKey = collections.NewPrefix("pool_stale_due") // pool id -> due unix
+)
+
 const (
-	// VolumeWindowDays is the number of daily buckets in a pool's rolling volume
-	// window used to weight LP reward distribution.
+	// VolumeWindowDays is how many days of volume a pool's ERTH depth is allowed
+	// to justify — the window in the depth cap, and nothing else.
+	//
+	// It used to be the decay window too. The two were split when the decay was
+	// slowed to track the unbonding period: they answer different questions, and
+	// letting the cap ride along would have doubled what a thin pool may claim
+	// as a side effect of a change about recency.
 	VolumeWindowDays = 7
+
+	// VolumeDecayWindowDays sets how fast recorded volume loses its weight:
+	// each day the scaling index grows by 14/13, so a steady d per day converges
+	// to 14d and volume half-lives in about 9.4 days.
+	//
+	// Two weeks because that is twice DefaultLpUnbondingSeconds. A provider who
+	// wants out waits a week, so the reward signal that drew them in has to stay
+	// meaningful over at least that long — at the previous 7-day window the
+	// weight had halved in 4.5 days and was mostly gone before they could
+	// finish leaving.
+	VolumeDecayWindowDays = 14
+
+	// VolumeIndexMaxCatchUpDays bounds the index's catch-up after downtime, so a
+	// chain resuming from a stale genesis_time cannot spend one block compounding
+	// thousands of steps. Ninety days is far past PoolStaleSeconds, so every pool
+	// the skipped steps would have applied to has been swept regardless.
+	VolumeIndexMaxCatchUpDays = 90
+
+	// PoolStaleSeconds is how long a pool keeps its volume weight without
+	// trading: sixty days.
+	//
+	// Scaled volume never reaches zero on its own, so something has to retire it
+	// or a pool traded once in 2026 would still be drawing a sliver of every LP
+	// reward in 2036. Sixty days rather than the fourteen the decay works over,
+	// because by then the pool holds about 1% of the weight it started with —
+	// the sweep is meant to collect what is already worthless, not to be a cliff
+	// a thin-but-real market has to keep trading to stay ahead of.
+	PoolStaleSeconds = 60 * 24 * 60 * 60
+
+	// PoolStaleSweepLimit caps how many pools one block may retire, so a cohort
+	// falling due together cannot land unbounded work on a single block. The rest
+	// stay at the front of the queue for the next one.
+	PoolStaleSweepLimit = 50
 
 	// DefaultLpUnbondingSeconds is how long a liquidity withdrawal waits before
 	// it is swept to the provider's wallet: 7 days.
 	DefaultLpUnbondingSeconds = 7 * 24 * 60 * 60
 
 	// PolBurnSeconds is how long a protocol-owned liquidity position takes to
-	// retire completely: ten Julian years. The genesis ANML/ERTH schedule sets
+	// retire completely: five Julian years. The genesis ANML/ERTH schedule sets
 	// this in the genesis file; the auction pool's schedule is created with it
-	// at settlement, so its ten years run from the day its pool opens rather
+	// at settlement, so its five years run from the day its pool opens rather
 	// than from block zero.
-	PolBurnSeconds = 10 * 36525 * 864 // 315,576,000
+	//
+	// Five rather than ten because each quarter of the pre-mine is five years of
+	// the whole chain's emission, and two of the four quarters sit in POL. So
+	// retiring them over five years destroys 1,261,440,000 ERTH against the
+	// pillars' 630,720,000 over the same window: supply falls while the schedule
+	// runs and only starts growing once it is spent.
+	//
+	// The cost is the runway — real providers have five years, not ten, to take
+	// over the book before there is nothing left of the protocol's.
+	PolBurnSeconds = 5 * 36525 * 864 // 157,788,000
 
 	// LpUnbondSweepLimit caps how many matured unbondings are paid out in one
 	// block. Each payout settles a pool and moves two coins, so an unbounded

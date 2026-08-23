@@ -38,10 +38,22 @@ Both allocation streams are one engine in **`x/allocation`**, keyed by a stream 
 the epoch reset and the claim path; they differ only in where a voter's weight
 comes from and who is allowed to vote at all.
 
-The two allocation streams don't mint continuously — they accrue via a reward index and
-are minted when realized (LP auto-compound, an option claim, or a registration payout), so
-ERTH supply grows as rewards are actually distributed. Every dex swap also **burns** ERTH
-(half the swap fee), and the buyback **burns ANML**.
+Both allocation streams mint **when the emission accrues**, not when somebody
+collects it. `AdvanceIndex` issues `1 ERTH/sec x elapsed` into the `x/allocation`
+module account once per stream per block, and every payment after that — an option
+claim, the LP auto-compound, a registration payout, the community pool — is a
+transfer out of it. So `x/allocation` is the only thing that issues allocation
+ERTH, the amount is a function of the block clock alone, and the reported supply
+is what the chain actually owes rather than what has happened to be claimed. A
+stream nobody has voted in mints nothing: emission no option is directing is
+never created rather than created and stranded.
+
+Every dex swap also **burns** ERTH (half the swap fee), the buyback **burns
+ANML**, and protocol-owned liquidity **burns** its way out over five years. Two
+of the pre-mine's four quarters sit in POL and each quarter is five years of the
+whole chain's emission, so that retirement destroys 8 ERTH/sec against the four
+pillars' 4: **ERTH supply falls by 630,720,000 over the first five years**, then
+grows at 4 ERTH/sec once the schedule is spent.
 
 ## Get started
 
@@ -77,16 +89,18 @@ through ERTH as two hops (`tokenA → ERTH → tokenB`).
 always denominated in ERTH; on every hop it is split **half to the pool** (accrues to
 LPs) and **half burned** (ERTH supply is permanently reduced).
 
-**Protocol-owned liquidity, and its ten-year exit.** The chain starts owning all of
+**Protocol-owned liquidity, and its five-year exit.** The chain starts owning all of
 its own liquidity: the genesis ANML/ERTH pool's LP shares are minted to the `dex`
 module account, and the liquidity auction's pool mints its shares there too when it
 settles. That account has no key, so nothing — governance included — can withdraw
 those positions. They are not permanent, though. Each is retired on a straight line
-over **ten years**, because running a book is active management whose incentives are
+over **five years**, because running a book is active management whose incentives are
 not an ERTH staker's, and a position nobody can adjust is the worst version of that
 mismatch. Retiring it makes room for providers who will actually manage the
-liquidity, and gives them a decade of steadily rising reward share as the reason to
-show up.
+liquidity, and gives them five years of steadily rising reward share as the reason to
+show up. Five years is also the span over which the burn cancels the chain's own
+issuance: the two positions hold 1,261,440,000 ERTH, and 4 ERTH/sec of pillar
+emission mints exactly that much over the same window.
 
 Retirement is not a withdrawal: a slice of the position is priced against the
 reserves exactly as a real withdrawal would be, and then destroyed.
@@ -190,10 +204,19 @@ There are two kinds of allocation option, differing in how they deliver their ER
   belonging to the other stream, are rejected at add-time. Integrated options are tracked
   in a dedicated key set, so `BeginBlocker` only ever iterates this bounded set.
   - **groundworks option #1 (`lp_rewards`, seeded at genesis)** — "volume-weighted LP rewards".
-    Its ERTH is split across dex pools by each pool's decaying trading volume
-    (ERTH-denominated, ~7-day window) and **auto-compounded into each pool's
-    `reserve_erth`**, raising every LP's redemption value pro-rata. Zero-volume pools get
-    nothing. The handler lives in `x/dex`, which registers it with `x/allocation`.
+    Its ERTH is split across dex pools by trading volume (ERTH-denominated) and
+    **auto-compounded into each pool's `reserve_erth`**, raising every LP's redemption
+    value pro-rata. Zero-volume pools get nothing. The handler lives in `x/dex`, which
+    registers it with `x/allocation`.
+
+    Volume is stored **scaled, not decayed**: one global index grows 14/13 each day and a
+    pool records `traded x index`, so recent volume outweighs old volume — half-life about
+    9.4 days, twice the LP unbonding period — without anything ever having to go back and
+    reduce a stored number. Decaying per pool required walking a set anyone can add to, so
+    the old code decayed lazily on touch while the shared denominator kept the undecayed
+    figure; the two stopped describing the same thing and 9-11% of the LP emission was
+    released to nobody. Scaled volume never reaches zero on its own, so trading starts a
+    60-day timer and a capped per-block sweep retires the weight of pools that stop.
   - **caretaker option #1 (`registration_rewards`, seeded at genesis)** — resolves nothing per
     block; the pool stacks and is drawn down on each new registration, **50% registree /
     50% referrer**. Registered by `x/personhood`.

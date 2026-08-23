@@ -73,7 +73,18 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 
 	in.AllocationKeeper.RegisterIntegratedHandler(allocationtypes.STREAM_ID_GROUNDWORKS, allocationtypes.HandlerLPRewards,
 		func(ctx context.Context, accrued math.Int) (math.Int, error) {
-			return k.DistributeLPRewards(ctx, accrued)
+			resolved, err := k.DistributeLPRewards(ctx, accrued)
+			if err != nil {
+				return math.ZeroInt(), err
+			}
+			// The ERTH already exists — x/allocation minted it as the stream
+			// accrued — so what moves here are coins, not a second issuance.
+			// Module-to-module, because this module's account is on the bank's
+			// blocked list and an ordinary send would be refused.
+			if err := in.AllocationKeeper.PayOutToModule(ctx, types.ModuleName, resolved); err != nil {
+				return math.ZeroInt(), err
+			}
+			return resolved, nil
 		})
 
 	return ModuleOutputs{

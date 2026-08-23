@@ -56,9 +56,55 @@ nothing to join.
   rather than denom-specific, needs nothing configured, and lifts itself when
   settlement creates the pool; from then on the ordinary one-pool-per-token guard
   protects that denom. A chain with no auction configured is never locked.
-- **Protocol-owned liquidity is retired over ten years.** The genesis ANML/ERTH
+- **Allocation emission is minted when it accrues, not when it is claimed.**
+  `x/allocation` issues each stream's `1 ERTH/sec` into its own module account as
+  the reward index advances, and every payout — option claims, the LP
+  auto-compound, registration rewards, the community pool — is now a transfer out
+  of it. Neither `x/dex` nor `x/personhood` mints allocation ERTH any more; the
+  only ERTH minted outside `x/allocation` is the ANML buyback's own pillar, which
+  is a separate emission and mints what it immediately spends. Reported supply is
+  therefore what the chain owes rather than what has been collected, the emission
+  rate can be checked against the block clock, and a new O(1) solvency invariant
+  compares what the options say they hold against what the module is carrying. A
+  stream with no votes mints nothing. Index truncation is swept to the community
+  pool, where x/distribution already puts the dust from its per-validator split.
+- **LP reward volume is scaled instead of decayed, and dead pools are swept.**
+  A pool's volume was aged only when something touched it, while the denominator
+  it was measured against kept the un-aged figure — so pools were credited less
+  than the stream released on their behalf, and 9-11% of the LP emission went to
+  nobody. Volume is now recorded multiplied by a global index that grows 14/13 a
+  day (half-life ~9.4 days, twice the LP unbonding period), which produces the
+  same weighting with nothing to age. Because scaled volume never reaches zero,
+  trading starts a 60-day timer and a capped per-block sweep retires the weight of
+  pools that stop trading, so a dead pool neither earns nor dilutes. The depth cap
+  keeps its own 7-day window and is unchanged at 2x reserve per day.
+- **The pre-mine splits four ways instead of three, and the registration-reward
+  pool is pre-funded.** 630,720,000 ERTH each — five years of the whole chain's
+  emission — to pool 1's reserve, both auction earmarks, and the human stream's
+  option #1, which now starts with real coins on the `x/allocation` account
+  (`allocation.registration_reward_seed`). The draw rate moves from basis points
+  to parts per million and drops from 10 bps to 100 ppm, so the reward halves
+  every 6,931 registrations instead of every 693 — $50 a side for the first
+  registrant and their referrer at a $1M clear, still $18 a side at the
+  ten-thousandth human. The finer unit exists because the unreferred branch
+  halves the rate in integer arithmetic: in whole basis points the smallest
+  usable rate was 2, since 1/2 truncated to zero and paid an unreferred
+  registrant nothing without erroring. ANML's opening price is unchanged, since
+  pool 1's ERTH side and the bidders' earmark move together.
+- **The per-country daily registration floor drops from 10,000 to 1,000**, and
+  the cap is now checked once, read-only, *before* the SNARK is verified rather
+  than only after. A country sitting at its cap previously cost a full 4-6ms
+  proof verification per rejected attempt; it now costs a map lookup. The
+  authoritative check stays where it was — the country is only trustworthy once
+  VerifyDsc has chained the certificate to a CSCA, so the early check runs after
+  that and writes nothing, and cannot be used to exhaust anyone's allowance.
+- **Protocol-owned liquidity is retired over five years.** The genesis ANML/ERTH
   pool and the liquidity auction's pool were permanent; they now burn down on a
   straight line. ANML/ERTH burns both assets, the auction pool burns only ERTH.
+  Each quarter of the pre-mine is five years of the whole chain's emission and
+  two of them sit in POL, so retiring them over five years burns 1,261,440,000
+  ERTH against the pillars' 630,720,000 — supply falls by 630,720,000 over the
+  window and only starts growing once the schedule is spent.
 - **The chain's own module accounts refuse ordinary transfers.** Sending to one
   was always a mistake, and it is now rejected rather than absorbed.
 - **`x/pki` stores one record per certificate, not per signing key.** The trust

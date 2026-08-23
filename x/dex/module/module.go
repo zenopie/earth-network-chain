@@ -141,11 +141,19 @@ func (AppModule) ConsensusVersion() uint64 { return 1 }
 //
 // Retirement runs last so that a pool created by settlement in this very block
 // is already in state when its own schedule is first walked.
+//
+// The stale-pool sweep is bounded the same way (PoolStaleSweepLimit) and runs
+// before retirement for the same reason the option prune does in x/allocation:
+// it settles each pool it retires, and settling has to happen while the block's
+// other writes are still ahead of it rather than after.
 func (am AppModule) EndBlock(ctx context.Context) error {
 	if err := am.keeper.SweepMaturedUnbondings(ctx); err != nil {
 		return err
 	}
 	if err := am.keeper.SettleDueAuction(ctx); err != nil {
+		return err
+	}
+	if err := am.keeper.SweepStalePools(ctx); err != nil {
 		return err
 	}
 	if err := am.keeper.BurnDuePol(ctx); err != nil {

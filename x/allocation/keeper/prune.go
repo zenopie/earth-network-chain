@@ -30,10 +30,16 @@ import (
 // recipient either way — so a live recipient has thirty days and a permissionless
 // way to take what is theirs.
 //
-// Nothing is destroyed in the process. An option's accrued balance is not held
-// anywhere: rewards are minted at the moment they are claimed, so a forfeited
-// balance is ERTH that is never issued rather than ERTH taken from anyone. The
-// stream's own accounting is untouched too — the invariant is over
+// A forfeited balance is burned. It used to be enough to simply not mint it —
+// rewards were issued at the moment they were claimed, so an unclaimed balance
+// was ERTH that never existed. Emission is now minted as it accrues, so the
+// coins behind a dead option's balance are real and sitting in this module's
+// account; leaving them there would put the module permanently out of balance
+// with what its options say they hold. Burning reproduces the old economics
+// exactly: supply ends up where it would have been had the option never been
+// paid.
+//
+// The stream's own accounting is untouched either way — the invariant is over
 // AmountAllocated, which is zero on anything prunable by definition.
 //
 // The structural fact that makes this safe: zero weight means no live voter is
@@ -161,12 +167,23 @@ func (k Keeper) SweepPrunableOptions(ctx context.Context) error {
 			return err
 		}
 
-		// forfeited is ERTH the option had earned and nobody claimed. It is
-		// reported because it is the one consequence of this sweep somebody
-		// might care about; it is not burned, because it was never minted.
+		// forfeited is ERTH the option had earned and nobody claimed. The coins
+		// exist — AdvanceIndex minted them as they accrued — so they are burned
+		// rather than merely reported, which is what keeps the module's balance
+		// equal to what its live options are owed.
 		forfeited := math.ZeroInt()
 		if !opt.Accumulated.IsNil() {
 			forfeited = opt.Accumulated
+		}
+		if forfeited.IsPositive() {
+			denom, err := k.HubDenom(ctx)
+			if err != nil {
+				return err
+			}
+			if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName,
+				sdk.NewCoins(sdk.NewCoin(denom, forfeited))); err != nil {
+				return err
+			}
 		}
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 			"prune_allocation_option",

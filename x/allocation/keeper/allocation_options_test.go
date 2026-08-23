@@ -18,21 +18,64 @@ import (
 	"github.com/earth-network/earth/x/allocation/types"
 )
 
-type stubBank struct{ burned sdk.Coins }
+// stubBank keeps a module-account ledger rather than swallowing every call.
+// The solvency invariant compares what the options are owed against what the
+// module holds, so a bank that always answers zero would make the check
+// vacuous — and it is the check that catches emission being minted in one place
+// and paid from another.
+type stubBank struct {
+	burned sdk.Coins
+	minted sdk.Coins
+	modBal sdk.Coins
+}
 
 func (s *stubBank) SpendableCoins(context.Context, sdk.AccAddress) sdk.Coins { return nil }
 func (s *stubBank) GetSupply(context.Context, string) sdk.Coin               { return sdk.Coin{} }
-func (s *stubBank) SendCoinsFromModuleToAccount(context.Context, string, sdk.AccAddress, sdk.Coins) error {
+func (s *stubBank) GetBalance(_ context.Context, _ sdk.AccAddress, denom string) sdk.Coin {
+	return sdk.NewCoin(denom, s.modBal.AmountOf(denom))
+}
+
+// debit subtracts without letting the ledger go negative: sdk.Coins panics on a
+// negative amount, and a test asserting insolvency wants a failed invariant
+// rather than a panic in the stub.
+func (s *stubBank) debit(amt sdk.Coins) {
+	for _, c := range amt {
+		have := s.modBal.AmountOf(c.Denom)
+		take := c.Amount
+		if take.GT(have) {
+			take = have
+		}
+		if take.IsPositive() {
+			s.modBal = s.modBal.Sub(sdk.NewCoin(c.Denom, take))
+		}
+	}
+}
+
+func (s *stubBank) SendCoinsFromModuleToAccount(_ context.Context, _ string, _ sdk.AccAddress, amt sdk.Coins) error {
+	s.debit(amt)
 	return nil
 }
 func (s *stubBank) SendCoinsFromAccountToModule(context.Context, sdk.AccAddress, string, sdk.Coins) error {
 	return nil
 }
-func (s *stubBank) MintCoins(context.Context, string, sdk.Coins) error { return nil }
-func (s *stubBank) BurnCoins(_ context.Context, _ string, amt sdk.Coins) error {
-	s.burned = s.burned.Add(amt...)
+func (s *stubBank) SendCoinsFromModuleToModule(_ context.Context, _, _ string, amt sdk.Coins) error {
+	s.debit(amt)
 	return nil
 }
+func (s *stubBank) MintCoins(_ context.Context, _ string, amt sdk.Coins) error {
+	s.minted = s.minted.Add(amt...)
+	s.modBal = s.modBal.Add(amt...)
+	return nil
+}
+func (s *stubBank) BurnCoins(_ context.Context, _ string, amt sdk.Coins) error {
+	s.burned = s.burned.Add(amt...)
+	s.debit(amt)
+	return nil
+}
+
+// fundModule credits the module account without touching the mint tally, for
+// putting a fixture into the state a funded genesis would have left.
+func (s *stubBank) fundModule(amt ...sdk.Coin) { s.modBal = s.modBal.Add(amt...) }
 
 // stubStaking reports a fixed bonded amount per delegator, which is the capital
 // stream's weight.

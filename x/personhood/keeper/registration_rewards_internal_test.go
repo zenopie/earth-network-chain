@@ -22,8 +22,13 @@ import (
 // drawn, so asserting on the payout alone would not distinguish this from the
 // old behaviour that drew everything and handed it all to the registree.
 type recordingAllocation struct {
-	drawnAtBps int64
+	drawnAtPpm int64
 	payout     math.Int
+	// paid records who the allocation module was asked to pay. The reward is no
+	// longer minted by x/personhood — x/allocation issues a stream's emission as
+	// it accrues — so the payout leaves through PayOut rather than the bank, and
+	// this is where it has to be observed.
+	paid map[string]math.Int
 }
 
 func (r *recordingAllocation) AdvanceIndex(context.Context, allocationtypes.StreamId) error {
@@ -33,10 +38,21 @@ func (r *recordingAllocation) ClearVoter(context.Context, allocationtypes.Stream
 	return nil
 }
 func (r *recordingAllocation) DrawFromOption(
-	_ context.Context, _ allocationtypes.StreamId, _ uint64, bps int64,
+	_ context.Context, _ allocationtypes.StreamId, _ uint64, ppm int64,
 ) (math.Int, error) {
-	r.drawnAtBps = bps
+	r.drawnAtPpm = ppm
 	return r.payout, nil
+}
+func (r *recordingAllocation) PayOut(_ context.Context, to sdk.AccAddress, amt math.Int) error {
+	if r.paid == nil {
+		r.paid = map[string]math.Int{}
+	}
+	cur, ok := r.paid[to.String()]
+	if !ok {
+		cur = math.ZeroInt()
+	}
+	r.paid[to.String()] = cur.Add(amt)
+	return nil
 }
 
 // payingBank records what each address was paid, and what was minted.
@@ -104,17 +120,23 @@ func TestRegistrationRewardSplitsWithReferrer(t *testing.T) {
 		t.Fatalf("payRegistrationReward: %v", err)
 	}
 
-	if alloc.drawnAtBps != types.RegistrationRewardBps {
-		t.Fatalf("drew at %d bps, want %d", alloc.drawnAtBps, types.RegistrationRewardBps)
+	if alloc.drawnAtPpm != types.RegistrationRewardPpm {
+		t.Fatalf("drew at %d ppm, want %d", alloc.drawnAtPpm, types.RegistrationRewardPpm)
 	}
 	if !got.Equal(math.NewInt(500)) {
 		t.Fatalf("registree got %s, want 500", got)
 	}
-	if p := bank.paid[referrer.String()]; !p.Equal(math.NewInt(500)) {
+	if p := alloc.paid[referrer.String()]; !p.Equal(math.NewInt(500)) {
 		t.Fatalf("referrer got %s, want 500", p)
 	}
-	if !bank.minted.Equal(math.NewInt(1000)) {
-		t.Fatalf("minted %s, want 1000", bank.minted)
+	// Nothing is minted here any more. The whole draw is paid out of the
+	// allocation module account, which is what makes x/allocation the only
+	// issuer of allocation ERTH.
+	if !bank.minted.IsZero() {
+		t.Fatalf("x/personhood minted %s; the reward must come out of the allocation account", bank.minted)
+	}
+	if p := alloc.paid[registree.String()]; !p.Equal(math.NewInt(500)) {
+		t.Fatalf("registree paid %s, want 500", p)
 	}
 }
 
@@ -133,17 +155,27 @@ func TestRegistrationRewardKeepsReferrerShareInPool(t *testing.T) {
 		t.Fatalf("payRegistrationReward: %v", err)
 	}
 
-	if want := int64(types.RegistrationRewardBps / 2); alloc.drawnAtBps != want {
-		t.Fatalf("drew at %d bps, want %d", alloc.drawnAtBps, want)
+	// 100/2 = 50 exactly. In basis points this halving was integer division on a
+	// single-digit rate, one step from truncating to zero and silently paying an
+	// unreferred registrant nothing.
+	if want := int64(types.RegistrationRewardPpm / 2); alloc.drawnAtPpm != want {
+		t.Fatalf("drew at %d ppm, want %d", alloc.drawnAtPpm, want)
+	}
+	if alloc.drawnAtPpm == 0 {
+		t.Fatal("an unreferred registration must still draw; a zero rate pays nothing")
 	}
 	if !got.Equal(math.NewInt(500)) {
 		t.Fatalf("registree got %s, want 500 — the same as a referred registration", got)
 	}
-	// Nothing is minted for an absent referrer.
-	if !bank.minted.Equal(math.NewInt(500)) {
-		t.Fatalf("minted %s, want 500", bank.minted)
+	// Nothing is minted here at all — the draw is paid out of the allocation
+	// module account, where x/allocation put it when the stream accrued.
+	if !bank.minted.IsZero() {
+		t.Fatalf("x/personhood minted %s; the reward must come out of the allocation account", bank.minted)
 	}
-	if len(bank.paid) != 1 {
-		t.Fatalf("paid %d addresses, want only the registree", len(bank.paid))
+	if len(alloc.paid) != 1 {
+		t.Fatalf("paid %d addresses, want only the registree", len(alloc.paid))
+	}
+	if p := alloc.paid[registree.String()]; !p.Equal(math.NewInt(500)) {
+		t.Fatalf("registree paid %s, want 500", p)
 	}
 }

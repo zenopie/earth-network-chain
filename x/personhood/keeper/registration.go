@@ -168,6 +168,31 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, proof []byte, publi
 		}
 	}
 
+	// Reject a registration whose country or signer is already at its daily cap
+	// BEFORE paying for the SNARK.
+	//
+	// The authoritative check is still in Register, after this returns. This one
+	// is a fast path and nothing else: at 4-6ms and a million gas apiece, a
+	// country sitting at its cap would otherwise have every further attempt that
+	// day cost a full verification to be told to come back tomorrow — and with a
+	// zero minimum gas price those attempts are free to send, which is a cheap
+	// way to keep every validator busy verifying proofs that are all going to be
+	// refused.
+	//
+	// Safe to do here and not earlier, for the reason the check in Register
+	// spells out: the country is only known to be real once VerifyDsc has
+	// chained the certificate to a trusted CSCA, which has happened above. Before
+	// that it is merely claimed, and acting on a claim would let anyone push a
+	// legitimate signer towards its limit with junk naming it.
+	//
+	// And it writes nothing. checkRegistrationRate reads the counters and
+	// compares; recordRegistrationRate, which increments them, runs only after a
+	// registration has fully succeeded. So an attempt refused here cannot move
+	// anyone else's allowance.
+	if err := k.checkRegistrationRate(ctx, facts.key, facts.country); err != nil {
+		return nil, dscFacts{}, err
+	}
+
 	// Charge for the verification before running it.
 	//
 	// This is the only thing bounding how much proof CPU one block can be made

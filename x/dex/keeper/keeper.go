@@ -36,6 +36,16 @@ type Keeper struct {
 	LpRewardIndex collections.Item[math.Int]
 	LpTotalVolume collections.Item[math.Int]
 	PoolLpIndex   collections.Map[uint64, math.Int]
+	// PendingLpRewards is ERTH paid in by the allocation stream and not yet
+	// settled into a pool reserve. Counted as an obligation. See invariants.go.
+	PendingLpRewards collections.Item[math.Int]
+
+	// Volume is stored scaled by VolumeIndex rather than decayed in place; the
+	// stale queue retires the weight of pools that stop trading. See lp_rewards.go.
+	VolumeIndex    collections.Item[math.Int]
+	VolumeIndexDay collections.Item[uint64]
+	PoolStaleQueue collections.KeySet[collections.Pair[int64, uint64]]
+	PoolStaleDue   collections.Map[uint64, int64]
 
 	// In-flight liquidity withdrawals, keyed (completion_time, pool_id, address)
 	// so the maturity sweep can walk them in due order — see lp_unbonding.go.
@@ -90,6 +100,14 @@ func NewKeeper(
 		LpRewardIndex: collections.NewItem(sb, types.LpRewardIndexKey, "lp_reward_index", sdk.IntValue),
 		LpTotalVolume: collections.NewItem(sb, types.LpTotalVolumeKey, "lp_total_volume", sdk.IntValue),
 		PoolLpIndex:   collections.NewMap(sb, types.PoolLpIndexKey, "pool_lp_index", collections.Uint64Key, sdk.IntValue),
+
+		PendingLpRewards: collections.NewItem(sb, types.PendingLpRewardsKey, "pending_lp_rewards", sdk.IntValue),
+
+		VolumeIndex:    collections.NewItem(sb, types.VolumeIndexKey, "volume_index", sdk.IntValue),
+		VolumeIndexDay: collections.NewItem(sb, types.VolumeIndexDayKey, "volume_index_day", collections.Uint64Value),
+		PoolStaleQueue: collections.NewKeySet(sb, types.PoolStaleQueueKey, "pool_stale_queue",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
+		PoolStaleDue: collections.NewMap(sb, types.PoolStaleDueKey, "pool_stale_due", collections.Uint64Key, collections.Int64Value),
 
 		LpUnbondings: collections.NewMap(
 			sb, types.LpUnbondingKey, "lp_unbondings",

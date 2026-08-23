@@ -113,7 +113,7 @@ func TestPolBurnErthOnlyLeavesTheSpokeAsset(t *testing.T) {
 // The target is recomputed from the clock every block rather than accumulated,
 // so a chain that halts does not push its end date out by the length of the
 // halt: it catches up on the block it resumes on, and truncation never
-// compounds across the millions of blocks in ten years.
+// compounds across the millions of blocks in five years.
 func TestPolBurnCatchesUpAfterAHalt(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	start := ctx.BlockTime()
@@ -167,9 +167,9 @@ func TestPolBurnRetiresTheWholePositionAndStops(t *testing.T) {
 // retired at less than it is worth and the ERTH it earned is left behind for
 // whoever is still holding shares at the end.
 //
-// One day of the schedule, not a decade: a pool left untouched past the volume
-// window decays to zero weight and collects nothing, so a ten-year jump would
-// test the dormancy rule rather than this one.
+// One day of the schedule, not the whole thing: a pool left untouched past the
+// volume window decays to zero weight and collects nothing, so a five-year jump
+// would test the dormancy rule rather than this one.
 func TestPolBurnClawsBackTheRewardsItEarned(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	start := ctx.BlockTime()
@@ -181,8 +181,7 @@ func TestPolBurnClawsBackTheRewardsItEarned(t *testing.T) {
 	pool.Volume = math.NewInt(1_000)
 	require.NoError(t, k.SetPool(ctx, 1, pool))
 	require.NoError(t, k.LpTotalVolume.Set(ctx, math.NewInt(1_000)))
-	_, err = k.DistributeLPRewards(ctx, math.NewInt(100_000))
-	require.NoError(t, err)
+	distributeLP(t, k, ctx, bank, math.NewInt(100_000))
 
 	ctx = ctx.WithBlockTime(start.Add(24 * time.Hour))
 	require.NoError(t, k.BurnDuePol(ctx))
@@ -195,15 +194,16 @@ func TestPolBurnClawsBackTheRewardsItEarned(t *testing.T) {
 	require.True(t, burnedErth.GT(burnedToken),
 		"the erth leg should be priced against a reserve that already holds the reward")
 
-	// A day of a ten-year schedule is 1/3652.5 of the position: 273 of 1,000,000
-	// shares. The reward that settled in is 85,700 rather than the full 100,000,
-	// because a day's decay takes the pool's volume to six sevenths first.
-	require.Equal(t, math.NewInt(273), bank.burned.AmountOf(types.LPShareDenom(1)))
-	require.Equal(t, math.NewInt(273), burnedToken)
-	require.Equal(t, math.NewInt(296), burnedErth)
+	// A day of a five-year schedule is 1/1826.25 of the position: 547 of
+	// 1,000,000 shares. The whole 100,000 settles in — the pool's stored volume
+	// is scaled, not decayed, so a day passing takes nothing away from what it
+	// is owed.
+	require.Equal(t, math.NewInt(547), bank.burned.AmountOf(types.LPShareDenom(1)))
+	require.Equal(t, math.NewInt(547), burnedToken)
+	require.Equal(t, math.NewInt(601), burnedErth)
 	pool, err = k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
-	require.Equal(t, math.NewInt(1_000_000+85_700-296), pool.ReserveErth.Amount)
+	require.Equal(t, math.NewInt(1_000_000+100_000-601), pool.ReserveErth.Amount)
 }
 
 // Third-party shares are in the denominator, so retirement prices the protocol's
@@ -238,7 +238,7 @@ func TestPolBurnPricesAgainstThirdPartyShares(t *testing.T) {
 }
 
 // Settling the auction has to register the pool it just opened, or two thirds of
-// the pre-mine would sit in a position nothing ever retires. Its ten years run
+// the pre-mine would sit in a position nothing ever retires. Its five years run
 // from the day the pool opens, not from block zero: governance chooses when to
 // hold the auction, and a schedule already part-spent before there was anything
 // to retire would dump the position the moment it existed.

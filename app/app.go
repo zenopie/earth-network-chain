@@ -206,6 +206,13 @@ func New(
 		allocationmoduletypes.HandlerCommunityPool,
 		allocationmodulekeeper.CommunityPoolHandler(app.AllocationKeeper, app.DistrKeeper),
 	)
+	// The streams' truncation residue goes to the same place, by a separate wire.
+	// An integrated handler only runs when its option has accrued something, so
+	// routing the dust through the emergency fund would strand it for as long as
+	// nobody voted for that fund. See keeper.SweepResidue.
+	app.AllocationKeeper.RegisterResidueSink(
+		allocationmodulekeeper.ResidueSink(app.AllocationKeeper, app.DistrKeeper),
+	)
 
 	// add to default baseapp options
 	// enable optimistic execution

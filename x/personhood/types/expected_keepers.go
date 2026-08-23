@@ -22,9 +22,13 @@ type AllocationKeeper interface {
 	// ClearVoter retires an address's vote in a stream, returning its weight to
 	// the stream. Called when a registration lapses or is replaced.
 	ClearVoter(ctx context.Context, stream allocationtypes.StreamId, addr []byte) error
-	// DrawFromOption settles an option and withdraws `bps` basis points of its
-	// accrued ERTH for the caller to pay out.
-	DrawFromOption(ctx context.Context, stream allocationtypes.StreamId, optionID uint64, bps int64) (math.Int, error)
+	// DrawFromOption settles an option and withdraws `ppm` parts-per-million of
+	// its accrued ERTH for the caller to pay out.
+	DrawFromOption(ctx context.Context, stream allocationtypes.StreamId, optionID uint64, ppm int64) (math.Int, error)
+	// PayOut sends drawn ERTH from the allocation module account. The coins
+	// already exist — x/allocation mints the emission as it accrues — so this
+	// module never issues allocation ERTH itself.
+	PayOut(ctx context.Context, recipient sdk.AccAddress, amount math.Int) error
 }
 
 // AuthKeeper defines the expected interface for the Auth module.

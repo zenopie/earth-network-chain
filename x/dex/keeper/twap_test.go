@@ -163,8 +163,7 @@ func TestRewardCompoundingBooksThePriorPriceFirst(t *testing.T) {
 	require.Equal(t, math.LegacyOneDec(), spot0)
 
 	// Rewards are owed but not yet compounded into the reserve.
-	_, err = k.DistributeLPRewards(ctx, math.NewInt(200_000))
-	require.NoError(t, err)
+	distributeLP(t, k, ctx, bank, math.NewInt(200_000))
 
 	// An hour passes at 1.0, then something settles the pool WITHOUT trading.
 	later := at(ctx, time.Hour)

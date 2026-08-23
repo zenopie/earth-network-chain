@@ -119,8 +119,7 @@ func TestUnbondingKeepsEarningRewards(t *testing.T) {
 	require.NoError(t, err)
 
 	// A reward lands while the withdrawal is in flight.
-	_, err = k.DistributeLPRewards(ctx, math.NewInt(100_000))
-	require.NoError(t, err)
+	distributeLP(t, k, ctx, bank, math.NewInt(100_000))
 
 	due := ctx.WithBlockTime(ctx.BlockTime().Add(3600 * time.Second))
 	require.NoError(t, k.SweepMaturedUnbondings(due))

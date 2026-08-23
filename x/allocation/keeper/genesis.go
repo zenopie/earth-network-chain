@@ -56,12 +56,31 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	// per stream, so they do not collide, and each is resolved only by the
 	// handler registered for its own stream. The capital stream carries a second
 	// seeded option: the emergency fund, which pays the community pool.
-	if _, err := k.appendOption(ctx, types.STREAM_ID_CARETAKER, types.AllocationOption{
+	regID, err := k.appendOption(ctx, types.STREAM_ID_CARETAKER, types.AllocationOption{
 		Description: "Registration rewards",
 		Kind:        types.ALLOCATION_KIND_INTEGRATED,
 		Handler:     types.HandlerRegistrationRewards,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
+	}
+	// Pre-fund it. The registration reward is drawn as a fraction of whatever the
+	// pool holds, so a pool that starts empty pays the first humans nothing —
+	// and they are the ones worth paying, because they arrive before there is a
+	// network to arrive for.
+	//
+	// The coins are a bank balance on this module's account, put there by the
+	// same genesis file. Nothing is minted here: emission is minted as it
+	// accrues, and a genesis balance did not accrue.
+	if !genState.RegistrationRewardSeed.IsNil() && genState.RegistrationRewardSeed.IsPositive() {
+		opt, err := k.Options.Get(ctx, optionKey(types.STREAM_ID_CARETAKER, regID))
+		if err != nil {
+			return err
+		}
+		opt.Accumulated = genState.RegistrationRewardSeed
+		if err := k.setOption(ctx, types.STREAM_ID_CARETAKER, opt); err != nil {
+			return err
+		}
 	}
 	if _, err := k.appendOption(ctx, types.STREAM_ID_GROUNDWORKS, types.AllocationOption{
 		Description: "Volume-weighted LP rewards",

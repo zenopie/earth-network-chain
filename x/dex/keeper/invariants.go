@@ -78,6 +78,20 @@ func (k Keeper) AssetObligations(ctx context.Context) (sdk.Coins, error) {
 		return nil, err
 	}
 
+	// LP rewards paid in by the allocation stream that no pool has settled into
+	// its reserve yet. They are on the account and they are not the module's:
+	// without this they read as surplus and the balance check breaks on the
+	// first block the capital stream emits.
+	if pending, err := k.getPendingLpRewards(ctx); err != nil {
+		return nil, err
+	} else if pending.IsPositive() {
+		denom, err := k.HubDenom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		owed = owed.Add(sdk.NewCoin(denom, pending))
+	}
+
 	a, err := k.getAuction(ctx)
 	switch {
 	case errors.Is(err, types.ErrAuctionUnavailable):

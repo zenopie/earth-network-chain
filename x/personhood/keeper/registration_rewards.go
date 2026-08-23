@@ -24,19 +24,23 @@ func (k Keeper) erthDenom(ctx context.Context) (string, error) {
 // instead (the previous behaviour) made being referred halve your own reward,
 // so the rational move was to never name anyone.
 //
-// Only a fixed fraction (RegistrationRewardBps) of the stacked pool is paid, so
+// Only a fixed fraction (RegistrationRewardPpm) of the stacked pool is paid, so
 // each reward is normalized to the pool size and the pool decays gradually
 // rather than being fully drained by whoever happens to register next.
 func (k Keeper) payRegistrationReward(ctx context.Context, registree, referrer sdk.AccAddress) (math.Int, error) {
 	// Halving the draw, rather than drawing in full and returning the remainder,
 	// is what keeps the unmatched half in the pool: the option has no deposit
 	// path, so anything drawn cannot be put back.
-	drawBps := int64(types.RegistrationRewardBps)
+	//
+	// The rate is in parts per million precisely so this halving is exact. In
+	// basis points it was integer division on a single-digit number, one step
+	// away from truncating to zero and paying an unreferred registrant nothing.
+	drawPpm := int64(types.RegistrationRewardPpm)
 	if referrer == nil {
-		drawBps = types.RegistrationRewardBps / 2
+		drawPpm = types.RegistrationRewardPpm / 2
 	}
 
-	payout, err := k.allocationKeeper.DrawFromOption(ctx, types.AllocationStream, types.RegistrationRewardOptionID, drawBps)
+	payout, err := k.allocationKeeper.DrawFromOption(ctx, types.AllocationStream, types.RegistrationRewardOptionID, drawPpm)
 	if err != nil {
 		return math.ZeroInt(), err
 	}
@@ -44,24 +48,21 @@ func (k Keeper) payRegistrationReward(ctx context.Context, registree, referrer s
 		return math.ZeroInt(), nil
 	}
 
-	erth, err := k.erthDenom(ctx)
-	if err != nil {
-		return math.ZeroInt(), err
-	}
 	referrerAmt := math.ZeroInt()
 	if referrer != nil {
 		referrerAmt = payout.QuoRaw(2)
 	}
 	registreeAmt := payout.Sub(referrerAmt)
 
-	if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, sdk.NewCoins(sdk.NewCoin(erth, payout))); err != nil {
-		return math.ZeroInt(), err
-	}
-	if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, registree, sdk.NewCoins(sdk.NewCoin(erth, registreeAmt))); err != nil {
+	// Paid out of the allocation module account, not minted here. x/allocation
+	// issues a stream's emission when the index advances, so by the time a
+	// registration draws on the pool the ERTH already exists and this module has
+	// no business creating any.
+	if err := k.allocationKeeper.PayOut(ctx, registree, registreeAmt); err != nil {
 		return math.ZeroInt(), err
 	}
 	if referrerAmt.IsPositive() {
-		if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, referrer, sdk.NewCoins(sdk.NewCoin(erth, referrerAmt))); err != nil {
+		if err := k.allocationKeeper.PayOut(ctx, referrer, referrerAmt); err != nil {
 			return math.ZeroInt(), err
 		}
 	}

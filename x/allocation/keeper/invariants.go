@@ -7,6 +7,7 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	"github.com/earth-network/earth/x/allocation/types"
 )
@@ -119,6 +120,20 @@ func (k Keeper) CheckStreamWeightBounded(ctx context.Context, stream types.Strea
 // halt is recoverable by upgrade; an emission that has been quietly wrong for a
 // month is not.
 func (k Keeper) AssertHotInvariants(ctx context.Context) error {
+	sol, err := k.CheckSolvency(ctx)
+	if err != nil {
+		return err
+	}
+	if sol.Broken() {
+		err := types.ErrInvariantBroken.Wrap(fmt.Sprintf(
+			"allocation module is short %s: its options are owed %s (accrued %s, residue %s) and it holds %s",
+			sol.Short, sol.Accrued.Add(sol.Residue), sol.Accrued, sol.Residue, sol.Held))
+		sdk.UnwrapSDKContext(ctx).Logger().Error(
+			"allocation invariant broken — halting", "err", err,
+			"height", sdk.UnwrapSDKContext(ctx).BlockHeight())
+		return err
+	}
+
 	for _, stream := range types.Streams {
 		rep, err := k.CheckStreamWeightBounded(ctx, stream)
 		if err != nil {
@@ -172,4 +187,69 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// --- solvency ----------------------------------------------------------------
+//
+// Emission is minted when a stream's index advances rather than when somebody
+// collects, so an option's Accumulated is a claim on coins this module is
+// holding right now. That makes the claim checkable, which it was not before:
+// there was nothing to compare an accrued balance against, and the comment on
+// the weight check above says as much — "there is no balance to compare
+// against, because an option's rewards are minted when they are claimed".
+//
+// Now there is. Every payment out is a transfer, every mint is one line in
+// AdvanceIndex, and a module short of what its options say they hold is a bug
+// that shows up as a number instead of as a failed send months later.
+//
+// The comparison is >= rather than ==, and the slack is real rather than
+// tolerated. settleOption credits each option AmountAllocated*(idx-last)/1e18,
+// truncating per option, so the options between them collect a hair less than
+// the interval released — sub-uerth per option per block. That surplus sits on
+// the account. It is reported so it can be watched, because a surplus growing
+// faster than dust means something is minting without accruing.
+
+// SolvencyReport is what the module's options say they hold against what it has.
+type SolvencyReport struct {
+	Accrued math.Int // the running sum of every option's Accumulated
+	Residue math.Int // minted emission no option can collect, awaiting sweep
+	Held    math.Int // the module account's ERTH balance
+	Short   math.Int // Held below Accrued+Residue: the module cannot pay
+	Surplus math.Int // Held above it: per-option truncation dust
+}
+
+func (r SolvencyReport) Broken() bool { return r.Short.IsPositive() }
+
+// CheckSolvency compares what the options are owed against what the module
+// holds. O(1): both figures are maintained rather than walked.
+func (k Keeper) CheckSolvency(ctx context.Context) (SolvencyReport, error) {
+	accrued, err := k.GetSummedAccrued(ctx)
+	if err != nil {
+		return SolvencyReport{}, err
+	}
+	residue, err := k.GetResidue(ctx)
+	if err != nil {
+		return SolvencyReport{}, err
+	}
+	denom, err := k.HubDenom(ctx)
+	if err != nil {
+		return SolvencyReport{}, err
+	}
+	held := k.bankKeeper.GetBalance(ctx, authtypes.NewModuleAddress(types.ModuleName), denom).Amount
+
+	owed := accrued.Add(residue)
+	rep := SolvencyReport{
+		Accrued: accrued,
+		Residue: residue,
+		Held:    held,
+		Short:   math.ZeroInt(),
+		Surplus: math.ZeroInt(),
+	}
+	switch {
+	case held.LT(owed):
+		rep.Short = owed.Sub(held)
+	case held.GT(owed):
+		rep.Surplus = held.Sub(owed)
+	}
+	return rep, nil
 }

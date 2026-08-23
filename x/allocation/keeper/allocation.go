@@ -82,10 +82,12 @@ func (k Keeper) getSummedWeight(ctx context.Context, stream types.StreamId) (mat
 // erases the evidence. A sum that is allowed to go negative keeps it.
 func (k Keeper) setOption(ctx context.Context, stream types.StreamId, opt types.AllocationOption) error {
 	prev := math.ZeroInt()
+	prevAcc := math.ZeroInt()
 	if p, err := k.Options.Get(ctx, optionKey(stream, opt.Id)); err == nil {
 		if !p.AmountAllocated.IsNil() {
 			prev = p.AmountAllocated
 		}
+		prevAcc = accruedOf(p)
 	} else if !errors.Is(err, collections.ErrNotFound) {
 		return err
 	}
@@ -105,6 +107,20 @@ func (k Keeper) setOption(ctx context.Context, stream types.StreamId, opt types.
 		}
 	}
 
+	// The accrued balances are summed here for the same reason and by the same
+	// method, but they answer a different question: emission is minted as it
+	// accrues, so what the options say they hold is a claim on coins this module
+	// is actually carrying. See CheckSolvency.
+	if delta := accruedOf(opt).Sub(prevAcc); !delta.IsZero() {
+		acc, err := k.GetSummedAccrued(ctx)
+		if err != nil {
+			return err
+		}
+		if err := k.SummedAccrued.Set(ctx, acc.Add(delta)); err != nil {
+			return err
+		}
+	}
+
 	if err := k.Options.Set(ctx, optionKey(stream, opt.Id), opt); err != nil {
 		return err
 	}
@@ -112,6 +128,30 @@ func (k Keeper) setOption(ctx context.Context, stream types.StreamId, opt types.
 	// same reason the sum is: one writer, so the schedule cannot describe a
 	// record that has since changed underneath it. See prune.go.
 	return k.refreshPruneSchedule(ctx, stream, opt)
+}
+
+// accruedOf reads an option's accrued balance, treating an unset one as zero.
+func accruedOf(opt types.AllocationOption) math.Int {
+	if opt.Accumulated.IsNil() {
+		return math.ZeroInt()
+	}
+	return opt.Accumulated
+}
+
+// GetSummedAccrued reports the running sum of every option's accrued balance,
+// across both streams. Zero before anything has accrued.
+func (k Keeper) GetSummedAccrued(ctx context.Context) (math.Int, error) {
+	v, err := k.SummedAccrued.Get(ctx)
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return math.ZeroInt(), nil
+		}
+		return math.Int{}, err
+	}
+	if v.IsNil() {
+		return math.ZeroInt(), nil
+	}
+	return v, nil
 }
 
 func (k Keeper) getLastUpkeep(ctx context.Context, stream types.StreamId) (int64, error) {
@@ -138,7 +178,29 @@ func (k Keeper) getEpoch(ctx context.Context, stream types.StreamId) (uint64, er
 }
 
 // AdvanceIndex advances a stream's reward index by the emission (1 ERTH/sec)
-// accrued since its last upkeep, split across the stream's total voting weight.
+// accrued since its last upkeep, split across the stream's total voting weight,
+// and mints that emission.
+//
+// Minting here — at the moment the emission is earned rather than the moment
+// somebody collects it — is what makes this module the sole issuer of allocation
+// ERTH and the reported supply a true one.
+//
+// The amount is a function of the block clock and nothing else:
+// EmissionPerSecond times the elapsed interval. It does not depend on how many
+// options there are, whether their handlers resolve, or whether anyone ever
+// claims. So the emission table can be checked against the chain's own clock,
+// which was not true when four different modules minted at four different
+// moments for four different reasons.
+//
+// A stream with no weight mints nothing. That is deliberate and it is visible
+// now: emission nobody has voted for is never created, rather than created and
+// stranded. Before the first human registers, the caretaker stream issues zero.
+//
+// The index is truncated to indexPrecision, so the options between them can only
+// collect delta*total, a hair under the reward. That hair is minted too — the
+// emission is 1 ERTH/sec, not 1 ERTH/sec less rounding — and set aside as
+// residue for the community pool, the same place x/distribution puts the dust
+// from its own per-validator split.
 //
 // Exported because x/personhood has to settle the human stream before it retires
 // a lapsed registration: the vote weight being unwound has to be credited
@@ -161,14 +223,55 @@ func (k Keeper) AdvanceIndex(ctx context.Context, stream types.StreamId) error {
 				if err != nil {
 					return err
 				}
-				idx = idx.Add(reward.Mul(indexPrecision).Quo(total))
-				if err := k.RewardIndex.Set(ctx, key(stream), idx); err != nil {
+				delta := reward.Mul(indexPrecision).Quo(total)
+				if err := k.RewardIndex.Set(ctx, key(stream), idx.Add(delta)); err != nil {
+					return err
+				}
+				if err := k.mintEmission(ctx, reward, delta.Mul(total).Quo(indexPrecision)); err != nil {
 					return err
 				}
 			}
 		}
 	}
 	return k.LastUpkeep.Set(ctx, key(stream), now)
+}
+
+// mintEmission issues one interval's emission into the module account and books
+// the part of it the options cannot reach.
+func (k Keeper) mintEmission(ctx context.Context, reward, collectable math.Int) error {
+	denom, err := k.HubDenom(ctx)
+	if err != nil {
+		return err
+	}
+	if err := k.bankKeeper.MintCoins(ctx, types.ModuleName,
+		sdk.NewCoins(sdk.NewCoin(denom, reward))); err != nil {
+		return err
+	}
+	dust := reward.Sub(collectable)
+	if !dust.IsPositive() {
+		return nil
+	}
+	held, err := k.GetResidue(ctx)
+	if err != nil {
+		return err
+	}
+	return k.Residue.Set(ctx, held.Add(dust))
+}
+
+// GetResidue reports the minted emission no option can collect, awaiting a sweep
+// to the community pool. Zero before anything has accrued.
+func (k Keeper) GetResidue(ctx context.Context) (math.Int, error) {
+	v, err := k.Residue.Get(ctx)
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return math.ZeroInt(), nil
+		}
+		return math.Int{}, err
+	}
+	if v.IsNil() {
+		return math.ZeroInt(), nil
+	}
+	return v, nil
 }
 
 // nextOptionID hands out the next option id within a stream. Ids restart per
@@ -306,15 +409,24 @@ func (k Keeper) ClearVoter(ctx context.Context, stream types.StreamId, addrBz []
 	return k.resyncVoter(ctx, stream, addrBz, nil, math.ZeroInt())
 }
 
-// DrawFromOption settles an option and withdraws `bps` basis points of its
+// DrawFromOption settles an option and withdraws `ppm` parts-per-million of its
 // accrued ERTH, returning the amount withdrawn for the caller to pay out. The
 // option keeps the remainder.
+//
+// Parts per million rather than basis points because the caller has to be able
+// to halve the rate exactly. x/personhood draws half as much when a registration
+// names no referrer, and halving a rate expressed in whole basis points is
+// integer division on a number small enough to reach zero: at 1 bp the
+// unreferred branch drew nothing at all and paid the registrant nothing, with no
+// error. A hundredfold finer unit puts that failure a hundred times further away
+// and lets the rate be tuned without a migration. It is the same unit Uniswap v3
+// uses for its fee tiers, for much the same reason.
 //
 // This is how an INTEGRATED option whose handler resolves nothing per block gets
 // drained on an external event instead: x/personhood calls it when a human
 // registers. A missing option is not an error — it just means that pool was
 // never configured — and yields zero.
-func (k Keeper) DrawFromOption(ctx context.Context, stream types.StreamId, optionID uint64, bps int64) (math.Int, error) {
+func (k Keeper) DrawFromOption(ctx context.Context, stream types.StreamId, optionID uint64, ppm int64) (math.Int, error) {
 	opt, err := k.Options.Get(ctx, optionKey(stream, optionID))
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
@@ -328,7 +440,7 @@ func (k Keeper) DrawFromOption(ctx context.Context, stream types.StreamId, optio
 	}
 	settleOption(&opt, rewardIndex)
 
-	drawn := opt.Accumulated.MulRaw(bps).QuoRaw(10000)
+	drawn := opt.Accumulated.MulRaw(ppm).QuoRaw(types.PpmDenominator)
 	if drawn.IsPositive() {
 		opt.Accumulated = opt.Accumulated.Sub(drawn)
 	} else {

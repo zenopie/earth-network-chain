@@ -147,7 +147,7 @@ func (k Keeper) settleAuction(ctx context.Context, a types.LiquidityAuction) err
 		return err
 	}
 
-	// Start retiring the position the moment it exists. Its ten years run from
+	// Start retiring the position the moment it exists. Its five years run from
 	// the day the pool opens rather than from block zero, because governance
 	// chooses when to hold the auction and the schedule should not be partly
 	// spent before there is anything to retire.

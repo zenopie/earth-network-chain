@@ -313,8 +313,7 @@ func TestInvariantsSurviveRandomisedOperations(t *testing.T) {
 						lpShares = lpShares.Sub(part)
 					}
 				case 3: // the LP-rewards allocation option pays out
-					_, err := k.DistributeLPRewards(ctx, math.NewInt(int64(1+rng.Intn(10_000))))
-					require.NoError(t, err)
+					distributeLP(t, k, ctx, bank, math.NewInt(int64(1+rng.Intn(10_000))))
 				case 4: // time passes, so the retirement schedule advances
 					ctx = ctx.WithBlockTime(ctx.BlockTime().Add(
 						time.Duration(1+rng.Intn(72)) * time.Hour))

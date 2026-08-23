@@ -48,6 +48,19 @@ var (
 	// can cancel its own removal without searching the queue for itself.
 	PruneDueKey = collections.NewPrefix("prune_due") // (stream, id) -> due unix
 
+	// SummedAccruedKey is the running sum of every option's Accumulated, across
+	// both streams, maintained by keeper.setOption. It exists so the solvency
+	// check does not have to walk the options to learn what they add up to —
+	// adding an ADDRESS option is permissionless, so the per-block cost must not
+	// grow with the option count.
+	SummedAccruedKey = collections.NewPrefix("summed_accrued") // Int
+
+	// ResidueKey is emission that was minted but that no option can collect:
+	// what a stream's index truncation leaves over. Held until it is swept to
+	// the community pool. Global rather than per stream — it is dust either way,
+	// and nothing about it is worth knowing per stream.
+	ResidueKey = collections.NewPrefix("residue") // Int
+
 	// EpochKey is the per-stream allocation epoch. Bumped by a governance reset;
 	// votes recorded under an older epoch carry no live weight. Per stream rather
 	// than global, so resetting one slate leaves the other one standing.
@@ -72,6 +85,10 @@ const (
 	// streams run at the same rate: one pillar of the four is directed by humans
 	// and one by stake.
 	EmissionPerSecond = earthtypes.EmissionPerSecondPerPillar
+
+	// PpmDenominator is the parts-per-million denominator DrawFromOption divides
+	// by (100% = 1,000,000).
+	PpmDenominator = 1_000_000
 
 	// DefaultAddressOptionFee is the ERTH (uerth) burned to add an ADDRESS option.
 	DefaultAddressOptionFee = 1_000_000

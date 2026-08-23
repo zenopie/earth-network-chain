@@ -37,6 +37,7 @@ func (stubAllocation) ClearVoter(context.Context, allocationtypes.StreamId, []by
 func (stubAllocation) DrawFromOption(context.Context, allocationtypes.StreamId, uint64, int64) (math.Int, error) {
 	return math.ZeroInt(), nil
 }
+func (stubAllocation) PayOut(context.Context, sdk.AccAddress, math.Int) error { return nil }
 
 // oracleDir points at the UltraHonk verifier's known-good bb v5.0.0 fixture.
 const oracleDir = "../../../zk/ultrahonk/testdata"

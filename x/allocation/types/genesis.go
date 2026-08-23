@@ -13,7 +13,8 @@ import (
 // #1. See keeper/genesis.go.
 func DefaultGenesis() *GenesisState {
 	return &GenesisState{
-		Params: DefaultParams(),
+		Params:                 DefaultParams(),
+		RegistrationRewardSeed: math.ZeroInt(),
 	}
 }
 
@@ -26,6 +27,19 @@ func DefaultGenesis() *GenesisState {
 // invariant at height 1 — which looks like a consensus failure and is much
 // harder to read.
 func (gs GenesisState) Validate() error {
+	// An absent seed is no pre-funding, not an error. Every other Int in this
+	// module reads nil as zero, and a genesis file written by hand should not
+	// have to name a field it does not want.
+	if !gs.RegistrationRewardSeed.IsNil() && gs.RegistrationRewardSeed.IsNegative() {
+		return fmt.Errorf("registration_reward_seed must not be negative, got %s", gs.RegistrationRewardSeed)
+	}
+	// A seed only means anything on a fresh chain. On an import the option's
+	// balance comes back with its stream, and honouring both would credit the
+	// pool twice — once from the export and once from the seed.
+	if len(gs.Streams) > 0 && !gs.RegistrationRewardSeed.IsNil() && gs.RegistrationRewardSeed.IsPositive() {
+		return fmt.Errorf("registration_reward_seed is for a fresh chain; an import carries option balances in its streams")
+	}
+
 	seenStream := make(map[StreamId]struct{}, len(gs.Streams))
 
 	for _, st := range gs.Streams {

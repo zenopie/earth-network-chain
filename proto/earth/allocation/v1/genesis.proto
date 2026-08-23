@@ -25,6 +25,25 @@ message GenesisState {
   // allocation refers to. Re-seeding on top of an import would hand out id 1
   // twice and silently repoint everyone who had voted for it.
   repeated StreamState streams = 2 [(gogoproto.nullable) = false];
+
+  // registration_reward_seed pre-funds the human stream's option #1 on a fresh
+  // chain, in uerth. Ignored on an import, where the option's balance comes back
+  // with the stream it belongs to.
+  //
+  // It is a genesis field rather than a compiled-in constant because it is an
+  // economic figure, and every other one — the pre-mine, the pool reserves, the
+  // auction earmarks — is decided in the genesis file. A testnet, or a relaunch
+  // that raises a different amount, must not need a rebuild to change it.
+  //
+  // The coins behind it are a bank balance on this module's account, declared in
+  // the same genesis file, because emission is minted as it accrues rather than
+  // when it is claimed: a balance the options say they hold has to actually be
+  // there. Genesis validation checks the two agree.
+  string registration_reward_seed = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
 }
 
 // StreamState is one emission stream at a point in time: its reward accounting,

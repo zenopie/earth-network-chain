@@ -143,6 +143,13 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 //
 // Two numbers per stream, not a walk: adding an option is permissionless, so the
 // per-block cost must not grow with the option count. See keeper/invariants.go.
+//
+// The truncation residue is swept first. It is minted emission that belongs to no
+// option, so until it leaves it reads as surplus on the module account — and the
+// solvency check below is the thing that would have to tolerate it.
 func (am AppModule) EndBlock(ctx context.Context) error {
+	if err := am.keeper.SweepResidue(ctx); err != nil {
+		return err
+	}
 	return am.keeper.AssertHotInvariants(ctx)
 }

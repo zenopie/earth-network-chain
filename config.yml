@@ -136,11 +136,20 @@ genesis:
     # It is *additive* to those emissions, not a substitute — the chain keeps
     # minting on top of it.
     #
-    # It splits three equal ways, 840,960,000 ERTH each:
+    # It splits four equal ways, 630,720,000 ERTH each — one quarter is five
+    # years of the whole chain's emission:
     #   - the ANML/ERTH pool below, against 1 person x 1 ANML/day x 7,300 d
-    #     = 7,300 ANML, so the pool opens at 1 ANML = 115,200 ERTH
+    #     = 7,300 ANML, so the pool opens at 1 ANML = 86,400 ERTH
     #   - the liquidity auction's bidder earmark
     #   - the liquidity auction's pool earmark
+    #   - the registration-reward pool: x/allocation's option #1 in the human
+    #     stream, seeded below with registration_reward_seed and backed by a real
+    #     balance on that module's account. Emission is minted as it accrues, so
+    #     a pool that says it holds ERTH has to be holding it.
+    #
+    # ANML's opening price in fiat is unchanged by the reshuffle: the pool's ERTH
+    # side and the bidders' earmark move together, so 1 ANML opens at
+    # raise/7,300 whatever the split.
     # Both auction earmarks are pre-funded here and merely *recorded* in the
     # auction state; opening a window cannot create ERTH genesis did not already
     # account for. They must be equal — see GenesisState.Validate.
@@ -158,7 +167,7 @@ genesis:
       # change here.
       supply:
       - denom: dexlp/1
-        amount: "2477702161277"
+        amount: "2145753014678"
       - denom: uanml
         amount: "7300000000"
       - denom: uerth
@@ -169,11 +178,19 @@ genesis:
       - address: earth1n58mly6f7er0zs6swtetqgfqs36jaarqqsddqt
         coins:
         - denom: dexlp/1
-          amount: "2477702161277"
+          amount: "2145753014678"
         - denom: uanml
           amount: "7300000000"
         - denom: uerth
-          amount: "2522880000000000"
+          amount: "1892160000000000"
+      # x/allocation's module account, holding the registration-reward pool's
+      # quarter. It is a real balance rather than a promise because emission is
+      # minted when it accrues, not when it is claimed: what the option below
+      # says it has accrued, this account has to be able to pay.
+      - address: earth1ze0slrj403psj2tcgq6a7lh2eaarlau4hhclpa
+        coins:
+        - denom: uerth
+          amount: "630720000000000"
     dex:
       params:
         # swap_fee is a percentage: "0.3" means 0.3%, charged in ERTH per hop.
@@ -189,7 +206,7 @@ genesis:
       - pool_id: "1"
         reserve_erth:
           denom: uerth
-          amount: "840960000000000"
+          amount: "630720000000000"
         reserve_token:
           denom: uanml
           amount: "7300000000"
@@ -209,20 +226,25 @@ genesis:
         end_time: "0"
         erth_for_bidders:
           denom: uerth
-          amount: "840960000000000"
+          amount: "630720000000000"
         erth_for_pool:
           denom: uerth
-          amount: "840960000000000"
+          amount: "630720000000000"
         total_raised: "0"
         pool_id: "0"
         claimed: "0"
       auction_bids: []
       # The chain owns pool 1 outright — the LP shares are minted to the dex
       # module account, which has no key — and retires that position on a
-      # straight line over ten years. Running a book is active management whose
+      # straight line over five years. Running a book is active management whose
       # incentives are not an ERTH staker's, so the protocol bootstraps the
-      # market and then gets out of the way, leaving a decade of steadily rising
-      # reward share as the reason for real LPs to take it over.
+      # market and then gets out of the way, leaving five years of steadily
+      # rising reward share as the reason for real LPs to take it over.
+      #
+      # Five years is also what makes the burn cancel the emission: the two
+      # pools hold 1,261,440,000 ERTH between them, and the chain issues
+      # 4 ERTH/sec, so retiring over five years destroys exactly what five years
+      # of emission creates.
       #
       # burn_token: both sides are the chain's own assets, so each retired slice
       # burns its ERTH *and* its ANML. Both reserves shrink by the same fraction,
@@ -232,10 +254,10 @@ genesis:
       # cannot know the chain's first block time. duration is ten Julian years.
       pol_burns:
       - pool_id: "1"
-        total_shares: "2477702161277"
-        shares_remaining: "2477702161277"
+        total_shares: "2145753014678"
+        shares_remaining: "2145753014678"
         start_time: "0"
-        duration_seconds: "315576000"
+        duration_seconds: "157788000"
         burn_token: true
     # Downtime tolerance. The SDK defaults — a 100-block window at 50% — jail a
     # validator after 50 missed blocks, which at 5s blocks is four minutes. On a
@@ -250,6 +272,18 @@ genesis:
     # x/allocation runs both emission streams — one directed by registered
     # humans, one by bonded stake — over the same engine and shared params.
     allocation:
+      # registration_reward_seed pre-funds the human stream's option #1 with a
+      # quarter of the pre-mine, matching the balance given to this module's
+      # account above. The reward is a fraction of whatever the pool holds, so a
+      # pool that starts empty pays the earliest registrants nothing — and they
+      # are the ones worth paying, because they arrive before there is a network
+      # to arrive for.
+      #
+      # At 100 ppm this pays the first registrant and their referrer 31,536 uerth
+      # each ($50 a side on a $1M auction clear), halves every 6,931
+      # registrations, and has distributed 63% of the pool by the ten-thousandth
+      # human and 86% by the twenty-thousandth.
+      registration_reward_seed: "630720000000000"
       params:
         # address_option_fee is the ERTH (uerth) burned to add a permissionless
         # ADDRESS option to either stream (anti-spam). 0 = free (demo/testing).

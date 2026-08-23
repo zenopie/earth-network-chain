@@ -149,18 +149,27 @@ func (k Keeper) checkErthSolvency(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	owed := pools.Add(auction)
+	// LP rewards x/allocation has paid in that no pool has settled into its
+	// reserve yet. They are on the account and they belong to the LPs, so
+	// without this term they read as ERTH the module cannot account for — which
+	// is exactly what they would be if the pay-in and the settle ever stopped
+	// matching.
+	pending, err := k.getPendingLpRewards(ctx)
+	if err != nil {
+		return err
+	}
+	owed := pools.Add(auction).Add(pending)
 
 	held := k.bankKeeper.GetBalance(ctx, authtypes.NewModuleAddress(types.ModuleName), hub).Amount
 	switch {
 	case held.LT(owed):
 		return types.ErrInvariantBroken.Wrapf(
-			"dex module is short %s%s: it owes %s (pools %s, auction %s) and holds %s",
-			owed.Sub(held), hub, owed, pools, auction, held)
+			"dex module is short %s%s: it owes %s (pools %s, auction %s, pending lp rewards %s) and holds %s",
+			owed.Sub(held), hub, owed, pools, auction, pending, held)
 	case held.GT(owed):
 		return types.ErrInvariantBroken.Wrapf(
-			"dex module holds %s%s it cannot account for: it owes %s (pools %s, auction %s) and holds %s",
-			held.Sub(owed), hub, owed, pools, auction, held)
+			"dex module holds %s%s it cannot account for: it owes %s (pools %s, auction %s, pending lp rewards %s) and holds %s",
+			held.Sub(owed), hub, owed, pools, auction, pending, held)
 	}
 	return nil
 }

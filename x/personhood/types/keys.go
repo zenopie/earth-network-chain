@@ -23,12 +23,23 @@ const (
 	// OneAnml is one ANML in uanml, minted per daily claim / registration.
 	OneAnml = 1_000_000
 
-	// RegistrationRewardBps is the fraction of the registration-rewards pool paid
-	// out on each registration, in basis points (10 bps = 0.1%). The pool stacks
-	// from the human allocation stream and decays by this fraction per
-	// registration, so each registrant's reward is normalized to the current pool
-	// size.
-	RegistrationRewardBps = 10
+	// RegistrationRewardPpm is the fraction of the registration-rewards pool paid
+	// out on each registration, in parts per million (100 ppm = 0.01%). The pool
+	// is pre-funded at genesis with a quarter of the pre-mine, stacks from the
+	// human allocation stream, and decays by this fraction per registration, so
+	// each registrant's reward is normalized to the current pool size.
+	//
+	// The draw halves the pool every ln(2)/rate registrations — 6,931 at this
+	// rate. Against a quarter of the pre-mine and a $1M auction clear that pays
+	// the first registrant and their referrer $50 each, is still $18 a side at
+	// the ten-thousandth human, and has distributed 63% of the pool by then and
+	// 86% by the twenty-thousandth.
+	//
+	// Parts per million rather than basis points so the unreferred branch, which
+	// halves this, divides exactly. In whole basis points the smallest usable
+	// rate was 2, because 1/2 truncates to zero and paid an unreferred registrant
+	// nothing without erroring.
+	RegistrationRewardPpm = 100
 
 	// EmissionPerSecond is the ERTH emission rate in uerth for this module's
 	// pillar (1 ERTH/sec): the ANML buyback-and-burn. The human allocation
@@ -77,9 +88,26 @@ const (
 	DefaultDscDailyRegistrationShareBps = 2_500
 
 	// DefaultCountryDailyRegistrationFloor is the same allowance per issuing
-	// country, ten times the per-signer floor because a country legitimately has
-	// several signers active at once.
-	DefaultCountryDailyRegistrationFloor = 10_000
+	// country.
+	//
+	// A thousand a day, not the ten thousand it started at. The floor only
+	// matters before the network is big enough for the share term to take over,
+	// and at launch scale ten thousand registrations from one country in a day
+	// is not adoption — it is the shape a compromised CSCA takes. It also sets
+	// how fast the registration-reward pool can drain: at 2 bps the pool halves
+	// every 3,466 registrations, so a ten-thousand-a-day country would spend
+	// most of the seed inside a week.
+	//
+	// It is a deferral, not a ban: the counter rolls at midnight UTC and genuine
+	// holders retry. Raising it is a governance parameter change, which is the
+	// right amount of friction for a number that decides how fast a compromise
+	// pays out.
+	//
+	// NOTE: this now equals DefaultDscDailyRegistrationFloor, so at launch scale
+	// the per-signer cap cannot bind before the per-country one does. The signer
+	// cap only starts doing independent work once the share term lifts the
+	// country cap above it.
+	DefaultCountryDailyRegistrationFloor = 1_000
 
 	// DefaultCountryDailyRegistrationShareBps allows one country up to 60% of
 	// yesterday's registrations. Deliberately generous: early adoption really can

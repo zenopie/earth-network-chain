@@ -285,8 +285,8 @@ func TestPoolSharesAndRetirementScheduleAgree(t *testing.T) {
 		t.Errorf("a genesis schedule has not retired anything yet: total_shares %s, shares_remaining %s",
 			burn.TotalShares, burn.SharesRemaining)
 	}
-	if burn.DurationSeconds != "315576000" {
-		t.Errorf("retirement should run ten Julian years (315576000s), got %s", burn.DurationSeconds)
+	if burn.DurationSeconds != "157788000" {
+		t.Errorf("retirement should run five Julian years (157788000s), got %s", burn.DurationSeconds)
 	}
 }
 

@@ -112,6 +112,23 @@ func (b *mintingBank) BurnCoins(_ context.Context, _ string, amt sdk.Coins) erro
 	return nil
 }
 
+// distributeLP mirrors what the production handler does. x/allocation resolves
+// the LP-rewards option and then pays the resolved ERTH into this module's
+// account; calling DistributeLPRewards on its own advances the index without the
+// coins ever arriving, which the solvency invariant is right to reject.
+//
+// The ERTH is funded rather than minted because x/allocation minted it already,
+// when the capital stream's index advanced. Nothing in x/dex issues it.
+func distributeLP(t *testing.T, k keeper.Keeper, ctx sdk.Context, bank *mintingBank, amount math.Int) math.Int {
+	t.Helper()
+	resolved, err := k.DistributeLPRewards(ctx, amount)
+	require.NoError(t, err)
+	if resolved.IsPositive() {
+		bank.fundModule(sdk.NewCoin("uerth", resolved))
+	}
+	return resolved
+}
+
 func initRewardFixture(t *testing.T) (keeper.Keeper, sdk.Context, *mintingBank) {
 	t.Helper()
 	encCfg := moduletestutil.MakeTestEncodingConfig(module.AppModule{})
@@ -185,16 +202,21 @@ func TestDistributeLPRewards_IsLazy(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	seedPool(t, k, ctx, 1, 1_000_000, 1_000_000, 1_000)
 
-	consumed, err := k.DistributeLPRewards(ctx, math.NewInt(500))
-	require.NoError(t, err)
+	consumed := distributeLP(t, k, ctx, bank, math.NewInt(500))
 	require.True(t, consumed.IsPositive(), "reward with volume present should be consumed")
-	require.True(t, bank.minted.IsZero(), "distribution must not mint before a pool is touched")
+	require.True(t, bank.minted.IsZero(), "x/dex must never mint LP rewards; x/allocation issues them")
+
+	pending, err := k.PendingLpRewards.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, math.NewInt(500), pending, "the reward is owed by the module until a pool settles it")
 
 	// The reward is owed, not lost: the pool collects it on its next swap.
 	_, err = k.SwapExactIn(ctx, sdk.AccAddress("trader______________"), sdk.NewInt64Coin("utok", 1_000), "uerth", math.ZeroInt())
 	require.NoError(t, err)
-	require.Equal(t, math.NewInt(500), bank.minted.AmountOf("uerth"),
-		"pool should collect the full reward on first touch")
+	require.True(t, bank.minted.IsZero(), "collecting it must not mint either")
+	pending, err = k.PendingLpRewards.Get(ctx)
+	require.NoError(t, err)
+	require.True(t, pending.IsZero(), "pool should collect the full reward on first touch")
 }
 
 // TestDistributeLPRewards_NoVolumeCarriesForward keeps the caller's carry-forward
@@ -217,8 +239,7 @@ func TestSettleBeforeAddLiquidity(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	seedPool(t, k, ctx, 1, 1_000_000, 1_000_000, 1_000)
 
-	_, err := k.DistributeLPRewards(ctx, math.NewInt(100_000))
-	require.NoError(t, err)
+	distributeLP(t, k, ctx, bank, math.NewInt(100_000))
 
 	ms := keeper.NewMsgServerImpl(k)
 	addr, err := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix()).
@@ -233,36 +254,49 @@ func TestSettleBeforeAddLiquidity(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// The reward landed in the reserve before shares were priced.
-	require.Equal(t, math.NewInt(100_000), bank.minted.AmountOf("uerth"))
+	// The reward landed in the reserve before shares were priced — moved in from
+	// the module's pending pile, not minted: x/allocation issued it already.
+	require.True(t, bank.minted.AmountOf("uerth").IsZero(),
+		"x/dex must not mint LP rewards (the LP shares AddLiquidity mints are a different denom)")
+	pending, err := k.PendingLpRewards.Get(ctx)
+	require.NoError(t, err)
+	require.True(t, pending.IsZero(), "the reward should have moved out of pending and into the reserve")
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, math.NewInt(1_000_000+100_000+1_000_000), pool.ReserveErth.Amount,
 		"reserve should hold the settled reward plus the new deposit")
 }
 
-// TestSettleDecaysDormantVolumeFirst pins the rule for a pool that goes quiet:
-// it collects against the volume it currently has, not the volume it last
-// recorded. Settling at the stale figure over-paid dormant pools and left a
-// wash-trade opening — spike volume, go quiet, then touch the pool to harvest
-// the whole silent stretch at the peak rate.
-func TestSettleDecaysDormantVolumeFirst(t *testing.T) {
+// TestDormantPoolCollectsWhatItWasAllocated pins the rule the old decay got
+// wrong. A pool that goes quiet keeps the weight it had, because the denominator
+// keeps it too — the two never part company, so the pool collects exactly what
+// the index set aside for it.
+//
+// Settling at a decayed figure against an undecayed denominator was the bug:
+// the pool was credited less than the stream had released on its behalf, and the
+// difference was ERTH nobody ever received. Over a year of mixed pool activity
+// that was 9-11% of the whole LP emission.
+func TestDormantPoolCollectsWhatItWasAllocated(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	seedPool(t, k, ctx, 1, 1_000_000, 1_000_000, 1_000)
 
-	_, err := k.DistributeLPRewards(ctx, math.NewInt(500))
-	require.NoError(t, err)
+	distributeLP(t, k, ctx, bank, math.NewInt(500))
 
-	// Three days of silence. Volume decays by (7-1)/7 each day, truncating:
-	// 1000 -> 857 -> 734 -> 629. The pool therefore collects 629/1000 of the
-	// 500 on offer, not all of it.
+	// Three days of silence. Nothing ages: the pool is the only holder of
+	// weight, so it is owed the whole 500 whenever it comes back.
 	later := ctx.WithBlockTime(ctx.BlockTime().Add(3 * 24 * time.Hour))
+	before, err := k.Pool.Get(later, 1)
+	require.NoError(t, err)
 	_, err = k.SwapExactIn(later, sdk.AccAddress("trader______________"),
 		sdk.NewInt64Coin("utok", 1_000), "uerth", math.ZeroInt())
 	require.NoError(t, err)
 
-	require.Equal(t, math.NewInt(314), bank.minted.AmountOf("uerth"),
-		"a dormant pool must collect at its decayed volume, not its last recorded one")
+	require.True(t, bank.minted.IsZero(), "x/dex must not mint LP rewards")
+	pending, err := k.PendingLpRewards.Get(later)
+	require.NoError(t, err)
+	require.True(t, pending.IsZero(),
+		"a dormant pool must still collect everything the index set aside for it, %s left owed", pending)
+	_ = before
 
 	// The denominator and the pools must never disagree: DistributeLPRewards
 	// reports delta*LpTotalVolume as handed out, and the pools between them claim
@@ -274,24 +308,80 @@ func TestSettleDecaysDormantVolumeFirst(t *testing.T) {
 	require.Equal(t, pool.Volume, total, "LpTotalVolume must track the sum of stored pool volumes")
 }
 
-// TestSettlePastWindowCollectsNothing is the far end of the same rule: a pool
-// silent for a full window has no weight left, so the rewards its stale volume
-// was holding a claim on are never minted.
-func TestSettlePastWindowCollectsNothing(t *testing.T) {
+// TestNewVolumeOutweighsOld is the decay, expressed the way the scheme expresses
+// it: nothing is taken away from old volume, new volume is simply worth more.
+func TestNewVolumeOutweighsOld(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
-	seedPool(t, k, ctx, 1, 1_000_000, 1_000_000, 1_000)
+	seedPool(t, k, ctx, 1, 1_000_000_000, 1_000_000_000, 0)
+	seedPool(t, k, ctx, 2, 1_000_000_000, 1_000_000_000, 0)
+	_ = bank
 
-	_, err := k.DistributeLPRewards(ctx, math.NewInt(500))
+	// Both pools trade the same amount, a fortnight apart.
+	require.NoError(t, k.AdvanceVolumeIndex(ctx))
+	p1, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
+	require.NoError(t, k.ApplyVolumeForTest(ctx, &p1, math.NewInt(1_000_000)))
+	require.NoError(t, k.SetPool(ctx, 1, p1))
 
-	later := ctx.WithBlockTime(ctx.BlockTime().Add(types.VolumeWindowDays * 24 * time.Hour))
-	_, err = k.SwapExactIn(later, sdk.AccAddress("trader______________"),
+	later := ctx.WithBlockTime(ctx.BlockTime().Add(types.VolumeDecayWindowDays * 24 * time.Hour))
+	require.NoError(t, k.AdvanceVolumeIndex(later))
+	p2, err := k.Pool.Get(later, 2)
+	require.NoError(t, err)
+	require.NoError(t, k.ApplyVolumeForTest(later, &p2, math.NewInt(1_000_000)))
+	require.NoError(t, k.SetPool(later, 2, p2))
+
+	p1, err = k.Pool.Get(later, 1)
+	require.NoError(t, err)
+	p2, err = k.Pool.Get(later, 2)
+	require.NoError(t, err)
+	require.True(t, p2.Volume.GT(p1.Volume),
+		"a fortnight-old trade must weigh less than a fresh one of the same size: %s vs %s",
+		p1.Volume, p2.Volume)
+	// (14/13)^14 is about 2.75, so the fresh trade should be worth roughly
+	// that much more. Loose bounds: this pins the direction and the order of
+	// magnitude, not the rounding.
+	ratio := p2.Volume.Mul(math.NewInt(100)).Quo(p1.Volume)
+	require.True(t, ratio.GTE(math.NewInt(250)) && ratio.LTE(math.NewInt(300)),
+		"fresh volume should be ~2.75x a fortnight-old one, got %s/100", ratio)
+}
+
+// TestStalePoolIsSweptOutOfTheDenominator is the other half of the scheme.
+// Scaled volume never reaches zero on its own, so a pool nobody trades would
+// hold a dwindling slice of every reward forever. The timer retires it — after
+// paying it what it was owed right up to the moment it goes.
+func TestStalePoolIsSweptOutOfTheDenominator(t *testing.T) {
+	k, ctx, bank := initRewardFixture(t)
+	seedPool(t, k, ctx, 1, 1_000_000, 1_000_000, 0)
+
+	// Trading is what starts the clock.
+	_, err := k.SwapExactIn(ctx, sdk.AccAddress("trader______________"),
 		sdk.NewInt64Coin("utok", 1_000), "uerth", math.ZeroInt())
 	require.NoError(t, err)
+	pool, err := k.Pool.Get(ctx, 1)
+	require.NoError(t, err)
+	require.True(t, pool.Volume.IsPositive(), "the swap should have recorded volume")
 
-	require.True(t, bank.minted.AmountOf("uerth").IsZero(),
-		"a pool dormant past the window has no volume to collect against, got %s",
-		bank.minted.AmountOf("uerth"))
+	distributeLP(t, k, ctx, bank, math.NewInt(500))
+
+	// Still inside the window: nothing is retired.
+	early := ctx.WithBlockTime(ctx.BlockTime().Add(time.Duration(types.PoolStaleSeconds-1) * time.Second))
+	require.NoError(t, k.SweepStalePools(early))
+	pool, err = k.Pool.Get(early, 1)
+	require.NoError(t, err)
+	require.True(t, pool.Volume.IsPositive(), "a pool inside its window keeps its weight")
+
+	// Past it: swept, and paid what it held right up to the sweep.
+	late := ctx.WithBlockTime(ctx.BlockTime().Add(time.Duration(types.PoolStaleSeconds+1) * time.Second))
+	require.NoError(t, k.SweepStalePools(late))
+	pool, err = k.Pool.Get(late, 1)
+	require.NoError(t, err)
+	require.True(t, pool.Volume.IsZero(), "a stale pool must lose its weight")
+	total, err := k.LpTotalVolume.Get(late)
+	require.NoError(t, err)
+	require.True(t, total.IsZero(), "and must leave the denominator with it")
+	pending, err := k.PendingLpRewards.Get(late)
+	require.NoError(t, err)
+	require.True(t, pending.IsZero(), "the sweep must settle before it retires, %s stranded", pending)
 }
 
 // TestNewPoolCannotClaimPastRewards pins the index initialization: a pool created
@@ -300,8 +390,7 @@ func TestSettlePastWindowCollectsNothing(t *testing.T) {
 func TestNewPoolCannotClaimPastRewards(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	seedPool(t, k, ctx, 1, 1_000_000, 1_000_000, 1_000)
-	_, err := k.DistributeLPRewards(ctx, math.NewInt(100_000))
-	require.NoError(t, err)
+	distributeLP(t, k, ctx, bank, math.NewInt(100_000))
 
 	ms := keeper.NewMsgServerImpl(k)
 	addr, err := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix()).

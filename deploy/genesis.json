@@ -8,6 +8,7 @@
       "params": {
         "address_option_fee": "1000000"
       },
+      "registration_reward_seed": "630720000000000",
       "streams": []
     },
     "auth": {
@@ -46,7 +47,7 @@
           "address": "earth1n58mly6f7er0zs6swtetqgfqs36jaarqqsddqt",
           "coins": [
             {
-              "amount": "2477702161277",
+              "amount": "2145753014678",
               "denom": "dexlp/1"
             },
             {
@@ -54,7 +55,16 @@
               "denom": "uanml"
             },
             {
-              "amount": "2522880000000000",
+              "amount": "1892160000000000",
+              "denom": "uerth"
+            }
+          ]
+        },
+        {
+          "address": "earth1ze0slrj403psj2tcgq6a7lh2eaarlau4hhclpa",
+          "coins": [
+            {
+              "amount": "630720000000000",
               "denom": "uerth"
             }
           ]
@@ -68,7 +78,7 @@
       "send_enabled": [],
       "supply": [
         {
-          "amount": "2477702161277",
+          "amount": "2145753014678",
           "denom": "dexlp/1"
         },
         {
@@ -93,11 +103,11 @@
         "claimed": "0",
         "end_time": "0",
         "erth_for_bidders": {
-          "amount": "840960000000000",
+          "amount": "630720000000000",
           "denom": "uerth"
         },
         "erth_for_pool": {
-          "amount": "840960000000000",
+          "amount": "630720000000000",
           "denom": "uerth"
         },
         "pool_id": "0",
@@ -113,11 +123,11 @@
       "pol_burns": [
         {
           "burn_token": true,
-          "duration_seconds": "315576000",
+          "duration_seconds": "157788000",
           "pool_id": "1",
-          "shares_remaining": "2477702161277",
+          "shares_remaining": "2145753014678",
           "start_time": "0",
-          "total_shares": "2477702161277"
+          "total_shares": "2145753014678"
         }
       ],
       "pool_map": [
@@ -125,7 +135,7 @@
           "last_volume_day": "0",
           "pool_id": "1",
           "reserve_erth": {
-            "amount": "840960000000000",
+            "amount": "630720000000000",
             "denom": "uerth"
           },
           "reserve_token": {
@@ -343,7 +353,7 @@
         "buyback_max_accrual_seconds": "86400",
         "buyback_max_deviation_bps": "200",
         "buyback_twap_window_seconds": "600",
-        "country_daily_registration_floor": "10000",
+        "country_daily_registration_floor": "1000",
         "country_daily_registration_share_bps": "6000",
         "current_date_index": 0,
         "current_date_max_skew_seconds": "172800",

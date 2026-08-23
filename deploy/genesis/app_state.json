@@ -59,7 +59,7 @@
         "last_volume_day": "0",
         "pool_id": "1",
         "reserve_erth": {
-          "amount": "840960000000000",
+          "amount": "630720000000000",
           "denom": "uerth"
         },
         "reserve_token": {
@@ -75,11 +75,11 @@
       "end_time": "0",
       "erth_for_bidders": {
         "denom": "uerth",
-        "amount": "840960000000000"
+        "amount": "630720000000000"
       },
       "erth_for_pool": {
         "denom": "uerth",
-        "amount": "840960000000000"
+        "amount": "630720000000000"
       },
       "total_raised": "0",
       "pool_id": "0",
@@ -88,10 +88,10 @@
     "pol_burns": [
       {
         "pool_id": "1",
-        "total_shares": "2477702161277",
-        "shares_remaining": "2477702161277",
+        "total_shares": "2145753014678",
+        "shares_remaining": "2145753014678",
         "start_time": "0",
-        "duration_seconds": "315576000",
+        "duration_seconds": "157788000",
         "burn_token": true
       }
     ]
@@ -107,6 +107,7 @@
     }
   },
   "allocation": {
+    "registration_reward_seed": "630720000000000",
     "params": {
       "address_option_fee": "1000000"
     }

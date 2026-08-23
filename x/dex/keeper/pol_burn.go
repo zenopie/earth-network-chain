@@ -21,7 +21,7 @@ import (
 // running a book is active management and the protocol is a bad manager of it:
 // an LP's incentives are not an ERTH staker's, and a position nobody can adjust
 // is the worst version of that mismatch. Retiring it makes room for providers
-// who will actually manage the liquidity, and gives them a decade of steadily
+// who will actually manage the liquidity, and gives them five years of steadily
 // rising reward share as the reason to show up.
 //
 // Retirement is not a withdrawal. A slice of the position is priced against the

@@ -11,10 +11,13 @@ import (
 	"github.com/earth-network/earth/x/allocation/types"
 )
 
-// ClaimAllocation mints and pays out an ADDRESS option's accrued ERTH to its
-// recipient. The signer must be the option's claimer, or anyone if the option
-// has no claimer set. INTEGRATED options resolve in BeginBlock and cannot be
-// claimed this way.
+// ClaimAllocation pays out an ADDRESS option's accrued ERTH to its recipient.
+// The coins already exist — the stream minted them as they accrued — so this
+// moves them rather than issuing them.
+//
+// The signer must be the option's claimer, or anyone if the option has no
+// claimer set. INTEGRATED options resolve in BeginBlock and cannot be claimed
+// this way.
 func (k msgServer) ClaimAllocation(ctx context.Context, msg *types.MsgClaimAllocation) (*types.MsgClaimAllocationResponse, error) {
 	if err := ValidateStream(msg.Stream); err != nil {
 		return nil, err
@@ -48,19 +51,11 @@ func (k msgServer) ClaimAllocation(ctx context.Context, msg *types.MsgClaimAlloc
 
 	amount := opt.Accumulated
 	if amount.IsPositive() {
-		hub, err := k.HubDenom(ctx)
-		if err != nil {
-			return nil, err
-		}
-		coins := sdk.NewCoins(sdk.NewCoin(hub, amount))
-		if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, coins); err != nil {
-			return nil, err
-		}
 		recipientBz, err := k.addressCodec.StringToBytes(opt.Recipient)
 		if err != nil {
 			return nil, err
 		}
-		if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, sdk.AccAddress(recipientBz), coins); err != nil {
+		if err := k.PayOut(ctx, sdk.AccAddress(recipientBz), amount); err != nil {
 			return nil, err
 		}
 		opt.Accumulated = math.ZeroInt()
