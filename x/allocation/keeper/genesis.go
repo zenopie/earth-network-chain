@@ -38,6 +38,9 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		if err := k.TotalWeight.Set(ctx, key(stream), math.ZeroInt()); err != nil {
 			return err
 		}
+		if err := k.SummedWeight.Set(ctx, key(stream), math.ZeroInt()); err != nil {
+			return err
+		}
 		if err := k.Epoch.Set(ctx, key(stream), 0); err != nil {
 			return err
 		}
@@ -107,7 +110,15 @@ func (k Keeper) restoreStream(ctx context.Context, st types.StreamState) error {
 		return err
 	}
 
+	// The options are restored verbatim rather than through setOption, so the
+	// running sum is rebuilt here from what they carry. It is derived state and
+	// so is not exported; genesis validation has already checked that it will
+	// come out equal to the total weight being restored above.
+	summed := math.ZeroInt()
 	for _, opt := range st.Options {
+		if !opt.AmountAllocated.IsNil() {
+			summed = summed.Add(opt.AmountAllocated)
+		}
 		if err := k.Options.Set(ctx, optionKey(st.Stream, opt.Id), opt); err != nil {
 			return err
 		}
@@ -116,6 +127,10 @@ func (k Keeper) restoreStream(ctx context.Context, st types.StreamState) error {
 				return err
 			}
 		}
+	}
+
+	if err := k.SummedWeight.Set(ctx, kk, summed); err != nil {
+		return err
 	}
 
 	for _, v := range st.Voters {

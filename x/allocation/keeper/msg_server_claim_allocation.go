@@ -65,7 +65,7 @@ func (k msgServer) ClaimAllocation(ctx context.Context, msg *types.MsgClaimAlloc
 		}
 		opt.Accumulated = math.ZeroInt()
 	}
-	if err := k.Options.Set(ctx, optionKey(msg.Stream, msg.OptionId), opt); err != nil {
+	if err := k.setOption(ctx, msg.Stream, opt); err != nil {
 		return nil, err
 	}
 

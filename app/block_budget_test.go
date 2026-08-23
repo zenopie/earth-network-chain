@@ -75,9 +75,12 @@ func TestPerBlockWorkBudget(t *testing.T) {
 //	                          a user
 //	x/allocation  BeginBlock  stream upkeep -> O(streams x integrated options),
 //	                          both governance-controlled
-//	              EndBlock    weight invariant -> O(all options in both streams),
-//	                          and ADDRESS options are permissionless. NOT bounded.
-//	                          See docs/LAUNCH_CHECKLIST.md section 5.
+//	              EndBlock    weight invariant -> O(1) per stream. It compares
+//	                          two maintained aggregates rather than walking the
+//	                          options, which matters because adding an option is
+//	                          permissionless. The walk lives in AssertInvariants,
+//	                          off the block path. See x/allocation/keeper/
+//	                          invariants.go and TestInvariantCostIsFlatInOptionCount.
 //	x/earth       EndBlock    fee split -> O(fee denoms in one block)
 //	x/mint        BeginBlock  emission -> O(1)
 //

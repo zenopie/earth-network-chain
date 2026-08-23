@@ -68,6 +68,15 @@ nothing to join.
   The SDK default is off, and a snapshot cannot be made for a height already
   passed, so a chain launched without them leaves everyone who joins later
   replaying from genesis. `SNAPSHOT_INTERVAL=0` disables them, loudly.
+- **The allocation invariant no longer walks every option.** It ran in the
+  EndBlocker and summed each stream by decoding every option in it, while adding
+  an option is permissionless — so the per-block cost of every node was
+  something an outsider could raise for a one-time fee. The sum is maintained on
+  write instead and the check compares two numbers per stream: 4,246 gas at five
+  options and 4,246 at five hundred. It still halts on the drift it was added
+  for, including the clamped case. The exhaustive walk moved to
+  `AssertInvariants`, which tests run after every operation and operators can run
+  against a node.
 - **An option's description is capped at 256 bytes.** It had no bound of any
   kind, and adding an ADDRESS option is permissionless: about one ERTH of fee
   plus a fifth of one in gas bought a megabyte of text that every node then

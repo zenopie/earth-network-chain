@@ -55,7 +55,11 @@ func (k Keeper) resolveIntegrated(ctx context.Context, stream types.StreamId) er
 			opt.Accumulated = opt.Accumulated.Sub(resolved)
 		}
 
-		if err := k.Options.Set(ctx, optionKey(stream, id), opt); err != nil {
+		// Through setOption like every other write, even though resolving an
+		// integrated option moves only its accrued balance and never its weight.
+		// One writer or none: an exception here is what a later edit that does
+		// touch the weight would inherit.
+		if err := k.setOption(ctx, stream, opt); err != nil {
 			return err
 		}
 	}

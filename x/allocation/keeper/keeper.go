@@ -50,6 +50,7 @@ type Keeper struct {
 	Voters            collections.Map[collections.Pair[uint32, []byte], types.Voter]
 	RewardIndex       collections.Map[uint32, math.Int]
 	TotalWeight       collections.Map[uint32, math.Int]
+	SummedWeight      collections.Map[uint32, math.Int]
 	LastUpkeep        collections.Map[uint32, int64]
 	Epoch             collections.Map[uint32, uint64]
 	IntegratedOptions collections.KeySet[collections.Pair[uint32, uint64]]
@@ -96,6 +97,7 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint32Key, collections.BytesKey), codec.CollValue[types.Voter](cdc)),
 		RewardIndex:       collections.NewMap(sb, types.RewardIndexKey, "reward_index", collections.Uint32Key, sdk.IntValue),
 		TotalWeight:       collections.NewMap(sb, types.TotalWeightKey, "total_weight", collections.Uint32Key, sdk.IntValue),
+		SummedWeight:      collections.NewMap(sb, types.SummedWeightKey, "summed_weight", collections.Uint32Key, sdk.IntValue),
 		LastUpkeep:        collections.NewMap(sb, types.LastUpkeepKey, "last_upkeep", collections.Uint32Key, collections.Int64Value),
 		Epoch:             collections.NewMap(sb, types.EpochKey, "epoch", collections.Uint32Key, collections.Uint64Value),
 		IntegratedOptions: collections.NewKeySet(sb, types.IntegratedOptionsKey, "integrated_options", streamOption),

@@ -296,26 +296,31 @@ An untested upgrade path is discovered during the upgrade.
       anyone could halt the chain with a `MsgSend`, and the check would have to
       weaken to "holds at least what it owes", which stops catching the second
       class of bug entirely.
-- [ ] **`x/allocation`'s invariant walks every option, every block.**
-      `AssertInvariants` runs in the EndBlocker and `CheckStreamWeight` sums a
+- [x] **`x/allocation`'s invariant walked every option, every block.** Fixed.
+      `AssertInvariants` ran in the EndBlocker and `CheckStreamWeight` summed a
       stream by walking all of its options, decoding each record in full. Adding
-      an ADDRESS option is permissionless, so that walk grows for a one-time fee:
-      one ERTH burned, gas paid in the block that stores the row, and after that
-      every node re-reads it in every block for the life of the chain.
-      This is the shape `x/dex` had before `TestPoolSetIsNoLongerUnbounded` — a
-      permissionless one-time payment buying unmetered per-block work — and the
-      budget in `app/block_budget_test.go` does not cover it: it records
-      allocation's per-block work as "O(streams x integrated options), both
-      governance-controlled", which is true of the BeginBlock upkeep and not of
-      this.
-      Capping the description (`MaxDescriptionLen`, added with the emergency
-      fund) shrinks the constant, not the order: 100,000 options at one ERTH each
-      is still a 100,000-row walk. Two ways out — maintain the aggregate at a
-      second write site so the check is O(1) and the two can still disagree, or
-      check a rotating slice per block the way `x/dex` settled on. Not blocking
-      at genesis, where the option count is three and an attacker needs ERTH to
-      raise it, but it must be closed before `address_option_fee` is ever
-      lowered.
+      an ADDRESS option is permissionless, so that walk grew for a one-time fee:
+      one ERTH burned, gas paid in the block that stored the row, and every node
+      re-reading it in every block afterwards — the shape `x/dex` had before
+      `TestPoolSetIsNoLongerUnbounded`.
+      The sum is now maintained rather than recomputed. `setOption` is the only
+      writer of an option record and moves a per-stream `summed_weight` by what
+      each option's balance actually changed by; the EndBlocker compares that
+      against `total_weight`. Two numbers per stream, whatever the option count:
+      `TestInvariantCostIsFlatInOptionCount` measures 4,246 gas at five options
+      and the same 4,246 at five hundred.
+      It stays a real check rather than a number agreeing with itself because the
+      two aggregates are maintained at different sites and from different
+      quantities — `resyncVoter` moves the total by a voter's whole weight, and
+      the sum moves per option and is never clamped. The clamped case is the one
+      that proves it, and it still halts.
+      What the bounded pair gives up is an option written around `setOption` with
+      the total left alone: both aggregates miss it and so agree. That is a bug
+      in the module rather than anything a user can cause, and the walk that
+      catches it now lives in `AssertInvariants`, which the tests run after every
+      operation and an operator can run against a halted node to learn which of
+      the two numbers is wrong. Genesis validation walks the options on every
+      import, and the running sum is rebuilt from them there.
 - [ ] **Pin the public-input schema.** `docs/PROOF_OF_PERSONHOOD_TODO.md:27`
       records that `verifyRegistrationProof` still uses placeholder indices
       (`nullifierSignalIndex=0`, `dscRootSignalIndex=2`). These are consensus

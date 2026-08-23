@@ -24,11 +24,20 @@ var ParamsKey = collections.NewPrefix("p_allocation")
 // streams share the engine and the code but never a byte of state: resetting,
 // resyncing or re-indexing one cannot reach into the other.
 var (
-	OptionsKey           = collections.NewPrefix("options")            // (stream, id) -> AllocationOption
-	OptionSeqKey         = collections.NewPrefix("option_seq")         // stream -> uint64
-	VotersKey            = collections.NewPrefix("voters")             // (stream, addr) -> Voter
-	RewardIndexKey       = collections.NewPrefix("reward_index")       // stream -> Int
-	TotalWeightKey       = collections.NewPrefix("total_weight")       // stream -> Int
+	OptionsKey     = collections.NewPrefix("options")      // (stream, id) -> AllocationOption
+	OptionSeqKey   = collections.NewPrefix("option_seq")   // stream -> uint64
+	VotersKey      = collections.NewPrefix("voters")       // (stream, addr) -> Voter
+	RewardIndexKey = collections.NewPrefix("reward_index") // stream -> Int
+	TotalWeightKey = collections.NewPrefix("total_weight") // stream -> Int
+	// SummedWeightKey is the running sum of the stream's options' allocations,
+	// maintained on every option write by keeper.setOption.
+	//
+	// It exists so the per-block check does not have to walk the options to
+	// learn what they add up to. The two figures are deliberately maintained at
+	// different sites — TotalWeight moves by a voter's whole weight in
+	// resyncVoter, this moves by the amount each option actually took — so
+	// comparing them is a real check and not a number agreeing with itself.
+	SummedWeightKey      = collections.NewPrefix("summed_weight")      // stream -> Int
 	LastUpkeepKey        = collections.NewPrefix("last_upkeep")        // stream -> int64 (unix nanos)
 	IntegratedOptionsKey = collections.NewPrefix("integrated_options") // (stream, id)
 	// EpochKey is the per-stream allocation epoch. Bumped by a governance reset;

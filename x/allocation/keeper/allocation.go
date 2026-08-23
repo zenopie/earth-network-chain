@@ -57,6 +57,57 @@ func (k Keeper) getTotalWeight(ctx context.Context, stream types.StreamId) (math
 	return v, nil
 }
 
+func (k Keeper) getSummedWeight(ctx context.Context, stream types.StreamId) (math.Int, error) {
+	v, err := k.SummedWeight.Get(ctx, key(stream))
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return math.ZeroInt(), nil
+		}
+		return math.Int{}, err
+	}
+	return v, nil
+}
+
+// setOption is the only writer of an option record.
+//
+// Every write goes through here so the stream's running weight sum moves with
+// it, which is what lets the EndBlocker check the stream in O(1) instead of
+// walking every option — see invariants.go. Calling k.Options.Set directly is
+// therefore a bug: the sum would stop meaning what it says, and the next block
+// would report the stream as drifted. CheckStreamWeight is the exhaustive walk
+// that catches one, and the tests run it after every operation.
+//
+// The sum is never clamped. TotalWeight is, in resyncVoter, and that clamp is
+// precisely the thing worth catching: it turns a negative total into zero and
+// erases the evidence. A sum that is allowed to go negative keeps it.
+func (k Keeper) setOption(ctx context.Context, stream types.StreamId, opt types.AllocationOption) error {
+	prev := math.ZeroInt()
+	if p, err := k.Options.Get(ctx, optionKey(stream, opt.Id)); err == nil {
+		if !p.AmountAllocated.IsNil() {
+			prev = p.AmountAllocated
+		}
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+
+	cur := math.ZeroInt()
+	if !opt.AmountAllocated.IsNil() {
+		cur = opt.AmountAllocated
+	}
+
+	if delta := cur.Sub(prev); !delta.IsZero() {
+		sum, err := k.getSummedWeight(ctx, stream)
+		if err != nil {
+			return err
+		}
+		if err := k.SummedWeight.Set(ctx, key(stream), sum.Add(delta)); err != nil {
+			return err
+		}
+	}
+
+	return k.Options.Set(ctx, optionKey(stream, opt.Id), opt)
+}
+
 func (k Keeper) getLastUpkeep(ctx context.Context, stream types.StreamId) (int64, error) {
 	v, err := k.LastUpkeep.Get(ctx, key(stream))
 	if err != nil {
@@ -145,7 +196,7 @@ func (k Keeper) appendOption(ctx context.Context, stream types.StreamId, opt typ
 	opt.AmountAllocated = math.ZeroInt()
 	opt.Accumulated = math.ZeroInt()
 	opt.LastRewardIndex = rewardIndex
-	if err := k.Options.Set(ctx, optionKey(stream, id), opt); err != nil {
+	if err := k.setOption(ctx, stream, opt); err != nil {
 		return 0, err
 	}
 	if opt.Kind == types.ALLOCATION_KIND_INTEGRATED {
@@ -202,7 +253,7 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 			amt := old.Weight.MulRaw(int64(w.Percent)).QuoRaw(100)
 			opt.AmountAllocated = opt.AmountAllocated.Sub(amt)
 			total = total.Sub(amt)
-			if err := k.Options.Set(ctx, optionKey(stream, w.OptionId), opt); err != nil {
+			if err := k.setOption(ctx, stream, opt); err != nil {
 				return err
 			}
 		}
@@ -220,7 +271,7 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 		amt := weight.MulRaw(int64(w.Percent)).QuoRaw(100)
 		opt.AmountAllocated = opt.AmountAllocated.Add(amt)
 		total = total.Add(amt)
-		if err := k.Options.Set(ctx, optionKey(stream, w.OptionId), opt); err != nil {
+		if err := k.setOption(ctx, stream, opt); err != nil {
 			return err
 		}
 	}
@@ -277,7 +328,7 @@ func (k Keeper) DrawFromOption(ctx context.Context, stream types.StreamId, optio
 	} else {
 		drawn = math.ZeroInt()
 	}
-	if err := k.Options.Set(ctx, optionKey(stream, optionID), opt); err != nil {
+	if err := k.setOption(ctx, stream, opt); err != nil {
 		return math.ZeroInt(), err
 	}
 	return drawn, nil
@@ -312,7 +363,7 @@ func (k Keeper) resetAllocations(ctx context.Context, stream types.StreamId) (ui
 		// Settle before zeroing so everything earned up to this block is kept.
 		settleOption(&opt, rewardIndex)
 		opt.AmountAllocated = math.ZeroInt()
-		if err := k.Options.Set(ctx, optionKey(stream, id), opt); err != nil {
+		if err := k.setOption(ctx, stream, opt); err != nil {
 			return 0, err
 		}
 	}

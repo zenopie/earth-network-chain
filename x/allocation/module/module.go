@@ -139,7 +139,10 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 // It runs at the end rather than alongside BeginBlock because allocations change
 // by message — MsgSetAllocations, MsgAddOption, MsgResetAllocations — and those
 // land between the two. Checking here catches a breach in the block that caused
-// it instead of the one after. Both streams are walked, which is O(options).
+// it instead of the one after.
+//
+// Two numbers per stream, not a walk: adding an option is permissionless, so the
+// per-block cost must not grow with the option count. See keeper/invariants.go.
 func (am AppModule) EndBlock(ctx context.Context) error {
-	return am.keeper.AssertInvariants(ctx)
+	return am.keeper.AssertHotInvariants(ctx)
 }
