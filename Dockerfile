@@ -43,7 +43,22 @@ COPY go.mod go.sum ./
 # go.mod replaces github.com/burnt-labs/barretenberg-go with ./third_party, so
 # resolution needs that module's go.mod before the rest of the tree is copied.
 COPY third_party/barretenberg-go/go.mod third_party/barretenberg-go/
-RUN go mod download
+# Go's module proxy and checksum database are a network dependency of every build
+# here, and they fail intermittently: two consecutive v0.4.8 builds died with
+#
+#   stream error: stream ID 71; INTERNAL_ERROR; received from peer
+#
+# once on proxy.golang.org during `go mod download` and once on sum.golang.org
+# while installing cosmovisor. Nothing was wrong with either build.
+#
+# Retry rather than weaken verification. GONOSUMDB or GOFLAGS=-insecure would
+# also make these pass, by skipping the checksums that make a supply-chain
+# substitution visible -- a far worse trade than waiting fifteen seconds.
+#
+# The trailing test is load-bearing: a bare `for ... done` exits 0 even when
+# every attempt failed, which would bake a half-populated module cache into the
+# image and fail later somewhere less obvious.
+RUN for i in 1 2 3; do go mod download && ok=1 && break; echo "go mod download failed (attempt $i)"; sleep 15; done; [ "${ok:-}" = 1 ]
 
 COPY . .
 
@@ -104,7 +119,7 @@ RUN CGO_ENABLED=1 go build -trimpath \
 #
 # The cgo path sidesteps it entirely. The runtime image is debian and already
 # carries glibc for earthd, so a dynamically linked relayer runs there fine.
-RUN CGO_ENABLED=1 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 \
+RUN for i in 1 2 3; do CGO_ENABLED=1 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 && ok=1 && break; echo "rly install failed (attempt $i)"; sleep 15; done; [ "${ok:-}" = 1 ] \
     && mv /out/relayer /out/rly
 
 # cosmovisor supervises earthd across upgrades: the chain halts on purpose at the
@@ -115,7 +130,7 @@ RUN CGO_ENABLED=1 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 \
 # Pinned rather than @latest. cosmovisor is the process that decides which binary
 # runs the chain, so "whatever was newest that day" is not a property this image
 # should have.
-RUN CGO_ENABLED=0 GOBIN=/out go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@v1.7.1
+RUN for i in 1 2 3; do CGO_ENABLED=0 GOBIN=/out go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@v1.7.1 && ok=1 && break; echo "cosmovisor install failed (attempt $i)"; sleep 15; done; [ "${ok:-}" = 1 ]
 
 # ---- runtime --------------------------------------------------------------
 FROM debian:trixie-slim
