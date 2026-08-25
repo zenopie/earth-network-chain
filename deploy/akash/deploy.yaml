@@ -212,6 +212,14 @@ services:
       # it back to false afterwards: linking spends gas on both chains and is
       # not something a container restart should retry.
       - LINK_ON_START=false
+      # The path an earlier link established. Without these the config rebuilt
+      # on each boot has no connection, and rly relays nothing while looking
+      # perfectly healthy. Read them back with:
+      #   /ibc/core/connection/v1/connections/connection-0
+      - SRC_CLIENT_ID=07-tendermint-5
+      - SRC_CONNECTION_ID=connection-0
+      - DST_CLIENT_ID=07-tendermint-5265
+      - DST_CONNECTION_ID=connection-4596
       # Names the path in rly's config and in its logs. Defaults to "earth-hub",
       # which is wrong for any counterparty that is not the Cosmos Hub.
       - PATH_NAME=earth-osmo

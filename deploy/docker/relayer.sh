@@ -79,7 +79,31 @@ EOF
   rly keys restore "$COUNTERPARTY_CHAIN_ID" default "$RELAYER_MNEMONIC" --home "$RLY_HOME"
 
   rly paths new "$CHAIN_ID" "$COUNTERPARTY_CHAIN_ID" "$PATH_NAME" --home "$RLY_HOME"
-  say "config written — the path has no channel yet"
+
+  # Pin an existing path, if one has already been linked.
+  #
+  # This config directory does not survive a redeploy — the relayer has
+  # ephemeral storage — so it is rebuilt on every boot, and `rly paths new`
+  # creates a path that knows nothing about the client and connection a previous
+  # link established. `rly start` then has nothing to relay: packets pile up on
+  # a perfectly healthy open channel while the relayer sits there idle and says
+  # nothing. That is exactly what happened after LINK_ON_START was turned off —
+  # the first transfer relayed because the link had just written the ids, and
+  # the next one stuck at sequence 2.
+  #
+  # A path in rly is a client plus a connection; the channels follow from the
+  # connection, so pinning these is enough to relay every channel on it.
+  if [ -n "${SRC_CLIENT_ID:-}" ] && [ -n "${SRC_CONNECTION_ID:-}" ] \
+     && [ -n "${DST_CLIENT_ID:-}" ] && [ -n "${DST_CONNECTION_ID:-}" ]; then
+    rly paths update "$PATH_NAME" \
+      --src-client-id "$SRC_CLIENT_ID" --src-connection-id "$SRC_CONNECTION_ID" \
+      --dst-client-id "$DST_CLIENT_ID" --dst-connection-id "$DST_CONNECTION_ID" \
+      --home "$RLY_HOME"
+    say "path pinned to $SRC_CONNECTION_ID <-> $DST_CONNECTION_ID"
+  else
+    say "config written — the path has no connection yet; link once, then set"
+    say "SRC_/DST_CLIENT_ID and SRC_/DST_CONNECTION_ID so restarts keep relaying"
+  fi
 fi
 
 # Creating the client/connection/channel is a one-off that spends gas on both
