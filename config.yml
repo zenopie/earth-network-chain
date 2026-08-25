@@ -161,6 +161,47 @@ genesis:
     # its balance exactly equals the sum of proposal deposits.)
     # LP shares are sqrt(reserve_erth * reserve_token), matching CreatePool.
     bank:
+      # Denom metadata: what a wallet reads to show "1.5 ERTH" instead of
+      # "1500000uerth". Without it Keplr and every explorer display the base
+      # micro-denom, because there is nothing on chain telling them the display
+      # unit or its exponent. It is genesis state rather than a parameter — there
+      # is no MsgSetDenomMetadata, so the only ways in are genesis or a gov
+      # proposal executing as the bank authority.
+      #
+      # Ordered by base denom, matching x/bank's own store ordering, so a state
+      # export and this file do not differ cosmetically.
+      #
+      # dexlp/* is deliberately absent: LP share denoms are minted per pool at
+      # runtime, so there is no fixed set to declare at genesis.
+      denom_metadata:
+      - description: "A proof-of-personhood token: one ANML minted per registered human per day, continuously bought back and burned with ERTH."
+        denom_units:
+        - denom: uanml
+          exponent: 0
+          aliases: []
+        - denom: anml
+          exponent: 6
+          aliases: []
+        base: uanml
+        display: anml
+        name: ANML
+        symbol: ANML
+        uri: ""
+        uri_hash: ""
+      - description: "The staking coin and the hub asset of the built-in AMM. Emitted at a fixed 4 ERTH/sec, prorated by block time."
+        denom_units:
+        - denom: uerth
+          exponent: 0
+          aliases: []
+        - denom: erth
+          exponent: 6
+          aliases: []
+        base: uerth
+        display: erth
+        name: Earth
+        symbol: ERTH
+        uri: ""
+        uri_hash: ""
       # Only the pool seed below is declared here: ignite applies this override
       # first and then ADDS each entry from `accounts` to the supply, so listing
       # the account coins too would double-count them. Editing `accounts` needs no

@@ -70,7 +70,50 @@
           ]
         }
       ],
-      "denom_metadata": [],
+      "denom_metadata": [
+        {
+          "base": "uanml",
+          "denom_units": [
+            {
+              "aliases": [],
+              "denom": "uanml",
+              "exponent": 0
+            },
+            {
+              "aliases": [],
+              "denom": "anml",
+              "exponent": 6
+            }
+          ],
+          "description": "A proof-of-personhood token: one ANML minted per registered human per day, continuously bought back and burned with ERTH.",
+          "display": "anml",
+          "name": "ANML",
+          "symbol": "ANML",
+          "uri": "",
+          "uri_hash": ""
+        },
+        {
+          "base": "uerth",
+          "denom_units": [
+            {
+              "aliases": [],
+              "denom": "uerth",
+              "exponent": 0
+            },
+            {
+              "aliases": [],
+              "denom": "erth",
+              "exponent": 6
+            }
+          ],
+          "description": "The staking coin and the hub asset of the built-in AMM. Emitted at a fixed 4 ERTH/sec, prorated by block time.",
+          "display": "erth",
+          "name": "Earth",
+          "symbol": "ERTH",
+          "uri": "",
+          "uri_hash": ""
+        }
+      ],
       "params": {
         "default_send_enabled": true,
         "send_enabled": []

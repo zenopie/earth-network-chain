@@ -38,6 +38,17 @@ type genesisDoc struct {
 	} `json:"consensus"`
 	AppState struct {
 		Bank struct {
+			DenomMetadata []struct {
+				Description string `json:"description"`
+				DenomUnits  []struct {
+					Denom    string `json:"denom"`
+					Exponent int    `json:"exponent"`
+				} `json:"denom_units"`
+				Base    string `json:"base"`
+				Display string `json:"display"`
+				Name    string `json:"name"`
+				Symbol  string `json:"symbol"`
+			} `json:"denom_metadata"`
 			Supply   []coin `json:"supply"`
 			Balances []struct {
 				Address string `json:"address"`
@@ -399,5 +410,66 @@ func TestWasmGenesisIsPermissionless(t *testing.T) {
 	if params.InstantiateDefaultPermission != "Everybody" {
 		t.Errorf("wasm instantiate_default_permission is %q, want %q",
 			params.InstantiateDefaultPermission, "Everybody")
+	}
+}
+
+// Wallets read denom metadata to show "1.5 ERTH" rather than "1500000uerth".
+// Without it Keplr and every block explorer fall back to the base micro-denom,
+// because nothing on chain tells them the display unit or its exponent.
+//
+// This is checked here rather than left to `validate-genesis` because the SDK
+// only validates metadata that is present: an empty denom_metadata is a
+// perfectly valid genesis, and the chain launched once already with exactly
+// that. Absence is the failure mode, and absence is what the SDK cannot catch.
+//
+// There is no MsgSetDenomMetadata, so the only ways to fix a genesis that ships
+// without this are a governance proposal executing as the bank authority, or a
+// relaunch.
+func TestDenomMetadataIsSeeded(t *testing.T) {
+	g := loadGenesis(t)
+
+	want := map[string]struct{ display, symbol string }{
+		"uerth": {"erth", "ERTH"},
+		"uanml": {"anml", "ANML"},
+	}
+
+	got := map[string]bool{}
+	for _, m := range g.AppState.Bank.DenomMetadata {
+		got[m.Base] = true
+
+		w, ok := want[m.Base]
+		if !ok {
+			continue // extra metadata is allowed; the two below are required
+		}
+		if m.Display != w.display {
+			t.Errorf("%s display is %q, want %q", m.Base, m.Display, w.display)
+		}
+		if m.Symbol != w.symbol {
+			t.Errorf("%s symbol is %q, want %q", m.Base, m.Symbol, w.symbol)
+		}
+		if m.Name == "" || m.Description == "" {
+			t.Errorf("%s has a blank name or description; the SDK rejects a blank name and wallets show the description", m.Base)
+		}
+
+		// The SDK checks unit ordering itself. What it cannot check is that the
+		// exponent matches what this chain actually means by one ERTH, which is
+		// 1e6 micro-units everywhere else in the repo. An exponent that
+		// disagrees misprices every balance a wallet displays by a factor of
+		// ten, silently and in the user's favour or against it.
+		if len(m.DenomUnits) != 2 {
+			t.Fatalf("%s has %d denom units, want 2 (base and display)", m.Base, len(m.DenomUnits))
+		}
+		if m.DenomUnits[0].Denom != m.Base || m.DenomUnits[0].Exponent != 0 {
+			t.Errorf("%s first unit is %s/%d, want %s/0", m.Base, m.DenomUnits[0].Denom, m.DenomUnits[0].Exponent, m.Base)
+		}
+		if m.DenomUnits[1].Denom != w.display || m.DenomUnits[1].Exponent != 6 {
+			t.Errorf("%s display unit is %s/%d, want %s/6", m.Base, m.DenomUnits[1].Denom, m.DenomUnits[1].Exponent, w.display)
+		}
+	}
+
+	for base := range want {
+		if !got[base] {
+			t.Errorf("no denom metadata for %s; wallets will show the raw micro-denom", base)
+		}
 	}
 }

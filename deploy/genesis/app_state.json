@@ -112,6 +112,52 @@
       "address_option_fee": "1000000"
     }
   },
+  "bank": {
+    "denom_metadata": [
+      {
+        "description": "A proof-of-personhood token: one ANML minted per registered human per day, continuously bought back and burned with ERTH.",
+        "denom_units": [
+          {
+            "denom": "uanml",
+            "exponent": 0,
+            "aliases": []
+          },
+          {
+            "denom": "anml",
+            "exponent": 6,
+            "aliases": []
+          }
+        ],
+        "base": "uanml",
+        "display": "anml",
+        "name": "ANML",
+        "symbol": "ANML",
+        "uri": "",
+        "uri_hash": ""
+      },
+      {
+        "description": "The staking coin and the hub asset of the built-in AMM. Emitted at a fixed 4 ERTH/sec, prorated by block time.",
+        "denom_units": [
+          {
+            "denom": "uerth",
+            "exponent": 0,
+            "aliases": []
+          },
+          {
+            "denom": "erth",
+            "exponent": 6,
+            "aliases": []
+          }
+        ],
+        "base": "uerth",
+        "display": "erth",
+        "name": "Earth",
+        "symbol": "ERTH",
+        "uri": "",
+        "uri_hash": ""
+      }
+    ]
+  },
   "wasm": {
     "params": {
       "code_upload_access": {

@@ -17,6 +17,34 @@ The first release after this line is the launch candidate. Until `genesis_time`
 is set and the gentx collected, the network is a single validator and there is
 nothing to join.
 
+### Breaking — consensus
+
+- **ERTH and ANML now carry denom metadata.** Wallets and explorers read
+  `bank.denom_metadata` to know that 1,500,000 `uerth` should be shown as
+  `1.5 ERTH`. Without it Keplr and every explorer fall back to the raw
+  micro-denom, which is what the running devnet does today —
+  `/cosmos/bank/v1beta1/denoms_metadata` returns an empty list on it.
+
+  `uerth` displays as `erth` (symbol ERTH, exponent 6) and `uanml` as `anml`
+  (symbol ANML, exponent 6), matching the micro-unit convention used everywhere
+  else in the repo.
+
+  Genesis state, not a parameter: there is no `MsgSetDenomMetadata`, so a chain
+  that launches without this can only get it through a governance proposal
+  executing as the bank authority, or a relaunch. `validate-genesis` will not
+  catch its absence either — the SDK validates metadata that is present and an
+  empty list is perfectly valid — so `deploy/genesis_test.go` asserts it
+  instead.
+
+  `dexlp/*` is deliberately excluded: LP share denoms are minted per pool at
+  runtime, so there is no fixed set to declare at genesis.
+
+  This also fixes `/cosmos.bank.v1beta1.Query/DenomMetadata` for contracts. The
+  path was already on the CosmWasm query allowlist but returned NOT_FOUND,
+  because there was no metadata behind it.
+
+## [v0.2.1]
+
 ### Fixed
 
 - **A devnet whose first boot was interrupted no longer crash-loops forever.**
