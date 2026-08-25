@@ -183,9 +183,18 @@ devnet_is_complete() {
 # this node built" and "this volume holds someone else's chain". Without this,
 # turning the check on would break every devnet deployment on its next restart.
 devnet_chain_on_disk() {
-  [ "$DEV_INIT" = "1" ] && return 0
-  [ -f "$DEVINIT_DONE" ] && return 0
-  return 1
+  # DEV_INIT only. It is tempting to also treat the .devinit-complete marker as
+  # "this is a devnet, leave it alone" — that was the first version of this, and
+  # it was wrong in the one case that matters. Cutting a devnet over to a real
+  # genesis means setting DEV_INIT=0 on a volume that still carries the marker,
+  # and honouring the marker there silently skipped the reset: the node resumed
+  # the old chain while the operator, the SDL and every published artefact said
+  # otherwise. It came up on the old chain with the new consensus key, so it had
+  # no voting power and the chain lost its only signer.
+  #
+  # DEV_INIT=0 is an unambiguous instruction. What is already on the volume does
+  # not get to override it.
+  [ "$DEV_INIT" = "1" ]
 }
 
 if [ "$DEV_INIT" = "1" ] && ! devnet_is_complete; then

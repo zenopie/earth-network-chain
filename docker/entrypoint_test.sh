@@ -130,18 +130,18 @@ fi
 
 # ── 4. resume: an existing genesis is never replaced ───────────────────────
 H="$WORK/resume"; mkdir -p "$H/config"
-printf '{"mine":true}\n' > "$H/config/genesis.json"
-# Marks this home as a chain the node built, not one it downloaded. Without it
-# the entrypoint compares this stub against the image's genesis, finds they
-# differ, and refuses to start -- which is correct behaviour for a joining node
-# and wrong for a fixture standing in for an existing devnet.
-touch "$H/config/.devinit-complete"
+# The real genesis, not a stub. A resuming node compares what is on its volume
+# against what the image ships and refuses to start if they differ, so a fixture
+# with a made-up genesis is a fixture for a node that should refuse to start --
+# tested separately below. This one stands in for a healthy volume.
+cp "$REPO/networks/genesis.json" "$H/config/genesis.json"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$H/config/config.toml"
 printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H"; then
   grep -q "resuming chain" "$LOG" && ok "resume: detects existing state" \
     || bad "resume: did not resume" "$(tail -2 "$LOG")"
-  grep -q '"mine":true' "$H/config/genesis.json" \
+  [ "$(shasum -a 256 "$H/config/genesis.json" | awk '{print $1}')" \
+    = "$(shasum -a 256 "$REPO/networks/genesis.json" | awk '{print $1}')" ] \
     && ok "resume: leaves the existing genesis alone" \
     || bad "resume: overwrote the chain's genesis" "this would fork an existing node"
 else
@@ -190,12 +190,11 @@ fi
 
 # It is applied on restart too, so an origin can be changed without a wipe.
 H="$WORK/rpccors-resume"; mkdir -p "$H/config"
-printf '{"mine":true}\n' > "$H/config/genesis.json"
-# Marks this home as a chain the node built, not one it downloaded. Without it
-# the entrypoint compares this stub against the image's genesis, finds they
-# differ, and refuses to start -- which is correct behaviour for a joining node
-# and wrong for a fixture standing in for an existing devnet.
-touch "$H/config/.devinit-complete"
+# The real genesis, not a stub. A resuming node compares what is on its volume
+# against what the image ships and refuses to start if they differ, so a fixture
+# with a made-up genesis is a fixture for a node that should refuse to start --
+# tested separately below. This one stands in for a healthy volume.
+cp "$REPO/networks/genesis.json" "$H/config/genesis.json"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = ["https://old.example"]\n' > "$H/config/config.toml"
 printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H" RPC_CORS_ORIGINS="https://new.example"; then
@@ -239,12 +238,11 @@ fi
 
 # Re-applied on an existing volume, so the cadence can change with a restart.
 H="$WORK/snap-resume"; mkdir -p "$H/config"
-printf '{"mine":true}\n' > "$H/config/genesis.json"
-# Marks this home as a chain the node built, not one it downloaded. Without it
-# the entrypoint compares this stub against the image's genesis, finds they
-# differ, and refuses to start -- which is correct behaviour for a joining node
-# and wrong for a fixture standing in for an existing devnet.
-touch "$H/config/.devinit-complete"
+# The real genesis, not a stub. A resuming node compares what is on its volume
+# against what the image ships and refuses to start if they differ, so a fixture
+# with a made-up genesis is a fixture for a node that should refuse to start --
+# tested separately below. This one stands in for a healthy volume.
+cp "$REPO/networks/genesis.json" "$H/config/genesis.json"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$H/config/config.toml"
 printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H" SNAPSHOT_INTERVAL=500; then
@@ -300,12 +298,11 @@ fi
 # Applied on restart, so a seed can be added or a wrong address corrected
 # without destroying the volume — which on this deployment is the chain.
 H="$WORK/peers-resume"; mkdir -p "$H/config"
-printf '{"mine":true}\n' > "$H/config/genesis.json"
-# Marks this home as a chain the node built, not one it downloaded. Without it
-# the entrypoint compares this stub against the image's genesis, finds they
-# differ, and refuses to start -- which is correct behaviour for a joining node
-# and wrong for a fixture standing in for an existing devnet.
-touch "$H/config/.devinit-complete"
+# The real genesis, not a stub. A resuming node compares what is on its volume
+# against what the image ships and refuses to start if they differ, so a fixture
+# with a made-up genesis is a fixture for a node that should refuse to start --
+# tested separately below. This one stands in for a healthy volume.
+cp "$REPO/networks/genesis.json" "$H/config/genesis.json"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\nexternal_address = "wrong:1"\nseeds = ""\npersistent_peers = ""\n' > "$H/config/config.toml"
 printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H" EXTERNAL_ADDRESS="198.51.100.4:26656" SEEDS="dddd@seed.two:26656"; then
@@ -314,6 +311,60 @@ if run "$H" EXTERNAL_ADDRESS="198.51.100.4:26656" SEEDS="dddd@seed.two:26656"; t
     || bad "peers: stale on restart" "$(grep '^external_address' "$H/config/config.toml")"
 else
   bad "peers resume: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# ── 9. genesis mismatch: never silently run the wrong chain ────────────────
+#
+# The case this exists for: a devnet being cut over to a real genesis. The
+# volume holds the old chain, the image ships the new one, and the first version
+# of this logic resumed the old chain anyway because the volume still carried
+# the .devinit-complete marker. The node came up on the old chain holding the
+# new consensus key, so it had no voting power and the chain lost its only
+# signer -- while everything printed looked healthy.
+H="$WORK/mismatch"; mkdir -p "$H/config"
+printf '{"not":"the image genesis"}\n' > "$H/config/genesis.json"
+# The marker matters: this is a volume that USED to be a devnet and is being cut
+# over. Without it here, this test passes against the very bug it exists for.
+touch "$H/config/.devinit-complete"
+printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$H/config/config.toml"
+printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
+if run "$H"; then
+  bad "mismatch: started anyway" "resumed a chain that is not the image's"
+else
+  grep -q "not the one in this image" "$LOG" \
+    && ok "mismatch: refuses to start on a foreign genesis" \
+    || bad "mismatch: died for the wrong reason" "$(tail -3 "$LOG")"
+  grep -q '"not":"the image genesis"' "$H/config/genesis.json" \
+    && ok "mismatch: left the volume untouched" \
+    || bad "mismatch: destroyed state without being asked" "refusing must not delete"
+fi
+
+# Same volume, with the cutover explicitly requested.
+if run "$H" RESET_ON_GENESIS_MISMATCH=1; then
+  grep -q "DESTROYING the existing chain state" "$LOG" \
+    && ok "reset: RESET_ON_GENESIS_MISMATCH=1 discards the old chain" \
+    || bad "reset: did not reset" "$(tail -3 "$LOG")"
+  [ "$(shasum -a 256 "$H/config/genesis.json" | awk '{print $1}')" \
+    = "$(shasum -a 256 "$REPO/networks/genesis.json" | awk '{print $1}')" ] \
+    && ok "reset: installed the image genesis" \
+    || bad "reset: genesis is not the image's" "$(tail -3 "$LOG")"
+else
+  bad "reset: entrypoint exited non-zero" "$(tail -3 "$LOG")"
+fi
+
+# And a DEV_INIT volume must be immune to all of it, or every existing devnet
+# deployment breaks on its next image update.
+H="$WORK/devnet-immune"; mkdir -p "$H/config"
+printf '{"a":"devnet genesis, deliberately unlike the image"}\n' > "$H/config/genesis.json"
+printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$H/config/config.toml"
+printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
+touch "$H/config/.devinit-complete"
+if run "$H" DEV_INIT=1; then
+  grep -q '"a":"devnet genesis' "$H/config/genesis.json" \
+    && ok "devnet: DEV_INIT=1 volume is never compared or reset" \
+    || bad "devnet: a devnet's genesis was replaced" "this breaks every devnet on update"
+else
+  bad "devnet: DEV_INIT=1 volume failed to start" "$(tail -3 "$LOG")"
 fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
