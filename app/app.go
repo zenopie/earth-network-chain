@@ -49,7 +49,7 @@ import (
 	ibctransferkeeper "github.com/cosmos/ibc-go/v10/modules/apps/transfer/keeper"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 
-	"github.com/earth-network/earth/docs"
+	"github.com/earth-network/earth/openapi"
 	allocationmodulekeeper "github.com/earth-network/earth/x/allocation/keeper"
 	allocationmoduletypes "github.com/earth-network/earth/x/allocation/types"
 	dexmodulekeeper "github.com/earth-network/earth/x/dex/keeper"
@@ -346,7 +346,7 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 	}
 
 	// register app's OpenAPI routes.
-	docs.RegisterOpenAPIService(Name, apiSvr.Router)
+	openapi.RegisterOpenAPIService(Name, apiSvr.Router)
 }
 
 // GetMaccPerms returns a copy of the module account permissions

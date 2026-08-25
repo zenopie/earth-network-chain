@@ -322,7 +322,7 @@ and the entrypoint that lets anyone run one.
 
 ## Running a node
 
-See **[docs/JOIN.md](docs/JOIN.md)** — binary, genesis and its hash, seeds, gas
+See **[docs.erth.network](https://docs.erth.network/run-a-node/join)** — binary, genesis and its hash, seeds, gas
 price, pruning, hardware, and becoming a validator.
 
 Binaries and checksums are on the
@@ -358,22 +358,22 @@ container image, and builds `earthd` natively for Linux amd64 and arm64 with
 checksums and the genesis file.
 
 Upgrading a running chain is a different thing entirely — see
-[docs/UPGRADES.md](docs/UPGRADES.md).
+[docs.erth.network](https://docs.erth.network/run-a-node/upgrades).
 
 ## Documentation
 
 **[docs.erth.network](https://docs.erth.network)** — what Earth is, registering,
 emission, using the app, governance. Built with Docusaurus from
-[`docs-site/`](docs-site/); every page has an edit link.
+[zenopie/earth-network-docs](https://github.com/zenopie/earth-network-docs); every page has an edit link.
 
 Operational guides stay next to the code:
 
 | | |
 | --- | --- |
-| [docs/JOIN.md](docs/JOIN.md) | running a node |
-| [docs/UPGRADES.md](docs/UPGRADES.md) | coordinated upgrades, and what goes wrong |
-| [docs/TRUST_STORE_RUNBOOK.md](docs/TRUST_STORE_RUNBOOK.md) | revoking or adding passport certificates |
-| [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md) | what still stands between here and a launch |
+| [docs.erth.network](https://docs.erth.network/run-a-node/join) | running a node |
+| [docs.erth.network](https://docs.erth.network/run-a-node/upgrades) | coordinated upgrades, and what goes wrong |
+| [trust-store-runbook](https://docs.erth.network) | revoking or adding passport certificates |
+| [launch-checklist](https://docs.erth.network) | what still stands between here and a launch |
 | [networks/genesis/README.md](networks/genesis/README.md) | how the genesis is built |
 
 ## License
