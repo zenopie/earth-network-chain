@@ -19,7 +19,7 @@ hand-maintained rather than generated: only its `image:` line is rewritten, and
 everything else you put there survives.
 
     Dockerfile                          builds earthd on a slim runtime
-    deploy/docker/entrypoint.sh         first-boot genesis, then earthd start
+    docker/entrypoint.sh         first-boot genesis, then earthd start
     docker-compose.yaml                 the deployed unit
     .github/workflows/docker-build.yml  builds and pins the digest
 
@@ -51,9 +51,9 @@ existing. The entrypoint decides which case it is purely by whether
 
 ## Genesis
 
-`deploy/genesis.json` is a build artifact, written by `scripts/build-genesis.sh`
-from the sources in `deploy/genesis/` and committed alongside its sha256. See
-`deploy/genesis/README.md`. It used to be `ignite chain init` followed by
+`networks/genesis.json` is a build artifact, written by `scripts/build-genesis.sh`
+from the sources in `networks/genesis/` and committed alongside its sha256. See
+`networks/genesis/README.md`. It used to be `ignite chain init` followed by
 hand-stripping and a manual "recompute bank supply", which is how `config.yml`
 and the genesis file came to disagree about the pre-mine for two days without
 anyone noticing.
@@ -113,13 +113,13 @@ Two flags are off unless asked for:
   path creates no keys at all, and a real validator's consensus key belongs
   behind `PRIV_VALIDATOR_LADDR`.
 
-Run `deploy/docker/entrypoint_test.sh` to exercise all of it without building a
+Run `docker/entrypoint_test.sh` to exercise all of it without building a
 container.
 
 Two accounts are seeded with 100k ERTH each so a fresh deployment is testable
 without hunting for the validator's mnemonic: the development handset, and the
 ads-for-gas hot wallet. Both are devnet keys with no value; drop them from
-`deploy/genesis.json` for anything real.
+`networks/genesis.json` for anything real.
 
 `genesis_time` is stamped to the current time by the entrypoint before the
 validator is created. The committed file carries the timestamp of the machine

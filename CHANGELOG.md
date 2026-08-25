@@ -87,7 +87,7 @@ nothing to join.
   layer moved. Nodes can be replaced in place, and a mixed network still agrees.
 
   Clients reading `volume` must read `volume_erth` and must NOT decay it — the
-  chain has already done the weighting. `deploy/genesis.json` changes, because
+  chain has already done the weighting. `networks/genesis.json` changes, because
   its JSON carries field names; that matters only to a chain launching fresh
   from it.
 
@@ -107,7 +107,7 @@ nothing to join.
   that launches without this can only get it through a governance proposal
   executing as the bank authority, or a relaunch. `validate-genesis` will not
   catch its absence either — the SDK validates metadata that is present and an
-  empty list is perfectly valid — so `deploy/genesis_test.go` asserts it
+  empty list is perfectly valid — so `networks/genesis_test.go` asserts it
   instead.
 
   `dexlp/*` is deliberately excluded: LP share denoms are minted per pool at
@@ -122,7 +122,7 @@ nothing to join.
 ### Fixed
 
 - **A devnet whose first boot was interrupted no longer crash-loops forever.**
-  The `DEV_INIT` path in `deploy/docker/entrypoint.sh` writes
+  The `DEV_INIT` path in `docker/entrypoint.sh` writes
   `config/genesis.json` early and only collects the gentx several commands
   later. Anything that interrupted it in between left a genesis with an empty
   `gen_txs` on the volume, and because the resume path only checks that a

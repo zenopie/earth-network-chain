@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build deploy/genesis.json from the sources in deploy/genesis/.
+# Build networks/genesis.json from the sources in networks/genesis/.
 #
 # The genesis file is a build artifact, not something anyone edits. Every node on
 # the network has to agree on it byte for byte, so the only safe way to produce
@@ -11,18 +11,18 @@
 #
 # What goes in:
 #
-#   deploy/genesis/chain.json        chain id, genesis time, app version, block gas limit
-#   deploy/genesis/app_state.json    the parameters this chain deliberately sets
-#   deploy/genesis/accounts.json     every balance that exists at height 1
-#   deploy/genesis/verifying-keys/   one base64 UltraHonk key per register circuit
-#   deploy/genesis/gentx/            signed gentxs to collect, if any
+#   networks/genesis/chain.json        chain id, genesis time, app version, block gas limit
+#   networks/genesis/app_state.json    the parameters this chain deliberately sets
+#   networks/genesis/accounts.json     every balance that exists at height 1
+#   networks/genesis/verifying-keys/   one base64 UltraHonk key per register circuit
+#   networks/genesis/gentx/            signed gentxs to collect, if any
 #   csca/                            the CSCA trust store, via tools/pki-genesis
 #
 # Everything else is whatever `earthd init` produces for the SDK version this
 # repo builds against. app_state.json is merged *over* that, so a field the SDK
 # adds arrives with its upstream default instead of silently going missing.
 #
-#   scripts/build-genesis.sh              write deploy/genesis.json
+#   scripts/build-genesis.sh              write networks/genesis.json
 #   scripts/build-genesis.sh --check      rebuild and diff; fail if it drifted
 #   scripts/build-genesis.sh -o out.json  write somewhere else
 #
@@ -30,8 +30,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC="$REPO/deploy/genesis"
-OUT="$REPO/deploy/genesis.json"
+SRC="$REPO/networks/genesis"
+OUT="$REPO/networks/genesis.json"
 CHECK=0
 
 while [ $# -gt 0 ]; do
@@ -109,7 +109,7 @@ for p in sorted(glob.glob(os.path.join(src, 'verifying-keys', '*.vk.b64'))):
     cid = os.path.basename(p)[:-len('.vk.b64')]
     vks[cid] = open(p).read().strip()
 if not vks:
-    sys.exit('no verifying keys in deploy/genesis/verifying-keys — MsgRegister would '
+    sys.exit('no verifying keys in networks/genesis/verifying-keys — MsgRegister would '
              'always fail and the chain could never register a human')
 g['app_state']['personhood']['params']['verifying_keys'] = vks
 
@@ -176,7 +176,7 @@ if compgen -G "$SRC/gentx/*.json" >/dev/null 2>&1; then
   "$WORK/earthd" genesis collect-gentxs --home "$WORK/home" >/dev/null 2>&1
   say "  $(ls -1 "$SRC"/gentx/*.json | wc -l | tr -d ' ') gentx(s)"
 else
-  say "no gentxs in deploy/genesis/gentx — launching with an empty validator set"
+  say "no gentxs in networks/genesis/gentx — launching with an empty validator set"
 fi
 
 # ── 6. the header ───────────────────────────────────────────────────────────
@@ -221,7 +221,7 @@ if [ "$CHECK" -eq 1 ]; then
     say "up to date  sha256 $SUM"
     exit 0
   fi
-  echo "genesis is stale — deploy/genesis.json does not match its sources." >&2
+  echo "genesis is stale — networks/genesis.json does not match its sources." >&2
   echo "Run scripts/build-genesis.sh and commit the result." >&2
   diff -u "$OUT" "$GEN" | head -60 >&2
   exit 1

@@ -32,7 +32,7 @@ import (
 
 // x/wasm on earth is permissionless: anyone may upload code and anyone may
 // instantiate it, paying only gas. That is wasmd's own default
-// (wasmtypes.DefaultParams), so the genesis in deploy/genesis/app_state.json
+// (wasmtypes.DefaultParams), so the genesis in networks/genesis/app_state.json
 // states it explicitly rather than inheriting it — a chain that is open by
 // accident and a chain that is open on purpose look identical until someone
 // changes the default underneath you.

@@ -81,7 +81,7 @@ func splitQueryPath(path string) (service, method string, ok bool) {
 // whatever wasmd shipped.
 //
 // This is the compiled-in default, which is what a fresh `earthd init` writes.
-// deploy/genesis.json states the same values explicitly; deploy/genesis_test.go
+// networks/genesis.json states the same values explicitly; networks/genesis_test.go
 // checks that copy.
 func TestWasmIsPermissionless(t *testing.T) {
 	params := wasmtypes.DefaultParams()

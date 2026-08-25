@@ -45,7 +45,7 @@ cd ../.. && make install
 ```
 
 There is also a container image at `ghcr.io/zenopie/earth-network-chain`, pinned
-by digest. See [deploy/docker/README.md](../deploy/docker/README.md).
+by digest. See [docker/README.md](../docker/README.md).
 
 ---
 

@@ -61,7 +61,7 @@ library (`noir_android`), not the circuit.
   the claim outlived the fix long enough to be repeated as a launch blocker.
 
 - **The verifying keys are seeded, and they are the real ones.** Seven distinct
-  keys ship in `deploy/genesis/verifying-keys/`, one per algorithm. The
+  keys ship in `networks/genesis/verifying-keys/`, one per algorithm. The
   `lean_poa` key is byte-identical to the one the keeper test verifies a real bb
   proof against, so these are `bb write_vk` output from the actual circuits, not
   demo keys.

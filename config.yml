@@ -378,7 +378,7 @@ genesis:
         registration_sweep_limit: "100"
     # Permissionless CosmWasm: anyone may upload code and anyone may instantiate
     # it, paying only gas. These are wasmd's own defaults, stated here so the dev
-    # chain and deploy/genesis/app_state.json agree and so the openness is a
+    # chain and networks/genesis/app_state.json agree and so the openness is a
     # decision on the record rather than an inherited default.
     wasm:
       params:

@@ -13,7 +13,7 @@
 #
 # What it does:
 #
-#   1. starts a single-validator chain from deploy/genesis.json
+#   1. starts a single-validator chain from networks/genesis.json
 #   2. passes a MsgSoftwareUpgrade proposal for a plan a few blocks out
 #   3. waits for the chain to halt with UPGRADE "<name>" NEEDED
 #   4. rebuilds earthd with a matching entry in Upgrades
@@ -69,7 +69,7 @@ step "start a single-validator chain"
 "$E" init rehearsal --chain-id "$CHAIN_ID" --home "$HOME_DIR" >/dev/null 2>&1
 "$E" keys add val $KR >/dev/null 2>&1
 VAL="$("$E" keys show val -a $KR)"
-cp "$REPO/deploy/genesis.json" "$HOME_DIR/config/genesis.json"
+cp "$REPO/networks/genesis.json" "$HOME_DIR/config/genesis.json"
 
 # Rewrite what a rehearsal needs: its own chain id, a voting period measured in
 # seconds rather than a week, and a genesis_time of now so nothing catches up.

@@ -1,7 +1,7 @@
-// Package deploy holds the launch genesis and the checks that keep it honest.
+// Package networks holds the launch genesis and the checks that keep it honest.
 //
 // genesis.json is a build artifact — scripts/build-genesis.sh writes it from the
-// sources in deploy/genesis/, and nobody edits it by hand. These tests read the
+// sources in networks/genesis/, and nobody edits it by hand. These tests read the
 // committed file and re-derive everything about it that can be derived, so a
 // mistake in the sources, in the script, or in an edit somebody made anyway
 // fails here rather than at height 1 on somebody else's node.
@@ -9,7 +9,7 @@
 // They deliberately do not run the build: they are fast, need no toolchain, and
 // answer "is the file we are shipping self-consistent". For "does the file still
 // match its sources", run scripts/build-genesis.sh --check.
-package deploy
+package networks
 
 import (
 	"encoding/json"
@@ -167,7 +167,7 @@ func TestSupplyEqualsSumOfBalances(t *testing.T) {
 	}
 }
 
-// Nothing holds a balance except the accounts deploy/genesis/accounts.json names.
+// Nothing holds a balance except the accounts networks/genesis/accounts.json names.
 // A stray funded address is how a devnet key, a leftover faucet, or an ignite
 // scaffold account rides into a launch genesis unnoticed — and once the chain
 // starts, whoever has that key has the coins.

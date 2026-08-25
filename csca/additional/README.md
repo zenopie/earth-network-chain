@@ -9,7 +9,7 @@ The directory may be empty — the build handles that, and today it is.
 1. Download CSCA certificate (DER or CER format)
 2. Save to this directory with a descriptive name (e.g. `csca_nigeria.der`)
 3. `make genesis`, then commit the certificate and the regenerated
-   `deploy/genesis.json` together
+   `networks/genesis.json` together
 
 **Format:** DER-encoded X.509 certificates
 **File extensions:** .der, .cer, or any extension (will attempt to load all files)

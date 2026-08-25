@@ -10,7 +10,7 @@
 # earthd is stubbed rather than real. What is under test is the branching, the
 # hash check and the flags — not whether the SDK can init a node, which it can.
 #
-#   deploy/docker/entrypoint_test.sh
+#   docker/entrypoint_test.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,7 +50,7 @@ export PATH="$WORK/bin:$PATH"
 
 # ── a genesis and a matching hash, standing in for the image's ─────────────
 GEN="$WORK/genesis.json"
-cp "$REPO/deploy/genesis.json" "$GEN"
+cp "$REPO/networks/genesis.json" "$GEN"
 if command -v sha256sum >/dev/null 2>&1; then sha256sum "$GEN" | awk '{print $1}' > "$GEN.sha256"
 else shasum -a 256 "$GEN" | awk '{print $1}' > "$GEN.sha256"; fi
 

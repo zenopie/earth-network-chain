@@ -1,4 +1,4 @@
-package deploy
+package networks
 
 import (
 	"encoding/json"
@@ -36,12 +36,12 @@ func sameDecimal(a, b string) bool {
 }
 
 // config.yml is ignite's, and it drives `ignite chain serve` for local
-// development only. deploy/genesis/ is the source of truth for the chain that
+// development only. networks/genesis/ is the source of truth for the chain that
 // actually launches.
 //
 // Keeping two of anything is how they diverge, and they already did: commit
 // 6dd49f3 split the pre-mine into a third for the ANML/ERTH pool and two thirds
-// for the liquidity auction, changed deploy/genesis.json, and left config.yml
+// for the liquidity auction, changed networks/genesis.json, and left config.yml
 // seeding the whole 2,522,880,000 ERTH into pool 1 with no auction at all. The
 // dev chain and the launch chain disagreed about the token supply's shape for
 // two days and nothing noticed.
@@ -136,7 +136,7 @@ func TestConfigYmlAgreesWithGenesisSources(t *testing.T) {
 			}
 		}
 		if !reflect.DeepEqual(norm(want), norm(got)) {
-			t.Errorf("genesis.app_state%s disagrees:\n  deploy/genesis/app_state.json: %v\n  config.yml:                   %v",
+			t.Errorf("genesis.app_state%s disagrees:\n  networks/genesis/app_state.json: %v\n  config.yml:                   %v",
 				path, want, got)
 		}
 	}

@@ -9,7 +9,8 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
-  contents: write
+  # read, not write: this workflow no longer commits anything back.
+  contents: read
   packages: write
 
 jobs:
@@ -60,95 +61,22 @@ jobs:
           MANIFEST_DIGEST=$(docker inspect ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}:${{ steps.get_version.outputs.VERSION }} --format='{{index .RepoDigests 0}}' | cut -d'@' -f2 | cut -d':' -f2)
           echo "IMAGE_HASH=${MANIFEST_DIGEST}" >> $GITHUB_OUTPUT          
 
-      - name: Generate docker-compose.yaml
-        run: |
-          # Determine the directory where the Dockerfile is located
-          DOCKERFILE_DIR="."
-          
-          # Create the docker-compose file in the same directory as the Dockerfile
-          cat > $DOCKERFILE_DIR/docker-compose.yaml << EOL
-          # Release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.get_version.outputs.VERSION }}
-          # Workflow URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # Commit: https://github.com/${{ github.repository }}/commit/${{ github.sha }}
-          # Dockerfile Path: Dockerfile
-          # Docker Compose Location: $DOCKERFILE_DIR/docker-compose.yaml
-          version: '3'
-          services:
-            app:
-              image: ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}@sha256:${{ steps.push.outputs.IMAGE_HASH }}
-              ports:
-                # Explicit host mappings: EARTH_NODE_URL and both wallet apps need
-                # a fixed address. The short form publishes on a random host port.
-                - '1317:1317'   # LCD  — wallet apps and the ads-for-gas backend
-                - '26657:26657' # RPC  — the explorer's block-range queries
-              volumes:
-                # Genesis, the validator's consensus key and all chain state.
-                # Without this a redeploy does not restart the chain, it creates a
-                # different one: new genesis, new keys, and every address the apps
-                # knew about stops existing. The entrypoint tells the two cases
-                # apart purely by whether /data/config/genesis.json is present.
-                - earth-data:/data
-              restart: unless-stopped
-
-          volumes:
-            earth-data:
-          EOL
-
-      - name: Pin the digest and commit
-        run: |
-          # Fetch all branches
-          git fetch origin
-          
-          # Get the branch where the tag was created from
-          # This is the branch that should receive the docker-compose file
-          BRANCH_NAME="master"
-          
-          # Checkout the branch
-          git checkout $BRANCH_NAME
-          
-          # Configure git
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          
-          # Determine the directory where the Dockerfile is located
-          DOCKERFILE_DIR="."
-
-          IMAGE="ghcr.io/${{ steps.set_repo.outputs.REPO_NAME }}@sha256:${{ steps.push.outputs.IMAGE_HASH }}"
-          SDL="$DOCKERFILE_DIR/deploy/akash/deploy.yaml"
-
-          # Pin the Akash SDL to the digest just pushed.
-          #
-          # Unlike docker-compose.yaml this file is NOT generated — it is
-          # hand-maintained and mostly comments — so only the image line is
-          # rewritten, in place, after the checkout above so the edit lands on
-          # the branch being committed rather than being carried across it.
-          #
-          # The pattern matches whatever the line currently holds, tag or
-          # digest, so re-releasing overwrites a previous pin.
-          # Anchored on this repo's own image path. The looser `ghcr.io/...`
-          # pattern rewrote EVERY ghcr image line, so adding any second image to
-          # the SDL — a relayer, a sidecar — silently became a second copy of the
-          # node, with no error and a deploy that looked fine.
-          sed -i -E "s|^([[:space:]]*image:[[:space:]]*)ghcr\.io/${{ steps.set_repo.outputs.REPO_NAME }}(@sha256:[a-f0-9]+\|:[^[:space:]]+)?|\1${IMAGE}|" "$SDL"
-
-          # Fail loudly if that matched nothing. A silent no-op here is the
-          # worst outcome available: the SDL keeps whatever it had, and a
-          # deployment made from it runs an image nobody chose while the
-          # release looks clean.
-          if ! grep -qF "$IMAGE" "$SDL"; then
-            echo "::error file=$SDL::image line not rewritten - the sed pattern no longer matches this file"
-            exit 1
-          fi
-          echo "pinned $SDL to $IMAGE"
-          
-          # Add and commit changes
-          git add $DOCKERFILE_DIR/docker-compose.yaml "$SDL"
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Pin docker-compose.yaml and the Akash SDL to ${{ steps.get_version.outputs.VERSION }}"
-            git push origin $BRANCH_NAME
-          fi
+      # Deliberately does NOT write the digest anywhere.
+      #
+      # This used to check out master, rewrite docker-compose.yaml and the Akash
+      # SDL with the digest it had just pushed, and commit that back. Two things
+      # were wrong with it: this repository carried deployment state it has no
+      # business holding, and a build racing a human push meant one of them lost
+      # — which happened.
+      #
+      # Deployment now lives in a separate private repository, which resolves
+      # tag -> digest from the registry when it deploys. Anyone can do the same
+      # with no credentials:
+      #
+      #   TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:<repo>:pull&service=ghcr.io" | jq -r .token)
+      #   curl -sI -H "Authorization: Bearer $TOKEN" \
+      #        -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+      #        "https://ghcr.io/v2/<repo>/manifests/<tag>" | grep -i docker-content-digest
 
       - name: Output Image URL
         run: |

@@ -1,13 +1,13 @@
 # The launch genesis
 
-`deploy/genesis.json` is a **build artifact**. Nobody edits it. It is written by
+`networks/genesis.json` is a **build artifact**. Nobody edits it. It is written by
 
     scripts/build-genesis.sh
 
 from the sources in this directory, and it is committed so that the file, its
 sha256 and the code that produced it all travel together.
 
-    make genesis          rebuild deploy/genesis.json + .sha256
+    make genesis          rebuild networks/genesis.json + .sha256
     make genesis-check    fail if the artifact no longer matches these sources
     go test ./deploy/...  check the committed file is self-consistent
 
@@ -21,7 +21,7 @@ rather than as an error here.
 
 Two things this already caught:
 
-- `config.yml` and `deploy/genesis.json` had disagreed about the shape of the
+- `config.yml` and `networks/genesis.json` had disagreed about the shape of the
   token supply since commit `6dd49f3` — the pre-mine was split a third to the
   ANML/ERTH pool and two thirds to the liquidity auction in one file and not the
   other. `TestConfigYmlAgreesWithGenesisSources` now fails on that.
@@ -49,7 +49,7 @@ instead of silently going missing.
 1. Edit the file in this directory.
 2. `make genesis`.
 3. `go test ./deploy/...`.
-4. Commit the source and the regenerated `deploy/genesis.json` together.
+4. Commit the source and the regenerated `networks/genesis.json` together.
 
 Swapping a verifying key is a file drop: overwrite `verifying-keys/<circuit>.b64`
 and rebuild. Adding a CSCA means adding the certificate under `csca/` — the

@@ -79,8 +79,8 @@ proto-gen:
 ###  Genesis  ###
 #################
 
-# deploy/genesis.json is a build artifact, not a file anyone edits. It is written
-# from deploy/genesis/ — see deploy/genesis/README.md.
+# networks/genesis.json is a build artifact, not a file anyone edits. It is written
+# from networks/genesis/ — see networks/genesis/README.md.
 
 genesis:
 	@scripts/build-genesis.sh

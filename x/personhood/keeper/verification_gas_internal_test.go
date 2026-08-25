@@ -152,7 +152,7 @@ func TestStaleDateIsRejectedBeforeTheVerifier(t *testing.T) {
 // for, in the terms that actually matter: how many verifications a full block
 // can be made to contain, and therefore how long one can take to execute.
 func TestBlockGasLimitBoundsProofsPerBlock(t *testing.T) {
-	const blockMaxGas = 100_000_000 // deploy/genesis/chain.json
+	const blockMaxGas = 100_000_000 // networks/genesis/chain.json
 
 	perBlock := blockMaxGas / types.DefaultProofVerificationGas
 	if perBlock > 128 {

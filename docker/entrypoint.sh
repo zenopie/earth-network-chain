@@ -79,7 +79,7 @@ PERSISTENT_PEERS="${PERSISTENT_PEERS:-}"
 
 # Where the release genesis and its hash live in the image. Overridable only so
 # the three paths below can be exercised without building a container — see
-# deploy/docker/entrypoint_test.sh.
+# docker/entrypoint_test.sh.
 GENESIS_SRC="${GENESIS_SRC:-/etc/earth/genesis.json}"
 GENESIS_SHA="${GENESIS_SHA:-${GENESIS_SRC}.sha256}"
 

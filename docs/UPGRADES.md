@@ -165,7 +165,7 @@ chain from that block on.
 
 **The chain is halted and consensus cannot resume.** That is a genesis restart,
 not an upgrade: export state, build a new genesis from it, and start a new chain
-id. `scripts/build-genesis.sh` and `deploy/genesis/README.md` cover the mechanics.
+id. `scripts/build-genesis.sh` and `networks/genesis/README.md` cover the mechanics.
 
 ---
 

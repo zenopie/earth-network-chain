@@ -281,7 +281,7 @@ registration) and the issuing state gets no extra exposure. See
 The chain runs **permissionless CosmWasm**. Anyone may upload code and anyone may
 instantiate it, paying only gas — no governance proposal, no allowlist of
 deployers. `code_upload_access` and `instantiate_default_permission` are both
-`Everybody` in the launch genesis, and a test in `deploy/genesis_test.go` fails
+`Everybody` in the launch genesis, and a test in `networks/genesis_test.go` fails
 if either is tightened without the change being deliberate.
 
 Contracts get the standard CosmWasm vocabulary (bank, staking, distribution,
@@ -313,6 +313,13 @@ earthd tx wasm instantiate 1 '{"…":"…"}' --label mine --no-admin --from you
 earthd query wasm contract-state smart <addr> '{"…":{}}'
 ```
 
+## Deployment
+
+The operator side — the Akash SDL, secrets and deploy tooling for the network's
+own node — lives in a separate private repository. Nothing there is needed to
+join the chain: this repository holds the node software, the genesis, the image
+and the entrypoint that lets anyone run one.
+
 ## Running a node
 
 See **[docs/JOIN.md](docs/JOIN.md)** — binary, genesis and its hash, seeds, gas
@@ -334,15 +341,15 @@ go test ./...
 ```
 
 `config.yml` drives the local devnet only. The launch genesis is built from
-`deploy/genesis/` — see [its README](deploy/genesis/README.md) — and a test fails
+`networks/genesis/` — see [its README](networks/genesis/README.md) — and a test fails
 if the two disagree about anything they both state.
 
 | | |
 | --- | --- |
-| `make genesis` | rebuild `deploy/genesis.json` from its sources |
+| `make genesis` | rebuild `networks/genesis.json` from its sources |
 | `make genesis-check` | fail if the artifact has drifted |
 | `scripts/rehearse-upgrade.sh` | run a governance upgrade end to end locally |
-| `deploy/docker/entrypoint_test.sh` | exercise the container's three boot paths |
+| `docker/entrypoint_test.sh` | exercise the container's three boot paths |
 
 ## Releasing
 
@@ -367,7 +374,7 @@ Operational guides stay next to the code:
 | [docs/UPGRADES.md](docs/UPGRADES.md) | coordinated upgrades, and what goes wrong |
 | [docs/TRUST_STORE_RUNBOOK.md](docs/TRUST_STORE_RUNBOOK.md) | revoking or adding passport certificates |
 | [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md) | what still stands between here and a launch |
-| [deploy/genesis/README.md](deploy/genesis/README.md) | how the genesis is built |
+| [networks/genesis/README.md](networks/genesis/README.md) | how the genesis is built |
 
 ## License
 

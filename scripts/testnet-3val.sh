@@ -20,7 +20,7 @@ CHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EARTHD="${EARTHD:-$HOME/go/bin/earthd}"
 # Read from the genesis ignite builds, never assumed.
 #
-# It was hardcoded to earth-1, which is what deploy/genesis.json carries — but
+# It was hardcoded to earth-1, which is what networks/genesis.json carries — but
 # `ignite chain init` names the chain from config.yml, config.yml sets no chain
 # id, and ignite then defaults to `earth`. Every transaction below was signed
 # for a chain that was not this one and came back "signature verification

@@ -6,7 +6,7 @@
 # Two stages: build earthd, then ship it on a slim base. The runtime carries no
 # Go toolchain, no Ignite and no source.
 #
-# Genesis comes from deploy/genesis.json, generated once with `ignite chain init`
+# Genesis comes from networks/genesis.json, generated once with `ignite chain init`
 # and committed. It holds everything config.yml describes — the 539 CSCAs, the
 # seven register verifying keys, the seeded ANML/ERTH pool, the governance
 # parameters — with the gentx and the dev accounts stripped, so no key that only
@@ -131,13 +131,13 @@ COPY --from=build /out/rly /usr/local/bin/rly
 # becomes a red build instead of a container that exits instantly on a provider
 # whose logs you cannot read.
 RUN earthd --help >/dev/null && echo "earthd links and runs"
-COPY deploy/docker/relayer.sh /usr/local/bin/relayer.sh
+COPY docker/relayer.sh /usr/local/bin/relayer.sh
 # Genesis and the hash it is checked against. The entrypoint refuses to start if
 # they disagree, so a genesis swapped into the image after the fact fails loudly
 # rather than quietly forking whoever runs it.
-COPY deploy/genesis.json /etc/earth/genesis.json
-COPY deploy/genesis.json.sha256 /etc/earth/genesis.json.sha256
-COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY networks/genesis.json /etc/earth/genesis.json
+COPY networks/genesis.json.sha256 /etc/earth/genesis.json.sha256
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/relayer.sh
 
 # Node home. Mount a volume here — without one, every redeploy is a brand new

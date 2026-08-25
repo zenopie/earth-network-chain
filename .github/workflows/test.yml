@@ -77,7 +77,7 @@ jobs:
         run: go test -mod=readonly -timeout 30m ./...
 
       # Runs last because it builds earthd, which needs the verifier lib above.
-      # deploy/genesis.json is an artifact: this fails if it has drifted from the
-      # sources in deploy/genesis/ that produce it.
+      # networks/genesis.json is an artifact: this fails if it has drifted from the
+      # sources in networks/genesis/ that produce it.
       - name: make genesis-check
         run: make genesis-check

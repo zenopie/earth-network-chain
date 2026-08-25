@@ -122,12 +122,12 @@ jobs:
           # `s|.*/|...|` matches up to the LAST slash — which swallows the hash
           # along with the directory. The first dry run published
           # "genesis.json  genesis.json" because of exactly that.
-          sha256sum "$GITHUB_WORKSPACE/deploy/genesis.json" \
+          sha256sum "$GITHUB_WORKSPACE/networks/genesis.json" \
             | awk '{print $1 "  genesis.json"}' >> checksums.txt
           echo "--- checksums.txt ---"; cat checksums.txt
           {
             echo 'GENESIS_SHA<<EOF'
-            awk '{print $1}' "$GITHUB_WORKSPACE/deploy/genesis.json.sha256"
+            awk '{print $1}' "$GITHUB_WORKSPACE/networks/genesis.json.sha256"
             echo EOF
           } >> "$GITHUB_OUTPUT"
 
@@ -141,7 +141,7 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/checksums.txt
-            deploy/genesis.json
+            networks/genesis.json
           body: |
             See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/CHANGELOG.md)
             for what changed, including anything consensus-affecting.

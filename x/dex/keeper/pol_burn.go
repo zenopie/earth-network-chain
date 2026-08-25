@@ -70,7 +70,7 @@ func (k Keeper) BurnDuePol(ctx context.Context) error {
 // genesis_time and gives block 2 the wall clock, so a genesis file four days old
 // anchors the schedule four days in the past and retires four days of the
 // position in a single block. This is the emission's failure mode exactly (see
-// deploy/docker/README.md on 125,485 ERTH minted at height 2) and it has the
+// docker/README.md on 125,485 ERTH minted at height 2) and it has the
 // same fix: launch from a genesis_time close to when the chain actually starts.
 func retirableAt(b types.PolBurn, now int64) math.Int {
 	if b.DurationSeconds <= 0 || now <= b.StartTime {

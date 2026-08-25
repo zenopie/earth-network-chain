@@ -40,7 +40,7 @@ can be changed after the file is signed and published.
       unforgeable. It also collects the entire staking pillar — 1 ERTH/sec, or
       86,400 ERTH a day — for as long as it is alone. Neither is a bug; both
       read badly if discovered rather than disclosed.
-- [ ] **The auction bid denom.** `deploy/genesis.json` ships the liquidity
+- [ ] **The auction bid denom.** `networks/genesis.json` ships the liquidity
       auction as `AUCTION_STATUS_PENDING` with `bid_denom: ""` and
       `end_time: 0`, holding 840,960 ERTH in each earmark. `MsgStartLiquidityAuction`
       is governance-only and, per its own comment, "only meaningful once IBC is
@@ -71,8 +71,8 @@ can be changed after the file is signed and published.
 
 ## 1. Genesis becomes an artifact, not a boot-time side effect
 
-**This is the blocker.** `deploy/docker/entrypoint.sh:29-62` copies
-`deploy/genesis.json`, rewrites `genesis_time` to `date -u` *now*, creates a
+**This is the blocker.** `docker/entrypoint.sh:29-62` copies
+`networks/genesis.json`, rewrites `genesis_time` to `date -u` *now*, creates a
 validator key, then runs `add-genesis-account`, `gentx` and `collect-gentxs`.
 Every node that starts this image therefore computes a *different* genesis, a
 different app hash, and cannot share a network with any other node. The committed
@@ -81,7 +81,7 @@ file confirms the shape: one account, `"gen_txs": []`.
 - [ ] **Fix `genesis_time`** to a specific UTC instant in the future and stop
       stamping it at boot. The stamping exists for a real reason — emission is
       prorated against elapsed time, so a stale genesis pays the whole gap out at
-      height 2 (`deploy/docker/README.md` records 125,485 ERTH minted in one
+      height 2 (`docker/README.md` records 125,485 ERTH minted in one
       block from a day-old file). The fix is a launch time close to when the
       chain actually starts, not a per-node rewrite.
       The POL retirement schedules do the same thing, for the same reason:
@@ -91,7 +91,7 @@ file confirms the shape: one account, `"gen_txs": []`.
 - [ ] **Collect the gentxs** into the file, or ship zero and have validators join
       with `MsgCreateValidator` after height 1 — decided in phase 0.
 - [x] **Set `consensus.version.app`.** Now `1`, in
-      `deploy/genesis/chain.json`.
+      `networks/genesis/chain.json`.
 - [x] **Drop the devnet accounts.** The ads-for-gas hot wallet is out of genesis.
       Its key was a devnet key that had been on a laptop, and a launch genesis is
       not the place to fund an operational wallet from one.
@@ -102,7 +102,7 @@ file confirms the shape: one account, `"gen_txs": []`.
       have the entrypoint *verify* it rather than generate anything.~~ Done for
       the entrypoint: join is the default, a hash mismatch against
       `/etc/earth/genesis.json.sha256` is fatal, and the old self-init sits
-      behind `DEV_INIT=1`. `deploy/docker/entrypoint_test.sh` covers all three
+      behind `DEV_INIT=1`. `docker/entrypoint_test.sh` covers all three
       paths — 16 assertions, verified by mutating the entrypoint three ways.
       **Still open:** putting the hash in the release notes, which needs a
       release to exist.
@@ -113,8 +113,8 @@ file confirms the shape: one account, `"gen_txs": []`.
       `PRIV_VALIDATOR_LADDR`.
 - [x] **Make genesis generation reproducible.** ~~Today it is `ignite chain init`
       followed by hand-stripping gentxs and dev accounts and "recompute bank
-      supply".~~ Done: `scripts/build-genesis.sh` builds `deploy/genesis.json`
-      from `deploy/genesis/` (see its README) and writes a `.sha256` beside it.
+      supply".~~ Done: `scripts/build-genesis.sh` builds `networks/genesis.json`
+      from `networks/genesis/` (see its README) and writes a `.sha256` beside it.
       Output is canonically sorted, so two people who run it get the same bytes.
       `make genesis-check` fails if the artifact drifts from its sources.
       `go test ./deploy/...` asserts `bank.supply == sum(balances)`, that no
@@ -209,7 +209,7 @@ file confirms the shape: one account, `"gen_txs": []`.
       builds `earthd` natively on Linux amd64 and arm64 — natively because the
       Barretenberg verifier is cgo, so Ignite's cross-compile could never have
       worked. Publishes tarballs, a `checksums.txt` that also covers
-      `deploy/genesis.json`, and the genesis file itself, with the genesis sha256
+      `networks/genesis.json`, and the genesis file itself, with the genesis sha256
       in the release notes.
 - [x] **Build the image with the version ldflags.** `VERSION` and `COMMIT` are
       build args passed from the tag and `github.sha`, and the build is
@@ -300,7 +300,7 @@ An untested upgrade path is discovered during the upgrade.
       shrinks a reserve without burning, a swap fee deducted but left in the
       pool, an unbonding paid without shrinking the reserve, a reward credited
       twice, and double-counted escrow — are each caught with an exact figure.
-      A live node ran 62 blocks from `deploy/genesis.json` with no breach.
+      A live node ran 62 blocks from `networks/genesis.json` with no breach.
       **Not done:** `x/allocation`'s reward index and `x/personhood`'s ANML
       accounting have no equivalent.
       **Note:** `x/crisis` is deprecated in SDK v0.53 and removed in the next
@@ -368,7 +368,7 @@ An untested upgrade path is discovered during the upgrade.
       field elements — `250101`, then `expected_nullifier`, then
       `expected_dsc_key` — and the handset splits three in the same order.
 - [x] **The verifying keys are seeded, and `dsc_root` no longer exists.** Seven
-      distinct keys ship in `deploy/genesis/verifying-keys/`, one per algorithm,
+      distinct keys ship in `networks/genesis/verifying-keys/`, one per algorithm,
       and the `lean_poa` key is byte-identical to the one the keeper test
       verifies a real bb proof against — `bb write_vk` output from the real
       circuits, not demo keys. `dsc_root` is `reserved` in the params proto: a
@@ -415,7 +415,7 @@ An untested upgrade path is discovered during the upgrade.
       empty state round-trips perfectly. That is a concrete argument for the sim
       ops above.
 - [x] **`x/pki` stored one certificate per signing key, not one per
-      certificate.** `deploy/genesis.json` carries 539 CSCAs and the chain held
+      certificate.** `networks/genesis.json` carries 539 CSCAs and the chain held
       366: `Cscas` was keyed by `cscaID`, which is the SKI, so certificates
       sharing a key overwrote each other and 173 certificate bodies were dropped
       at InitGenesis without ever reaching the chain.
@@ -441,7 +441,7 @@ An untested upgrade path is discovered during the upgrade.
       A live chain now stores and exports all 539.
 
       No migration: the store layout changed, but the chain has not launched
-      (`app/upgrades.go` is empty) and `deploy/genesis.json` is byte-identical,
+      (`app/upgrades.go` is empty) and `networks/genesis.json` is byte-identical,
       because the file always carried 539 — it was the import that collapsed
       them. A devnet with state worth keeping needs a restart from genesis.
 
