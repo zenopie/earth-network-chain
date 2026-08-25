@@ -131,6 +131,11 @@ fi
 # ── 4. resume: an existing genesis is never replaced ───────────────────────
 H="$WORK/resume"; mkdir -p "$H/config"
 printf '{"mine":true}\n' > "$H/config/genesis.json"
+# Marks this home as a chain the node built, not one it downloaded. Without it
+# the entrypoint compares this stub against the image's genesis, finds they
+# differ, and refuses to start -- which is correct behaviour for a joining node
+# and wrong for a fixture standing in for an existing devnet.
+touch "$H/config/.devinit-complete"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$H/config/config.toml"
 printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H"; then
@@ -186,6 +191,11 @@ fi
 # It is applied on restart too, so an origin can be changed without a wipe.
 H="$WORK/rpccors-resume"; mkdir -p "$H/config"
 printf '{"mine":true}\n' > "$H/config/genesis.json"
+# Marks this home as a chain the node built, not one it downloaded. Without it
+# the entrypoint compares this stub against the image's genesis, finds they
+# differ, and refuses to start -- which is correct behaviour for a joining node
+# and wrong for a fixture standing in for an existing devnet.
+touch "$H/config/.devinit-complete"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = ["https://old.example"]\n' > "$H/config/config.toml"
 printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H" RPC_CORS_ORIGINS="https://new.example"; then
@@ -230,6 +240,11 @@ fi
 # Re-applied on an existing volume, so the cadence can change with a restart.
 H="$WORK/snap-resume"; mkdir -p "$H/config"
 printf '{"mine":true}\n' > "$H/config/genesis.json"
+# Marks this home as a chain the node built, not one it downloaded. Without it
+# the entrypoint compares this stub against the image's genesis, finds they
+# differ, and refuses to start -- which is correct behaviour for a joining node
+# and wrong for a fixture standing in for an existing devnet.
+touch "$H/config/.devinit-complete"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\n' > "$H/config/config.toml"
 printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H" SNAPSHOT_INTERVAL=500; then
@@ -286,6 +301,11 @@ fi
 # without destroying the volume — which on this deployment is the chain.
 H="$WORK/peers-resume"; mkdir -p "$H/config"
 printf '{"mine":true}\n' > "$H/config/genesis.json"
+# Marks this home as a chain the node built, not one it downloaded. Without it
+# the entrypoint compares this stub against the image's genesis, finds they
+# differ, and refuses to start -- which is correct behaviour for a joining node
+# and wrong for a fixture standing in for an existing devnet.
+touch "$H/config/.devinit-complete"
 printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\nexternal_address = "wrong:1"\nseeds = ""\npersistent_peers = ""\n' > "$H/config/config.toml"
 printf 'snapshot-interval = 1000\nsnapshot-keep-recent = 5\n' > "$H/config/app.toml"
 if run "$H" EXTERNAL_ADDRESS="198.51.100.4:26656" SEEDS="dddd@seed.two:26656"; then

@@ -177,6 +177,17 @@ devnet_is_complete() {
   return 0
 }
 
+# A DEV_INIT chain's genesis NEVER matches the image's: it carries a stamped
+# genesis_time and a gentx the image's copy does not have. So the mismatch check
+# below has to know the difference between "this volume holds a throwaway chain
+# this node built" and "this volume holds someone else's chain". Without this,
+# turning the check on would break every devnet deployment on its next restart.
+devnet_chain_on_disk() {
+  [ "$DEV_INIT" = "1" ] && return 0
+  [ -f "$DEVINIT_DONE" ] && return 0
+  return 1
+}
+
 if [ "$DEV_INIT" = "1" ] && ! devnet_is_complete; then
   # ── devnet ───────────────────────────────────────────────────────────────
   if [ -f "$EARTH_HOME/config/genesis.json" ]; then
@@ -250,9 +261,45 @@ if [ "$DEV_INIT" = "1" ] && ! devnet_is_complete; then
   touch "$DEVINIT_DONE"
   say "devnet genesis ready: validator bonded $VALIDATOR_BONDED"
 
+elif [ -f "$EARTH_HOME/config/genesis.json" ] \
+     && ! devnet_chain_on_disk \
+     && [ "$(sha256_of "$EARTH_HOME/config/genesis.json")" != "$(sha256_of "$GENESIS_SRC")" ] \
+     && [ "${RESET_ON_GENESIS_MISMATCH:-0}" = "1" ]; then
+  # ── reset ────────────────────────────────────────────────────────────────
+  #
+  # The volume holds a different chain from the one this image ships. Normally
+  # that is a mistake worth stopping for, which is what the branch below does.
+  # With RESET_ON_GENESIS_MISMATCH=1 it is instead a deliberate cutover: throw
+  # the old chain away and join the image's one.
+  #
+  # This is safe to leave switched on, which is the point of keying it to the
+  # hash rather than to a plain WIPE=1. It fires exactly once — on the first
+  # boot after the genesis changes — and every restart afterwards sees matching
+  # hashes and resumes normally. A knob that wiped on every restart would be a
+  # loaded gun in a config file.
+  say "genesis on this volume does not match the image, and RESET_ON_GENESIS_MISMATCH=1"
+  say "  on disk: $(sha256_of "$EARTH_HOME/config/genesis.json")"
+  say "  image:   $(sha256_of "$GENESIS_SRC")"
+  say "DESTROYING the existing chain state at $EARTH_HOME"
+  rm -rf "$EARTH_HOME/config" "$EARTH_HOME/data"
+  earthd init "$MONIKER" --chain-id "$CHAIN_ID" --home "$EARTH_HOME" >/dev/null 2>&1
+  cp "$GENESIS_SRC" "$EARTH_HOME/config/genesis.json"
+  say "installed the image genesis — $(sha256_of "$EARTH_HOME/config/genesis.json")"
+
 elif [ -f "$EARTH_HOME/config/genesis.json" ]; then
+  ON_DISK="$(sha256_of "$EARTH_HOME/config/genesis.json")"
+  IN_IMAGE="$(sha256_of "$GENESIS_SRC")"
+  if ! devnet_chain_on_disk && [ "$ON_DISK" != "$IN_IMAGE" ]; then
+    die "the genesis on this volume is not the one in this image
+      on disk: $ON_DISK
+      image:   $IN_IMAGE
+    These are two different chains. Resuming would keep running the old one
+    while every published artefact describes the new one. Set
+    RESET_ON_GENESIS_MISMATCH=1 to destroy the volume's chain and join the
+    image's, or deploy an image whose genesis matches this volume."
+  fi
   say "existing genesis found — resuming chain at $EARTH_HOME"
-  say "genesis sha256 $(sha256_of "$EARTH_HOME/config/genesis.json")"
+  say "genesis sha256 $ON_DISK"
 
 else
   # ── join ─────────────────────────────────────────────────────────────────
@@ -278,6 +325,56 @@ else
   # the file the hash just vouched for), and no key generation (a validator joins
   # with MsgCreateValidator after height 1, or its gentx is already in the file).
   say "ready to join $CHAIN_ID — no keys created, genesis unmodified"
+fi
+
+# ---- injected identity ------------------------------------------------------
+#
+# `earthd init` mints a random consensus key and a random node key. That is
+# correct for a node joining an existing network, and wrong for the node whose
+# consensus key is named in the genesis it ships: after any volume reset it
+# would come up as a validator nobody has heard of, holding none of the voting
+# power the gentx assigned, and the chain would have no signer at all.
+#
+# So both identities can be supplied. Written after init, which is what created
+# the files being replaced.
+#
+#   PRIV_VALIDATOR_KEY_B64   base64 of priv_validator_key.json. The consensus
+#                            key the genesis gentx commits to.
+#   NODE_KEY_B64             base64 of node_key.json. Fixes the node id, so the
+#                            peer address in the gentx memo and in the docs
+#                            keeps working across restarts.
+#
+# Base64 rather than raw JSON because these travel through a YAML env list in the
+# SDL, and a raw `{"address":...}` there is a flow mapping to the YAML parser,
+# not a string. Encoding sidesteps the quoting entirely.
+#
+# Both are secrets. PRIV_VALIDATOR_KEY especially: it is the key that
+# double-signs. Prefer PRIV_VALIDATOR_LADDR and a remote signer for anything
+# with real stake behind it — see akash/REMOTE_SIGNER.md in the deploy repo.
+#
+# priv_validator_state.json is deliberately NOT injected. It tracks the last
+# height signed, and restoring a stale copy is how a validator double-signs.
+if [ -n "${PRIV_VALIDATOR_KEY_B64:-}" ]; then
+  printf '%s' "$PRIV_VALIDATOR_KEY_B64" | base64 -d > "$EARTH_HOME/config/priv_validator_key.json" \
+    || die "PRIV_VALIDATOR_KEY_B64 is not valid base64"
+  chmod 600 "$EARTH_HOME/config/priv_validator_key.json"
+  # grep, not a JSON parser: the runtime image is debian-slim with earthd and
+  # nothing else, and adding python here to validate a three-field file would be
+  # 30MB of image for a check that greps do just as well. The realistic failure
+  # is a truncated or empty variable, not subtly malformed JSON.
+  grep -q '"priv_key"' "$EARTH_HOME/config/priv_validator_key.json" \
+    || die "PRIV_VALIDATOR_KEY_B64 does not decode to a priv_validator_key.json —
+      refusing to start with a broken consensus key."
+  say "consensus key taken from PRIV_VALIDATOR_KEY_B64"
+fi
+if [ -n "${NODE_KEY_B64:-}" ]; then
+  printf '%s' "$NODE_KEY_B64" | base64 -d > "$EARTH_HOME/config/node_key.json" \
+    || die "NODE_KEY_B64 is not valid base64"
+  chmod 600 "$EARTH_HOME/config/node_key.json"
+  grep -q '"priv_key"' "$EARTH_HOME/config/node_key.json" \
+    || die "NODE_KEY_B64 does not decode to a node_key.json — refusing to start with
+      a broken node identity."
+  say "node id fixed from NODE_KEY_B64: $(earthd comet show-node-id --home "$EARTH_HOME" 2>/dev/null || echo '?')"
 fi
 
 # Remote signer, if one is configured.

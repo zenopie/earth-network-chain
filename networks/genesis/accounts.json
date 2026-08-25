@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Every balance the chain starts with. Nothing else may hold one \u2014 genesis_test.go",
+    "Every balance the chain starts with. Nothing else may hold one — genesis_test.go",
     "fails the build if it does.",
     "",
     "The ads-for-gas hot wallet used to be here with 10,000 ERTH. It is gone: its key",
@@ -22,7 +22,12 @@
     {
       "address": "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a",
       "coins": "1000000000uerth",
-      "note": "The genesis validator. 1,000 ERTH: enough to self-delegate 100, and to fund governance deposits (5 ERTH expedited, 1 normal) for years. Deliberately small \u2014 0.00004% of the pre-mine \u2014 because the validator's real income is the staking pillar, which pays 1 ERTH/sec split by voting power, and a large genesis balance on top of that is an allocation nobody voted for. Address derived from the operator address of the running devnet validator; the key itself is the VALIDATOR_MNEMONIC in the gitignored .env and is not in this repo."
+      "note": "The genesis validator. 1,000 ERTH: enough to self-delegate 100, and to fund governance deposits (5 ERTH expedited, 1 normal) for years. Deliberately small — 0.00004% of the pre-mine — because the validator's real income is the staking pillar, which pays 1 ERTH/sec split by voting power, and a large genesis balance on top of that is an allocation nobody voted for. Address derived from the operator address of the running devnet validator; the key itself is the VALIDATOR_MNEMONIC in the gitignored .env and is not in this repo."
+    },
+    {
+      "address": "earth1s7rgscltvw8v3kzhj46pptdqg843ngs7th9ywp",
+      "coins": "10000000000uerth",
+      "note": "Devnet faucet/test account. 10,000 ERTH, enough to exercise transfers, swaps, governance deposits and a second validator's self-delegation without topping up. Its mnemonic is DEV_MNEMONIC in the gitignored .env of the deploy repo and is not in this repository. REMOVE THIS ACCOUNT before the real launch genesis: it is a key that has been on a laptop, and nothing on mainnet should be funded from one."
     }
   ],
   "modules": [
