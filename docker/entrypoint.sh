@@ -371,4 +371,61 @@ if [ "$API_UNSAFE_CORS" = "1" ]; then
   START_ARGS+=(--api.enabled-unsafe-cors)
 fi
 
+# ---- cosmovisor ------------------------------------------------------------
+#
+# Off unless USE_COSMOVISOR=true, the same way ENABLED gates the relayer. Anyone
+# running this image without the switch gets the old behaviour exactly: earthd,
+# directly, no supervisor in the path.
+#
+# What it buys: at an upgrade height the chain halts on purpose and refuses to
+# continue on the old binary. Without cosmovisor a human has to notice and put
+# the new binary in place -- on Akash, that means redeploying the SDL with a new
+# image digest while the chain sits stopped. With it, cosmovisor reads the plan
+# the chain wrote to data/upgrade-info.json, fetches the binary named in the
+# governance proposal, verifies its checksum, swaps it in and restarts.
+if [ "${USE_COSMOVISOR:-false}" = "true" ]; then
+  command -v cosmovisor >/dev/null || die "USE_COSMOVISOR=true but cosmovisor is not in this image"
+
+  # DAEMON_HOME must be on the mounted volume. Cosmovisor keeps downloaded
+  # upgrade binaries under $DAEMON_HOME/cosmovisor/, and on Akash everything
+  # outside /data is gone on the next container start -- so a DAEMON_HOME on the
+  # container filesystem would download the upgrade, restart, and find the
+  # binary it just installed missing.
+  export DAEMON_HOME="${DAEMON_HOME:-$EARTH_HOME}"
+  export DAEMON_NAME=earthd
+  export DAEMON_RESTART_AFTER_UPGRADE="${DAEMON_RESTART_AFTER_UPGRADE:-true}"
+  export DAEMON_ALLOW_DOWNLOAD_BINARIES="${DAEMON_ALLOW_DOWNLOAD_BINARIES:-true}"
+
+  # Never let this default to false. With downloads enabled, cosmovisor runs
+  # whatever the upgrade plan points at; the checksum in the URL is the only
+  # thing tying that download to what governance actually approved.
+  export DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM="${DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM:-true}"
+
+  # Cosmovisor copies data/ before applying an upgrade, which needs as much free
+  # space again as the chain currently occupies. Worth keeping: it is the only
+  # rollback that exists if an upgrade handler corrupts state. Set
+  # UNSAFE_SKIP_BACKUP=true only if the volume genuinely cannot hold two copies.
+  export UNSAFE_SKIP_BACKUP="${UNSAFE_SKIP_BACKUP:-false}"
+
+  # cosmovisor expects the current binary at cosmovisor/genesis/bin/$DAEMON_NAME.
+  # A symlink rather than a copy, deliberately: the image is the source of truth
+  # for the base binary, so pinning a new image digest also updates what
+  # cosmovisor runs before any upgrade has happened.
+  gen_bin="$DAEMON_HOME/cosmovisor/genesis/bin"
+  mkdir -p "$gen_bin" "$DAEMON_HOME/cosmovisor/upgrades"
+  ln -sf "$(command -v earthd)" "$gen_bin/earthd"
+
+  # After an upgrade, cosmovisor's `current` symlink points at the downloaded
+  # binary under upgrades/, NOT at the image. From that moment the running chain
+  # is whatever governance published rather than whatever digest the SDL pins --
+  # which is the intended behaviour, and also the thing to remember when the
+  # deployed digest and `earthd version` disagree.
+  if [ -L "$DAEMON_HOME/cosmovisor/current" ]; then
+    say "cosmovisor: current -> $(readlink "$DAEMON_HOME/cosmovisor/current")"
+  fi
+
+  say "starting under cosmovisor (downloads=$DAEMON_ALLOW_DOWNLOAD_BINARIES, checksum required=$DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM, backup=$([ "$UNSAFE_SKIP_BACKUP" = "true" ] && echo no || echo yes))"
+  exec cosmovisor run start "${START_ARGS[@]}" "$@"
+fi
+
 exec earthd start "${START_ARGS[@]}" "$@"

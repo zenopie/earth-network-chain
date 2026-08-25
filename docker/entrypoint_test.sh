@@ -14,7 +14,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"
 ENTRYPOINT="$HERE/entrypoint.sh"
 
 WORK="$(mktemp -d)"

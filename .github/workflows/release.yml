@@ -74,21 +74,100 @@ jobs:
         run: |
           # -trimpath so the binary does not vary with the checkout path, and the
           # same ldflags the Dockerfile uses so `earthd version` reports the tag.
+          #
+          # The rpath is what makes the tarball portable. earthd links libwasmvm
+          # dynamically, and wasmvm's own cgo directive bakes in
+          #   -Wl,-rpath,<the builder's Go module cache>
+          # which exists on this runner and nowhere else. Up to v0.4.5 that was
+          # the only rpath in the binary, so every downloaded release failed with
+          # "libwasmvm.x86_64.so: cannot open shared object file" the moment it
+          # ran off this machine. The Docker image hid the bug by copying the .so
+          # into /usr/local/lib and running ldconfig.
+          #
+          # $ORIGIN is resolved by the loader at run time, not by the shell, so it
+          # follows the binary wherever it is unpacked. bin/earthd finds
+          # ../lib/libwasmvm.*.so whether that is inside a release directory, a
+          # cosmovisor upgrade directory, or /usr/local/bin next to /usr/local/lib.
           CGO_ENABLED=1 go build -trimpath \
             -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=earth \
                       -X github.com/cosmos/cosmos-sdk/version.AppName=earthd \
                       -X github.com/cosmos/cosmos-sdk/version.Version=${VERSION} \
-                      -X github.com/cosmos/cosmos-sdk/version.Commit=${GITHUB_SHA}" \
+                      -X github.com/cosmos/cosmos-sdk/version.Commit=${GITHUB_SHA} \
+                      -extldflags '-Wl,-rpath,\$ORIGIN/../lib'" \
             -o earthd ./cmd/earthd
 
           ./earthd version --long | head -20
 
+          # bin/ and lib/ sit at the ARCHIVE ROOT, with no wrapper directory.
+          # That is not cosmetic. cosmovisor's downloadUpgradeAsArchive unpacks
+          # the release straight into the upgrade directory and then looks for
+          # exactly one of two layouts:
+          #
+          #   /<daemonName>       -> moved to /bin/<daemonName>
+          #   /bin/<daemonName>   -> used as-is
+          #
+          # A wrapper directory -- earthd_v0.4.5_linux_amd64/bin/earthd, which is
+          # what releases up to v0.4.5 shipped -- matches neither, and the
+          # download fails at the halt height with the chain already stopped.
+          #
+          # Rooting it here also makes the rpath land correctly: unpacked into
+          # cosmovisor/upgrades/<name>/, bin/earthd resolves $ORIGIN/../lib to
+          # that same upgrade's lib/, so each staged version carries the exact
+          # libwasmvm it was built against.
           NAME="earthd_${VERSION}_linux_${{ matrix.goarch }}"
-          mkdir -p "dist/$NAME"
-          cp earthd LICENSE "dist/$NAME/"
-          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          mkdir -p "dist/$NAME/bin" "dist/$NAME/lib"
+          cp earthd "dist/$NAME/bin/"
+          cp LICENSE "dist/$NAME/"
+
+          # Ship the libraries that are version-locked to this binary, and only
+          # those. libc, libm and the loader deliberately stay the host's --
+          # bundling those is how you get a binary that segfaults on a different
+          # distro rather than one that is more portable.
+          #
+          # libwasmvm is the critical one: its ABI moves with the CosmWasm
+          # version this build compiled against, so a node must never pair one
+          # release's earthd with another release's libwasmvm.
+          for lib in libwasmvm libc++ libc++abi libunwind; do
+            path=$(ldd earthd | awk -v l="$lib" '$1 ~ "^"l"\\." {print $3}')
+            if [ -z "$path" ] || [ ! -f "$path" ]; then
+              echo "::error::could not resolve $lib from ldd output"; ldd earthd; exit 1
+            fi
+            # -L to dereference: these resolve through symlink chains, and a
+            # dangling symlink in the tarball is a broken binary at the far end.
+            cp -L "$path" "dist/$NAME/lib/"
+            echo "  bundled $(basename "$path")"
+          done
+
+          # -C into the directory and name its contents, so the archive holds
+          # bin/, lib/ and LICENSE rather than $NAME/bin/...
+          tar -C "dist/$NAME" -czf "dist/$NAME.tar.gz" bin lib LICENSE
+          echo "--- archive layout ---"
+          tar -tzf "dist/$NAME.tar.gz"
           ( cd dist && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
           cat "dist/$NAME.tar.gz.sha256"
+          echo "NAME=$NAME" >> "$GITHUB_OUTPUT"
+
+      # The check that would have caught the broken tarball. debian:trixie-slim is
+      # the runtime image's base and has no libc++, no libwasmvm and no Go module
+      # cache -- so this passes only if the tarball genuinely carries what it needs.
+      # Running it on the build runner proves nothing, because everything is
+      # already installed there.
+      - name: Verify the tarball runs on a clean machine
+        if: matrix.goarch == 'amd64'
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" debian:trixie-slim bash -eu -c '
+            # Unpack the way cosmovisor does: contents straight into a bare
+            # directory, then run <dir>/bin/earthd. If the archive ever regains a
+            # wrapper directory this fails here rather than at an upgrade height.
+            mkdir -p /tmp/upgrade
+            tar -C /tmp/upgrade -xzf /dist/${{ steps.build.outputs.NAME }}.tar.gz
+            test -x /tmp/upgrade/bin/earthd \
+              || { echo "::error::bin/earthd is not at the archive root"; find /tmp/upgrade | head -20; exit 1; }
+            echo "--- ldd (no host libc++ or libwasmvm installed) ---"
+            ldd /tmp/upgrade/bin/earthd || true
+            /tmp/upgrade/bin/earthd version --long | head -5
+            echo "tarball is self-contained and cosmovisor-shaped"
+          '
 
       - uses: actions/upload-artifact@v7
         with:

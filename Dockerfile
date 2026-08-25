@@ -107,6 +107,16 @@ RUN CGO_ENABLED=1 go build -trimpath \
 RUN CGO_ENABLED=1 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 \
     && mv /out/relayer /out/rly
 
+# cosmovisor supervises earthd across upgrades: the chain halts on purpose at the
+# upgrade height, and cosmovisor swaps the binary and restarts it so nobody has
+# to be awake for it. Pure Go, so CGO off gives a static binary with nothing to
+# resolve at load time.
+#
+# Pinned rather than @latest. cosmovisor is the process that decides which binary
+# runs the chain, so "whatever was newest that day" is not a property this image
+# should have.
+RUN CGO_ENABLED=0 GOBIN=/out go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@v1.7.1
+
 # ---- runtime --------------------------------------------------------------
 FROM debian:trixie-slim
 
@@ -124,6 +134,7 @@ RUN ldconfig /usr/local/lib
 
 COPY --from=build /out/earthd /usr/local/bin/earthd
 COPY --from=build /out/rly /usr/local/bin/rly
+COPY --from=build /out/cosmovisor /usr/local/bin/cosmovisor
 
 # Prove the binary can actually start before the image ships. `earthd --help`
 # touches no chain state, but it forces the dynamic loader to resolve every
@@ -131,6 +142,7 @@ COPY --from=build /out/rly /usr/local/bin/rly
 # becomes a red build instead of a container that exits instantly on a provider
 # whose logs you cannot read.
 RUN earthd --help >/dev/null && echo "earthd links and runs"
+RUN cosmovisor version >/dev/null 2>&1 || cosmovisor help >/dev/null
 COPY docker/relayer.sh /usr/local/bin/relayer.sh
 # Genesis and the hash it is checked against. The entrypoint refuses to start if
 # they disagree, so a genesis swapped into the image after the fact fails loudly
