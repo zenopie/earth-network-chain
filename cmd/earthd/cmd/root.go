@@ -82,6 +82,12 @@ func NewRootCmd() *cobra.Command {
 		autoCliOpts.Modules[name] = mod
 	}
 
+	// x/wasm is wired by hand for the same reason and needs the same treatment.
+	for name, mod := range app.RegisterWasm(clientCtx.Codec) {
+		moduleBasicManager[name] = module.CoreAppModuleBasicAdaptor(name, mod)
+		autoCliOpts.Modules[name] = mod
+	}
+
 	initRootCmd(rootCmd, clientCtx.TxConfig, moduleBasicManager)
 
 	if err := autoCliOpts.EnhanceRootCommand(rootCmd); err != nil {

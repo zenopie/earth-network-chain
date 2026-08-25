@@ -47,6 +47,23 @@ RUN go mod download
 
 COPY . .
 
+# libwasmvm — the Rust engine behind x/wasm, linked through cgo.
+#
+# It is a prebuilt shared object inside the wasmvm Go module rather than
+# something compiled here, so the only work is putting it where the linker and,
+# later, the runtime image can find it. Both halves matter: with the .so present
+# at build time but missing at runtime, earthd builds cleanly and then dies on
+# startup with "libwasmvm.so: cannot open shared object file", which reads like
+# a corrupt image rather than a missing dependency.
+#
+# The path comes from `go list` rather than being written out, because the module
+# cache escapes capitals ("CosmWasm" becomes "!cosm!wasm") and the version is
+# pinned in go.mod, not here. TARGETARCH is Docker's (amd64/arm64); the library
+# is named for the machine architecture (x86_64/aarch64), hence uname.
+RUN cp "$(go list -m -f '{{.Dir}}' github.com/CosmWasm/wasmvm/v3)/internal/api/libwasmvm.$(uname -m).so" \
+        /usr/local/lib/libwasmvm.$(uname -m).so \
+    && ldconfig /usr/local/lib
+
 # Build the native UltraHonk verifier lib. Only lib/darwin_arm64 is checked in;
 # verifier-libs.yml produces the Linux ones for releases. Building it here keeps
 # the image self-contained. This is not a Barretenberg compile — the script
@@ -98,6 +115,12 @@ FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates libc++1 libc++abi1 \
     && rm -rf /var/lib/apt/lists/*
+
+# libwasmvm is dynamically linked, so it has to ship with the binary. Copied
+# under a glob because the file is named for the architecture and this stage has
+# no shell expansion of `uname` in a COPY.
+COPY --from=build /usr/local/lib/libwasmvm.*.so /usr/local/lib/
+RUN ldconfig /usr/local/lib
 
 COPY --from=build /out/earthd /usr/local/bin/earthd
 COPY --from=build /out/rly /usr/local/bin/rly

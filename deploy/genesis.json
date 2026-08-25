@@ -2032,7 +2032,19 @@
       "total_escrowed": []
     },
     "upgrade": {},
-    "vesting": {}
+    "vesting": {},
+    "wasm": {
+      "codes": [],
+      "contracts": [],
+      "params": {
+        "code_upload_access": {
+          "addresses": [],
+          "permission": "Everybody"
+        },
+        "instantiate_default_permission": "Everybody"
+      },
+      "sequences": []
+    }
   },
   "app_version": "0.0.1-5b5d77d3",
   "chain_id": "earth-1",

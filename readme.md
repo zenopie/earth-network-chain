@@ -276,6 +276,43 @@ The registration nullifier is derived deterministically in-circuit from the pass
 registration) and the issuing state gets no extra exposure. See
 [`docs/DSC_REGISTRY_OPTION_C.md`](docs/DSC_REGISTRY_OPTION_C.md) for the DSC-registry design.
 
+## Smart contracts — CosmWasm (`x/wasm`)
+
+The chain runs **permissionless CosmWasm**. Anyone may upload code and anyone may
+instantiate it, paying only gas — no governance proposal, no allowlist of
+deployers. `code_upload_access` and `instantiate_default_permission` are both
+`Everybody` in the launch genesis, and a test in `deploy/genesis_test.go` fails
+if either is tightened without the change being deliberate.
+
+Contracts get the standard CosmWasm vocabulary (bank, staking, distribution,
+gov, IBC, wasm-to-wasm) plus two doors into this chain specifically:
+
+- **Messages.** A contract sends any module's `Msg` as `CosmosMsg::Any`, routed
+  through the same `MsgServiceRouter` a transaction uses. A contract can swap on
+  the dex, vote an allocation stream, or claim ANML — with the module's own
+  validation applying unchanged. There is nothing a contract can send that its
+  sender could not have sent themselves.
+- **Queries.** An allowlist, in `wasmAcceptedQueries` (`app/wasm.go`). The one
+  that matters is `/earth.personhood.v1.Query/Registration` — "is this address a
+  live verified human" — which is what a sybil-resistant airdrop or a
+  one-human-one-vote contract needs and cannot get on any other chain. Pool
+  reserves, allocation options and voter splits are there too.
+
+The allowlist is short on purpose: a contract reading a protobuf response is
+frozen to that response's wire shape, so every path on it is a compatibility
+promise. Paginated list queries are deliberately excluded for now. Adding a path
+is a one-line change plus an upgrade; removing one after contracts depend on it
+is not.
+
+Contracts can also own IBC ports and be invoked by callbacks on incoming
+transfers, so a cross-chain action can be a single user step.
+
+```bash
+earthd tx wasm store contract.wasm --from you --gas auto
+earthd tx wasm instantiate 1 '{"…":"…"}' --label mine --no-admin --from you
+earthd query wasm contract-state smart <addr> '{"…":{}}'
+```
+
 ## Running a node
 
 See **[docs/JOIN.md](docs/JOIN.md)** — binary, genesis and its hash, seeds, gas

@@ -111,5 +111,14 @@
     "params": {
       "address_option_fee": "1000000"
     }
+  },
+  "wasm": {
+    "params": {
+      "code_upload_access": {
+        "permission": "Everybody",
+        "addresses": []
+      },
+      "instantiate_default_permission": "Everybody"
+    }
   }
 }

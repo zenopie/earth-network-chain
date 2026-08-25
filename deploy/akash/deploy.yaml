@@ -44,10 +44,16 @@ services:
       # joining a network looks like, and which produces no blocks until there is
       # a validator set.
       #
-      # Deliberately NOT set here. This file describes a node on a network, not a
-      # chain of its own; a devnet is one uncomment away when wanted:
+      # Set here, because this deployment IS the devnet. The release genesis
+      # carries no gentx — `build-genesis.sh` reports "launching with an empty
+      # validator set" — so on a fresh volume the join path would install it,
+      # verify it, create no keys and then produce no blocks forever, with the
+      # pod reporting ready the whole time. VALIDATOR_MNEMONIC below recovers
+      # the same validator address across rebuilds, so a wipe changes the
+      # genesis hash and the block history but not who signs.
       #
-      #   - DEV_INIT=1
+      # Take this back out for a node that is meant to join a real network.
+      - DEV_INIT=1
       #
       # ---- browser access -------------------------------------------------
       #

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"io"
 
 	clienthelpers "cosmossdk.io/client/v2/helpers"
@@ -9,8 +10,11 @@ import (
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
+	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
 
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	abci "github.com/cometbft/cometbft/abci/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
@@ -96,12 +100,19 @@ type App struct {
 	ConsensusParamsKeeper consensuskeeper.Keeper
 	CircuitBreakerKeeper  circuitkeeper.Keeper
 	ParamsKeeper          paramskeeper.Keeper
+	FeeGrantKeeper        feegrantkeeper.Keeper
 
 	// ibc keepers
 	IBCKeeper           *ibckeeper.Keeper
 	ICAControllerKeeper icacontrollerkeeper.Keeper
 	ICAHostKeeper       icahostkeeper.Keeper
 	TransferKeeper      ibctransferkeeper.Keeper
+
+	// CosmWasm. WasmNodeConfig is node-local (app.toml), not consensus, but the
+	// ante handler needs the simulation gas limit out of it, so it is kept
+	// alongside the keeper rather than re-read. See app/wasm.go.
+	WasmKeeper     wasmkeeper.Keeper
+	WasmNodeConfig wasmtypes.NodeConfig
 
 	// simulation manager
 	sm               *module.SimulationManager
@@ -184,6 +195,7 @@ func New(
 		&app.ConsensusParamsKeeper,
 		&app.CircuitBreakerKeeper,
 		&app.ParamsKeeper,
+		&app.FeeGrantKeeper,
 		&app.EarthKeeper,
 		&app.DexKeeper,
 		&app.AllocationKeeper,
@@ -222,8 +234,26 @@ func New(
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
 	// register legacy modules
+	//
+	// x/wasm rides along inside this call: its keeper is built between the IBC
+	// keepers and the IBC routers, because it needs the former and the latter
+	// need it. See app/wasm.go.
 	if err := app.registerIBCModules(appOpts); err != nil {
 		panic(err)
+	}
+
+	// Replace the default ante handler with one that knows about contracts, the
+	// circuit breaker and redundant IBC relays. Must follow Build — the default
+	// is installed as a baseapp option during it — and must precede the first
+	// transaction, which Load is nowhere near. See app/ante.go.
+	if err := app.setAnteHandler(); err != nil {
+		panic(err)
+	}
+
+	// State sync has to carry contract code, which lives outside the IAVL tree.
+	// Must precede Load: the snapshot manager is sealed there.
+	if err := app.registerWasmSnapshotter(); err != nil {
+		panic(fmt.Errorf("registering wasm snapshot extension: %w", err))
 	}
 
 	/****  Module Options ****/
@@ -255,6 +285,12 @@ func New(
 
 	if err := app.Load(loadLatest); err != nil {
 		panic(err)
+	}
+
+	// After Load, because it reads pinned code ids out of the loaded store and
+	// warms the node-local wasmvm cache from them.
+	if err := app.initializeWasmPinnedCodes(loadLatest); err != nil {
+		panic(fmt.Errorf("initializing pinned wasm codes: %w", err))
 	}
 
 	return app

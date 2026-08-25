@@ -3,6 +3,9 @@ package app
 import (
 	"cosmossdk.io/core/appmodule"
 	storetypes "cosmossdk.io/store/types"
+	"github.com/CosmWasm/wasmd/x/wasm"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
@@ -17,6 +20,7 @@ import (
 	icahostkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/keeper"
 	icahosttypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/types"
 	icatypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/types"
+	ibccallbacks "github.com/cosmos/ibc-go/v10/modules/apps/callbacks"
 	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
 	ibctransferkeeper "github.com/cosmos/ibc-go/v10/modules/apps/transfer/keeper"
 	ibctransfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
@@ -99,6 +103,17 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		govModuleAddr,
 	)
 
+	// x/wasm's keeper goes here, after the keepers it depends on and before the
+	// routers that depend on it. See app/wasm.go.
+	if err := app.registerWasmKeeper(appOpts); err != nil {
+		return err
+	}
+
+	// The wasm IBC handler is both an IBC app in its own right — contracts own
+	// ports and speak their own protocols over them — and the callbacks target
+	// below.
+	wasmStackIBCHandler := wasm.NewIBCHandler(app.WasmKeeper, app.IBCKeeper.ChannelKeeper, app.TransferKeeper, app.IBCKeeper.ChannelKeeper)
+
 	// create IBC module from bottom to top of stack
 	var (
 		transferStack      porttypes.IBCModule = ibctransfer.NewIBCModule(app.TransferKeeper)
@@ -107,15 +122,35 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		icaHostStack       porttypes.IBCModule = icahost.NewIBCModule(app.ICAHostKeeper)
 	)
 
+	// Wrap transfer and the ICA controller in the callbacks middleware, which
+	// lets a packet name a contract to invoke on acknowledgement or timeout.
+	// This is what makes a cross-chain action a single user step: send tokens to
+	// earth and have a contract act on them on arrival, rather than transfer,
+	// wait, then send a second transaction from a second chain.
+	//
+	// The middleware is itself an ICS4Wrapper, so each keeper has to be told to
+	// send through it. Skip the WithICS4Wrapper calls and outbound packets
+	// bypass the middleware entirely: callbacks on acks and timeouts silently
+	// never fire, with nothing in the logs to say why.
+	transferStack = ibccallbacks.NewIBCMiddleware(transferStack, app.IBCKeeper.ChannelKeeper, wasmStackIBCHandler, wasm.DefaultMaxIBCCallbackGas)
+	app.TransferKeeper.WithICS4Wrapper(transferStack.(porttypes.ICS4Wrapper))
+
+	icaControllerStack = ibccallbacks.NewIBCMiddleware(icaControllerStack, app.IBCKeeper.ChannelKeeper, wasmStackIBCHandler, wasm.DefaultMaxIBCCallbackGas)
+	app.ICAControllerKeeper.WithICS4Wrapper(icaControllerStack.(porttypes.ICS4Wrapper))
+
 	// create IBC v1 router, add transfer route, then set it on the keeper
 	ibcRouter := porttypes.NewRouter().
 		AddRoute(ibctransfertypes.ModuleName, transferStack).
+		AddRoute(wasmtypes.ModuleName, wasmStackIBCHandler).
 		AddRoute(icacontrollertypes.SubModuleName, icaControllerStack).
 		AddRoute(icahosttypes.SubModuleName, icaHostStack)
 
 	// create IBC v2 router, add transfer route, then set it on the keeper
+	// AddPrefixRoute: every IBC v2 port a contract owns starts with the same
+	// prefix, so one route covers all of them.
 	ibcv2Router := ibcapi.NewRouter().
-		AddRoute(ibctransfertypes.PortID, transferStackV2)
+		AddRoute(ibctransfertypes.PortID, transferStackV2).
+		AddPrefixRoute(wasmkeeper.PortIDPrefixV2, wasmkeeper.NewIBC2Handler(app.WasmKeeper))
 
 	// this line is used by starport scaffolding # ibc/app/module
 
@@ -142,7 +177,10 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		return err
 	}
 
-	return nil
+	// x/wasm registers after the routers are set: RegisterModules wires its
+	// genesis, msg and query services, and by then everything it hands those
+	// services is in place.
+	return app.registerWasmModule()
 }
 
 // RegisterIBC Since the IBC modules don't support dependency injection,

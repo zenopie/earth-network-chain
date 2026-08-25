@@ -69,6 +69,15 @@ type genesisDoc struct {
 		PKI struct {
 			Cscas []json.RawMessage `json:"cscas"`
 		} `json:"pki"`
+		Wasm struct {
+			Params struct {
+				CodeUploadAccess struct {
+					Permission string   `json:"permission"`
+					Addresses  []string `json:"addresses"`
+				} `json:"code_upload_access"`
+				InstantiateDefaultPermission string `json:"instantiate_default_permission"`
+			} `json:"params"`
+		} `json:"wasm"`
 	} `json:"app_state"`
 }
 
@@ -359,5 +368,36 @@ func TestHeaderMatchesChainJSON(t *testing.T) {
 	if g.InitialHeight != c.InitialHeight {
 		t.Errorf("initial_height is %d in genesis.json, %d in chain.json",
 			g.InitialHeight, c.InitialHeight)
+	}
+}
+
+// CosmWasm on earth is permissionless: anyone may upload code and anyone may
+// instantiate it, paying only gas.
+//
+// These match wasmd's compiled-in defaults, so this test looks redundant with
+// app.TestWasmIsPermissionless — it is not. That one checks what the binary
+// would do with no genesis at all; this one checks the file the network actually
+// launches from. They can disagree in both directions: a wasmd bump could change
+// the default under a genesis that still says Everybody, or someone could
+// "simplify" app_state.json by deleting a block that only restates a default and
+// leave the launched chain at whatever the next version decides.
+//
+// Tightening either value is a real decision — it means contracts arrive by
+// governance proposal instead of by transaction. It should fail here and be
+// changed deliberately, not arrive as a diff nobody read.
+func TestWasmGenesisIsPermissionless(t *testing.T) {
+	g := loadGenesis(t)
+	params := g.AppState.Wasm.Params
+
+	if params.CodeUploadAccess.Permission != "Everybody" {
+		t.Errorf("wasm code_upload_access is %q, want %q: uploading a contract would require governance",
+			params.CodeUploadAccess.Permission, "Everybody")
+	}
+	if n := len(params.CodeUploadAccess.Addresses); n != 0 {
+		t.Errorf("wasm code_upload_access names %d address(es); an Everybody permission should name none", n)
+	}
+	if params.InstantiateDefaultPermission != "Everybody" {
+		t.Errorf("wasm instantiate_default_permission is %q, want %q",
+			params.InstantiateDefaultPermission, "Everybody")
 	}
 }

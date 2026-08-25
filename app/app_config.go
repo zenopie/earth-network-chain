@@ -36,6 +36,7 @@ import (
 	_ "cosmossdk.io/x/nft/module" // import for side-effects
 	_ "cosmossdk.io/x/upgrade"    // import for side-effects
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config" // import for side-effects
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -100,7 +101,12 @@ var (
 		// x/earth owns issuance: it mints the emission on its way to the fee
 		// collector, and burns gas fees. Without these permissions MintCoins panics.
 		// It needs no Staking permission — it never touches the staking pools.
-		{Account: earthmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}}}
+		{Account: earthmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		// x/wasm burns, and only burns: the account exists so a contract holding
+		// a vesting account's coins can have them destroyed when the contract is
+		// pruned. It never mints, and no contract's own balance passes through
+		// it — a contract address is an ordinary account.
+		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Burner}}}
 
 	// Blocked account addresses — MsgSend and MsgMultiSend refuse them as a
 	// recipient. Setting this list at all overrides the SDK default, which is to
@@ -134,6 +140,12 @@ var (
 		earthmoduletypes.ModuleName,
 		allocationmoduletypes.ModuleName,
 		personhoodmoduletypes.ModuleName,
+		// Blocked for the usual reason: nothing credits a sender who pays it and
+		// there is no path back out. Contracts are unaffected — they hold coins
+		// at their own ordinary addresses, not here — and x/wasm's own burn path
+		// goes through SendCoinsFromAccountToModule, which does not consult this
+		// list.
+		wasmtypes.ModuleName,
 		// We allow the following module accounts to receive funds:
 		// govtypes.ModuleName
 	}
@@ -229,6 +241,10 @@ var (
 						allocationmoduletypes.ModuleName,
 						personhoodmoduletypes.ModuleName,
 						pkimoduletypes.ModuleName,
+						// wasm last: a contract in genesis may call any other
+						// module, so every module it could reach has to have
+						// initialised first.
+						wasmtypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/initGenesis
 					},
 				}),

@@ -335,6 +335,16 @@ genesis:
         # blocks and emits registration_sweep_capped — so raise this if that
         # event persists. 0 uses the compiled-in default (100).
         registration_sweep_limit: "100"
+    # Permissionless CosmWasm: anyone may upload code and anyone may instantiate
+    # it, paying only gas. These are wasmd's own defaults, stated here so the dev
+    # chain and deploy/genesis/app_state.json agree and so the openness is a
+    # decision on the record rather than an inherited default.
+    wasm:
+      params:
+        code_upload_access:
+          permission: Everybody
+          addresses: []
+        instantiate_default_permission: Everybody
     pki:
       # cscas is the trusted CSCA master list: the root of trust for passport
       # verification. Without it no DSC can be submitted, so no registry root ever
