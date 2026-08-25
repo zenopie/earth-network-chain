@@ -173,8 +173,8 @@ func seedPool(t *testing.T, k keeper.Keeper, ctx sdk.Context, id uint64, erth, t
 		PoolId:        id,
 		ReserveErth:   sdk.NewInt64Coin("uerth", erth),
 		ReserveToken:  sdk.NewInt64Coin(denom, token),
-		Volume:        math.NewInt(volume),
-		LastVolumeDay: uint64(ctx.BlockTime().Unix()) / 86400,
+		VolumeWeight:        math.NewInt(volume),
+		LastTradedDay: uint64(ctx.BlockTime().Unix()) / 86400,
 	}))
 	require.NoError(t, k.PoolByToken.Set(ctx, denom, id))
 
@@ -305,7 +305,7 @@ func TestDormantPoolCollectsWhatItWasAllocated(t *testing.T) {
 	require.NoError(t, err)
 	total, err := k.LpTotalVolume.Get(later)
 	require.NoError(t, err)
-	require.Equal(t, pool.Volume, total, "LpTotalVolume must track the sum of stored pool volumes")
+	require.Equal(t, pool.VolumeWeight, total, "LpTotalVolume must track the sum of stored pool volumes")
 }
 
 // TestNewVolumeOutweighsOld is the decay, expressed the way the scheme expresses
@@ -334,13 +334,13 @@ func TestNewVolumeOutweighsOld(t *testing.T) {
 	require.NoError(t, err)
 	p2, err = k.Pool.Get(later, 2)
 	require.NoError(t, err)
-	require.True(t, p2.Volume.GT(p1.Volume),
+	require.True(t, p2.VolumeWeight.GT(p1.VolumeWeight),
 		"a fortnight-old trade must weigh less than a fresh one of the same size: %s vs %s",
-		p1.Volume, p2.Volume)
+		p1.VolumeWeight, p2.VolumeWeight)
 	// (14/13)^14 is about 2.75, so the fresh trade should be worth roughly
 	// that much more. Loose bounds: this pins the direction and the order of
 	// magnitude, not the rounding.
-	ratio := p2.Volume.Mul(math.NewInt(100)).Quo(p1.Volume)
+	ratio := p2.VolumeWeight.Mul(math.NewInt(100)).Quo(p1.VolumeWeight)
 	require.True(t, ratio.GTE(math.NewInt(250)) && ratio.LTE(math.NewInt(300)),
 		"fresh volume should be ~2.75x a fortnight-old one, got %s/100", ratio)
 }
@@ -359,7 +359,7 @@ func TestStalePoolIsSweptOutOfTheDenominator(t *testing.T) {
 	require.NoError(t, err)
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
-	require.True(t, pool.Volume.IsPositive(), "the swap should have recorded volume")
+	require.True(t, pool.VolumeWeight.IsPositive(), "the swap should have recorded volume")
 
 	distributeLP(t, k, ctx, bank, math.NewInt(500))
 
@@ -368,14 +368,14 @@ func TestStalePoolIsSweptOutOfTheDenominator(t *testing.T) {
 	require.NoError(t, k.SweepStalePools(early))
 	pool, err = k.Pool.Get(early, 1)
 	require.NoError(t, err)
-	require.True(t, pool.Volume.IsPositive(), "a pool inside its window keeps its weight")
+	require.True(t, pool.VolumeWeight.IsPositive(), "a pool inside its window keeps its weight")
 
 	// Past it: swept, and paid what it held right up to the sweep.
 	late := ctx.WithBlockTime(ctx.BlockTime().Add(time.Duration(types.PoolStaleSeconds+1) * time.Second))
 	require.NoError(t, k.SweepStalePools(late))
 	pool, err = k.Pool.Get(late, 1)
 	require.NoError(t, err)
-	require.True(t, pool.Volume.IsZero(), "a stale pool must lose its weight")
+	require.True(t, pool.VolumeWeight.IsZero(), "a stale pool must lose its weight")
 	total, err := k.LpTotalVolume.Get(late)
 	require.NoError(t, err)
 	require.True(t, total.IsZero(), "and must leave the denominator with it")

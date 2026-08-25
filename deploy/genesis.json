@@ -175,7 +175,7 @@
       ],
       "pool_map": [
         {
-          "last_volume_day": "0",
+          "last_traded_day": "0",
           "pool_id": "1",
           "reserve_erth": {
             "amount": "630720000000000",
@@ -185,7 +185,7 @@
             "amount": "7300000000",
             "denom": "uanml"
           },
-          "volume": "0"
+          "volume_weight": "0"
         }
       ]
     },

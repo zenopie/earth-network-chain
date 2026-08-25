@@ -73,9 +73,40 @@ message QueryGetPoolRequest {
   uint64 pool_id = 1;
 }
 
+// PoolView is a pool as the outside world sees it.
+//
+// Separate from Pool because Pool is storage, and storage carries
+// volume_weight — a figure scaled by an ever-growing chain-wide index that is
+// meaningless outside the reward denominator. A public field that has to be
+// de-scaled before it means anything is a field that will be read wrong: the
+// wallet's LP APR did exactly that, computing a decay the chain stopped doing
+// and reporting a rate that drifted further out every day.
+//
+// So the scaled figure does not leave the module. Everything here is in units a
+// caller can use directly.
+message PoolView {
+  uint64 pool_id = 1;
+  cosmos.base.v1beta1.Coin reserve_erth = 2 [(gogoproto.nullable) = false];
+  cosmos.base.v1beta1.Coin reserve_token = 3 [(gogoproto.nullable) = false];
+  // volume_erth is 14-day-weighted swap volume in real uerth, derived at query
+  // time and not stored. Recent trading dominates: a trade a week ago counts
+  // (13/14)^7 of one made today.
+  //
+  // A pool's share of the LP reward stream is this over the sum of it across
+  // pools — the same ratio the chain computes internally, because the scale
+  // that is divided out here is the same for every pool.
+  string volume_erth = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // last_traded_day is the day index at which this pool last traded.
+  uint64 last_traded_day = 5;
+}
+
 // QueryGetPoolResponse defines the QueryGetPoolResponse message.
 message QueryGetPoolResponse {
-  Pool pool = 1 [(gogoproto.nullable) = false];
+  PoolView pool = 1 [(gogoproto.nullable) = false];
 }
 
 // QueryAllPoolRequest defines the QueryAllPoolRequest message.
@@ -85,7 +116,7 @@ message QueryAllPoolRequest {
 
 // QueryAllPoolResponse defines the QueryAllPoolResponse message.
 message QueryAllPoolResponse {
-  repeated Pool pool = 1 [(gogoproto.nullable) = false];
+  repeated PoolView pool = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 

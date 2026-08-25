@@ -26,7 +26,7 @@ import (
 // Volume is stored SCALED, not decayed. There is one global VolumeIndex that
 // grows by VolumeDecayWindow/(VolumeDecayWindow-1) each day, and a pool records
 // `traded * index` rather than `traded`. A reward share is then
-// `pool.Volume / LpTotalVolume`, in which the index cancels — so the shares are
+// `pool.VolumeWeight / LpTotalVolume`, in which the index cancels — so the shares are
 // exact at every instant and nothing has to be aged.
 //
 // That is what fixes the accounting, and it is worth being explicit about what
@@ -206,15 +206,15 @@ func (k Keeper) capVolume(ctx context.Context, pool types.Pool, scaled math.Int)
 // part of it — and that equality was previously re-established by hand at each
 // write site. One funnel means a new write site cannot forget it.
 func (k Keeper) setPoolVolume(ctx context.Context, pool *types.Pool, v math.Int, day uint64) error {
-	old := pool.Volume
+	old := pool.VolumeWeight
 	if old.IsNil() {
 		old = math.ZeroInt()
 	}
 	if v.IsNegative() {
 		v = math.ZeroInt()
 	}
-	pool.Volume = v
-	pool.LastVolumeDay = day
+	pool.VolumeWeight = v
+	pool.LastTradedDay = day
 
 	delta := v.Sub(old)
 	if delta.IsZero() {
@@ -413,7 +413,7 @@ func (k Keeper) SweepStalePools(ctx context.Context) error {
 		} else if err != nil {
 			return err
 		}
-		if pool.Volume.IsNil() || !pool.Volume.IsPositive() {
+		if pool.VolumeWeight.IsNil() || !pool.VolumeWeight.IsPositive() {
 			continue
 		}
 		// Settle first. The pool held this weight right up to now, and the
@@ -480,7 +480,7 @@ func (k Keeper) settlePoolRewards(ctx context.Context, poolID uint64, pool *type
 		return nil
 	}
 
-	if vol := pool.Volume; !vol.IsNil() && vol.IsPositive() {
+	if vol := pool.VolumeWeight; !vol.IsNil() && vol.IsPositive() {
 		owed := vol.Mul(idx.Sub(last)).Quo(lpIndexPrecision)
 		if owed.IsPositive() {
 			hub, err := k.HubDenom(ctx)
@@ -526,7 +526,7 @@ func (k Keeper) applyVolume(ctx context.Context, pool *types.Pool, erthAmount ma
 	if err != nil {
 		return err
 	}
-	old := pool.Volume
+	old := pool.VolumeWeight
 	if old.IsNil() {
 		old = math.ZeroInt()
 	}

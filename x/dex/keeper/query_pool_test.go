@@ -21,10 +21,25 @@ func createNPool(keeper keeper.Keeper, ctx context.Context, n int) []types.Pool 
 		items[i].PoolId = uint64(i)
 		items[i].ReserveErth = sdk.NewInt64Coin(`uerth`, int64(i+100))
 		items[i].ReserveToken = sdk.NewInt64Coin(`token`, int64(i+100))
-		items[i].Volume = math.ZeroInt()
+		items[i].VolumeWeight = math.ZeroInt()
 		_ = keeper.SetPool(ctx, items[i].PoolId, items[i])
 	}
 	return items
+}
+
+// viewOfTest mirrors what the querier returns for a pool created above.
+//
+// Those pools carry zero volume, so the de-scaling is a no-op and this is just
+// a field-for-field copy. Written out rather than reusing the keeper's own
+// viewOf so the test does not pass by sharing the bug it is checking for.
+func viewOfTest(p types.Pool) types.PoolView {
+	return types.PoolView{
+		PoolId:        p.PoolId,
+		ReserveErth:   p.ReserveErth,
+		ReserveToken:  p.ReserveToken,
+		VolumeErth:    p.VolumeWeight,
+		LastTradedDay: p.LastTradedDay,
+	}
 }
 
 func TestPoolQuerySingle(t *testing.T) {
@@ -42,14 +57,14 @@ func TestPoolQuerySingle(t *testing.T) {
 			request: &types.QueryGetPoolRequest{
 				PoolId: msgs[0].PoolId,
 			},
-			response: &types.QueryGetPoolResponse{Pool: msgs[0]},
+			response: &types.QueryGetPoolResponse{Pool: viewOfTest(msgs[0])},
 		},
 		{
 			desc: "Second",
 			request: &types.QueryGetPoolRequest{
 				PoolId: msgs[1].PoolId,
 			},
-			response: &types.QueryGetPoolResponse{Pool: msgs[1]},
+			response: &types.QueryGetPoolResponse{Pool: viewOfTest(msgs[1])},
 		},
 		{
 			desc: "KeyNotFound",
@@ -80,6 +95,12 @@ func TestPoolQueryPaginated(t *testing.T) {
 	f := initFixture(t)
 	qs := keeper.NewQueryServerImpl(f.keeper)
 	msgs := createNPool(f.keeper, f.ctx, 5)
+	// ListPool returns PoolView, not the stored Pool, so the expectations have
+	// to be in the same shape.
+	views := make([]types.PoolView, len(msgs))
+	for i, m := range msgs {
+		views[i] = viewOfTest(m)
+	}
 
 	request := func(next []byte, offset, limit uint64, total bool) *types.QueryAllPoolRequest {
 		return &types.QueryAllPoolRequest{
@@ -97,7 +118,7 @@ func TestPoolQueryPaginated(t *testing.T) {
 			resp, err := qs.ListPool(f.ctx, request(nil, uint64(i), uint64(step), false))
 			require.NoError(t, err)
 			require.LessOrEqual(t, len(resp.Pool), step)
-			require.Subset(t, msgs, resp.Pool)
+			require.Subset(t, views, resp.Pool)
 		}
 	})
 	t.Run("ByKey", func(t *testing.T) {
@@ -107,7 +128,7 @@ func TestPoolQueryPaginated(t *testing.T) {
 			resp, err := qs.ListPool(f.ctx, request(next, 0, uint64(step), false))
 			require.NoError(t, err)
 			require.LessOrEqual(t, len(resp.Pool), step)
-			require.Subset(t, msgs, resp.Pool)
+			require.Subset(t, views, resp.Pool)
 			next = resp.Pagination.NextKey
 		}
 	})
@@ -115,7 +136,7 @@ func TestPoolQueryPaginated(t *testing.T) {
 		resp, err := qs.ListPool(f.ctx, request(nil, 0, 0, true))
 		require.NoError(t, err)
 		require.Equal(t, len(msgs), int(resp.Pagination.Total))
-		require.EqualExportedValues(t, msgs, resp.Pool)
+		require.EqualExportedValues(t, views, resp.Pool)
 	})
 	t.Run("InvalidRequest", func(t *testing.T) {
 		_, err := qs.ListPool(f.ctx, nil)

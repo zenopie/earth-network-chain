@@ -183,8 +183,8 @@ func (k Keeper) CheckVolumeAccounting(ctx context.Context) (stored, summed math.
 	}
 	summed = math.ZeroInt()
 	if err := k.Pool.Walk(ctx, nil, func(_ uint64, p types.Pool) (bool, error) {
-		if !p.Volume.IsNil() {
-			summed = summed.Add(p.Volume)
+		if !p.VolumeWeight.IsNil() {
+			summed = summed.Add(p.VolumeWeight)
 		}
 		return false, nil
 	}); err != nil {

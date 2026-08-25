@@ -17,6 +17,35 @@ The first release after this line is the launch candidate. Until `genesis_time`
 is set and the gentx collected, the network is a single validator and there is
 nothing to join.
 
+### Breaking — clients, NOT consensus
+
+- **Pool queries return real volume instead of an internal weight.** `GetPool`
+  and `ListPool` now answer with `PoolView`, whose `volume_erth` is 14-day
+  weighted swap volume in actual uerth. The stored `Pool.volume` is renamed
+  `volume_weight` and no longer leaves the module; `last_volume_day` becomes
+  `last_traded_day`.
+
+  The old field was swap volume multiplied by a chain-wide index that grows
+  7.7% a day forever, and the proto documented it as "decaying ERTH-denominated
+  swap volume (~7-day half-life window)" — a description of the mechanism it
+  replaced. The wallet implemented that description faithfully and its LP fee
+  APR inflated with the index: right by accident on day one, 18x out within a
+  month, 1,580x within three. Publishing a figure that has to be de-scaled
+  before it means anything is what made that possible, so it is not published.
+
+  The de-scaling happens at query time from state that already exists. Nothing
+  new is stored.
+
+  **This is not consensus-affecting and needs no coordinated upgrade.** The
+  field numbers and types are unchanged, so stored bytes are identical and a
+  new binary reads existing state exactly as the old one did; only the query
+  layer moved. Nodes can be replaced in place, and a mixed network still agrees.
+
+  Clients reading `volume` must read `volume_erth` and must NOT decay it — the
+  chain has already done the weighting. `deploy/genesis.json` changes, because
+  its JSON carries field names; that matters only to a chain launching fresh
+  from it.
+
 ### Breaking — consensus
 
 - **ERTH and ANML now carry denom metadata.** Wallets and explorers read

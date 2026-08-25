@@ -178,7 +178,7 @@ func TestPolBurnClawsBackTheRewardsItEarned(t *testing.T) {
 	// Give the pool volume so it can collect, then hand the dex a reward.
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
-	pool.Volume = math.NewInt(1_000)
+	pool.VolumeWeight = math.NewInt(1_000)
 	require.NoError(t, k.SetPool(ctx, 1, pool))
 	require.NoError(t, k.LpTotalVolume.Set(ctx, math.NewInt(1_000)))
 	distributeLP(t, k, ctx, bank, math.NewInt(100_000))

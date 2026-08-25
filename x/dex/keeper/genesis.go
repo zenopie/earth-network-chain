@@ -17,8 +17,8 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	// import has to rebuild that denominator rather than leave it at zero.
 	totalVolume := math.ZeroInt()
 	for _, elem := range genState.PoolMap {
-		if elem.Volume.IsNil() {
-			elem.Volume = math.ZeroInt()
+		if elem.VolumeWeight.IsNil() {
+			elem.VolumeWeight = math.ZeroInt()
 		}
 		if err := k.SetPool(ctx, elem.PoolId, elem); err != nil {
 			return err
@@ -29,7 +29,7 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		if err := k.PoolLpIndex.Set(ctx, elem.PoolId, math.ZeroInt()); err != nil {
 			return err
 		}
-		totalVolume = totalVolume.Add(elem.Volume)
+		totalVolume = totalVolume.Add(elem.VolumeWeight)
 		if elem.PoolId >= maxID {
 			maxID = elem.PoolId + 1
 		}

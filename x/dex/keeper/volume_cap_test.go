@@ -48,9 +48,9 @@ func TestVolumeCapBoundsWashTrading(t *testing.T) {
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
 	ceiling := capFor(pool.ReserveErth.Amount.Int64())
-	require.True(t, pool.Volume.LTE(ceiling),
-		"counted volume %s exceeded the depth cap %s", pool.Volume, ceiling)
-	require.Equal(t, ceiling, pool.Volume, "sustained wash trading should sit exactly at the cap")
+	require.True(t, pool.VolumeWeight.LTE(ceiling),
+		"counted volume %s exceeded the depth cap %s", pool.VolumeWeight, ceiling)
+	require.Equal(t, ceiling, pool.VolumeWeight, "sustained wash trading should sit exactly at the cap")
 	require.NoError(t, k.AssertInvariants(ctx))
 }
 
@@ -66,9 +66,9 @@ func TestVolumeCapLeavesHonestPoolsAlone(t *testing.T) {
 
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
-	require.True(t, pool.Volume.LT(capFor(pool.ReserveErth.Amount.Int64())),
-		"an honest pool should sit below the cap, got %s", pool.Volume)
-	require.True(t, pool.Volume.IsPositive(), "honest volume must still count")
+	require.True(t, pool.VolumeWeight.LT(capFor(pool.ReserveErth.Amount.Int64())),
+		"an honest pool should sit below the cap, got %s", pool.VolumeWeight)
+	require.True(t, pool.VolumeWeight.IsPositive(), "honest volume must still count")
 	require.NoError(t, k.AssertInvariants(ctx))
 }
 
@@ -95,7 +95,7 @@ func TestVolumeCapFollowsDepthDown(t *testing.T) {
 	}
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
-	atDepth := pool.Volume
+	atDepth := pool.VolumeWeight
 	require.True(t, atDepth.IsPositive())
 
 	// Depth collapses. Written straight into the pool rather than withdrawn
@@ -110,10 +110,10 @@ func TestVolumeCapFollowsDepthDown(t *testing.T) {
 
 	pool, err = k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
-	require.True(t, pool.Volume.LTE(capFor(pool.ReserveErth.Amount.Int64())),
+	require.True(t, pool.VolumeWeight.LTE(capFor(pool.ReserveErth.Amount.Int64())),
 		"volume %s outlived the depth that justified it (cap %s)",
-		pool.Volume, capFor(pool.ReserveErth.Amount.Int64()))
-	require.True(t, pool.Volume.LT(atDepth), "counted volume should fall with depth")
+		pool.VolumeWeight, capFor(pool.ReserveErth.Amount.Int64()))
+	require.True(t, pool.VolumeWeight.LT(atDepth), "counted volume should fall with depth")
 }
 
 // TestCappingKeepsTheDenominatorInStep guards the accounting the cap runs
@@ -135,10 +135,10 @@ func TestCappingKeepsTheDenominatorInStep(t *testing.T) {
 	total, err := k.LpTotalVolume.Get(ctx)
 	require.NoError(t, err)
 
-	require.Equal(t, capFor(pool.ReserveErth.Amount.Int64()), pool.Volume,
+	require.Equal(t, capFor(pool.ReserveErth.Amount.Int64()), pool.VolumeWeight,
 		"stored volume should be clamped to the cap on first touch")
-	require.Equal(t, pool.Volume, total,
+	require.Equal(t, pool.VolumeWeight, total,
 		"the global denominator must follow the clamp down, got %s for a pool holding %s",
-		total, pool.Volume)
+		total, pool.VolumeWeight)
 	require.NoError(t, k.AssertInvariants(ctx))
 }

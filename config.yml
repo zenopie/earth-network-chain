@@ -251,8 +251,8 @@ genesis:
         reserve_token:
           denom: uanml
           amount: "7300000000"
-        volume: "0"
-        last_volume_day: "0"
+        volume_weight: "0"
+        last_traded_day: "0"
       # The genesis liquidity auction. It starts PENDING: the two earmarks are
       # already funded on the module account above and this only records how much
       # of that balance is spoken for. Governance opens a window with

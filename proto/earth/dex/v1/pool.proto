@@ -15,17 +15,30 @@ message Pool {
   cosmos.base.v1beta1.Coin reserve_erth = 2 [(gogoproto.nullable) = false];
   // reserve_token is the spoke-side reserve.
   cosmos.base.v1beta1.Coin reserve_token = 3 [(gogoproto.nullable) = false];
-  // volume is the pool's decaying ERTH-denominated swap volume, used to weight
-  // LP reward distribution. It decays exponentially per day (~7-day half-life
-  // window), so recent trading dominates.
-  string volume = 4 [
+  // volume_weight is this pool's share of the LP reward denominator. It is NOT
+  // ERTH and it is NOT decayed: it is swap volume multiplied by the chain-wide
+  // VolumeIndex at the moment it was recorded, so a trade today is worth 14/13
+  // of one yesterday without anything having to go back and reduce the old
+  // figure. See x/dex/keeper/lp_rewards.go.
+  //
+  // The scale cancels in `volume_weight / LpTotalVolume`, which is the only
+  // thing the chain does with it, but it grows without bound in absolute terms
+  // — so it is meaningless on its own and never leaves the module. Queries
+  // return PoolView.volume_erth, which is this figure de-scaled back into real
+  // uerth.
+  string volume_weight = 4 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
     (gogoproto.nullable) = false
   ];
-  // last_volume_day is the day index (block time / 86400) at which `volume` was
-  // last decayed/updated.
-  uint64 last_volume_day = 5;
+  // last_traded_day is the day index (block time / 86400) at which
+  // volume_weight was last written.
+  //
+  // A write stamp, not a decay marker: nothing is aged from it, and a client
+  // that treats it as "volume was last decayed here" will compute a decay the
+  // chain does not perform. It exists so the staleness sweep knows when a pool
+  // last traded.
+  uint64 last_traded_day = 5;
 }
 
 // PolBurn is the schedule that retires the protocol's own liquidity in a pool.
