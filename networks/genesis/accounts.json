@@ -3,10 +3,14 @@
     "Every balance the chain starts with. Nothing else may hold one — genesis_test.go",
     "fails the build if it does.",
     "",
-    "The ads-for-gas hot wallet used to be here with 10,000 ERTH. It is gone: its key",
-    "was a devnet key that had been on a laptop, and a launch genesis is not the place",
-    "to fund an operational wallet from one. Fund it after launch from the validator,",
-    "with a key that has never left a signer.",
+    "The ads-for-gas hot wallet is here with 10,000 ERTH for the devnet only. It was",
+    "removed once already, for a reason that still stands: its key is a devnet key that",
+    "has been on a laptop, and a launch genesis is not the place to fund an operational",
+    "wallet from one. It is back because every genesis cutover otherwise leaves the",
+    "service with an empty wallet, and that failure is silent and expensive — callbacks",
+    "still verify, transaction ids are still consumed, and people watch ads for nothing.",
+    "REMOVE IT before the real launch genesis and fund it after launch from the",
+    "validator, with a key that has never left a signer.",
     "",
     "'keyed' accounts are added with `earthd genesis add-genesis-account`, which writes",
     "auth, bank.balances and bank.supply together. That is the whole reason the tool is",
@@ -28,6 +32,11 @@
       "address": "earth1s7rgscltvw8v3kzhj46pptdqg843ngs7th9ywp",
       "coins": "10000000000uerth",
       "note": "Devnet faucet/test account. 10,000 ERTH, enough to exercise transfers, swaps, governance deposits and a second validator's self-delegation without topping up. Its mnemonic is DEV_MNEMONIC in the gitignored .env of the deploy repo and is not in this repository. REMOVE THIS ACCOUNT before the real launch genesis: it is a key that has been on a laptop, and nothing on mainnet should be funded from one."
+    },
+    {
+      "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
+      "coins": "10000000000uerth",
+      "note": "The ads-for-gas hot wallet, devnet only. 10,000 ERTH is 200,000 grants at DUST_UERTH=50000 — the service sends one dust grant per verified rewarded-ad view so a new human can afford the transaction that registers them. Seeded here because a cutover otherwise starts the service with an empty wallet, which fails quietly: /health reports grants_remaining 0, but callbacks still verify and consume their transaction_id, so the ads are watched and nothing is granted. Its mnemonic is GAS_WALLET_MNEMONIC in the gitignored .env of the backend repo and is not in this repository. REMOVE THIS ACCOUNT before the real launch genesis, for the same reason as the faucet above: it is a key that has been on a laptop."
     }
   ],
   "modules": [
