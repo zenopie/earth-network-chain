@@ -17,31 +17,40 @@ The first release after this line is the launch candidate. Until `genesis_time`
 is set and the gentx collected, the network is a single validator and there is
 nothing to join.
 
-### Breaking — clients, NOT consensus
-
-- **Pool queries return real volume instead of an internal weight.** `GetPool`
-  and `ListPool` now answer with `PoolView`, whose `volume_erth` is 14-day
-  weighted swap volume in actual uerth. The stored `Pool.volume` is renamed
-  `volume_weight` and no longer leaves the module; `last_volume_day` becomes
-  `last_traded_day`.
-
-  The old field was swap volume multiplied by a chain-wide index that grows
-  7.7% a day forever, and the proto documented it as "decaying ERTH-denominated
-  swap volume (~7-day half-life window)" — a description of the mechanism it
-  replaced. The wallet implemented that description faithfully and its LP fee
-  APR inflated with the index: right by accident on day one, 18x out within a
-  month. Publishing a figure that must be de-scaled before it means anything is
-  what made that possible, so it is no longer published. The de-scaling happens
-  at query time from state that already exists; nothing new is stored.
-
-  **Not consensus-affecting.** Field numbers and types are unchanged, so stored
-  bytes are identical and a new binary reads existing state exactly as the old
-  one did. Only the query layer moved, and queries are not part of the app hash.
-
-  Clients reading `volume` must read `volume_erth`, and must NOT decay it — the
-  chain has already done the weighting.
-
 ### Operators
+
+- **Downloaded releases could not start.** Every published tarball up to and
+  including `v0.4.5` contained `earthd` and `LICENSE` and nothing else, while
+  the binary needs `libwasmvm` as a shared library. wasmvm's cgo directive bakes
+  in `-Wl,-rpath,<the builder's Go module cache>`, which was the only rpath in
+  the binary, so running it anywhere but the machine that built it gave
+
+      libwasmvm.x86_64.so: cannot open shared object file
+
+  The container image was never affected — it copies the library into
+  `/usr/local/lib` and runs `ldconfig` — which is why this survived five
+  releases. Anyone following `docs/run-a-node/join.md` hit it immediately.
+
+  **The tarball layout has changed.** It now holds `bin/earthd` and a `lib/`
+  with the matching `libwasmvm`, `libc++`, `libc++abi` and `libunwind`, and the
+  binary carries `-Wl,-rpath,$ORIGIN/../lib` so it finds them wherever it is
+  unpacked. `libc`, `libm` and the loader still come from the host, deliberately.
+
+      sudo install -m755 <dir>/bin/earthd /usr/local/bin/
+      sudo install -m644 <dir>/lib/*      /usr/local/lib/
+
+  Both lines are required. `earthd` and `libwasmvm` are version-locked: never
+  pair one release's binary with another release's library.
+
+- **Cosmovisor is available, and optional.** It ships in the container image and
+  is off unless `USE_COSMOVISOR=true`. Nothing changes for a node that does not
+  set it. `docs/run-a-node/upgrades.md` documents the manual path and the
+  cosmovisor path side by side.
+
+  The release archive is rooted at `bin/` with no wrapper directory so that
+  cosmovisor's auto-download works: it accepts `/<daemon>` or `/bin/<daemon>`
+  and nothing else, and a wrapper directory fails at the upgrade height with the
+  chain already halted.
 
 - **The first real upgrade handler.** `app/upgrades.go` carries an entry for
   `v0.4.0`. Its migration does nothing, deliberately: this release needs no
