@@ -35,6 +35,15 @@ EARTH_RPC="${EARTH_RPC:-http://node:26657}"
 EARTH_GAS_PRICES="${EARTH_GAS_PRICES:-0.006uerth}"
 COUNTERPARTY_PREFIX="${COUNTERPARTY_PREFIX:-cosmos}"
 COUNTERPARTY_GAS_PRICES="${COUNTERPARTY_GAS_PRICES:-0.025uatom}"
+# 118 is the Cosmos default and right for most chains. Ethereum-style chains
+# derive keys down coin type 60 and sign with ethsecp256k1 rather than
+# secp256k1 — Injective is one. Get either of these wrong and rly derives an
+# address that is not the one you funded, then fails with "account not found"
+# or an unparseable pubkey, neither of which names the real cause.
+#
+#   Injective:  COUNTERPARTY_COIN_TYPE=60  COUNTERPARTY_EXTRA_CODECS='"ethermint"'
+COUNTERPARTY_COIN_TYPE="${COUNTERPARTY_COIN_TYPE:-118}"
+COUNTERPARTY_EXTRA_CODECS="${COUNTERPARTY_EXTRA_CODECS:-}"
 PATH_NAME="${PATH_NAME:-earth-hub}"
 RLY_HOME="${RLY_HOME:-/data/relayer}"
 
@@ -68,13 +77,17 @@ EOF
   "account-prefix":"$COUNTERPARTY_PREFIX","keyring-backend":"test",
   "gas-adjustment":1.5,"gas-prices":"$COUNTERPARTY_GAS_PRICES","min-gas-amount":0,
   "debug":false,"timeout":"20s","output-format":"json",
-  "sign-mode":"direct","extra-codecs":[],"coin-type":118,
+  "sign-mode":"direct","extra-codecs":[$COUNTERPARTY_EXTRA_CODECS],
+  "coin-type":$COUNTERPARTY_COIN_TYPE,
   "broadcast-mode":"batch"}}
 EOF
   rly chains add --file /tmp/earth.json "$CHAIN_ID" --home "$RLY_HOME"
   rly chains add --file /tmp/counterparty.json "$COUNTERPARTY_CHAIN_ID" --home "$RLY_HOME"
 
-  # One mnemonic, both chains. Same key material, different prefixes.
+  # One mnemonic, both chains. Same key material — but NOT necessarily the same
+  # address: a counterparty on coin type 60 derives a different key from the
+  # same words than earth does on 118. Check the addresses printed below against
+  # the ones you funded.
   rly keys restore "$CHAIN_ID" default "$RELAYER_MNEMONIC" --home "$RLY_HOME"
   rly keys restore "$COUNTERPARTY_CHAIN_ID" default "$RELAYER_MNEMONIC" --home "$RLY_HOME"
 

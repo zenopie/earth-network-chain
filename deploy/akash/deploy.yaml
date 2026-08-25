@@ -196,33 +196,28 @@ services:
       # Everything below is read only when ENABLED=true, and only the first time
       # — the config is written once into /data/relayer and reused after that.
       #
-      - COUNTERPARTY_CHAIN_ID=osmo-test-5
-      - COUNTERPARTY_RPC=https://rpc.testnet.osmosis.zone:443
-      - COUNTERPARTY_PREFIX=osmo
-      # Osmosis prices fees with an EIP-1559-style base fee that MOVES with
-      # demand, enforced chain-level by x/txfees — not by the node's
-      # minimum-gas-prices, which reports empty and misleads you into thinking
-      # anything clears. Read the live floor at
-      #   /osmosis/txfees/v1beta1/cur_eip_base_fee
-      # It was 0.030 when this was set, so 0.025 had every transaction rejected
-      # for insufficient fees. Set well clear of the floor rather than on it:
-      # the whole point of a dynamic fee is that it rises.
-      - COUNTERPARTY_GAS_PRICES=0.1uosmo
+      - COUNTERPARTY_CHAIN_ID=injective-888
+      - COUNTERPARTY_RPC=https://testnet.sentry.tm.injective.network:443
+      - COUNTERPARTY_PREFIX=inj
+      # Injective is Ethereum-style: coin type 60 and ethsecp256k1 keys, not the
+      # Cosmos defaults. Both are required or rly signs with the wrong key.
+      - COUNTERPARTY_COIN_TYPE=60
+      - COUNTERPARTY_EXTRA_CODECS="ethermint"
+      # Injective's minimum is 160000000inj per gas unit, and INJ has 18
+      # decimals. Set with headroom, as with any chain whose floor can move.
+      - COUNTERPARTY_GAS_PRICES=500000000inj
       # true for ONE deploy, to create the client, connection and channel. Put
       # it back to false afterwards: linking spends gas on both chains and is
       # not something a container restart should retry.
-      - LINK_ON_START=false
-      # The path an earlier link established. Without these the config rebuilt
-      # on each boot has no connection, and rly relays nothing while looking
-      # perfectly healthy. Read them back with:
-      #   /ibc/core/connection/v1/connections/connection-0
-      - SRC_CLIENT_ID=07-tendermint-5
-      - SRC_CONNECTION_ID=connection-0
-      - DST_CLIENT_ID=07-tendermint-5265
-      - DST_CONNECTION_ID=connection-4596
+      # true for ONE deploy to build the Injective path, then back to false with
+      # SRC_/DST_CLIENT_ID and SRC_/DST_CONNECTION_ID filled in from
+      #   /ibc/core/connection/v1/connections/<id>
+      # Without those pinned, the config rebuilt on each boot has no connection
+      # and rly relays nothing while looking perfectly healthy.
+      - LINK_ON_START=true
       # Names the path in rly's config and in its logs. Defaults to "earth-hub",
       # which is wrong for any counterparty that is not the Cosmos Hub.
-      - PATH_NAME=earth-osmo
+      - PATH_NAME=earth-inj
       #
       # EARTH_GAS_PRICES defaults to 0.006uerth, just above the node's
       # MIN_GAS_PRICES. Only set it here if you raise the node's minimum.
