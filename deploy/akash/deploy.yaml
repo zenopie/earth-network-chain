@@ -191,16 +191,22 @@ services:
       - /usr/local/bin/relayer.sh
     env:
       # The switch. Anything other than "true" and the container idles.
-      - ENABLED=false
+      - ENABLED=true
       #
       # Everything below is read only when ENABLED=true, and only the first time
       # — the config is written once into /data/relayer and reused after that.
       #
-      # - COUNTERPARTY_CHAIN_ID=cosmoshub-4
-      # - COUNTERPARTY_RPC=https://...
-      # - COUNTERPARTY_PREFIX=cosmos
-      # - COUNTERPARTY_GAS_PRICES=0.025uatom
-      # - LINK_ON_START=false   # true once, to create the channel
+      - COUNTERPARTY_CHAIN_ID=osmo-test-5
+      - COUNTERPARTY_RPC=https://rpc.testnet.osmosis.zone:443
+      - COUNTERPARTY_PREFIX=osmo
+      - COUNTERPARTY_GAS_PRICES=0.025uosmo
+      # true for ONE deploy, to create the client, connection and channel. Put
+      # it back to false afterwards: linking spends gas on both chains and is
+      # not something a container restart should retry.
+      - LINK_ON_START=true
+      # Names the path in rly's config and in its logs. Defaults to "earth-hub",
+      # which is wrong for any counterparty that is not the Cosmos Hub.
+      - PATH_NAME=earth-osmo
       #
       # EARTH_GAS_PRICES defaults to 0.006uerth, just above the node's
       # MIN_GAS_PRICES. Only set it here if you raise the node's minimum.

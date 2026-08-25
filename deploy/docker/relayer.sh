@@ -7,9 +7,10 @@
 # without the concerns that surround the consensus key. The worst a broken or
 # absent relayer does is delay packets until they time out and refund.
 #
-# What it CANNOT do is run without funds. Earth is zero-fee, but every packet
-# also needs a transaction on the counterparty, paid in that chain's token. A
-# relayer whose counterparty balance runs dry stops relaying silently.
+# What it CANNOT do is run without funds, on EITHER chain. Delivering a packet
+# is a transaction wherever it lands, paid in that chain's token, and earth is
+# not free — the node sets minimum-gas-prices. A relayer whose balance runs dry
+# on either side stops relaying silently.
 set -eu
 
 say() { printf '[relayer] %s\n' "$*"; }
@@ -85,7 +86,25 @@ fi
 # chains, so it is opt-in rather than something a restart re-attempts.
 if [ "${LINK_ON_START:-false}" = "true" ]; then
   say "linking $PATH_NAME (creates client, connection and channel)"
-  rly transact link "$PATH_NAME" --home "$RLY_HOME"
+
+  # --override skips the scan for an existing client to reuse, and on some
+  # counterparties that scan is fatal. rly decodes every client the chain hosts,
+  # and a chain hosting 08-wasm light clients (Osmosis testnet does — that is
+  # how Celestia and Ethereum are bridged) makes it fail before a single
+  # transaction is submitted:
+  #
+  #   no concrete type registered for type URL
+  #   /ibc.lightclients.wasm.v1.ClientState against interface *exported.ClientState
+  #
+  # rly v2.6.0 — the newest release — does not register that type. The cost of
+  # skipping the scan is a fresh client rather than a reused one, which is a few
+  # thousand gas once. LINK_REUSE_CLIENT=true restores the old behaviour on a
+  # counterparty where reuse matters and the scan works.
+  if [ "${LINK_REUSE_CLIENT:-false}" = "true" ]; then
+    rly transact link "$PATH_NAME" --home "$RLY_HOME"
+  else
+    rly transact link "$PATH_NAME" --override --home "$RLY_HOME"
+  fi
 fi
 
 say "relaying $PATH_NAME"
