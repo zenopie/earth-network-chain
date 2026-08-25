@@ -202,6 +202,10 @@ services:
       # - COUNTERPARTY_GAS_PRICES=0.025uatom
       # - LINK_ON_START=false   # true once, to create the channel
       #
+      # EARTH_GAS_PRICES defaults to 0.006uerth, just above the node's
+      # MIN_GAS_PRICES. Only set it here if you raise the node's minimum.
+      # - EARTH_GAS_PRICES=0.006uerth
+      #
       # RELAYER_MNEMONIC is NOT set here. Everything in this file reaches the
       # provider, and while this key only pays gas, a mnemonic in a public repo
       # is a mnemonic on the internet. Inject it at deploy time like

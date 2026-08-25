@@ -28,6 +28,10 @@ fi
 
 CHAIN_ID="${CHAIN_ID:-earth-1}"
 EARTH_RPC="${EARTH_RPC:-http://node:26657}"
+# Must be >= the node's minimum-gas-prices (MIN_GAS_PRICES in the SDL, 0.005uerth).
+# Defaulted a little above it so a small bump on the node side does not silently
+# stop the relayer.
+EARTH_GAS_PRICES="${EARTH_GAS_PRICES:-0.006uerth}"
 COUNTERPARTY_PREFIX="${COUNTERPARTY_PREFIX:-cosmos}"
 COUNTERPARTY_GAS_PRICES="${COUNTERPARTY_GAS_PRICES:-0.025uatom}"
 PATH_NAME="${PATH_NAME:-earth-hub}"
@@ -41,11 +45,18 @@ if [ ! -f "$RLY_HOME/config/config.yaml" ]; then
 
   # coin-type 118 on both sides: Earth uses the Cosmos default (app/app.go).
   # Getting it wrong yields addresses that look correct and hold nothing.
+  #
+  # EARTH_GAS_PRICES must be at or above the node's minimum-gas-prices, which
+  # the SDL sets to 0.005uerth. This said "0uerth" until it was noticed: earth
+  # was zero-fee once, the minimum was raised to stop free spam, and the relayer
+  # config never followed. Every packet it tried to deliver would have been
+  # rejected with "insufficient fees" — while looking, from the outside, like a
+  # channel or counterparty problem rather than a fee one.
   cat > /tmp/earth.json <<EOF
 {"type":"cosmos","value":{
   "key":"default","chain-id":"$CHAIN_ID","rpc-addr":"$EARTH_RPC",
   "account-prefix":"earth","keyring-backend":"test",
-  "gas-adjustment":1.5,"gas-prices":"0uerth","min-gas-amount":0,
+  "gas-adjustment":1.5,"gas-prices":"$EARTH_GAS_PRICES","min-gas-amount":0,
   "debug":false,"timeout":"20s","output-format":"json",
   "sign-mode":"direct","extra-codecs":[],"coin-type":118,
   "broadcast-mode":"batch"}}

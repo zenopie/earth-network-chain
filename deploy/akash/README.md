@@ -83,9 +83,15 @@ restart should retry.
 The config is written once into `/data/relayer` and reused, so changing the env
 afterwards does nothing until that directory is cleared.
 
-**It needs funding on the counterparty.** Earth is zero-fee, but every packet
-also costs a transaction on the other chain, in that chain's token. A relayer
-whose counterparty balance runs dry stops relaying silently.
+**It needs funding on BOTH chains.** Earth is no longer zero-fee — the node sets
+`MIN_GAS_PRICES=0.005uerth` to stop free spam — so the relayer pays uerth to
+deliver a packet here, and the counterparty's token to deliver one there. A
+relayer whose balance runs dry on either side stops relaying silently.
+
+This note used to say earth was free and only the counterparty needed funding.
+That was true when it was written and stopped being true when the minimum was
+raised; `relayer.sh` still had `"gas-prices":"0uerth"` to match, which would
+have had every packet rejected for insufficient fees on first use.
 
 `earth-ibc-test` in the projects folder is the local two-chain rig this was
 derived from.
