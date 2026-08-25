@@ -25,7 +25,7 @@ services:
     # A version tag is mutable and a digest is not; on a chain the difference
     # between "the image I tested" and "an image with that name" is a consensus
     # failure. The workflow fails the release if its pattern stops matching.
-    image: ghcr.io/zenopie/earth-network-chain@sha256:ab8df834ef59fb4f0f39b09a32b199214bcdc7588e6d9937de7bbb150274454f
+    image: ghcr.io/zenopie/earth-network-chain@sha256:53ad58e0fa6110552cf4ddbd11ae0e6d43763c51145575236e542c424049e001
 
     env:
       - CHAIN_ID=earth-1
@@ -186,7 +186,7 @@ services:
   # else. The failure mode is delay, not theft.
   relayer:
     # PINNED BY CI alongside the node's image; both are this repo.
-    image: ghcr.io/zenopie/earth-network-chain@sha256:ab8df834ef59fb4f0f39b09a32b199214bcdc7588e6d9937de7bbb150274454f
+    image: ghcr.io/zenopie/earth-network-chain@sha256:53ad58e0fa6110552cf4ddbd11ae0e6d43763c51145575236e542c424049e001
     command:
       - /usr/local/bin/relayer.sh
     env:
