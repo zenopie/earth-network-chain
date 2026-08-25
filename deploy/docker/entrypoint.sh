@@ -144,12 +144,49 @@ sed_inplace() {
   sed "$expr" "$file" > "$file.tmp" && mv "$file.tmp" "$file"
 }
 
-if [ -f "$EARTH_HOME/config/genesis.json" ]; then
-  say "existing genesis found — resuming chain at $EARTH_HOME"
-  say "genesis sha256 $(sha256_of "$EARTH_HOME/config/genesis.json")"
+# Marker written only after collect-gentxs succeeds. See devnet_is_complete.
+DEVINIT_DONE="$EARTH_HOME/config/.devinit-complete"
 
-elif [ "$DEV_INIT" = "1" ]; then
+# Is the genesis on the volume a *finished* devnet genesis?
+#
+# This exists because the DEV_INIT path below is not atomic and cannot easily be
+# made so: it writes config/genesis.json early (earthd init, then cp) and only
+# collects the gentx several commands later. Anything that interrupts it in
+# between — the pod rescheduled, the container killed — leaves a genesis file
+# with an empty gen_txs on the volume. Without this check the next start finds a
+# genesis, takes the resume path, and earthd dies with
+#
+#   error during handshake: error on replay: validator set is empty after
+#   InitGenesis, please ensure at least one validator is initialized ...
+#
+# on every restart forever, because the resume path never rebuilds. That is
+# exactly what happened on the first v0.2.0 lease: the node crash-looped, the
+# pod reported available but never ready, and the Console API exposes no logs to
+# say why. A devnet genesis with no gentx is broken by construction, so detect
+# it and rebuild rather than resuming into a chain that cannot produce a block.
+devnet_is_complete() {
+  [ -f "$DEVINIT_DONE" ] && return 0
+  # No marker: either a half-built chain, or one built by an image from before
+  # the marker existed. The gentx is what tells those apart.
+  [ -f "$EARTH_HOME/config/genesis.json" ] || return 1
+  if grep -q '"gen_txs"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]' "$EARTH_HOME/config/genesis.json"; then
+    return 1
+  fi
+  # Healthy chain from an older image. Adopt it and stop re-checking.
+  touch "$DEVINIT_DONE" 2>/dev/null || true
+  return 0
+}
+
+if [ "$DEV_INIT" = "1" ] && ! devnet_is_complete; then
   # ── devnet ───────────────────────────────────────────────────────────────
+  if [ -f "$EARTH_HOME/config/genesis.json" ]; then
+    say "DEV_INIT=1 and the genesis on this volume has no gentx — a previous"
+    say "attempt died partway through. Rebuilding rather than resuming a chain"
+    say "with an empty validator set."
+    # Safe: a genesis with no gentx never produced a block, so there is no
+    # history here to lose. Config is rebuilt from scratch below.
+    rm -rf "$EARTH_HOME/config" "$EARTH_HOME/data"
+  fi
   say "DEV_INIT=1 — creating a NEW throwaway chain (not joining one)"
   earthd init "$MONIKER" --chain-id "$CHAIN_ID" --home "$EARTH_HOME" >/dev/null 2>&1
   cp "$GENESIS_SRC" "$EARTH_HOME/config/genesis.json"
@@ -197,8 +234,25 @@ elif [ "$DEV_INIT" = "1" ]; then
     earthd genesis add-genesis-account validator "$VALIDATOR_COINS" $KEYRING
   fi
   earthd genesis gentx validator "$VALIDATOR_BONDED" --chain-id "$CHAIN_ID" $KEYRING >/dev/null
-  earthd genesis collect-gentxs --home "$EARTH_HOME" >/dev/null 2>&1
+  # NOT >/dev/null 2>&1. This is the step whose failure used to be invisible:
+  # with both streams discarded, a collect that died took its reason with it and
+  # left a genesis that looked fine until earthd refused to start.
+  earthd genesis collect-gentxs --home "$EARTH_HOME" >/dev/null
+
+  # Refuse to hand earthd a genesis that cannot produce a block, rather than
+  # letting it discover that during the ABCI handshake.
+  if grep -q '"gen_txs"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]' "$EARTH_HOME/config/genesis.json"; then
+    die "collect-gentxs produced a genesis with no gentx — refusing to start"
+  fi
+
+  # Last thing, and only on success: this is what stops a later restart from
+  # resuming a half-built chain.
+  touch "$DEVINIT_DONE"
   say "devnet genesis ready: validator bonded $VALIDATOR_BONDED"
+
+elif [ -f "$EARTH_HOME/config/genesis.json" ]; then
+  say "existing genesis found — resuming chain at $EARTH_HOME"
+  say "genesis sha256 $(sha256_of "$EARTH_HOME/config/genesis.json")"
 
 else
   # ── join ─────────────────────────────────────────────────────────────────

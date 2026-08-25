@@ -17,6 +17,36 @@ The first release after this line is the launch candidate. Until `genesis_time`
 is set and the gentx collected, the network is a single validator and there is
 nothing to join.
 
+### Fixed
+
+- **A devnet whose first boot was interrupted no longer crash-loops forever.**
+  The `DEV_INIT` path in `deploy/docker/entrypoint.sh` writes
+  `config/genesis.json` early and only collects the gentx several commands
+  later. Anything that interrupted it in between left a genesis with an empty
+  `gen_txs` on the volume, and because the resume path only checks that a
+  genesis *exists*, every later start resumed that file and died with
+
+      error during handshake: error on replay: validator set is empty after
+      InitGenesis
+
+  forever, with no way out but destroying the volume. The v0.2.0 lease hit
+  exactly this: the pod reported available, never ready, and the Akash Console
+  API exposes no logs to say why.
+
+  The entrypoint now writes a `.devinit-complete` marker only after
+  `collect-gentxs` succeeds, and treats a devnet genesis with no gentx as
+  broken-by-construction — rebuilding it rather than resuming a chain that
+  cannot produce a block. A healthy chain from an older image is adopted
+  unchanged. `collect-gentxs` also no longer discards stderr, which is what made
+  the original failure invisible.
+
+- **The image now proves `earthd` runs before it ships.** A `RUN earthd --help`
+  in the runtime stage forces the dynamic loader to resolve every NEEDED entry,
+  libwasmvm included, so a binary that cannot start is a red build rather than a
+  container that exits instantly somewhere you cannot read logs.
+
+## [v0.2.0]
+
 ### Breaking — consensus
 
 - **Permissionless CosmWasm.** The chain runs `x/wasm` (wasmd v0.61.14). Anyone

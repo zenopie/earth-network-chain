@@ -124,6 +124,13 @@ RUN ldconfig /usr/local/lib
 
 COPY --from=build /out/earthd /usr/local/bin/earthd
 COPY --from=build /out/rly /usr/local/bin/rly
+
+# Prove the binary can actually start before the image ships. `earthd --help`
+# touches no chain state, but it forces the dynamic loader to resolve every
+# NEEDED entry — libwasmvm included — so a library the loader cannot find
+# becomes a red build instead of a container that exits instantly on a provider
+# whose logs you cannot read.
+RUN earthd --help >/dev/null && echo "earthd links and runs"
 COPY deploy/docker/relayer.sh /usr/local/bin/relayer.sh
 # Genesis and the hash it is checked against. The entrypoint refuses to start if
 # they disagree, so a genesis swapped into the image after the fact fails loudly
