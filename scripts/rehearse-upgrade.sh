@@ -2,10 +2,14 @@
 #
 # Rehearses a governance upgrade end to end on a throwaway local chain.
 #
-# app/upgrades.go is well built and has never run. `var Upgrades = []Upgrade{}`
-# means the halt, the store loader and the handler lookup have executed exactly
-# zero times, and the first time they do will be a real upgrade on a live chain
-# with validators waiting. This turns that into something already seen once.
+# app/upgrades.go was well built and had never run: the halt, the store loader
+# and the handler lookup had executed exactly zero times, and the first time
+# they did would have been a real upgrade on a live chain with validators
+# waiting. This turns that into something already seen once.
+#
+# It works whether or not real upgrades have shipped. All it needs is a plan
+# name the current binary has no handler for, which is what makes the old
+# binary halt.
 #
 # What it does:
 #
@@ -49,12 +53,17 @@ KR="--keyring-backend test --home $HOME_DIR"
 TXFLAGS="--chain-id $CHAIN_ID --node tcp://127.0.0.1:26657 --gas auto --gas-adjustment 1.6 --gas-prices 0.005uerth -y"
 Q="--home $HOME_DIR --node tcp://127.0.0.1:26657"
 
-step "build the 'old' binary (Upgrades is empty)"
+step "build the 'old' binary (no handler for $NAME)"
 cp "$REPO/app/upgrades.go" "$WORK/upgrades.go.orig"
 ( cd "$REPO" && go build -o "$E" ./cmd/earthd )
-grep -q 'Upgrades = \[\]Upgrade{}' "$REPO/app/upgrades.go" \
-  && ok "Upgrades is empty, as it is on master" \
-  || die "Upgrades is not empty — this rehearsal assumes a clean starting point"
+# What matters is that the OLD binary lacks a handler for the name this
+# rehearsal proposes — not that Upgrades is empty. It was empty once; it stops
+# being empty the moment a real upgrade ships, and a rehearsal that only works
+# on a chain that has never upgraded is a rehearsal that retires itself exactly
+# when it starts being worth running.
+grep -q "Name:[[:space:]]*\"$NAME\"" "$REPO/app/upgrades.go" \
+  && die "Upgrades already contains $NAME — pick a name this binary does not handle"
+ok "no handler for $NAME yet, so the old binary must halt on it"
 
 step "start a single-validator chain"
 "$E" init rehearsal --chain-id "$CHAIN_ID" --home "$HOME_DIR" >/dev/null 2>&1
@@ -170,9 +179,11 @@ python3 - "$REPO/app/upgrades.go" "$NAME" <<'PY'
 import sys
 p, name = sys.argv[1], sys.argv[2]
 s = open(p).read()
-s = s.replace(
-    'var Upgrades = []Upgrade{}',
-    'var Upgrades = []Upgrade{\n\t{Name: "%s", CreateHandler: defaultUpgradeHandler},\n}' % name)
+# Prepend into whatever is already there, rather than assuming an empty list.
+entry = '\t{Name: "%s", CreateHandler: defaultUpgradeHandler},\n' % name
+marker = 'var Upgrades = []Upgrade{'
+i = s.index(marker) + len(marker)
+s = s[:i] + '\n' + entry + s[i:].lstrip('\n')
 open(p, 'w').write(s)
 PY
 ( cd "$REPO" && go build -o "$E" ./cmd/earthd )

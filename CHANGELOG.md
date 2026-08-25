@@ -30,6 +30,51 @@ nothing to join.
   swap volume (~7-day half-life window)" — a description of the mechanism it
   replaced. The wallet implemented that description faithfully and its LP fee
   APR inflated with the index: right by accident on day one, 18x out within a
+  month. Publishing a figure that must be de-scaled before it means anything is
+  what made that possible, so it is no longer published. The de-scaling happens
+  at query time from state that already exists; nothing new is stored.
+
+  **Not consensus-affecting.** Field numbers and types are unchanged, so stored
+  bytes are identical and a new binary reads existing state exactly as the old
+  one did. Only the query layer moved, and queries are not part of the app hash.
+
+  Clients reading `volume` must read `volume_erth`, and must NOT decay it — the
+  chain has already done the weighting.
+
+### Operators
+
+- **The first real upgrade handler.** `app/upgrades.go` carries an entry for
+  `v0.4.0`. Its migration does nothing, deliberately: this release needs no
+  migration, which makes it the safest possible first exercise of a path that
+  had never run outside `scripts/rehearse-upgrade.sh`.
+
+  So there are two ways to take this release, and both are correct:
+
+      in place       swap the binary. Nothing halts; the handler never runs.
+      by governance  submit MsgSoftwareUpgrade for "v0.4.0" at a height. The
+                     chain halts there, you swap the binary, it resumes.
+
+  The second is a rehearsal with nothing at stake. Practise it here rather than
+  on the release that finally does need a migration.
+
+- `scripts/rehearse-upgrade.sh` no longer assumes `Upgrades` is empty. It
+  needed a plan name the binary has no handler for, not an empty list — the old
+  check would have retired the script permanently at the first real upgrade,
+  which is precisely when rehearsing starts to matter.
+
+### Breaking — clients, NOT consensus
+
+- **Pool queries return real volume instead of an internal weight.** `GetPool`
+  and `ListPool` now answer with `PoolView`, whose `volume_erth` is 14-day
+  weighted swap volume in actual uerth. The stored `Pool.volume` is renamed
+  `volume_weight` and no longer leaves the module; `last_volume_day` becomes
+  `last_traded_day`.
+
+  The old field was swap volume multiplied by a chain-wide index that grows
+  7.7% a day forever, and the proto documented it as "decaying ERTH-denominated
+  swap volume (~7-day half-life window)" — a description of the mechanism it
+  replaced. The wallet implemented that description faithfully and its LP fee
+  APR inflated with the index: right by accident on day one, 18x out within a
   month, 1,580x within three. Publishing a figure that has to be de-scaled
   before it means anything is what made that possible, so it is not published.
 
