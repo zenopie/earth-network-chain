@@ -127,11 +127,21 @@ jobs:
           # libwasmvm is the critical one: its ABI moves with the CosmWasm
           # version this build compiled against, so a node must never pair one
           # release's earthd with another release's libwasmvm.
-          for lib in libwasmvm libc++ libc++abi libunwind; do
-            path=$(ldd earthd | awk -v l="$lib" '$1 ~ "^"l"\\." {print $3}')
+          #
+          # index($1,l)==1, not a regex match. These names contain '+', which is
+          # a quantifier in awk's ERE: "^libc++\\." parses as lib, one-or-more c,
+          # one-or-more of that -- which matches libc.so.6 and bundles glibc,
+          # while "^libc++abi\\." matches nothing at all. Both happened. A literal
+          # prefix test is the only correct way to match these names.
+          for lib in libwasmvm. libc++. libc++abi. libunwind.; do
+            path=$(ldd earthd | awk -v l="$lib" 'index($1, l)==1 {print $3; exit}')
             if [ -z "$path" ] || [ ! -f "$path" ]; then
               echo "::error::could not resolve $lib from ldd output"; ldd earthd; exit 1
             fi
+            case "$(basename "$path")" in
+              libc.so.*|libm.so.*|ld-linux*)
+                echo "::error::refusing to bundle $path -- the host must supply it"; exit 1 ;;
+            esac
             # -L to dereference: these resolve through symlink chains, and a
             # dangling symlink in the tarball is a broken binary at the far end.
             cp -L "$path" "dist/$NAME/lib/"
