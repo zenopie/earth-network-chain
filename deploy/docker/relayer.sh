@@ -100,10 +100,23 @@ if [ "${LINK_ON_START:-false}" = "true" ]; then
   # skipping the scan is a fresh client rather than a reused one, which is a few
   # thousand gas once. LINK_REUSE_CLIENT=true restores the old behaviour on a
   # counterparty where reuse matters and the scan works.
+  # --client-tp-percentage 66, not rly's default of 85.
+  #
+  # A light client's trusting period must expire BEFORE the counterparty's
+  # unbonding period, so that validators who signed a fraudulent header are
+  # still bonded — and so still slashable — when the evidence is submitted. The
+  # gap between the two is the whole window for detecting misbehaviour and
+  # getting proof on chain.
+  #
+  # Two thirds is the long-standing IBC convention and Hermes' default. rly ships
+  # 85%, which leaves a third of the margin: against a 5-day unbonding that is
+  # 18 hours to catch a fork instead of 40. It buys nothing but slightly fewer
+  # client updates.
+  TP_PCT="${CLIENT_TP_PERCENTAGE:-66}"
   if [ "${LINK_REUSE_CLIENT:-false}" = "true" ]; then
-    rly transact link "$PATH_NAME" --home "$RLY_HOME"
+    rly transact link "$PATH_NAME" --client-tp-percentage "$TP_PCT" --home "$RLY_HOME"
   else
-    rly transact link "$PATH_NAME" --override --home "$RLY_HOME"
+    rly transact link "$PATH_NAME" --override --client-tp-percentage "$TP_PCT" --home "$RLY_HOME"
   fi
 fi
 

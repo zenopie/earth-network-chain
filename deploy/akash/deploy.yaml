@@ -199,11 +199,19 @@ services:
       - COUNTERPARTY_CHAIN_ID=osmo-test-5
       - COUNTERPARTY_RPC=https://rpc.testnet.osmosis.zone:443
       - COUNTERPARTY_PREFIX=osmo
-      - COUNTERPARTY_GAS_PRICES=0.025uosmo
+      # Osmosis prices fees with an EIP-1559-style base fee that MOVES with
+      # demand, enforced chain-level by x/txfees — not by the node's
+      # minimum-gas-prices, which reports empty and misleads you into thinking
+      # anything clears. Read the live floor at
+      #   /osmosis/txfees/v1beta1/cur_eip_base_fee
+      # It was 0.030 when this was set, so 0.025 had every transaction rejected
+      # for insufficient fees. Set well clear of the floor rather than on it:
+      # the whole point of a dynamic fee is that it rises.
+      - COUNTERPARTY_GAS_PRICES=0.1uosmo
       # true for ONE deploy, to create the client, connection and channel. Put
       # it back to false afterwards: linking spends gas on both chains and is
       # not something a container restart should retry.
-      - LINK_ON_START=true
+      - LINK_ON_START=false
       # Names the path in rly's config and in its logs. Defaults to "earth-hub",
       # which is wrong for any counterparty that is not the Cosmos Hub.
       - PATH_NAME=earth-osmo

@@ -96,6 +96,37 @@ have had every packet rejected for insufficient fees on first use.
 `earth-ibc-test` in the projects folder is the local two-chain rig this was
 derived from.
 
+### Verified against osmo-test-5, 2026-08-25
+
+    earth channel-0  <->  osmo-test-5 channel-11830   transfer / ics20-1
+    1 ERTH delivered as ibc/7035253F26470779EFAF2941FFDCCBE7763EEDBB87983E2F51CCEDA3611E81FD
+    cost to establish: ~7,000 uerth + ~79,000 uosmo
+
+Three things had to be fixed to get there, none of which had ever run:
+
+- **earth's own gas price was 0uerth** while the node demands 0.005. See above.
+- **rly cannot read a chain that hosts 08-wasm light clients.** Osmosis does —
+  that is how Celestia and Ethereum reach it — and rly v2.6.0 has no such type
+  registered, so its scan for a reusable client dies before any transaction is
+  sent. `--override` skips the scan. rly's last release is from January 2025 and
+  builds against ibc-go v8.2.0; this chain runs v10.5.0.
+- **Osmosis prices fees with a moving EIP-1559 base fee**, enforced chain-level
+  by x/txfees. `/cosmos/base/node/v1beta1/config` reports an empty minimum and
+  tells you nothing. Read `/osmosis/txfees/v1beta1/cur_eip_base_fee` and set
+  well clear of it.
+
+All three failed the same way: the relayer looked healthy, the counterparty
+balance never moved, and only its logs said why. If a link stalls, read the
+relayer's logs first — everything checkable from outside will look fine.
+
+**Client expiry.** A light client dies if it is not updated within its trusting
+period, and an expired client cannot be revived by a newer header — it needs
+governance substitution or a new channel. The link uses 66% of the
+counterparty's unbonding period, the IBC convention and Hermes' default, rather
+than rly's 85%. Against Osmosis mainnet that is ~9 days; against osmo-test-5,
+whose unbonding is a testnet-shortened 5 days, it is ~3. A relayer down over a
+long weekend loses a testnet channel.
+
 ## Addresses
 
 The node is reachable **only through the tunnel** — `lcd.erth.network` and
