@@ -124,6 +124,14 @@ func (gs GenesisState) Validate() error {
 					return fmt.Errorf("stream %s: voter %s allocates to option %d, which does not exist",
 						st.Stream, v.Address, w.OptionId)
 				}
+				// Bound each share before it enters the uint64 sum: two shares near
+				// 2^63 sum to exactly 100 modulo 2^64, slipping past the pct > 100
+				// check below and later sign-flipping to a negative weight. Same
+				// guard SetAllocations applies to a live vote.
+				if w.Percent > 100 {
+					return fmt.Errorf("stream %s: voter %s allocates %d%% to option %d, over 100",
+						st.Stream, v.Address, w.Percent, w.OptionId)
+				}
 				pct += w.Percent
 			}
 			if len(v.Voter.Percentages) > 0 && pct > 100 {
