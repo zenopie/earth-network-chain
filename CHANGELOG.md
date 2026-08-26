@@ -102,6 +102,20 @@ nothing to join.
 
 ### Breaking — consensus
 
+- **A malformed allocation vote could halt the chain.** `MsgSetAllocations`
+  checked only that a voter's percentages summed to 100, over a `uint64` that
+  wraps. Two shares near 2^63 sum to exactly 100 modulo 2^64, passing that
+  check, and then sign-flip to a negative weight when applied — which the next
+  block's stream-weight invariant catches, halting every validator by design.
+  Any account with voting weight (a single small delegation, or one
+  registration) could trigger it in one transaction.
+
+  Each share is now rejected on its own if it exceeds 100, in both the live
+  message path and genesis validation, so neither the sum nor the later cast can
+  overflow. Consensus-affecting: a patched node rejects a transaction an
+  unpatched one accepts, so the whole set must upgrade together. No state
+  migration — the guard is purely on inbound validation.
+
 - **ERTH and ANML now carry denom metadata.** Wallets and explorers read
   `bank.denom_metadata` to know that 1,500,000 `uerth` should be shown as
   `1.5 ERTH`. Without it Keplr and every explorer fall back to the raw

@@ -102,6 +102,42 @@ func TestVoterSplitAtCapIsAccepted(t *testing.T) {
 	require.NoError(t, err, "a full-width but valid split must still be accepted")
 }
 
+// TestVoterSplitRejectsOverflowingShares is the chain-halt guard. Percent is a
+// uint64 with no natural ceiling, and the only sum check is over a uint64 that
+// wraps. Two shares near 2^63 sum to exactly 100 modulo 2^64 — passing sum==100
+// — and then sign-flip to a negative amount when cast to int64 in resyncVoter,
+// driving an option's weight negative. TotalWeight clamps that to zero while
+// SummedWeight (never clamped) keeps it, so the next block's stream-weight
+// invariant breaks and the EndBlocker halts the chain. A single share over 100
+// must be refused before it ever reaches the sum.
+func TestVoterSplitRejectsOverflowingShares(t *testing.T) {
+	e := newTestEnv(t)
+	k, ctx := e.k, e.ctx
+	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
+	ms := NewMsgServerImpl(k)
+
+	acc, addr := e.addr("registered-human")
+	e.humans.add(acc)
+
+	// Two shares that overflow the uint64 sum back to exactly 100.
+	weights := seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, 2)
+	weights[0].Percent = 1 << 63         // 9223372036854775808
+	weights[1].Percent = (1 << 63) + 100 // sum wraps to 100 mod 2^64
+
+	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
+		Creator:     addr,
+		Stream:      types.STREAM_ID_CARETAKER,
+		Percentages: weights,
+	})
+	require.ErrorIs(t, err, types.ErrBadPercentages,
+		"a share over 100 must be rejected before it can overflow the sum")
+
+	// The stream's accounting must be untouched: the vote never landed, so the
+	// bounded invariant the EndBlocker runs still holds.
+	require.NoError(t, k.AssertHotInvariants(ctx))
+	require.NoError(t, k.AssertInvariants(ctx))
+}
+
 // TestUnregisteredHumanCannotVote pins the human stream's eligibility rule: the
 // weight source returning zero is what stands in for "not a live registration",
 // and it has to reject rather than silently record a zero-weight vote.

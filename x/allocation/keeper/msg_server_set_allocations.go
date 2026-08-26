@@ -38,6 +38,17 @@ func (k msgServer) SetAllocations(ctx context.Context, msg *types.MsgSetAllocati
 		if w.Percent == 0 {
 			return nil, errorsmod.Wrapf(types.ErrBadPercentages, "option %d has a zero share", w.OptionId)
 		}
+		// Bound each share on its own, before it reaches the uint64 sum below. A
+		// single share can never legitimately exceed 100, and without this ceiling
+		// two shares near 2^63 can sum to exactly 100 modulo 2^64 — passing the
+		// sum==100 check — and then sign-flip to a negative amount when cast to
+		// int64 in resyncVoter, driving an option's weight negative and halting the
+		// chain on the next block's stream-weight invariant. Capping each share at
+		// 100 keeps the sum under 2000 (MaxVoterOptions * 100), so neither the sum
+		// nor the int64 cast can overflow.
+		if w.Percent > 100 {
+			return nil, errorsmod.Wrapf(types.ErrBadPercentages, "option %d has a share of %d%%, over 100", w.OptionId, w.Percent)
+		}
 		if _, dup := seen[w.OptionId]; dup {
 			return nil, errorsmod.Wrapf(types.ErrBadPercentages, "duplicate option %d", w.OptionId)
 		}
