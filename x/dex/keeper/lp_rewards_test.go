@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,30 @@ type mintingBank struct {
 	// destroyed, RecordBurn should have counted — minus the LP shares, which are
 	// a claim on the pool rather than supply.
 	counted map[string]sdk.Coins
+}
+
+// assertBurnsCounted holds what the bank destroyed against what the keeper
+// reported to the counters. The bank sees every burn whether or not the module
+// remembered to record it, which is what makes it an independent check rather
+// than a restatement.
+//
+// LP shares are excluded on the bank side because they are excluded on the
+// counter side: burning them destroys a claim on a pool, not supply.
+func (b *mintingBank) assertBurnsCounted(t *testing.T) {
+	t.Helper()
+	want := sdk.NewCoins()
+	for _, c := range b.burned {
+		if !strings.HasPrefix(c.Denom, "dexlp/") {
+			want = want.Add(c)
+		}
+	}
+	got := sdk.NewCoins()
+	for _, m := range b.counted {
+		got = got.Add(m...)
+	}
+	require.Equal(t, want, got,
+		"the bank burned coins the counters never saw (or vice versa) — every "+
+			"BurnCoins needs a RecordBurn beside it, in the same context")
 }
 
 func (b *mintingBank) RecordBurn(_ context.Context, source string, coins sdk.Coins) error {
@@ -160,6 +185,8 @@ func initRewardFixture(t *testing.T) (keeper.Keeper, sdk.Context, *mintingBank) 
 		bank,
 	)
 	require.NoError(t, k.Params.Set(ctx, types.DefaultParams()))
+	// Every test built on this fixture becomes a completeness check for free.
+	t.Cleanup(func() { bank.assertBurnsCounted(t) })
 	return k, ctx, bank
 }
 

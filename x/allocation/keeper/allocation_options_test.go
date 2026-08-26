@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
@@ -30,6 +31,20 @@ type stubBank struct {
 	// counted is what the keeper reported to x/earth's burn counters, kept here
 	// so a test can hold it against what BurnCoins actually destroyed.
 	counted map[string]sdk.Coins
+}
+
+// assertBurnsCounted holds what the bank destroyed against what reached the
+// counters. This module burns only ERTH, so unlike the dex there is nothing to
+// exclude: every coin it destroys is supply leaving.
+func (s *stubBank) assertBurnsCounted(t *testing.T) {
+	t.Helper()
+	got := sdk.NewCoins()
+	for _, m := range s.counted {
+		got = got.Add(m...)
+	}
+	require.Equal(t, s.burned, got,
+		"the bank burned coins the counters never saw (or vice versa) — every "+
+			"BurnCoins needs a RecordBurn beside it")
 }
 
 func (s *stubBank) RecordBurn(_ context.Context, source string, coins sdk.Coins) error {
@@ -164,6 +179,9 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac,
 		authtypes.NewModuleAddress(types.GovModuleName), bank, staking, bank)
+
+	// Every test built on this env becomes a completeness check for free.
+	t.Cleanup(func() { bank.assertBurnsCounted(t) })
 
 	// The same registrations the app performs from x/dex and x/personhood.
 	k.RegisterWeightSource(types.STREAM_ID_CARETAKER, humans)

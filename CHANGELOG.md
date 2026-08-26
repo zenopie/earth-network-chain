@@ -19,6 +19,30 @@ nothing to join.
 
 ### Consensus
 
+- **The chain publishes its issuance rate again.** Overriding x/mint's mint
+  function left x/mint's own `Minter` at its zero value, so
+  `/cosmos/mint/v1beta1/inflation` and `.../annual_provisions` both answered
+  `0.000000000000000000`. Nothing in this project reads them — both clients
+  compute from the fixed per-second rate — but wallets, explorers and
+  aggregators derive staking yield and monetary policy from exactly those two
+  fields, and a chain issuing 126,144,000 ERTH a year was telling every one of
+  them it issued nothing.
+
+  What is published is **gross** issuance: 126,144,000 ERTH a year, and that over
+  total supply, which is ~5% at genesis. That is what the fields mean —
+  `AnnualProvisions = TotalSupply * Inflation` is the SDK's own identity and it
+  describes minting, not the change in supply. It is not the whole picture: this
+  chain also burns, currently faster than it mints, so supply is falling while
+  this number is positive. There is nowhere in x/mint to say so. Its eight fields
+  are all about positive issuance and `ValidateMinter` rejects a negative
+  inflation, so a net figure is not representable even in principle. Net lives at
+  `/earth/earth/v1/burns`, which reports both sides.
+
+  **Expect this number to rise before it falls.** The decay described in
+  x/earth/types/keys.go assumes a growing supply. While the protocol-owned
+  liquidity retires, supply shrinks, so a fixed numerator over a smaller
+  denominator climbs — for about five years, and only then begins the decay.
+
 - **The chain now counts what it burns.** Five mechanisms destroy supply — the
   gas split, the dex swap fee, protocol-owned liquidity retiring, the ANML
   buyback, and forfeited allocation rewards — and until now none of them left a
@@ -44,6 +68,18 @@ nothing to join.
   clock and skipped one block's issuance. It is exported now, alongside the new
   burn counters — the one piece of state that cannot be reconstructed from
   anything else the chain keeps.
+
+### Testing
+
+- **Burn sites are pinned.** The counters are a parallel record — x/bank moves
+  the supply and each call site is separately responsible for saying so — and
+  nothing at runtime notices when the second half is forgotten. The burn still
+  happens; the total is quietly short, and no later observation recovers it.
+  `TestEveryBurnSiteIsAccountedFor` walks the modules for calls to `BurnCoins`
+  and fails until each is listed with the source it counts under, or a reason it
+  must not be. The test bank stubs in x/dex and x/allocation now assert on every
+  fixture that what the bank destroyed is what the counters saw, which turns
+  every existing test over a burn path into a completeness check.
 
 ### Operators
 
