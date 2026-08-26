@@ -15,6 +15,8 @@ import (
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
+	earthkeeper "github.com/earth-network/earth/x/earth/keeper"
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
@@ -92,24 +94,47 @@ func (b *countingBank) BurnCoins(_ context.Context, _ string, amt sdk.Coins) err
 	return nil
 }
 
-func newBuybackKeeper(t *testing.T, dex types.DexKeeper) (Keeper, *countingBank, sdk.Context) {
+// newBuybackKeeper wires a real x/earth keeper as the burn recorder rather than
+// a stub, because the property worth testing here is a store property: the
+// buyback burns inside a cache context it discards on any failure, and only a
+// recorder writing to an actual store can show that a discarded window leaves
+// the counter untouched. A stub holding a Go map would record the burn either
+// way and prove nothing.
+func newBuybackKeeper(t *testing.T, dex types.DexKeeper) (Keeper, *countingBank, earthkeeper.Keeper, sdk.Context) {
 	t.Helper()
 	encCfg := moduletestutil.MakeTestEncodingConfig()
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
-	base := testutil.DefaultContextWithDB(t, storeKey, storetypes.NewTransientStoreKey("transient_test")).Ctx
+	earthKey := storetypes.NewKVStoreKey(earthtypes.StoreKey)
+	base := testutil.DefaultContextWithKeys(
+		map[string]*storetypes.KVStoreKey{
+			types.StoreKey:      storeKey,
+			earthtypes.StoreKey: earthKey,
+		},
+		map[string]*storetypes.TransientStoreKey{
+			"transient_test": storetypes.NewTransientStoreKey("transient_test"),
+		},
+		nil,
+	)
+	ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
+	authority := authtypes.NewModuleAddress(types.GovModuleName)
+
+	// nil bank: the earth keeper is used here only for its burn counters, which
+	// touch nothing but their own store.
+	burns := earthkeeper.NewKeeper(runtime.NewKVStoreService(earthKey), encCfg.Codec, ac, authority, nil)
+
 	bank := &countingBank{}
 	k := NewKeeper(
 		runtime.NewKVStoreService(storeKey),
 		encCfg.Codec,
-		addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix()),
-		authtypes.NewModuleAddress(types.GovModuleName),
-		bank, dex, nil, stubAllocation{},
+		ac,
+		authority,
+		bank, dex, nil, stubAllocation{}, burns,
 	)
 	ctx := base.WithBlockTime(time.Unix(1_700_000_000, 0).UTC())
 	if err := k.Params.Set(ctx, types.DefaultParams()); err != nil {
 		t.Fatal(err)
 	}
-	return k, bank, ctx
+	return k, bank, burns, ctx
 }
 
 func advance(ctx sdk.Context, d time.Duration) sdk.Context {
@@ -121,7 +146,7 @@ func advance(ctx sdk.Context, d time.Duration) sdk.Context {
 // against yet.
 func TestBuybackWaitsForItsWindow(t *testing.T) {
 	dex := newOracleDex("1.0", "1.0")
-	k, _, ctx := newBuybackKeeper(t, dex)
+	k, _, _, ctx := newBuybackKeeper(t, dex)
 
 	if err := k.buybackAndBurn(ctx); err != nil { // starts the clock
 		t.Fatal(err)
@@ -172,7 +197,7 @@ func fastForward(t *testing.T, k Keeper, dex *oracleDex, ctx sdk.Context) sdk.Co
 // moved the price gets no protocol bid to sell into.
 func TestBuybackRefusesSpotAboveTwap(t *testing.T) {
 	dex := newOracleDex("1.0", "1.0")
-	k, bank, ctx := newBuybackKeeper(t, dex)
+	k, bank, _, ctx := newBuybackKeeper(t, dex)
 	ctx = fastForward(t, k, dex, ctx)
 	tradesBefore := len(dex.swaps)
 	mintedBefore := bank.minted.AmountOf("uerth")
@@ -197,7 +222,7 @@ func TestBuybackRefusesSpotAboveTwap(t *testing.T) {
 // pillar's emission rather than merely delay it.
 func TestBuybackAccruesWhatItRefused(t *testing.T) {
 	dex := newOracleDex("1.0", "1.0")
-	k, _, ctx := newBuybackKeeper(t, dex)
+	k, _, _, ctx := newBuybackKeeper(t, dex)
 	ctx = fastForward(t, k, dex, ctx)
 	tradedAt := ctx.BlockTime()
 
@@ -231,7 +256,7 @@ func TestBuybackAccruesWhatItRefused(t *testing.T) {
 // good trade for no gain.
 func TestBuybackAllowsSpotBelowTwap(t *testing.T) {
 	dex := newOracleDex("1.0", "1.0")
-	k, _, ctx := newBuybackKeeper(t, dex)
+	k, _, _, ctx := newBuybackKeeper(t, dex)
 	ctx = fastForward(t, k, dex, ctx)
 	tradesBefore := len(dex.swaps)
 
@@ -249,7 +274,7 @@ func TestBuybackAllowsSpotBelowTwap(t *testing.T) {
 // out with min_out of zero.
 func TestBuybackDemandsMinOut(t *testing.T) {
 	dex := newOracleDex("1.0", "1.0")
-	k, _, ctx := newBuybackKeeper(t, dex)
+	k, _, _, ctx := newBuybackKeeper(t, dex)
 	fastForward(t, k, dex, ctx)
 
 	minOut := dex.minOuts[0]
@@ -267,7 +292,7 @@ func TestBuybackDemandsMinOut(t *testing.T) {
 // halt turns into one unbounded market order the moment the chain resumes.
 func TestBuybackCapsCatchUp(t *testing.T) {
 	dex := newOracleDex("1.0", "1.0")
-	k, _, ctx := newBuybackKeeper(t, dex)
+	k, _, _, ctx := newBuybackKeeper(t, dex)
 	ctx = fastForward(t, k, dex, ctx)
 
 	ctx = advance(ctx, 30*24*time.Hour) // a month of downtime
@@ -285,7 +310,7 @@ func TestBuybackCapsCatchUp(t *testing.T) {
 // clock alone, so the emission is retried rather than silently burned off.
 func TestBuybackKeepsAccrualWhenTheSwapFails(t *testing.T) {
 	dex := newOracleDex("1.0", "1.0")
-	k, bank, ctx := newBuybackKeeper(t, dex)
+	k, bank, _, ctx := newBuybackKeeper(t, dex)
 	ctx = fastForward(t, k, dex, ctx)
 	before := bank.burned
 
@@ -307,5 +332,60 @@ func TestBuybackKeepsAccrualWhenTheSwapFails(t *testing.T) {
 	twoWindows := math.NewInt(types.EmissionPerSecond).MulRaw(22 * 60)
 	if spent.LT(twoWindows) {
 		t.Fatalf("emission from the failed window was lost: spent %s over two windows, want >= %s", spent, twoWindows)
+	}
+}
+
+// TestBuybackCountsWhatItBurned: the counter and the bank must agree. Nothing
+// else on the chain can check this after the fact — the buyback runs in EndBlock
+// with no transaction to inspect, and x/bank keeps only the supply that remains.
+func TestBuybackCountsWhatItBurned(t *testing.T) {
+	dex := newOracleDex("1.0", "1.0")
+	k, bank, burns, ctx := newBuybackKeeper(t, dex)
+	ctx = fastForward(t, k, dex, ctx)
+
+	ctx = advance(ctx, 11*time.Minute)
+	if err := k.buybackAndBurn(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	counted, err := burns.TotalBurned(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !counted.Equal(bank.burned) {
+		t.Fatalf("counter says %s, bank burned %s", counted, bank.burned)
+	}
+	if counted.AmountOf("uanml").IsZero() {
+		t.Fatal("the buyback burned nothing to count")
+	}
+}
+
+// TestBuybackDiscardsTheCounterWithTheTrade is the cache-context property. The
+// buyback mints, swaps and burns inside a cache it throws away on any failure,
+// so the counter has to be written inside that cache too. Recorded against the
+// parent context it would survive the discard and claim ERTH was destroyed by a
+// trade that never settled — the one way this figure could overstate itself.
+func TestBuybackDiscardsTheCounterWithTheTrade(t *testing.T) {
+	dex := newOracleDex("1.0", "1.0")
+	k, _, burns, ctx := newBuybackKeeper(t, dex)
+	ctx = fastForward(t, k, dex, ctx)
+
+	before, err := burns.TotalBurned(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dex.swapErr = errors.New("pool too thin")
+	ctx = advance(ctx, 11*time.Minute)
+	if err := k.buybackAndBurn(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := burns.TotalBurned(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.Equal(before) {
+		t.Fatalf("a discarded window moved the counter: %s -> %s", before, after)
 	}
 }

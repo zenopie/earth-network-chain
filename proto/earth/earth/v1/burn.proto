@@ -1,0 +1,27 @@
+syntax = "proto3";
+package earth.earth.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/earth/types";
+
+// BurnTotal is everything one mechanism has destroyed since genesis.
+//
+// Kept per denom rather than as a single ERTH figure because two of the sources
+// burn something else: the gas split burns whatever denom paid the fee, and a
+// pol retirement burns the pool's spoke token alongside its ERTH.
+message BurnTotal {
+  // source is one of the SourceX constants in x/earth/types/keys.go. It is a
+  // string rather than an enum so that a mechanism added later is a new key in
+  // an existing map, not a state migration.
+  string source = 1;
+
+  // amount is the cumulative burn, one entry per denom, sorted by denom.
+  repeated cosmos.base.v1beta1.Coin amount = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
+}

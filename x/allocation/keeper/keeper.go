@@ -43,6 +43,9 @@ type Keeper struct {
 
 	bankKeeper    types.BankKeeper
 	stakingKeeper types.StakingKeeper
+	// burnRecorder counts what this module destroys, in x/earth. Burning is
+	// invisible after the block that does it, so it is recorded as it happens.
+	burnRecorder types.BurnRecorder
 
 	// --- per-stream allocation state ---
 	Options           collections.Map[collections.Pair[uint32, uint64], types.AllocationOption]
@@ -93,6 +96,7 @@ func NewKeeper(
 
 	bankKeeper types.BankKeeper,
 	stakingKeeper types.StakingKeeper,
+	burnRecorder types.BurnRecorder,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -108,6 +112,7 @@ func NewKeeper(
 		authority:     authority,
 		bankKeeper:    bankKeeper,
 		stakingKeeper: stakingKeeper,
+		burnRecorder:  burnRecorder,
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 

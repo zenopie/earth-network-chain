@@ -10,6 +10,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/allocation/types"
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 )
 
 // AddIntegratedOption adds an INTEGRATED option, resolved every block by a
@@ -96,6 +97,9 @@ func (k msgServer) AddAddressOption(ctx context.Context, msg *types.MsgAddAddres
 			return nil, err
 		}
 		if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, fee); err != nil {
+			return nil, err
+		}
+		if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceAllocation, fee); err != nil {
 			return nil, err
 		}
 	}

@@ -27,8 +27,11 @@ type Keeper struct {
 
 	bankKeeper    types.BankKeeper
 	stakingKeeper types.StakingKeeper
-	Pool          collections.Map[uint64, types.Pool]
-	PoolSeq       collections.Sequence
+	// burnRecorder counts what this module destroys, in x/earth. Burning is
+	// invisible after the block that does it, so it is recorded as it happens.
+	burnRecorder types.BurnRecorder
+	Pool         collections.Map[uint64, types.Pool]
+	PoolSeq      collections.Sequence
 	// PoolByToken indexes the spoke token denom to its pool id (one pool per token).
 	PoolByToken collections.Map[string, uint64]
 
@@ -77,6 +80,7 @@ func NewKeeper(
 
 	bankKeeper types.BankKeeper,
 	stakingKeeper types.StakingKeeper,
+	burnRecorder types.BurnRecorder,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -91,6 +95,7 @@ func NewKeeper(
 		authority:     authority,
 		bankKeeper:    bankKeeper,
 		stakingKeeper: stakingKeeper,
+		burnRecorder:  burnRecorder,
 
 		Params:      collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		Pool:        collections.NewMap(sb, types.PoolKey, "pool", collections.Uint64Key, codec.CollValue[types.Pool](cdc)),

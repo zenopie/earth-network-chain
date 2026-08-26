@@ -8,6 +8,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/dex/types"
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 )
 
 // Swap trades token_in for denom_out, routing through the ERTH hub:
@@ -159,7 +160,11 @@ func (k Keeper) swapExactIn(ctx context.Context, trader swapParty, tokenIn sdk.C
 		return sdk.Coin{}, err
 	}
 	if totalBurn.IsPositive() {
-		if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, sdk.NewCoins(sdk.NewCoin(hub, totalBurn))); err != nil {
+		burned := sdk.NewCoins(sdk.NewCoin(hub, totalBurn))
+		if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, burned); err != nil {
+			return sdk.Coin{}, err
+		}
+		if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceSwapFee, burned); err != nil {
 			return sdk.Coin{}, err
 		}
 	}

@@ -39,7 +39,7 @@ func gasFixture(t *testing.T) (Keeper, sdk.Context, []byte, []string) {
 		encCfg.Codec,
 		addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix()),
 		authtypes.NewModuleAddress(types.GovModuleName),
-		nil, stubDex{}, nil, stubAllocation{},
+		nil, stubDex{}, nil, stubAllocation{}, &burnLog{},
 	)
 	params := types.DefaultParams()
 	params.VerifyingKeys = map[string][]byte{"lean_poa": vk}

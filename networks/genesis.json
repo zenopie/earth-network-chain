@@ -241,6 +241,8 @@
       "validator_slash_events": []
     },
     "earth": {
+      "burned": [],
+      "last_mint_time": "0",
       "params": {}
     },
     "epochs": {
@@ -2212,6 +2214,6 @@
       }
     }
   },
-  "genesis_time": "2026-08-25T14:07:37Z",
+  "genesis_time": "2026-08-26T19:00:00Z",
   "initial_height": 1
 }

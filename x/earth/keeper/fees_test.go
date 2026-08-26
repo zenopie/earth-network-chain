@@ -136,3 +136,56 @@ func TestEmptyFeeCollectorIsANoOp(t *testing.T) {
 	require.True(t, bank.burned.IsZero())
 	require.True(t, bank.held.IsZero())
 }
+
+// TestFeeSplitCountsTheBurnedHalf: the gas burn is the one that runs on every
+// block with a transaction in it, and it runs in EndBlock where no transaction
+// search will ever find it. If it were not counted here it would be invisible.
+func TestFeeSplitCountsTheBurnedHalf(t *testing.T) {
+	k, ctx, bank := feeFixture(t, sdk.NewCoins(sdk.NewInt64Coin("uerth", 1_001)))
+	require.NoError(t, k.SplitCollectedFees(ctx))
+
+	counted, err := k.TotalBurned(ctx)
+	require.NoError(t, err)
+	require.Equal(t, bank.burned, counted)
+	require.Equal(t, sdk.NewCoins(sdk.NewInt64Coin("uerth", 501)), counted,
+		"the counter takes the odd unit too, because the burn did")
+}
+
+// TestFeeSplitCountsEveryFeeDenom: gas can be paid in more than one denom, and
+// the split halves each separately. A counter that only tracked ERTH would
+// under-report the moment a second fee denom was allowed.
+func TestFeeSplitCountsEveryFeeDenom(t *testing.T) {
+	k, ctx, bank := feeFixture(t, sdk.NewCoins(
+		sdk.NewInt64Coin("uerth", 1_000),
+		sdk.NewInt64Coin("uusdc", 400),
+	))
+	require.NoError(t, k.SplitCollectedFees(ctx))
+
+	counted, err := k.TotalBurned(ctx)
+	require.NoError(t, err)
+	require.Equal(t, bank.burned, counted)
+	require.Equal(t, sdk.NewCoins(
+		sdk.NewInt64Coin("uerth", 500),
+		sdk.NewInt64Coin("uusdc", 200),
+	), counted)
+}
+
+// TestFeeSplitAccumulatesAcrossBlocks: every block adds to the same counter.
+// This is the property the whole design exists for — the figure is a history,
+// not a reading of the current block.
+func TestFeeSplitAccumulatesAcrossBlocks(t *testing.T) {
+	k, ctx, bank := feeFixture(t, sdk.NewCoins(sdk.NewInt64Coin("uerth", 1_000)))
+	require.NoError(t, k.SplitCollectedFees(ctx))
+
+	// A second block's gas arrives in the collector and is split in turn.
+	bank.collector = bank.collector.Add(sdk.NewInt64Coin("uerth", 600))
+	require.NoError(t, k.SplitCollectedFees(ctx))
+
+	counted, err := k.TotalBurned(ctx)
+	require.NoError(t, err)
+	// 500 from the first block; the second splits the 500 left behind plus the
+	// new 600, so the bank is the authority on the arithmetic — they must agree.
+	require.Equal(t, bank.burned, counted)
+	require.True(t, counted.AmountOf("uerth").GT(sdk.NewInt64Coin("uerth", 500).Amount),
+		"the second block must have added to the first, not replaced it")
+}

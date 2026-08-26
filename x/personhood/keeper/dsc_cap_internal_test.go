@@ -36,7 +36,7 @@ func capKeeper(t *testing.T) (Keeper, *revocablePki, sdk.Context) {
 		encCfg.Codec,
 		addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix()),
 		authtypes.NewModuleAddress(types.GovModuleName),
-		nil, stubDex{}, pki, stubAllocation{},
+		nil, stubDex{}, pki, stubAllocation{}, &burnLog{},
 	)
 	ctx := base.WithBlockTime(time.Unix(1_700_000_000, 0).UTC())
 	if err := k.Params.Set(ctx, types.DefaultParams()); err != nil {

@@ -11,6 +11,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
@@ -225,6 +226,12 @@ func (k Keeper) buybackAndBurn(ctx context.Context) error {
 	}
 	if out.Amount.IsPositive() {
 		if err := k.bankKeeper.BurnCoins(cacheCtx, types.ModuleName, sdk.NewCoins(out)); err != nil {
+			return nil // discard
+		}
+		// On cacheCtx, not ctx: every path above discards the whole window on
+		// failure, and a counter written outside the cache would survive that
+		// and claim a buyback that never settled.
+		if err := k.burnRecorder.RecordBurn(cacheCtx, earthtypes.SourceAnmlBuyback, sdk.NewCoins(out)); err != nil {
 			return nil // discard
 		}
 	}

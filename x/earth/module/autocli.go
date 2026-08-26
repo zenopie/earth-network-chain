@@ -17,6 +17,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:       "params",
 					Short:     "Shows the parameters of the module",
 				},
+				{
+					RpcMethod: "Burns",
+					Use:       "burns",
+					Short:     "Shows the supply this chain has destroyed, by mechanism",
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

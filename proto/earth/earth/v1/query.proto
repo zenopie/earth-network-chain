@@ -3,6 +3,8 @@ package earth.earth.v1;
 
 import "amino/amino.proto";
 import "cosmos/base/query/v1beta1/pagination.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "earth/earth/v1/burn.proto";
 import "earth/earth/v1/params.proto";
 import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
@@ -15,6 +17,17 @@ service Query {
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/earth/earth/v1/params";
   }
+
+  // Burns queries the supply this chain has destroyed, by mechanism.
+  //
+  // This exists because the burn is otherwise unobservable. Three of the five
+  // mechanisms run in EndBlock, so they leave no transaction to search for, and
+  // the bank module records only what supply remains — never what was taken out
+  // of it. A client that wanted this figure without the chain keeping it would
+  // have to replay every block since genesis.
+  rpc Burns(QueryBurnsRequest) returns (QueryBurnsResponse) {
+    option (google.api.http).get = "/earth/earth/v1/burns";
+  }
 }
 
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -26,5 +39,28 @@ message QueryParamsResponse {
   Params params = 1 [
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryBurnsRequest is request type for the Query/Burns RPC method.
+message QueryBurnsRequest {}
+
+// QueryBurnsResponse is response type for the Query/Burns RPC method.
+message QueryBurnsResponse {
+  // by_source is one entry per mechanism that has ever burned, sorted by source
+  // name. A mechanism that has not yet burned anything is absent rather than
+  // present with a zero.
+  repeated BurnTotal by_source = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+
+  // total is by_source summed across mechanisms, one entry per denom. Rolled up
+  // here rather than left to the caller so that every client agrees on the
+  // headline figure.
+  repeated cosmos.base.v1beta1.Coin total = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
   ];
 }

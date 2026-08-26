@@ -38,6 +38,19 @@ type mintingBank struct {
 	sent           sdk.Coins
 	sentByAddr     map[string]sdk.Coins
 	modBal         sdk.Coins
+	// counted is what the keeper reported to x/earth's burn counters, by source.
+	// Kept on the bank so the two can be compared directly: whatever BurnCoins
+	// destroyed, RecordBurn should have counted — minus the LP shares, which are
+	// a claim on the pool rather than supply.
+	counted map[string]sdk.Coins
+}
+
+func (b *mintingBank) RecordBurn(_ context.Context, source string, coins sdk.Coins) error {
+	if b.counted == nil {
+		b.counted = map[string]sdk.Coins{}
+	}
+	b.counted[source] = b.counted[source].Add(coins...)
+	return nil
 }
 
 func (b *mintingBank) SpendableCoins(context.Context, sdk.AccAddress) sdk.Coins { return nil }
@@ -144,6 +157,7 @@ func initRewardFixture(t *testing.T) (keeper.Keeper, sdk.Context, *mintingBank) 
 		authtypes.NewModuleAddress(types.GovModuleName),
 		bank,
 		stubStakingKeeper{},
+		bank,
 	)
 	require.NoError(t, k.Params.Set(ctx, types.DefaultParams()))
 	return k, ctx, bank
@@ -173,7 +187,7 @@ func seedPool(t *testing.T, k keeper.Keeper, ctx sdk.Context, id uint64, erth, t
 		PoolId:        id,
 		ReserveErth:   sdk.NewInt64Coin("uerth", erth),
 		ReserveToken:  sdk.NewInt64Coin(denom, token),
-		VolumeWeight:        math.NewInt(volume),
+		VolumeWeight:  math.NewInt(volume),
 		LastTradedDay: uint64(ctx.BlockTime().Unix()) / 86400,
 	}))
 	require.NoError(t, k.PoolByToken.Set(ctx, denom, id))

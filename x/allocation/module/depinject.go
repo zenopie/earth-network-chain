@@ -12,6 +12,7 @@ import (
 
 	"github.com/earth-network/earth/x/allocation/keeper"
 	"github.com/earth-network/earth/x/allocation/types"
+	earthkeeper "github.com/earth-network/earth/x/earth/keeper"
 )
 
 var _ depinject.OnePerModuleType = AppModule{}
@@ -37,6 +38,10 @@ type ModuleInputs struct {
 	AuthKeeper    types.AuthKeeper
 	BankKeeper    types.BankKeeper
 	StakingKeeper types.StakingKeeper
+	// EarthKeeper owns the chain's tokenomics, and is taken here only for its
+	// burn counters: this module destroys supply and x/earth is where the chain
+	// records that it happened.
+	EarthKeeper earthkeeper.Keeper
 }
 
 type ModuleOutputs struct {
@@ -49,10 +54,11 @@ type ModuleOutputs struct {
 }
 
 // ProvideModule builds the allocation keeper. It deliberately depends on nothing
-// but staking and bank: the modules that own the two streams' behaviour
-// (x/personhood's weight source, x/dex's lp_rewards handler) register themselves
-// into this keeper from their own wiring, which is what keeps the dependency
-// graph a tree rather than a cycle.
+// but staking, bank and x/earth's burn counters: the modules that own the two
+// streams' behaviour (x/personhood's weight source, x/dex's lp_rewards handler)
+// register themselves into this keeper from their own wiring, which is what
+// keeps the dependency graph a tree rather than a cycle. x/earth imports none of
+// the pillar modules, so depending on it does not threaten that.
 func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// default to governance authority if not provided
 	authority := authtypes.NewModuleAddress(types.GovModuleName)
@@ -66,6 +72,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		authority,
 		in.BankKeeper,
 		in.StakingKeeper,
+		in.EarthKeeper,
 	)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 
