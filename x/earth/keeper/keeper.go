@@ -6,7 +6,9 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/address"
 	corestore "cosmossdk.io/core/store"
+	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/earth/types"
 )
@@ -35,6 +37,10 @@ type Keeper struct {
 	// LastMintTime is the previous emission's block time (unix nanos), used to
 	// prorate the fixed per-second rate across variable block times.
 	LastMintTime collections.Item[int64]
+
+	// Burned is cumulative destroyed supply, keyed by (source, denom). See
+	// burns.go for why the chain counts this rather than deriving it.
+	Burned collections.Map[collections.Pair[string, string], math.Int]
 }
 
 func NewKeeper(
@@ -60,6 +66,8 @@ func NewKeeper(
 
 		Params:       collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		LastMintTime: collections.NewItem(sb, types.LastMintTimeKey, "last_mint_time", collections.Int64Value),
+		Burned: collections.NewMap(sb, types.BurnedKey, "burned",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey), sdk.IntValue),
 	}
 
 	schema, err := sb.Build()

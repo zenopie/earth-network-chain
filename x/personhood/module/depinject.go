@@ -14,6 +14,7 @@ import (
 
 	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
 	dexkeeper "github.com/earth-network/earth/x/dex/keeper"
+	earthkeeper "github.com/earth-network/earth/x/earth/keeper"
 	"github.com/earth-network/earth/x/personhood/keeper"
 	"github.com/earth-network/earth/x/personhood/types"
 	pkikeeper "github.com/earth-network/earth/x/pki/keeper"
@@ -47,6 +48,10 @@ type ModuleInputs struct {
 	// way — this module registers itself into the allocation keeper below rather
 	// than being reached for — which is what keeps the two out of a cycle.
 	AllocationKeeper allocationkeeper.Keeper
+	// EarthKeeper owns the chain's tokenomics, and is taken here only for its
+	// burn counters: this module destroys supply and x/earth is where the chain
+	// records that it happened.
+	EarthKeeper earthkeeper.Keeper
 }
 
 type ModuleOutputs struct {
@@ -71,6 +76,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.DexKeeper,
 		in.PkiKeeper,
 		in.AllocationKeeper,
+		in.EarthKeeper,
 	)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 

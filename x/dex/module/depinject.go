@@ -16,6 +16,7 @@ import (
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"github.com/earth-network/earth/x/dex/keeper"
 	"github.com/earth-network/earth/x/dex/types"
+	earthkeeper "github.com/earth-network/earth/x/earth/keeper"
 )
 
 var _ depinject.OnePerModuleType = AppModule{}
@@ -46,6 +47,10 @@ type ModuleInputs struct {
 	// is spread over pools by volume — belongs here, so this module registers
 	// the handler rather than the allocation module importing the dex.
 	AllocationKeeper allocationkeeper.Keeper
+	// EarthKeeper owns the chain's tokenomics, and is taken here only for its
+	// burn counters: this module destroys supply and x/earth is where the chain
+	// records that it happened.
+	EarthKeeper earthkeeper.Keeper
 }
 
 type ModuleOutputs struct {
@@ -68,6 +73,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		authority,
 		in.BankKeeper,
 		in.StakingKeeper,
+		in.EarthKeeper,
 	)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 

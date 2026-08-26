@@ -10,6 +10,7 @@ import (
 
 	"github.com/earth-network/earth/x/dex/keeper"
 	"github.com/earth-network/earth/x/dex/types"
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 )
 
 // seedPol writes a pool the protocol owns outright, plus the schedule retiring
@@ -269,4 +270,41 @@ func TestAuctionSettlementSchedulesItsOwnRetirement(t *testing.T) {
 	require.Equal(t, int64(types.PolBurnSeconds), b.DurationSeconds)
 	require.False(t, b.BurnToken, "the auction's spoke side is bridged and must not be burned")
 	require.Equal(t, b.TotalShares, b.SharesRemaining)
+}
+
+// TestPolBurnCountsAssetsNotShares: the retirement burns three things — the LP
+// shares and both sides of what they were worth — but only two of them are
+// supply. Shares are a claim on the pool, destroyed by every withdrawal as a
+// matter of bookkeeping, and counting them would inflate the chain's burn total
+// with an entry that never represented anything anyone held.
+func TestPolBurnCountsAssetsNotShares(t *testing.T) {
+	k, ctx, bank := initRewardFixture(t)
+	seedPol(t, k, ctx, bank, 1, 4_000_000, 1_000_000, true)
+
+	ctx = ctx.WithBlockTime(ctx.BlockTime().Add(time.Duration(types.PolBurnSeconds/10) * time.Second))
+	require.NoError(t, k.BurnDuePol(ctx))
+
+	counted := bank.counted[earthtypes.SourcePolRetire]
+	require.Equal(t, bank.burned.AmountOf("uerth"), counted.AmountOf("uerth"))
+	require.Equal(t, bank.burned.AmountOf("utok"), counted.AmountOf("utok"))
+	require.True(t, counted.AmountOf(types.LPShareDenom(1)).IsZero(),
+		"LP shares are a claim on the pool, not supply")
+	require.False(t, bank.burned.AmountOf(types.LPShareDenom(1)).IsZero(),
+		"the shares were burned even though they are not counted")
+}
+
+// TestPolBurnCountsOnlyErthWhenTheSpokeSurvives: the auction pool's spoke side
+// is a bridged asset the chain cannot recreate, so it stays in the reserve. The
+// counter has to agree — reporting a burn of an asset still sitting in the pool
+// would be the figure's most embarrassing failure.
+func TestPolBurnCountsOnlyErthWhenTheSpokeSurvives(t *testing.T) {
+	k, ctx, bank := initRewardFixture(t)
+	seedPol(t, k, ctx, bank, 1, 4_000_000, 1_000_000, false)
+
+	ctx = ctx.WithBlockTime(ctx.BlockTime().Add(time.Duration(types.PolBurnSeconds/10) * time.Second))
+	require.NoError(t, k.BurnDuePol(ctx))
+
+	counted := bank.counted[earthtypes.SourcePolRetire]
+	require.Equal(t, math.NewInt(400_000), counted.AmountOf("uerth"))
+	require.True(t, counted.AmountOf("utok").IsZero())
 }

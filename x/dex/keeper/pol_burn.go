@@ -8,6 +8,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/dex/types"
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 )
 
 // Retiring protocol-owned liquidity.
@@ -163,6 +164,13 @@ func (k Keeper) retirePolShares(ctx context.Context, b types.PolBurn, slice math
 
 	burn := sdk.NewCoins(sdk.NewCoin(types.LPShareDenom(b.PoolId), slice), outErth, outToken)
 	if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, burn); err != nil {
+		return sdk.Coin{}, sdk.Coin{}, err
+	}
+	// The shares are deliberately not counted. Burning them destroys a claim on
+	// the pool, not supply — every withdrawal does the same — and totalling them
+	// alongside the assets would inflate the figure with an accounting entry.
+	if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourcePolRetire,
+		sdk.NewCoins(outErth, outToken)); err != nil {
 		return sdk.Coin{}, sdk.Coin{}, err
 	}
 

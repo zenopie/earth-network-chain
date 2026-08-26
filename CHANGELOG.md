@@ -17,6 +17,34 @@ The first release after this line is the launch candidate. Until `genesis_time`
 is set and the gentx collected, the network is a single validator and there is
 nothing to join.
 
+### Consensus
+
+- **The chain now counts what it burns.** Five mechanisms destroy supply — the
+  gas split, the dex swap fee, protocol-owned liquidity retiring, the ANML
+  buyback, and forfeited allocation rewards — and until now none of them left a
+  figure anyone could read. Three run in EndBlock, so no transaction search can
+  find them, and x/bank records only the supply that remains, never what left
+  it. The totals were therefore unrecoverable after the fact: counted as they
+  happen or not at all.
+
+  x/earth now keeps a running total per `(source, denom)`, queryable at
+  `/earth/earth/v1/burns` and `earthd query earth burns`. LP shares burned when
+  liquidity is withdrawn are deliberately excluded — they are a claim on a pool,
+  not supply, and counting them would inflate the figure with bookkeeping.
+
+  **This is consensus-affecting**: it adds state writes on every burn path. A
+  node running an older binary will not agree with one running this.
+
+  Counters start at zero from the height this takes effect. A chain upgrading in
+  place therefore reports only what it burned after the upgrade, which is why
+  this release is paired with a genesis reset rather than an in-place swap.
+
+- **The earth module's genesis is now lossless.** `last_mint_time` was written by
+  the keeper but never exported, so an export/import silently reset the emission
+  clock and skipped one block's issuance. It is exported now, alongside the new
+  burn counters — the one piece of state that cannot be reconstructed from
+  anything else the chain keeps.
+
 ### Operators
 
 - **Downloaded releases could not start.** Every published tarball up to and

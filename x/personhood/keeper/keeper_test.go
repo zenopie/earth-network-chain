@@ -120,6 +120,7 @@ func initFixture(t *testing.T) *fixture {
 		authority,
 		nil,
 		stubStaking{},
+		&burnLog{},
 	)
 
 	k := keeper.NewKeeper(
@@ -131,6 +132,7 @@ func initFixture(t *testing.T) *fixture {
 		stubDexKeeper{},
 		nil, // pkiKeeper
 		ak,
+		&burnLog{},
 	)
 
 	// The same wiring ProvideModule does: the human stream asks this keeper who

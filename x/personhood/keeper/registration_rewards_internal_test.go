@@ -100,6 +100,7 @@ func rewardKeeper(t *testing.T, alloc *recordingAllocation, bank *payingBank) (K
 		stubDex{},
 		nil,
 		alloc,
+		&burnLog{},
 	)
 	return k, ctx
 }

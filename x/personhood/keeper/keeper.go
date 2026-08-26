@@ -26,6 +26,9 @@ type Keeper struct {
 
 	bankKeeper types.BankKeeper
 	dexKeeper  types.DexKeeper
+	// burnRecorder counts what this module destroys, in x/earth. Burning is
+	// invisible after the block that does it, so it is recorded as it happens.
+	burnRecorder types.BurnRecorder
 	// allocationKeeper owns the human emission stream. This module supplies that
 	// stream's weight source and draws its registration-reward pool down; it
 	// stores none of the stream's state itself.
@@ -80,6 +83,7 @@ func NewKeeper(
 	dexKeeper types.DexKeeper,
 	pkiKeeper types.PkiKeeper,
 	allocationKeeper types.AllocationKeeper,
+	burnRecorder types.BurnRecorder,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -94,6 +98,7 @@ func NewKeeper(
 		authority:        authority,
 		bankKeeper:       bankKeeper,
 		dexKeeper:        dexKeeper,
+		burnRecorder:     burnRecorder,
 		pkiKeeper:        pkiKeeper,
 		allocationKeeper: allocationKeeper,
 

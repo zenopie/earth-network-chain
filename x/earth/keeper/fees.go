@@ -78,6 +78,9 @@ func (k Keeper) SplitCollectedFees(ctx context.Context) error {
 	if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, burn); err != nil {
 		return err
 	}
+	if err := k.RecordBurn(ctx, types.SourceGasFees, burn); err != nil {
+		return err
+	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
 		sdk.NewEvent("gas_fees_split",

@@ -93,7 +93,7 @@ func TestVerifyRegistrationProof_DscBinding(t *testing.T) {
 		ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
 		storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 		base := testutil.DefaultContextWithDB(t, storeKey, storetypes.NewTransientStoreKey("transient_test")).Ctx
-		k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac, authtypes.NewModuleAddress(types.GovModuleName), nil, stubDex{}, pki, stubAllocation{})
+		k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac, authtypes.NewModuleAddress(types.GovModuleName), nil, stubDex{}, pki, stubAllocation{}, &burnLog{})
 		ctx := base.WithBlockTime(blockTime)
 		if err := k.Params.Set(ctx, params); err != nil {
 			t.Fatal(err)
@@ -163,6 +163,7 @@ func newKeeperForTest(t *testing.T) (Keeper, context.Context) {
 		stubDex{},
 		nil, // pkiKeeper: nil -> falls back to static params.DscRoot in tests
 		stubAllocation{},
+		&burnLog{},
 	)
 	return k, ctx
 }

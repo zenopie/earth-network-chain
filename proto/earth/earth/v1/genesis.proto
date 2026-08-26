@@ -2,6 +2,7 @@ syntax = "proto3";
 package earth.earth.v1;
 
 import "amino/amino.proto";
+import "earth/earth/v1/burn.proto";
 import "earth/earth/v1/params.proto";
 import "gogoproto/gogo.proto";
 
@@ -14,4 +15,23 @@ message GenesisState {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+
+  // burned carries the cumulative burn counters across an export/import.
+  //
+  // These are the one piece of this module's state that can never be
+  // reconstructed: a chain that exports and reimports without them would report
+  // that nothing had ever been burned, and no later observation could tell it
+  // otherwise. Empty on a genuinely new chain.
+  repeated BurnTotal burned = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+
+  // last_mint_time is the previous emission's block time in unix nanoseconds.
+  //
+  // Exported for the same reason the emission prorates against it at all: a
+  // zero here means the next block mints nothing and restarts the clock, so an
+  // export/import would quietly skip one block's issuance. Zero is correct only
+  // for a chain that has never minted.
+  int64 last_mint_time = 3;
 }

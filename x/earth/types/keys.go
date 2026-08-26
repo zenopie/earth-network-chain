@@ -59,3 +59,40 @@ var (
 	// times.
 	LastMintTimeKey = collections.NewPrefix("last_mint_time")
 )
+
+// BurnedKey prefixes the cumulative burn counters, keyed by (source, denom).
+//
+// The chain destroys supply in five places across four modules, and three of
+// them run in EndBlock where nothing indexes them. Nobody can reconstruct the
+// figure after the fact — x/bank tracks what supply remains, never what left —
+// so it is counted as it happens or not at all. See keeper/burns.go.
+var BurnedKey = collections.NewPrefix("burned")
+
+// The mechanisms that destroy supply. These are the `source` keys under
+// BurnedKey and the labels the explorer groups by, so renaming one silently
+// starts a fresh counter and orphans the old total: treat them as state.
+const (
+	// SourceGasFees is the burned half of each block's gas, split in
+	// keeper/fees.go. Any denom that can pay for gas can appear here.
+	SourceGasFees = "gas_fees"
+
+	// SourceSwapFee is the ERTH half of every dex swap fee, burned in
+	// x/dex/keeper/msg_server_swap.go.
+	SourceSwapFee = "swap_fee"
+
+	// SourcePolRetire is protocol-owned liquidity being retired on its
+	// straight-line schedule in x/dex/keeper/pol_burn.go. Burns the pool's
+	// spoke token as well as ERTH, except where the spoke side is a bridged
+	// asset the chain cannot recreate.
+	SourcePolRetire = "pol_retire"
+
+	// SourceAnmlBuyback is ANML bought with the individual pillar's emission
+	// and destroyed, in x/personhood/keeper/abci.go.
+	SourceAnmlBuyback = "anml_buyback"
+
+	// SourceAllocation is ERTH an allocation option earned but nobody claimed,
+	// plus the fee for opening one. Two call sites in x/allocation, counted
+	// together because the distinction is internal bookkeeping rather than
+	// something a reader of the total would ask about.
+	SourceAllocation = "allocation"
+)

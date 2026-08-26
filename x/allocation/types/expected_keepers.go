@@ -59,3 +59,11 @@ type BankKeeper interface {
 type CommunityPoolKeeper interface {
 	FundCommunityPool(ctx context.Context, amount sdk.Coins, sender sdk.AccAddress) error
 }
+
+// BurnRecorder is x/earth's cumulative burn counters, narrowed to the one call
+// this module makes into them. Burns are unobservable after the fact — x/bank
+// records only the supply that remains — so every burn here is counted as it
+// happens. See x/earth/keeper/burns.go.
+type BurnRecorder interface {
+	RecordBurn(ctx context.Context, source string, coins sdk.Coins) error
+}

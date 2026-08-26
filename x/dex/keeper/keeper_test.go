@@ -60,6 +60,7 @@ func initFixture(t *testing.T) *fixture {
 		authority,
 		nil,
 		stubStakingKeeper{},
+		&burnLog{},
 	)
 
 	// Initialize params

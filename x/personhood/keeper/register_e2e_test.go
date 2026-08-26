@@ -63,7 +63,7 @@ func TestRegisterEndToEnd_RealPki(t *testing.T) {
 	}
 
 	k := NewKeeper(runtime.NewKVStoreService(personhoodStore), encCfg.Codec, ac,
-		authtypes.NewModuleAddress(types.GovModuleName), nil, stubDex{}, pki, stubAllocation{})
+		authtypes.NewModuleAddress(types.GovModuleName), nil, stubDex{}, pki, stubAllocation{}, &burnLog{})
 
 	params := types.Params{
 		VerifyingKeys:             map[string][]byte{"lean_poa": vk},

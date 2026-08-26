@@ -27,6 +27,17 @@ type stubBank struct {
 	burned sdk.Coins
 	minted sdk.Coins
 	modBal sdk.Coins
+	// counted is what the keeper reported to x/earth's burn counters, kept here
+	// so a test can hold it against what BurnCoins actually destroyed.
+	counted map[string]sdk.Coins
+}
+
+func (s *stubBank) RecordBurn(_ context.Context, source string, coins sdk.Coins) error {
+	if s.counted == nil {
+		s.counted = map[string]sdk.Coins{}
+	}
+	s.counted[source] = s.counted[source].Add(coins...)
+	return nil
 }
 
 func (s *stubBank) SpendableCoins(context.Context, sdk.AccAddress) sdk.Coins { return nil }
@@ -152,7 +163,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	humans := newStubHumans()
 
 	k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac,
-		authtypes.NewModuleAddress(types.GovModuleName), bank, staking)
+		authtypes.NewModuleAddress(types.GovModuleName), bank, staking, bank)
 
 	// The same registrations the app performs from x/dex and x/personhood.
 	k.RegisterWeightSource(types.STREAM_ID_CARETAKER, humans)

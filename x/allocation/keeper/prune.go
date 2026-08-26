@@ -10,6 +10,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/allocation/types"
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 )
 
 // Dead options do not stay forever.
@@ -180,8 +181,11 @@ func (k Keeper) SweepPrunableOptions(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName,
-				sdk.NewCoins(sdk.NewCoin(denom, forfeited))); err != nil {
+			burned := sdk.NewCoins(sdk.NewCoin(denom, forfeited))
+			if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, burned); err != nil {
+				return err
+			}
+			if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceAllocation, burned); err != nil {
 				return err
 			}
 		}

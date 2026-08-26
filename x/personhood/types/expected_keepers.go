@@ -84,3 +84,11 @@ type PkiKeeper interface {
 	// on the Registration — not by the certificate VerifyDsc takes.
 	IsCommitmentRevoked(ctx context.Context, commitment []byte) (bool, error)
 }
+
+// BurnRecorder is x/earth's cumulative burn counters, narrowed to the one call
+// this module makes into them. Burns are unobservable after the fact — x/bank
+// records only the supply that remains — so every burn here is counted as it
+// happens. See x/earth/keeper/burns.go.
+type BurnRecorder interface {
+	RecordBurn(ctx context.Context, source string, coins sdk.Coins) error
+}
