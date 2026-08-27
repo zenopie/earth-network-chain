@@ -8,11 +8,14 @@ import (
 	"github.com/CosmWasm/wasmd/x/wasm"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+	wasmvmtypes "github.com/CosmWasm/wasmvm/v3/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -25,6 +28,7 @@ import (
 
 	allocationmoduletypes "github.com/earth-network/earth/x/allocation/types"
 	dexmoduletypes "github.com/earth-network/earth/x/dex/types"
+	earthmodulekeeper "github.com/earth-network/earth/x/earth/keeper"
 	earthmoduletypes "github.com/earth-network/earth/x/earth/types"
 	personhoodmoduletypes "github.com/earth-network/earth/x/personhood/types"
 	pkimoduletypes "github.com/earth-network/earth/x/pki/types"
@@ -144,6 +148,73 @@ func wasmAcceptedQueries() wasmkeeper.AcceptedQueries {
 	}
 }
 
+// burnRecorder counts contract-initiated burns into x/earth's burn counters.
+//
+// CosmWasm's BankMsg::Burn moves a contract's coins into the x/wasm module
+// account and destroys them there (wasmd x/wasm/keeper/handler_plugin.go,
+// NewBurnCoinMessageHandler). That is a real reduction in ERTH supply and it
+// happens entirely inside wasmd, which knows nothing about this chain's
+// tokenomics — so without this decorator the coins vanish from supply and no
+// counter moves.
+//
+// It is counted because it is economically real: someone chose to destroy value
+// on this chain, which is exactly what /earth/earth/v1/burns is for. x/bank
+// records what supply remains, never what left, so an uncounted burn is simply
+// gone from the record. Contracts are the one burner this chain does not
+// author, and x/wasm is permissionless here — anyone may upload and instantiate
+// — so this is not a rare path to be argued away; it is whatever deployed
+// contracts choose to do.
+//
+// Not covered: wasmd's other burn through this account, VestingCoinBurner,
+// which fires when a contract is instantiated at an address already holding a
+// vesting account and destroys its original vesting balances. Counting it would
+// mean recomputing wasmd's own choice of which denoms to burn — it derives them
+// from GetOriginalVesting internally and reports nothing back — and a copy of
+// that logic would drift silently. It needs a vesting account deliberately
+// parked at a contract's future address, so it is an instantiation collision
+// rather than a mechanism.
+//
+// Nor is it the only ERTH burn outside these counters — staking slashing and
+// vetoed governance deposits both destroy supply and are deliberately out of
+// scope. See x/earth/keeper/burns.go: these counters answer what the tokenomics
+// destroyed, not what the total supply did.
+//
+// The recording deliberately runs AFTER the inner handler and only on success,
+// which is what RecordBurn's contract asks for: the counter must live or die
+// with the burn it describes. A failed dispatch records nothing, and a burn
+// inside a submessage whose parent later reverts takes its counter with it,
+// because both are writes to the same context.
+type burnRecorder struct {
+	inner wasmkeeper.Messenger
+	earth earthmodulekeeper.Keeper
+}
+
+var _ wasmkeeper.Messenger = burnRecorder{}
+
+func (b burnRecorder) DispatchMsg(
+	ctx sdk.Context,
+	contractAddr sdk.AccAddress,
+	contractIBCPortID string,
+	msg wasmvmtypes.CosmosMsg,
+) ([]sdk.Event, [][]byte, [][]*codectypes.Any, error) {
+	events, data, responses, err := b.inner.DispatchMsg(ctx, contractAddr, contractIBCPortID, msg)
+	if err != nil || msg.Bank == nil || msg.Bank.Burn == nil {
+		return events, data, responses, err
+	}
+
+	// Same conversion the inner handler used to decide what to burn. It cannot
+	// fail here: the handler ran it first and returned an error if it did, and
+	// this branch is only reached when the handler succeeded.
+	coins, convErr := wasmkeeper.ConvertWasmCoinsToSdkCoins(msg.Bank.Burn.Amount)
+	if convErr != nil {
+		return nil, nil, nil, convErr
+	}
+	if err := b.earth.RecordBurn(ctx, earthmoduletypes.SourceWasm, coins); err != nil {
+		return nil, nil, nil, err
+	}
+	return events, data, responses, nil
+}
+
 // registerWasmKeeper mounts the x/wasm store and builds its keeper.
 //
 // Called from registerIBCModules rather than standing on its own, because it
@@ -212,6 +283,17 @@ func (app *App) registerWasmKeeper(appOpts servertypes.AppOptions) error {
 		wasmkeeper.WithQueryPlugins(&wasmkeeper.QueryPlugins{
 			Grpc:     wasmkeeper.AcceptListGrpcQuerier(wasmAcceptedQueries(), app.GRPCQueryRouter(), app.appCodec),
 			Stargate: wasmkeeper.AcceptListStargateQuerier(wasmAcceptedQueries(), app.GRPCQueryRouter(), app.appCodec),
+		}),
+		// Count BankMsg::Burn into x/earth. A decorator rather than
+		// WithMessageHandler so the default handler chain — bank, staking,
+		// distribution, IBC, stargate, Any — stays exactly as wasmd built it;
+		// this only observes what passes through. See burnRecorder above.
+		//
+		// app.EarthKeeper is populated by depinject well before this runs, and
+		// the keeper is a value holding collections that reference the store
+		// service, so copying it here is the same keeper.
+		wasmkeeper.WithMessageHandlerDecorator(func(old wasmkeeper.Messenger) wasmkeeper.Messenger {
+			return burnRecorder{inner: old, earth: app.EarthKeeper}
 		}),
 	)
 

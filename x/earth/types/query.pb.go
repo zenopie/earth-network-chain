@@ -271,11 +271,22 @@ type QueryClient interface {
 	Params(ctx context.Context, in *QueryParamsRequest, opts ...grpc.CallOption) (*QueryParamsResponse, error)
 	// Burns queries the supply this chain has destroyed, by mechanism.
 	//
-	// This exists because the burn is otherwise unobservable. Three of the five
+	// This exists because the burn is otherwise unobservable. Three of the
 	// mechanisms run in EndBlock, so they leave no transaction to search for, and
 	// the bank module records only what supply remains — never what was taken out
 	// of it. A client that wanted this figure without the chain keeping it would
 	// have to replay every block since genesis.
+	//
+	// These are TOKENOMICS burns: supply this chain destroys on purpose as part of
+	// how the token works — gas fees, swap fees, protocol-owned liquidity retiring
+	// on schedule, the ANML buyback, unclaimed allocation, and contracts burning
+	// their own coins.
+	//
+	// It is not every way ERTH leaves the supply. Staking slashing and vetoed
+	// governance deposits also burn, and are deliberately excluded: a penalty and
+	// a process forfeiture are not the token's economics. So this total cannot be
+	// used to reconstruct total supply — ask x/bank for that. See
+	// x/earth/keeper/burns.go.
 	Burns(ctx context.Context, in *QueryBurnsRequest, opts ...grpc.CallOption) (*QueryBurnsResponse, error)
 }
 
@@ -311,11 +322,22 @@ type QueryServer interface {
 	Params(context.Context, *QueryParamsRequest) (*QueryParamsResponse, error)
 	// Burns queries the supply this chain has destroyed, by mechanism.
 	//
-	// This exists because the burn is otherwise unobservable. Three of the five
+	// This exists because the burn is otherwise unobservable. Three of the
 	// mechanisms run in EndBlock, so they leave no transaction to search for, and
 	// the bank module records only what supply remains — never what was taken out
 	// of it. A client that wanted this figure without the chain keeping it would
 	// have to replay every block since genesis.
+	//
+	// These are TOKENOMICS burns: supply this chain destroys on purpose as part of
+	// how the token works — gas fees, swap fees, protocol-owned liquidity retiring
+	// on schedule, the ANML buyback, unclaimed allocation, and contracts burning
+	// their own coins.
+	//
+	// It is not every way ERTH leaves the supply. Staking slashing and vetoed
+	// governance deposits also burn, and are deliberately excluded: a penalty and
+	// a process forfeiture are not the token's economics. So this total cannot be
+	// used to reconstruct total supply — ask x/bank for that. See
+	// x/earth/keeper/burns.go.
 	Burns(context.Context, *QueryBurnsRequest) (*QueryBurnsResponse, error)
 }
 

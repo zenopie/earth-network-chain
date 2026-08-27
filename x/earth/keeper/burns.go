@@ -27,10 +27,39 @@ import (
 // and they are exact, which is the whole of their justification: a figure that
 // says "this much has been destroyed" is worth nothing if it is an estimate.
 //
-// Attribution is kept alongside the total because the five mechanisms mean
-// different things. Gas burned is congestion, swap fees are volume, a pol
-// retirement is a schedule running whether anyone trades or not — collapsing
-// them into one number would hide every one of those signals.
+// Attribution is kept alongside the total because the mechanisms mean different
+// things. Gas burned is congestion, swap fees are volume, a pol retirement is a
+// schedule running whether anyone trades or not — collapsing them into one
+// number would hide every one of those signals.
+//
+// SCOPE: these are tokenomics burns, not every way ERTH can leave the supply.
+//
+// What is counted is supply this chain destroys on purpose, as part of how the
+// token is designed to work — fees returned to holders by removing them from
+// circulation, liquidity retired on schedule, an emission spent buying its own
+// token back. That is the question the counters answer: where is value being
+// destroyed, and by which mechanism.
+//
+// Deliberately NOT counted, because they are not tokenomics:
+//
+//   - Staking slashing (x/staking). A penalty for downtime or equivocation. It
+//     burns real ERTH and fires in ordinary operation, but it prices validator
+//     misbehaviour, not the token. It belongs to the security model.
+//   - Vetoed proposal deposits (x/gov, burn_vote_veto is true in genesis). A
+//     forfeiture in a governance process, for the same reason.
+//   - wasmd's vesting-account prune, which burns the balance of a vesting
+//     account that a contract is instantiated over. Not a mechanism at all —
+//     it needs an account deliberately parked at a contract's future address.
+//
+// SourceWasm sits on the near side of that line but is worth reading carefully:
+// a contract burning its own coins is real, economically-driven destruction and
+// belongs in the total, but it is third-party behaviour, not a lever this
+// chain's tokenomics controls. The by_source split keeps it distinguishable.
+//
+// The consequence to hold onto: this total is NOT all supply destruction, so
+// current_supply cannot be reconstructed from genesis supply, issuance and
+// these figures. x/bank is the authority on how much ERTH exists. These
+// counters answer why the tokenomics moved it, not what the number is.
 
 // RecordBurn adds coins to the running total for one source.
 //
