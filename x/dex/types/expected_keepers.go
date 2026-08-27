@@ -4,9 +4,7 @@ import (
 	"context"
 
 	"cosmossdk.io/core/address"
-	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 // AuthKeeper defines the expected interface for the Auth module.
@@ -16,15 +14,24 @@ type AuthKeeper interface {
 	// Methods imported from account should be defined here
 }
 
-// StakingKeeper defines the expected interface for the Staking module. It is
-// used to resolve the hub denom (the staking coin, ERTH) and to read a
-// delegator's bonded stake, which is their voting weight in the allocation
-// stream.
+// StakingKeeper is a denom oracle, and nothing else. x/dex does not cross
+// staking: no pool, swap, auction or reward path reads a delegation, and this
+// module has no stake-weighted logic of its own.
+//
+// It is here because the hub asset every pool pairs against is the staking coin,
+// and BondDenom is the only runtime accessor for the chain's denom that does not
+// require x/dex to carry a param of its own. That identity is deliberate — ERTH
+// is both — but it is an identity the code assumes rather than enforces. If the
+// two ever needed to differ, the fix is a hub_denom param on this module, not a
+// second denom read from somewhere else.
+//
+// Keep this interface at one method. It previously declared GetDelegatorBonded,
+// GetDelegation and GetValidator, none of which x/dex ever called; they were
+// implemented only by the test stub, and the comment above them described
+// x/allocation's vote-weight logic, which lives in
+// x/allocation/keeper/keeper.go.
 type StakingKeeper interface {
 	BondDenom(ctx context.Context) (string, error)
-	GetDelegatorBonded(ctx context.Context, delegator sdk.AccAddress) (math.Int, error)
-	GetDelegation(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) (stakingtypes.Delegation, error)
-	GetValidator(ctx context.Context, valAddr sdk.ValAddress) (stakingtypes.Validator, error)
 }
 
 // BankKeeper defines the expected interface for the Bank module.
