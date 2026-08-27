@@ -41,23 +41,31 @@ func ProvideEarthMintFn(earthKeeper earthkeeper.Keeper) mintkeeper.MintFn {
 	}
 }
 
-// publishInflation writes this chain's issuance into x/mint's Minter, which
-// nothing here reads and every third party does.
+// publishInflation writes this mint function's issuance into x/mint's Minter,
+// which nothing here reads and every third party does.
 //
 // Overriding the mint function left the Minter at its zero value, so
 // /cosmos/mint/v1beta1/inflation and .../annual_provisions both answered
-// 0.000000000000000000. Wallets and explorers derive staking yield and monetary
-// policy from those two fields, and a chain issuing 126,144,000 ERTH a year was
-// telling all of them it issued nothing. The app itself is unaffected: both
-// clients compute from the fixed per-second rate directly and never ask.
+// 0.000000000000000000. Wallets and explorers derive staking yield from those
+// two fields, and a chain paying stakers 31,536,000 ERTH a year was telling all
+// of them it paid nothing. The app itself is unaffected: both clients compute
+// from the fixed per-second rate directly and never ask.
 //
-// What is published is GROSS issuance, which is what these fields mean —
-// AnnualProvisions = TotalSupply * Inflation is the SDK's own identity, and it
-// describes minting, not the change in supply. This chain also burns, currently
-// faster than it mints, so its supply is falling while this figure is positive.
-// That is not expressible here: ValidateMinter rejects a negative inflation, so
-// there is no honest net figure to publish even if the field's meaning allowed
-// one. Net belongs to /earth/earth/v1/burns, which reports both sides.
+// What is published is what THIS mint function mints, because that is what the
+// SDK means by these fields. DefaultMintFn (x/mint/keeper/mint.go) sets
+// AnnualProvisions, mints AnnualProvisions/BlocksPerYear each block, and pays
+// all of it to the fee collector — so AnnualProvisions is by construction the
+// module's own annual issuance, and Inflation is that over the staking token
+// supply. Every SDK-derived client is built against that identity; publishing a
+// larger figure here reads to them as a proportionally larger staking APR.
+//
+// That makes this the investor pillar alone. The chain's GROSS issuance is four
+// times this: the other three pillars are minted by x/personhood and
+// x/allocation, never reach the fee collector, and so are not x/mint's to
+// report. Those rates are constants in x/earth/types/keys.go and are not yet
+// served over RPC — the chain's own endpoint, /earth/earth/v1/burns, covers only
+// the destruction side, so gross issuance and net supply change currently have
+// no query. Worth adding to x/earth rather than distorting this one.
 func publishInflation(ctx sdk.Context, k *mintkeeper.Keeper) error {
 	minter, err := k.Minter.Get(ctx)
 	if err != nil {
@@ -75,29 +83,29 @@ func publishInflation(ctx sdk.Context, k *mintkeeper.Keeper) error {
 		return nil
 	}
 
-	annual, inflation := grossIssuance(supply)
+	annual, inflation := stakingIssuance(supply)
 	minter.AnnualProvisions = annual
 	minter.Inflation = inflation
 
 	return k.Minter.Set(ctx, minter)
 }
 
-// grossIssuance is the pair x/mint publishes: what this chain mints in a year,
-// and that as a fraction of the supply it is minted into.
+// stakingIssuance is the pair x/mint publishes: what this mint function mints in
+// a year, and that as a fraction of the supply it is minted into.
 //
-// The denominator is TOTAL supply, not bonded — that is what the SDK's
-// AnnualProvisions = TotalSupply * Inflation identity means, and the difference
-// is not small: against bonded stake this same numerator would read a rate in
-// the thousands of percent.
+// The numerator is one pillar, matching what MintEmission actually pays into the
+// fee collector. The denominator is the staking token supply, matching the SDK's
+// NextAnnualProvisions, so that AnnualProvisions = supply * Inflation holds
+// exactly as it does on a chain running DefaultMintFn.
 //
 // Note the direction this moves. A fixed numerator over a growing supply falls,
 // which is the decay x/earth/types/keys.go describes. While the protocol-owned
 // liquidity is retiring, supply shrinks instead, so this figure RISES for those
 // five years and only begins falling once the retirement is spent. That is the
 // arithmetic being honest about a denominator that goes down before it goes up.
-func grossIssuance(supply math.Int) (annual, inflation math.LegacyDec) {
+func stakingIssuance(supply math.Int) (annual, inflation math.LegacyDec) {
 	annual = math.LegacyNewDecFromInt(
-		math.NewInt(earthtypes.TotalEmissionPerSecond).MulRaw(secondsPerYear),
+		math.NewInt(earthtypes.EmissionPerSecondPerPillar).MulRaw(secondsPerYear),
 	)
 	return annual, annual.QuoInt(supply)
 }
