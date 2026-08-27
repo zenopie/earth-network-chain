@@ -95,4 +95,17 @@ const (
 	// together because the distinction is internal bookkeeping rather than
 	// something a reader of the total would ask about.
 	SourceAllocation = "allocation"
+
+	// SourceWasm is a contract destroying coins it holds, via CosmWasm's
+	// BankMsg::Burn. Any denom a contract can hold can appear here.
+	//
+	// Unlike the four above, this one is not a mechanism this chain designed.
+	// It is a standard CosmWasm message, x/wasm is permissionless here (see
+	// app/wasm.go), and wasmd burns through its own module account without
+	// telling anyone — so it is counted by a decorator in app/wasm.go rather
+	// than at a call site in this repo.
+	//
+	// It is a demand signal like gas and swap fees, not a schedule: it says
+	// contracts on this chain chose to destroy this much.
+	SourceWasm = "wasm"
 )

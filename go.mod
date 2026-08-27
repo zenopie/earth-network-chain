@@ -28,6 +28,7 @@ require (
 	cosmossdk.io/x/feegrant v0.2.0
 	cosmossdk.io/x/nft v0.2.0
 	cosmossdk.io/x/upgrade v0.2.0
+	github.com/CosmWasm/wasmvm/v3 v3.0.7
 	github.com/cometbft/cometbft v0.38.21
 	github.com/consensys/gnark-crypto v0.20.1
 	github.com/cosmos/cosmos-db v1.1.3
@@ -86,7 +87,6 @@ require (
 	github.com/Antonboom/nilnil v1.0.1 // indirect
 	github.com/Antonboom/testifylint v1.5.2 // indirect
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
-	github.com/CosmWasm/wasmvm/v3 v3.0.7 // indirect
 	github.com/Crocmagnon/fatcontext v0.7.1 // indirect
 	github.com/DataDog/datadog-go v4.8.3+incompatible // indirect
 	github.com/DataDog/zstd v1.5.7 // indirect

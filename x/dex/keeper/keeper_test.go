@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"cosmossdk.io/core/address"
-	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -13,7 +12,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/dex/keeper"
 	module "github.com/earth-network/earth/x/dex/module"
@@ -31,15 +29,6 @@ type fixture struct {
 type stubStakingKeeper struct{}
 
 func (stubStakingKeeper) BondDenom(context.Context) (string, error) { return "uerth", nil }
-func (stubStakingKeeper) GetDelegatorBonded(context.Context, sdk.AccAddress) (math.Int, error) {
-	return math.ZeroInt(), nil
-}
-func (stubStakingKeeper) GetDelegation(context.Context, sdk.AccAddress, sdk.ValAddress) (stakingtypes.Delegation, error) {
-	return stakingtypes.Delegation{}, stakingtypes.ErrNoDelegation
-}
-func (stubStakingKeeper) GetValidator(context.Context, sdk.ValAddress) (stakingtypes.Validator, error) {
-	return stakingtypes.Validator{}, stakingtypes.ErrNoValidatorFound
-}
 
 func initFixture(t *testing.T) *fixture {
 	t.Helper()

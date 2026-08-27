@@ -142,7 +142,9 @@ func AppConfig() depinject.Config {
 				genutiltypes.ModuleName: genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
 			},
 		),
-		// Override x/mint's default inflation with a fixed 1 ERTH/sec emission.
+		// Override x/mint's bonded-ratio inflation with the investor pillar's
+		// fixed 1 ERTH/sec emission — one of the chain's four pillars, and the
+		// only one that pays stakers. See app/mint.go.
 		depinject.Provide(ProvideEarthMintFn),
 	)
 }

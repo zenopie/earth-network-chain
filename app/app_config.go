@@ -102,10 +102,20 @@ var (
 		// collector, and burns gas fees. Without these permissions MintCoins panics.
 		// It needs no Staking permission — it never touches the staking pools.
 		{Account: earthmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
-		// x/wasm burns, and only burns: the account exists so a contract holding
-		// a vesting account's coins can have them destroyed when the contract is
-		// pruned. It never mints, and no contract's own balance passes through
-		// it — a contract address is an ordinary account.
+		// x/wasm burns, and only burns. The permission serves CosmWasm's
+		// BankMsg::Burn: wasmd moves the burning contract's coins into this
+		// module account and destroys them there, so a contract's own balance
+		// does pass through it, on any denom a contract can hold. That path is
+		// counted into x/earth by the burnRecorder decorator in app/wasm.go.
+		//
+		// A second, far rarer path uses the same permission: instantiating a
+		// contract at an address already holding a vesting account prunes that
+		// account and burns its original vesting balances (wasmd's
+		// VestingCoinBurner, the default AccountPruner). That one is NOT
+		// counted — see burnRecorder's comment.
+		//
+		// It never mints. A contract address is an ordinary account, not a
+		// module account, so nothing a contract merely holds is here.
 		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Burner}}}
 
 	// Blocked account addresses — MsgSend and MsgMultiSend refuse them as a

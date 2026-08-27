@@ -81,22 +81,24 @@ genesis:
         burn_proposal_deposit_prevote: false
     # x/mint does NOT decide issuance on this chain. app.ProvideEarthMintFn
     # replaces the module's MintFn, and x/mint's BeginBlocker calls nothing but
-    # that function — so the bonded-ratio inflation model is never evaluated and
-    # the Minter record is never written. All of ERTH issuance is the fixed
-    # 4 ERTH/sec in x/earth/types/keys.go.
+    # that function — so the bonded-ratio inflation model below is never
+    # evaluated. All of ERTH issuance is the fixed 4 ERTH/sec in
+    # x/earth/types/keys.go, of which x/mint pays out one pillar.
     #
     # `mint_denom` is the single param that still does something: MintEmission
     # mints in it. It is not set here on purpose — ignite fills it from
     # `default_denom` at the top of this file, and one source of truth beats two.
     #
-    # Everything below is zeroed so genesis reads honestly. Left at the SDK
-    # defaults, `earthd q mint params` would report 20%/7% bonded-ratio inflation
-    # and `q mint inflation` a flat 13%, none of which this chain does — a
-    # plausible-looking wrong answer is worse than an obviously inert one.
+    # The params below are zeroed so genesis reads honestly. Left at the SDK
+    # defaults, `earthd q mint params` would report 20%/7% bonded-ratio inflation,
+    # which this chain does not do — a plausible-looking wrong answer is worse
+    # than an obviously inert one.
     mint:
       minter:
-        # Frozen at genesis: with a custom MintFn nothing ever updates these, so
-        # whatever is written here is what the queries return forever.
+        # Starting values only, unlike the params below. app.publishInflation
+        # rewrites both fields every block with what the custom MintFn actually
+        # mints, so `q mint inflation` answers ~1.25% from the first block on and
+        # these zeros are visible only in the genesis file itself.
         inflation: "0"
         annual_provisions: "0"
       params:
