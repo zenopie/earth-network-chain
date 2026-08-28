@@ -15,7 +15,10 @@ import (
 	"encoding/json"
 	"math/big"
 	"os"
+	"strconv"
 	"testing"
+
+	"github.com/earth-network/earth/app"
 )
 
 type coin struct {
@@ -379,6 +382,28 @@ func TestHeaderMatchesChainJSON(t *testing.T) {
 	if g.InitialHeight != c.InitialHeight {
 		t.Errorf("initial_height is %d in genesis.json, %d in chain.json",
 			g.InitialHeight, c.InitialHeight)
+	}
+}
+
+// The binary has to report the app version the genesis declares, and nothing
+// else in the build ties the two together.
+//
+// baseapp keeps the reported version in a field only SetProtocolVersion writes,
+// so app.AppVersion is a hand-maintained constant that has to be bumped in step
+// with chain.json at every coordinated upgrade. Nothing reads the difference in
+// normal operation — the mismatch surfaces only at the last step of a state sync
+// restore, on somebody else's node, after it has downloaded and applied every
+// chunk. That is far too late and far too quiet, so it fails here instead.
+func TestAppVersionMatchesChainJSON(t *testing.T) {
+	c := readJSON[struct {
+		AppVersion string `json:"app_version"`
+	}](t, "genesis/chain.json")
+
+	want := strconv.FormatUint(app.AppVersion, 10)
+	if c.AppVersion != want {
+		t.Errorf("chain.json app_version is %q, app.AppVersion is %s — "+
+			"bump app/version.go and chain.json together, or state sync breaks for every joining node",
+			c.AppVersion, want)
 	}
 }
 

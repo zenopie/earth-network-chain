@@ -232,6 +232,32 @@ func New(
 	// enable optimistic execution
 	baseAppOptions = append(baseAppOptions, baseapp.SetOptimisticExecution())
 
+	// Report the app version the network agreed on.
+	//
+	// baseapp keeps this in a plain field that nothing but SetProtocolVersion
+	// writes -- there is no VersionModifier in SDK v0.53 and x/upgrade does not
+	// bump it -- so leaving it unset makes ABCI Info answer 0 while
+	// consensus_params.version.app says 1. Nothing in normal operation reads the
+	// difference, which is why a chain can run for tens of thousands of blocks
+	// without noticing.
+	//
+	// State sync is the one thing that checks, as the last step of a restore.
+	// A joining node discovers a snapshot, fetches every chunk, applies them all,
+	// and only then fails with
+	//
+	//   snapshot restoration failed: app version mismatch. Expected: 1, got: 0
+	//
+	// leaving from-genesis replay as the only way in. Measured against earth-1 on
+	// 2026-08-27.
+	//
+	// MUST equal networks/genesis/chain.json's app_version, which moves with
+	// every coordinated upgrade. TestAppVersionMatchesGenesis pins the pair
+	// together, because nothing else would notice them drifting apart until the
+	// next person tried to join.
+	baseAppOptions = append(baseAppOptions, func(bapp *baseapp.BaseApp) {
+		bapp.SetProtocolVersion(AppVersion)
+	})
+
 	// build app
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
