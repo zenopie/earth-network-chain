@@ -341,11 +341,14 @@ individual pillar buys back. Instead of a trusted backend, the app scans a passp
 and generates a **zk proof** on-device; the chain verifies a **Barretenberg
 UltraHonk** proof (`zk/ultrahonk`) against the
 governance-set verifying key selected by `signature_algorithm`
-(`params.verifying_keys`), pins `current_date` to block time, binds the proof to the
-live DSC-registry root (`x/pki`), and dedups on the nullifier. The passport register
-circuits (`lean_poa` + per-DSC-algorithm variants) live in `earth-network-mobile/circuits`;
-the DSC registry and its CSCA trust anchor are `x/pki` — see
-[`docs/DSC_REGISTRY_OPTION_C.md`](docs/DSC_REGISTRY_OPTION_C.md).
+(`params.verifying_keys`), pins `current_date` to block time, requires the proof's
+`address` public input to equal the transaction signer, and dedups on the nullifier.
+The Document Signer travels with the message: the chain verifies the certificate
+against the CSCA trust store in `x/pki`, recomputes its Poseidon2 commitment, and
+requires the proof's `dsc_key` to match — which is what binds a proof to one
+specific, CSCA-verified signer, and what lets governance revoke one. The passport
+register circuits (`lean_poa` + per-DSC-algorithm variants) live in
+`earth-network-mobile/circuits`.
 
 - **ANML token** (`uanml`, 1 ANML = 1e6 uanml) — minted 1/day per registered human.
 - **Buyback-and-burn (1 ERTH/sec)** — `BeginBlock` mints ERTH, swaps it for ANML on the
@@ -360,9 +363,13 @@ the DSC registry and its CSCA trust anchor are `x/pki` — see
 `personhood params`.
 
 The registration nullifier is derived deterministically in-circuit from the passport
-(name + date of birth), so a renewed passport yields the same nullifier (one person, one
-registration) and the issuing state gets no extra exposure. See
-[`docs/DSC_REGISTRY_OPTION_C.md`](docs/DSC_REGISTRY_OPTION_C.md) for the DSC-registry design.
+(document number + date of birth), and the proof is bound to the registering account,
+so it cannot be lifted out of a block and replayed from another wallet. A renewed
+passport therefore yields a *different* nullifier: uniqueness is bounded by the cost
+of renewing a passport rather than absolute. That is a deliberate trade for
+unlinkability — a name and a birth date are not secrets, so deriving from them let
+anyone holding a candidate pair confirm which address belongs to that person. See
+finding #1 in the circuit's SECURITY.md.
 
 ## Smart contracts — CosmWasm (`x/wasm`)
 

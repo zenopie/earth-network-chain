@@ -13,7 +13,6 @@ import (
 	"time"
 
 	storetypes "cosmossdk.io/store/types"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/testutil"
@@ -108,12 +107,4 @@ func TestVerifyDscFlow(t *testing.T) {
 	if _, err := k.VerifyDsc(ctx, dscDER); err == nil {
 		t.Fatal("expected rejection after revocation")
 	}
-}
-
-func mustField(t *testing.T, dec string) (f fr.Element) {
-	t.Helper()
-	if _, ok := f.SetString(dec); ok != nil {
-		t.Fatalf("bad field element %q", dec)
-	}
-	return f
 }

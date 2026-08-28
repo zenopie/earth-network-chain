@@ -9,7 +9,6 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	earthtypes "github.com/earth-network/earth/x/earth/types"
 	"github.com/earth-network/earth/x/personhood/types"
@@ -58,10 +57,6 @@ func (k Keeper) getLastBuyback(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return v, nil
-}
-
-func (k Keeper) moduleAddress() sdk.AccAddress {
-	return authtypes.NewModuleAddress(types.ModuleName)
 }
 
 // buybackAndBurn mints the ERTH this pillar has emitted since the last buyback

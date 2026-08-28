@@ -39,9 +39,6 @@ func (stubAllocation) DrawFromOption(context.Context, allocationtypes.StreamId, 
 }
 func (stubAllocation) PayOut(context.Context, sdk.AccAddress, math.Int) error { return nil }
 
-// oracleDir points at the UltraHonk verifier's known-good bb v5.0.0 fixture.
-const oracleDir = "../../../zk/ultrahonk/testdata"
-
 // stubPki is a test PkiKeeper: it either rejects the DSC outright or returns a
 // fixed canonical public key for it.
 type stubPki struct {
@@ -352,15 +349,6 @@ func TestYYMMDDToUnix(t *testing.T) {
 			t.Fatalf("expected error for %d", bad)
 		}
 	}
-}
-
-func readFixture(t *testing.T, name string) []byte {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(oracleDir, name))
-	if err != nil {
-		t.Skipf("fixture %s missing (%v)", name, err)
-	}
-	return b
 }
 
 func readFileAt(t *testing.T, path string) []byte {

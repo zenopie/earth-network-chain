@@ -11,11 +11,23 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
-## [Unreleased]
+## [v0.5.1]
 
-The first release after this line is the launch candidate. Until `genesis_time`
-is set and the gentx collected, the network is a single validator and there is
-nothing to join.
+Dead code and stale documentation only; nothing here is consensus state. It is
+the chain's first governance upgrade, kept deliberately trivial because
+`app/upgrades.go` had never run against live validators — only in
+`scripts/rehearse-cosmovisor.sh`. Operators need do nothing: cosmovisor
+downloads and swaps it at the plan height.
+
+## [v0.5.0] — launch
+
+`earth-1` launched from this release at 2026-08-28T06:30:00Z, genesis sha256
+`3701aa69c304f45bbede5bb9eef3b7770d57dd7c03f39caa8c1d7b8a1ea4f792`.
+
+This section covers everything since v0.2.1 rather than one tag's worth. That is
+not tidiness lost: the v0.3.x and v0.4.x tags were released against a chain that
+no longer exists, and the chain running today started at v0.5.0 with all of this
+in it. For an operator deciding what to run, this is the first release there is.
 
 ### Consensus
 
