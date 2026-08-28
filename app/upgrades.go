@@ -48,6 +48,23 @@ type Upgrade struct {
 //	}
 var Upgrades = []Upgrade{
 	{
+		// v0.4.13 is the first upgrade on this chain that changes the state
+		// machine. Three things move:
+		//
+		//   * app/wasm.go gains burnRecorder, a decorator that counts CosmWasm
+		//     BankMsg::Burn into x/earth under the new SourceWasm bucket
+		//   * app/mint.go reports the staking pillar rather than gross issuance
+		//   * x/dex narrows its StakingKeeper interface
+		//
+		// None of it adds, renames or removes a module store. SourceWasm is a
+		// new *value* in an existing map inside x/earth's store, and a value
+		// needs no store upgrade — only a key does. So StoreUpgrades stays
+		// empty, and RunMigrations is the whole handler.
+		Name:          "v0.4.13",
+		CreateHandler: defaultUpgradeHandler,
+		StoreUpgrades: storetypes.StoreUpgrades{},
+	},
+	{
 		// v0.4.0 renames two x/dex proto fields and moves pool queries onto
 		// PoolView. None of that is state: the field numbers and types are
 		// unchanged, so stored bytes are identical, and the only behaviour that
