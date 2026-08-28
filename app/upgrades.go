@@ -47,47 +47,15 @@ type Upgrade struct {
 //	    StoreUpgrades: storetypes.StoreUpgrades{Added: []string{"newmodule"}},
 //	}
 var Upgrades = []Upgrade{
-	{
-		// v0.4.13 is the first upgrade on this chain that changes the state
-		// machine. Three things move:
-		//
-		//   * app/wasm.go gains burnRecorder, a decorator that counts CosmWasm
-		//     BankMsg::Burn into x/earth under the new SourceWasm bucket
-		//   * app/mint.go reports the staking pillar rather than gross issuance
-		//   * x/dex narrows its StakingKeeper interface
-		//
-		// None of it adds, renames or removes a module store. SourceWasm is a
-		// new *value* in an existing map inside x/earth's store, and a value
-		// needs no store upgrade — only a key does. So StoreUpgrades stays
-		// empty, and RunMigrations is the whole handler.
-		Name:          "v0.4.13",
-		CreateHandler: defaultUpgradeHandler,
-		StoreUpgrades: storetypes.StoreUpgrades{},
-	},
-	{
-		// v0.4.0 renames two x/dex proto fields and moves pool queries onto
-		// PoolView. None of that is state: the field numbers and types are
-		// unchanged, so stored bytes are identical, and the only behaviour that
-		// moved is in a query handler, which is not part of the app hash.
-		//
-		// So this migration does nothing, and that is deliberate. app/upgrades.go
-		// had never run — the halt, the store loader and the handler lookup had
-		// executed zero times outside scripts/rehearse-upgrade.sh — and the
-		// first time they run should not also be the first time the state they
-		// migrate matters. A no-op upgrade exercises the whole path (proposal,
-		// halt at height, operator swaps the binary, handler runs, chain
-		// continues) with nothing to lose if a step is wrong.
-		//
-		// RunMigrations is still called rather than skipped: it writes the
-		// module version map, and a later upgrade that does need a migration
-		// starts from a consistent one.
-		Name:          "v0.4.0",
-		CreateHandler: defaultUpgradeHandler,
-		// Empty on purpose. No module is added, renamed or removed, so there is
-		// no store to create — and declaring one that does not exist is how an
-		// upgrade fails at load with a store key nobody can explain.
-		StoreUpgrades: storetypes.StoreUpgrades{},
-	},
+	// Empty, and correct: this chain launches from the 2026-08-28 genesis and
+	// has performed no upgrades. The v0.4.0 and v0.4.13 entries that used to sit
+	// here belonged to the chain this one replaces -- keeping them would leave
+	// handlers for plan names no node will ever reach, and would let a proposal
+	// naming one of them pass and apply as a no-op.
+	//
+	// Entries are kept once they HAVE been applied, so a node syncing from
+	// genesis replays each in turn. Add the first one when the first upgrade
+	// ships; defaultUpgradeHandler below is the shape it starts from.
 }
 
 // setupUpgrades registers the upgrade handlers and, if the node is restarting
