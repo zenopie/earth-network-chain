@@ -49,11 +49,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:       "claim-anml",
 					Short:     "Claim 1 ANML (once per day, registered humans only)",
 				},
-				{
-					RpcMethod: "Unregister",
-					Use:       "unregister",
-					Short:     "Retire your own proof-of-personhood registration, freeing its nullifier",
-				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

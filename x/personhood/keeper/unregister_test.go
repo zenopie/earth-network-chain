@@ -11,12 +11,15 @@ import (
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
-// Unregister is the exit the chain did not have. Before it, a registration was
-// only ever taken away by the chain -- on expiry, or when its Document Signer
-// was revoked -- so undoing one meant waiting a year or resetting the chain from
-// genesis. The second is not hypothetical: earth-1 was reset on 2026-08-26 to
-// clear exactly one test registration.
-func TestUnregisterRetiresTheRegistration(t *testing.T) {
+// Unregister is removed. It was the exit the chain did not have, and it was also
+// an unbounded draw on the registration reward pool: it freed the nullifier, and
+// a free nullifier is a fresh registration as far as Register is concerned. On
+// earth-1 the loop ran in six blocks for a second payout of 31,534 ERTH.
+//
+// These tests pin the removal rather than the old behaviour, and they pin it at
+// the message boundary: the handler is the whole of the fix, so an accidental
+// restore has to fail here.
+func TestUnregisterIsRemoved(t *testing.T) {
 	f := initFixture(t)
 	sdkCtx := sdk.UnwrapSDKContext(f.ctx)
 	ms := keeper.NewMsgServerImpl(f.keeper)
@@ -32,36 +35,33 @@ func TestUnregisterRetiresTheRegistration(t *testing.T) {
 	countBefore, err := f.keeper.RegCount.Get(f.ctx)
 	require.NoError(t, err)
 
-	resp, err := ms.Unregister(f.ctx, &types.MsgUnregister{Creator: addrStr})
-	require.NoError(t, err)
-	require.Equal(t, nullifier, resp.Nullifier, "the response names the nullifier it freed")
+	_, err = ms.Unregister(f.ctx, &types.MsgUnregister{Creator: addrStr})
+	require.ErrorIs(t, err, types.ErrUnregisterRemoved)
 
-	// Every index the registration occupied, not just the primary one. A stale
-	// row in any of these is a registration that queries can still see.
-	_, err = f.keeper.Registrations.Get(f.ctx, nullifier)
-	require.ErrorIs(t, err, collections.ErrNotFound, "nullifier still registered")
-	_, err = f.keeper.RegByAddr.Get(f.ctx, addr.Bytes())
-	require.ErrorIs(t, err, collections.ErrNotFound, "address still maps to a nullifier")
+	// Rejected, not partially applied. Every index the registration occupies has
+	// to still hold it -- a handler that cleared state and then errored would
+	// leave the exploit open in a transaction that merely looks like it failed.
+	reg, err := f.keeper.Registrations.Get(f.ctx, nullifier)
+	require.NoError(t, err, "the registration was retired anyway")
+	require.Equal(t, addrStr, reg.Address)
+	got, err := f.keeper.RegByAddr.Get(f.ctx, addr.Bytes())
+	require.NoError(t, err, "the address no longer maps to a nullifier")
+	require.Equal(t, nullifier, got)
 	has, err := f.keeper.RegByRegisteredAt.Has(f.ctx, collections.Join(sdkCtx.BlockTime().Unix(), nullifier))
 	require.NoError(t, err)
-	require.False(t, has, "still in the expiry index")
+	require.True(t, has, "dropped out of the expiry index")
 
 	countAfter, err := f.keeper.RegCount.Get(f.ctx)
 	require.NoError(t, err)
-	require.Equal(t, countBefore-1, countAfter, "live registration count not decremented")
+	require.Equal(t, countBefore, countAfter, "live registration count moved")
 
-	// The part that is easy to miss: a retired registration must give its vote
-	// weight back, or it dilutes every human still verified while its option
-	// keeps accruing ERTH nobody directs.
-	require.Equal(t, weightBefore.SubRaw(types.VoterWeight).Int64(), humanTotalWeight(t, f, f.ctx).Int64(),
-		"vote weight left in the human stream")
-
-	// And the nullifier is genuinely free: the same person can register again.
-	_, err = f.keeper.Registrations.Get(f.ctx, nullifier)
-	require.ErrorIs(t, err, collections.ErrNotFound)
+	require.Equal(t, weightBefore.Int64(), humanTotalWeight(t, f, f.ctx).Int64(),
+		"vote weight left the human stream")
 }
 
-func TestUnregisterRejectsAnAddressThatIsNotRegistered(t *testing.T) {
+// The rejection does not depend on there being anything to retire. It is not a
+// precondition failure that a future state could satisfy -- the message is gone.
+func TestUnregisterIsRemovedForAnAddressThatIsNotRegistered(t *testing.T) {
 	f := initFixture(t)
 	ms := keeper.NewMsgServerImpl(f.keeper)
 
@@ -69,13 +69,15 @@ func TestUnregisterRejectsAnAddressThatIsNotRegistered(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = ms.Unregister(f.ctx, &types.MsgUnregister{Creator: addrStr})
-	require.ErrorIs(t, err, types.ErrNotRegistered)
+	require.ErrorIs(t, err, types.ErrUnregisterRemoved)
+	require.NotErrorIs(t, err, types.ErrNotRegistered,
+		"removal must not be reported as a state precondition")
 }
 
-// An expired registration is still unregisterable. It is retired either way, and
-// refusing would leave the row in state until the sweep reached it while telling
-// the holder they were not registered.
-func TestUnregisterWorksOnAnExpiredRegistration(t *testing.T) {
+// An expired registration was the one case unregister still did useful work on:
+// it is retired either way, and refusing left the row in state until the sweep
+// reached it. That work now belongs entirely to the expiry sweep.
+func TestUnregisterIsRemovedForAnExpiredRegistration(t *testing.T) {
 	f := initFixture(t)
 	sdkCtx := sdk.UnwrapSDKContext(f.ctx)
 	ms := keeper.NewMsgServerImpl(f.keeper)
@@ -89,12 +91,11 @@ func TestUnregisterWorksOnAnExpiredRegistration(t *testing.T) {
 	require.NoError(t, err)
 	nullifier := []byte("nullifier-long-since-lapsed-----")
 
-	// Registered far enough in the past that the validity window has closed.
 	seedVoter(t, f, sdkCtx, nullifier, addr, sdkCtx.BlockTime().Unix()-5000)
 
 	_, err = ms.Unregister(f.ctx, &types.MsgUnregister{Creator: addrStr})
-	require.NoError(t, err, "an expired registration should still be retirable by its holder")
+	require.ErrorIs(t, err, types.ErrUnregisterRemoved)
 
 	_, err = f.keeper.RegByAddr.Get(f.ctx, addr.Bytes())
-	require.ErrorIs(t, err, collections.ErrNotFound)
+	require.NoError(t, err, "the registration was retired anyway")
 }

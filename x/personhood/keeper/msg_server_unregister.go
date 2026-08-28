@@ -2,59 +2,34 @@ package keeper
 
 import (
 	"context"
-	"encoding/hex"
 
 	errorsmod "cosmossdk.io/errors"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
-// Unregister retires the signer's own registration and frees its nullifier.
+// Unregister is removed. It always fails.
 //
-// Until this existed the chain could only take a registration away — it lapses
-// after registration_validity_seconds, or is purged when its Document Signer is
-// revoked — and a person had no way to leave. The only remedy for a registration
-// somebody wanted undone was resetting the chain from genesis, which is a thing
-// that actually happened on 2026-08-26 for a single test registration.
+// It existed as the exit the chain did not have, and it worked -- but it also
+// freed the nullifier, and a free nullifier is a fresh registration. Register
+// pays the registration reward and mints 1 ANML whenever the nullifier it sees
+// is not already live, so unregister-then-register was an unbounded draw on the
+// human stream's reward pool: one passport, once per block. On earth-1 it was
+// done in six blocks for a second payout of 31,534 ERTH.
 //
-// An expired registration can still be unregistered. It is retired either way,
-// and refusing here would leave the row sitting in state until the expiry sweep
-// reached it while telling the holder they were not registered.
-func (k msgServer) Unregister(ctx context.Context, msg *types.MsgUnregister) (*types.MsgUnregisterResponse, error) {
-	creatorBz, err := k.addressCodec.StringToBytes(msg.Creator)
-	if err != nil {
-		return nil, errorsmod.Wrap(err, "invalid creator address")
-	}
-
-	reg, ok, err := k.getRegistrationByAddr(ctx, sdk.AccAddress(creatorBz))
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, errorsmod.Wrap(types.ErrNotRegistered, msg.Creator)
-	}
-
-	// removeRegistration calls ClearVoter, which credits the retired vote weight
-	// against the human stream's index -- so the index has to be current first.
-	// Register does the same thing for the same reason.
-	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
-		return nil, err
-	}
-	if err := k.removeRegistration(ctx, reg); err != nil {
-		return nil, err
-	}
-
-	// The ANML already minted stays with the holder. It was minted for days they
-	// were verified, and this is a departure rather than a reversal -- there is
-	// no claim that the registration should never have existed.
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
-		sdk.NewEvent(
-			"unregister",
-			sdk.NewAttribute("address", msg.Creator),
-			sdk.NewAttribute("nullifier", hex.EncodeToString(reg.Nullifier)),
-		),
-	)
-
-	return &types.MsgUnregisterResponse{Nullifier: reg.Nullifier}, nil
+// The switch path already covers the case this was mostly used for. Registering
+// again from a different wallet moves a live registration and deliberately pays
+// nothing -- the circuit binds the registrant's address, so a proof cannot be
+// lifted from somebody else's transaction to steal one. What is genuinely lost
+// is leaving the registry outright, which now only happens on expiry or a
+// Document Signer revocation.
+//
+// The message, its response and their proto definitions are all kept, and this
+// method with them. Deleting the type would unregister it from the interface
+// registry, and the historical MsgUnregister in block 4827 would stop decoding
+// -- every tx query touching that block would fail rather than show what
+// happened. Replay is unaffected either way: cosmovisor runs the pre-upgrade
+// binary for pre-upgrade blocks.
+func (k msgServer) Unregister(_ context.Context, msg *types.MsgUnregister) (*types.MsgUnregisterResponse, error) {
+	return nil, errorsmod.Wrap(types.ErrUnregisterRemoved, msg.Creator)
 }
