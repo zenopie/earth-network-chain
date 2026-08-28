@@ -77,6 +77,25 @@ EXTERNAL_ADDRESS="${EXTERNAL_ADDRESS:-}"
 SEEDS="${SEEDS:-}"
 PERSISTENT_PEERS="${PERSISTENT_PEERS:-}"
 
+# State sync. The node restores state at a recent height from a peer's snapshot
+# instead of replaying every block, and starts from there.
+#
+# This matters more here than on most chains, and for two reasons. Replaying a
+# block re-executes its transactions, and every passport registration verifies a
+# zkSNARK -- so replay cost grows with adoption, not just with time. And a chain
+# that has performed consensus-breaking upgrades cannot be replayed at all by a
+# single binary; state sync skips the whole problem, because it never executes a
+# block from before the height it lands on.
+#
+# Needs a trusted height and the hash of that block, from a source you trust --
+# your own node, a block explorer, someone you asked. Two rpc_servers are
+# required by CometBFT; the same URL twice is accepted and is what a
+# single-endpoint network has to do.
+STATESYNC_RPC_SERVERS="${STATESYNC_RPC_SERVERS:-}"
+STATESYNC_TRUST_HEIGHT="${STATESYNC_TRUST_HEIGHT:-}"
+STATESYNC_TRUST_HASH="${STATESYNC_TRUST_HASH:-}"
+STATESYNC_TRUST_PERIOD="${STATESYNC_TRUST_PERIOD:-168h0m0s}"
+
 # Where the release genesis and its hash live in the image. Overridable only so
 # the three paths below can be exercised without building a container — see
 # docker/entrypoint_test.sh.
@@ -134,6 +153,26 @@ set_config() {
     There is no '$key = ' line to replace, which means this config was written
     by a version of CometBFT that spells it differently. Refusing to start
     rather than run with the setting silently ignored."
+}
+
+# Sets `key = value` inside one [section], writing the value verbatim.
+#
+# set_config cannot do this job twice over. It quotes the value, and CometBFT
+# wants trust_height as an integer and enable as a bool -- quoted, the file no
+# longer parses. And it replaces every matching line in the file, while `enable`
+# is not unique across config.toml: today [statesync] is the only section with a
+# bare `enable`, which is luck rather than a guarantee.
+set_config_in_section() {
+  local section="$1" key="$2" value="$3" file="$4"
+  awk -v sec="[$section]" -v k="$key" -v v="$value" '
+    /^\[/ { in_sec = ($0 == sec) }
+    in_sec && $0 ~ "^" k " = " { print k " = " v; found = 1; next }
+    { print }
+    END { if (!found) exit 3 }
+  ' "$file" > "$file.tmp" || die "no '$key' line in [$section] of $file — this config
+    was written by a CometBFT that spells it differently. Refusing to start
+    rather than run with the setting silently ignored."
+  mv "$file.tmp" "$file"
 }
 
 sed_inplace() {
@@ -452,6 +491,20 @@ if [ -n "$EXTERNAL_ADDRESS" ]; then
 else
   say "EXTERNAL_ADDRESS unset — peers will be handed whatever address this node sees on itself, which in a container is usually unreachable"
 fi
+if [ -n "$STATESYNC_RPC_SERVERS" ]; then
+  [ -n "$STATESYNC_TRUST_HEIGHT" ] && [ -n "$STATESYNC_TRUST_HASH" ] \
+    || die "STATESYNC_RPC_SERVERS is set but STATESYNC_TRUST_HEIGHT/STATESYNC_TRUST_HASH are not.
+    State sync verifies the snapshot against a block you already trust; without
+    that pair it has nothing to check the restored state against."
+  cfg="$EARTH_HOME/config/config.toml"
+  set_config_in_section statesync enable       "true"                          "$cfg"
+  set_config_in_section statesync rpc_servers  "\"$STATESYNC_RPC_SERVERS\""    "$cfg"
+  set_config_in_section statesync trust_height "$STATESYNC_TRUST_HEIGHT"       "$cfg"
+  set_config_in_section statesync trust_hash   "\"$STATESYNC_TRUST_HASH\""      "$cfg"
+  set_config_in_section statesync trust_period "\"$STATESYNC_TRUST_PERIOD\""    "$cfg"
+  say "state sync ON from height $STATESYNC_TRUST_HEIGHT via $STATESYNC_RPC_SERVERS"
+fi
+
 if [ -n "$SEEDS" ]; then
   set_config seeds "$SEEDS" "$EARTH_HOME/config/config.toml"
   say "seeds = $SEEDS"
@@ -513,13 +566,51 @@ if [ "${USE_COSMOVISOR:-false}" = "true" ]; then
   # UNSAFE_SKIP_BACKUP=true only if the volume genuinely cannot hold two copies.
   export UNSAFE_SKIP_BACKUP="${UNSAFE_SKIP_BACKUP:-false}"
 
-  # cosmovisor expects the current binary at cosmovisor/genesis/bin/$DAEMON_NAME.
-  # A symlink rather than a copy, deliberately: the image is the source of truth
-  # for the base binary, so pinning a new image digest also updates what
-  # cosmovisor runs before any upgrade has happened.
+  # Which cosmovisor slot the image binary belongs in depends on where this node
+  # starts, and the two answers are opposites.
+  #
+  #   replaying from genesis  the image must be the LAUNCH binary, in
+  #                           cosmovisor/genesis/bin, so cosmovisor walks each
+  #                           upgrade in turn and swaps at every plan height.
+  #
+  #   state syncing           the node lands at a recent height, PAST every
+  #                           upgrade, and must run the CURRENT state machine
+  #                           from its first block. Starting it on the launch
+  #                           binary is a guaranteed app-hash mismatch: a fresh
+  #                           volume has no upgrade-info.json, so nothing would
+  #                           ever tell cosmovisor to swap.
+  #
+  # Putting the image in genesis/bin unconditionally -- which this did -- is
+  # correct for the first and silently wrong for the second. So the choice
+  # follows the mode the operator actually configured.
   gen_bin="$DAEMON_HOME/cosmovisor/genesis/bin"
   mkdir -p "$gen_bin" "$DAEMON_HOME/cosmovisor/upgrades"
-  ln -sf "$(command -v earthd)" "$gen_bin/earthd"
+
+  if [ -n "$STATESYNC_RPC_SERVERS" ] && [ ! -L "$DAEMON_HOME/cosmovisor/current" ]; then
+    # State sync, on a volume that has not upgraded yet: run the image binary as
+    # `current`, not as the genesis binary.
+    #
+    # The directory is named for the image's version so `cosmovisor run version`
+    # and the logs say something true. Its name is not matched against any plan:
+    # a later upgrade creates its own directory and repoints `current`, so this
+    # one is simply where this node began.
+    img_ver="$(earthd version 2>/dev/null || echo image)"
+    [ -n "$img_ver" ] || img_ver=image
+    sync_dir="$DAEMON_HOME/cosmovisor/upgrades/$img_ver"
+    mkdir -p "$sync_dir/bin"
+    ln -sf "$(command -v earthd)" "$sync_dir/bin/earthd"
+    ln -sfn "$sync_dir" "$DAEMON_HOME/cosmovisor/current"
+    # genesis/bin is still populated: cosmovisor reads it on some paths, and an
+    # operator who later turns state sync off gets a working node rather than a
+    # missing binary.
+    ln -sf "$(command -v earthd)" "$gen_bin/earthd"
+    say "state sync: running the image binary ($img_ver) as cosmovisor current, not as the genesis binary"
+  else
+    # A symlink rather than a copy, deliberately: the image is the source of
+    # truth for the base binary, so pinning a new image digest also updates what
+    # cosmovisor runs before any upgrade has happened.
+    ln -sf "$(command -v earthd)" "$gen_bin/earthd"
+  fi
 
   # After an upgrade, cosmovisor's `current` symlink points at the downloaded
   # binary under upgrades/, NOT at the image. From that moment the running chain

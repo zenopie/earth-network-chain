@@ -38,10 +38,15 @@ case "$1" in
     # persistent_peers, and a pattern loose enough to hit both would leave
     # CometBFT unable to parse its own config.
     printf 'priv_validator_laddr = ""\ncors_allowed_origins = []\nexternal_address = ""\nseeds = ""\npersistent_peers = ""\npersistent_peers_max_dial_period = "0s"\n' > "$home/config/config.toml"
+    # [statesync], plus a decoy `enable` in another section. `enable` is not a
+    # unique key in a real config.toml either, and a file-wide substitution
+    # would silently switch on whatever else owns one.
+    printf '\n[tx_index]\nenable = false\n\n[statesync]\nenable = false\nrpc_servers = ""\ntrust_height = 0\ntrust_hash = ""\ntrust_period = "168h0m0s"\n' >> "$home/config/config.toml"
     printf 'snapshot-interval = 0\nsnapshot-keep-recent = 2\n' > "$home/config/app.toml"
     printf '{"stock":true}\n' > "$home/config/genesis.json"
     ;;
   start) echo "STARTED $*" >> "$EARTHD_LOG" ;;
+  version) echo "v9.9.9" ;;
 esac
 exit 0
 STUB
@@ -365,6 +370,64 @@ if run "$H" DEV_INIT=1; then
     || bad "devnet: a devnet's genesis was replaced" "this breaks every devnet on update"
 else
   bad "devnet: DEV_INIT=1 volume failed to start" "$(tail -3 "$LOG")"
+fi
+
+# ── state sync, and the cosmovisor slot it depends on ──────────────────────
+cat > "$WORK/bin/cosmovisor" <<'CV'
+#!/usr/bin/env bash
+echo "COSMOVISOR $*" >> "$EARTHD_LOG"
+CV
+chmod +x "$WORK/bin/cosmovisor"
+
+H="$WORK/statesync"; mkdir -p "$H"
+if run "$H" USE_COSMOVISOR=true \
+       STATESYNC_RPC_SERVERS="https://rpc.example:443,https://rpc.example:443" \
+       STATESYNC_TRUST_HEIGHT=21000 \
+       STATESYNC_TRUST_HASH=DEADBEEF; then
+  C="$H/config/config.toml"
+  grep -q '^trust_height = 21000$' "$C" \
+    && ok "statesync: trust_height written unquoted" \
+    || bad "statesync: trust_height quoted or missing" "$(grep '^trust_height' "$C")"
+  grep -q '^trust_hash = "DEADBEEF"$' "$C" \
+    && ok "statesync: trust_hash written quoted" \
+    || bad "statesync: trust_hash wrong" "$(grep '^trust_hash' "$C")"
+  awk '/^\[statesync\]/{s=1} s&&/^enable = /{print; exit}' "$C" | grep -q 'true' \
+    && ok "statesync: enabled in its own section" \
+    || bad "statesync: not enabled" "$(grep -n '^enable' "$C")"
+  awk '/^\[tx_index\]/{s=1} s&&/^enable = /{print; exit}' "$C" | grep -q 'false' \
+    && ok "statesync: left another section's enable alone" \
+    || bad "statesync: clobbered [tx_index] enable" "$(grep -n '^enable' "$C")"
+  if [ -L "$H/cosmovisor/current" ]; then
+    case "$(readlink "$H/cosmovisor/current")" in
+      *upgrades/v9.9.9) ok "statesync: image binary runs as cosmovisor current" ;;
+      *) bad "statesync: current points somewhere unexpected" "$(readlink "$H/cosmovisor/current")" ;;
+    esac
+  else
+    bad "statesync: no cosmovisor/current" "the node would start on the launch binary and diverge"
+  fi
+else
+  bad "statesync: entrypoint failed" "$(tail -3 "$LOG")"
+fi
+
+H="$WORK/replay"; mkdir -p "$H"
+if run "$H" USE_COSMOVISOR=true; then
+  [ -L "$H/cosmovisor/genesis/bin/earthd" ] \
+    && ok "replay: image binary is the genesis binary" \
+    || bad "replay: genesis/bin not populated"
+  [ -L "$H/cosmovisor/current" ] \
+    && bad "replay: current was set" "cosmovisor would not walk the upgrades" \
+    || ok "replay: no current, so cosmovisor walks each upgrade in turn"
+else
+  bad "replay: entrypoint failed" "$(tail -3 "$LOG")"
+fi
+
+H="$WORK/notrust"; mkdir -p "$H"
+if run "$H" USE_COSMOVISOR=true STATESYNC_RPC_SERVERS="https://rpc.example:443"; then
+  bad "statesync: started with no trust height or hash"
+else
+  grep -q "STATESYNC_TRUST_HEIGHT" "$LOG" \
+    && ok "statesync: refuses rpc_servers without a trust height and hash" \
+    || bad "statesync: died for the wrong reason" "$(tail -3 "$LOG")"
 fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
