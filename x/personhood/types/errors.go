@@ -23,4 +23,7 @@ var (
 	// ErrDscRevoked is returned once governance has withdrawn trust from the
 	// Document Signer a registration was made under.
 	ErrDscRevoked = errors.Register(ModuleName, 1114, "the document signer behind this registration has been revoked")
+	// ErrUnregisterRemoved is what MsgUnregister now returns, always. See
+	// msg_server_unregister.go for why the message still exists at all.
+	ErrUnregisterRemoved = errors.Register(ModuleName, 1115, "unregister has been removed; re-register from the new wallet to move a registration")
 )

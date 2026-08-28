@@ -356,18 +356,18 @@ func (m *MsgClaimAnmlResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgClaimAnmlResponse proto.InternalMessageInfo
 
-// MsgUnregister retires the signer's own proof-of-personhood registration.
+// MsgUnregister retired the signer's own proof-of-personhood registration.
 //
-// Registration is otherwise only undone by the chain: it lapses after
-// registration_validity_seconds, or is purged when its Document Signer is
-// revoked. That left a person no way to leave, and no way to free a nullifier
-// they no longer wanted bound to a wallet — the only remedy was resetting the
-// whole chain, which is a thing that actually happened.
+// REMOVED. Freeing the nullifier made the holder a stranger to Register, which
+// pays the registration reward and mints 1 ANML for anyone whose nullifier is
+// not already live — so unregister-then-register drew on the reward pool once
+// per block. Registering again from another wallet still moves a live
+// registration, and still pays nothing; leaving the registry outright now only
+// happens on expiry or a Document Signer revocation.
 //
-// It takes no proof. The signer is the registered address, and giving up a
-// registration is not a claim about who you are: the worst a wrong signature
-// could do is retire the signer's own registration. Re-registering needs the
-// passport again, so this is not a way to launder a nullifier.
+// Retained, with its response, purely so the MsgUnregister already in the chain's
+// history decodes. Nothing accepts one: the handler always returns
+// ErrUnregisterRemoved.
 type MsgUnregister struct {
 	Creator string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
 }
@@ -536,7 +536,8 @@ type MsgClient interface {
 	Register(ctx context.Context, in *MsgRegister, opts ...grpc.CallOption) (*MsgRegisterResponse, error)
 	// ClaimAnml defines the ClaimAnml RPC.
 	ClaimAnml(ctx context.Context, in *MsgClaimAnml, opts ...grpc.CallOption) (*MsgClaimAnmlResponse, error)
-	// Unregister defines the Unregister RPC.
+	// Unregister is REMOVED and always fails. Kept registered so the historical
+	// MsgUnregister already on chain still decodes -- see msg_server_unregister.go.
 	Unregister(ctx context.Context, in *MsgUnregister, opts ...grpc.CallOption) (*MsgUnregisterResponse, error)
 }
 
@@ -593,7 +594,8 @@ type MsgServer interface {
 	Register(context.Context, *MsgRegister) (*MsgRegisterResponse, error)
 	// ClaimAnml defines the ClaimAnml RPC.
 	ClaimAnml(context.Context, *MsgClaimAnml) (*MsgClaimAnmlResponse, error)
-	// Unregister defines the Unregister RPC.
+	// Unregister is REMOVED and always fails. Kept registered so the historical
+	// MsgUnregister already on chain still decodes -- see msg_server_unregister.go.
 	Unregister(context.Context, *MsgUnregister) (*MsgUnregisterResponse, error)
 }
 

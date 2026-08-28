@@ -47,23 +47,23 @@ type Upgrade struct {
 //	    StoreUpgrades: storetypes.StoreUpgrades{Added: []string{"newmodule"}},
 //	}
 var Upgrades = []Upgrade{
-	// Empty, and correct: this chain launches from the v0.5.2 genesis and has
-	// performed no upgrades. An entry here is a handler for a plan name that has
-	// already been agreed and applied; a name no node will ever reach would just
-	// let a proposal naming it pass and do nothing.
+	// Removes MsgUnregister. Freeing a nullifier made its holder a stranger to
+	// Register, which pays the registration reward and mints 1 ANML for any
+	// nullifier that is not already live -- so unregister-then-register drew on
+	// the human stream's reward pool once per block. See
+	// x/personhood/keeper/msg_server_unregister.go.
 	//
-	// Add the first one when the first upgrade ships. defaultUpgradeHandler
-	// below is the shape it starts from.
+	// No state migration: the change is entirely in what the handler accepts, and
+	// registrations retired before this height stay retired. No StoreUpgrades
+	// either -- the module set is unchanged. AppVersion also stays at 1; it is
+	// pinned to networks/genesis/chain.json, which x/upgrade does not move, and
+	// editing that file would change the genesis hash that
+	// RESET_ON_GENESIS_MISMATCH is keyed to.
+	{
+		Name:          "v0.6.0",
+		CreateHandler: defaultUpgradeHandler,
+	},
 }
-
-// Retained deliberately while Upgrades is empty.
-//
-// It has no caller until the first upgrade names it, but it is not dead:
-// scripts/rehearse-upgrade.sh injects exactly that line to exercise the
-// halt-and-resume path, so deleting it as unused breaks the rehearsal that
-// proves upgrades work at all. This reference says so to the compiler as well
-// as to the reader.
-var _ = defaultUpgradeHandler
 
 // setupUpgrades registers the upgrade handlers and, if the node is restarting
 // into a pending upgrade, installs the store loader that applies its
