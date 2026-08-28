@@ -19,7 +19,6 @@ import (
 
 var (
 	_ module.AppModuleBasic = (*AppModule)(nil)
-	_ module.AppModule      = (*AppModule)(nil)
 	_ module.HasGenesis     = (*AppModule)(nil)
 
 	_ appmodule.AppModule = (*AppModule)(nil)

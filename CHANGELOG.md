@@ -11,6 +11,34 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
+## [v0.5.2] — launch
+
+`earth-1` launched from this release. The v0.5.0 and v0.5.1 tags were released
+against a chain that ran for 45 minutes and was discarded; this is the genesis
+the network actually runs.
+
+### Operators
+
+- **A node can state sync from the container image.** The image could produce
+  snapshots and not consume them, so anyone using it to run a second node had to
+  replay from genesis. Set `STATESYNC_RPC_SERVERS`, `STATESYNC_TRUST_HEIGHT` and
+  `STATESYNC_TRUST_HASH`.
+- Cosmovisor's binary slot now follows that choice. Replaying wants the launch
+  binary in `cosmovisor/genesis/bin` so it walks each upgrade; state syncing
+  lands past every upgrade and must start on the current binary instead. Putting
+  the image in the genesis slot unconditionally was right for the first and
+  silently wrong for the second.
+
+### Fixed
+
+- `chain.json` claimed `app_version` "moves with every coordinated upgrade, and
+  x/upgrade uses it to refuse a binary that is not the one the network agreed to
+  run". None of that is true in SDK v0.53: nothing bumps it, and x/upgrade never
+  reads it. It documented a protection the code does not have.
+- Dropped the redundant deprecated `module.AppModule` assertion from all five
+  modules; each already asserts `appmodule.AppModule`, so the migration was done
+  and the old line was a leftover.
+
 ## [v0.5.1]
 
 Dead code and stale documentation only; nothing here is consensus state. It is

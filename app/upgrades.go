@@ -47,28 +47,23 @@ type Upgrade struct {
 //	    StoreUpgrades: storetypes.StoreUpgrades{Added: []string{"newmodule"}},
 //	}
 var Upgrades = []Upgrade{
-	{
-		// The first upgrade this chain performs, and deliberately the smallest
-		// one available: dead code removed and documentation corrected. Nothing
-		// it changes is consensus state.
-		//
-		// That is the point. app/upgrades.go was well built and had never run
-		// against live validators -- the halt, the store loader, the handler
-		// lookup and cosmovisor's download had executed only in
-		// scripts/rehearse-cosmovisor.sh. The first time they run for real
-		// should not also be the first time the state they migrate matters.
-		//
-		// RunMigrations is still called rather than skipped: it writes the
-		// module version map, so a later upgrade that does need a migration
-		// starts from a consistent one.
-		Name:          "v0.5.1",
-		CreateHandler: defaultUpgradeHandler,
-		// Empty on purpose. No module is added, renamed or removed, so there is
-		// no store to create -- and declaring one that does not exist is how an
-		// upgrade fails at load with a store key nobody can explain.
-		StoreUpgrades: storetypes.StoreUpgrades{},
-	},
+	// Empty, and correct: this chain launches from the v0.5.2 genesis and has
+	// performed no upgrades. An entry here is a handler for a plan name that has
+	// already been agreed and applied; a name no node will ever reach would just
+	// let a proposal naming it pass and do nothing.
+	//
+	// Add the first one when the first upgrade ships. defaultUpgradeHandler
+	// below is the shape it starts from.
 }
+
+// Retained deliberately while Upgrades is empty.
+//
+// It has no caller until the first upgrade names it, but it is not dead:
+// scripts/rehearse-upgrade.sh injects exactly that line to exercise the
+// halt-and-resume path, so deleting it as unused breaks the rehearsal that
+// proves upgrades work at all. This reference says so to the compiler as well
+// as to the reader.
+var _ = defaultUpgradeHandler
 
 // setupUpgrades registers the upgrade handlers and, if the node is restarting
 // into a pending upgrade, installs the store loader that applies its
@@ -105,9 +100,7 @@ func (app *App) setupUpgrades() {
 // Suitable for any upgrade that changes logic or parameters but not the set of
 // modules.
 //
-// Used by v0.4.0 above, and the shape every upgrade starts from.
-// scripts/rehearse-upgrade.sh injects exactly this line to exercise the
-// halt-and-resume path, so deleting it as dead code breaks that rehearsal.
+// The shape every upgrade starts from.
 func defaultUpgradeHandler(app *App) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
