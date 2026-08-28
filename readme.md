@@ -7,17 +7,102 @@ scaffolded with [Ignite CLI](https://ignite.com/cli).
 - **ANML** (`uanml`) — a proof-of-personhood token: one ANML minted per registered human
   per day, continuously bought back and burned with ERTH.
 
-## Tokenomics — 4 ERTH/sec across two pillars
+## The four pillars
+
+Every real polity runs on two axes at once. One is **who decides** — capital or
+persons. The other is **who the claim belongs to** — the individual or the
+collective. Cross them and you get four quadrants, and institutions fail by
+collapsing into one and starving the other three: capital without persons cannot
+legitimize, persons without capital cannot build, individual claim without a
+commons has nothing shared, a commons without individual claim has no exit.
+
+Earth funds all four at **1 ERTH/sec**, permanently, and lets none of them
+defund another.
+
+| | **Individual claim** | **Collective claim** |
+| --- | --- | --- |
+| **Capital decides** | **Investor** — base staking, paid to whoever bonded, pro rata | **Groundworks** — bonded stake votes a shared budget |
+| **Persons decide** | **Individual** — one ANML per registered human per day, bought back and burned | **Caretaker** — one human, one vote over a shared budget |
+
+**The split is not a parameter.** `EmissionPerSecondPerPillar` is a compile-time
+constant (`x/earth/types/keys.go`) and there is no message, proposal or param
+that moves a rate from one pillar to another. Any split governance is allowed to
+set is a fifth decision — and whichever quadrant is strongest in the year it is
+taken wins it, which is exactly how the collapse starts. So the one number worth
+protecting is the one taken off the ballot. Changing it means shipping a new
+binary that every validator chooses to run: forking the chain, not winning a vote
+on it.
+
+**The two weight sources cannot be converted into each other.** Buying ERTH
+gains no caretaker weight; holding a passport gains no groundworks weight.
+Sybils cost passports rather than money, whales cost money rather than
+passports, and steering the chain's discretionary spend means capturing both
+axes at once — while the two individual-claim pillars keep paying out by rule
+regardless, because no vote reaches them. Neither axis is a check bolted onto
+the other; they are funded peers.
+
+**Individual claim is paid without anyone's approval.** Staking rewards and ANML
+accrue by rule and are taken by the holder — nothing votes on whether you get
+them, which is what makes them an exit rather than a grant. Collective claim has
+to be pointed somewhere first, but by a continuous vote that any voter can
+re-aim in any block, not by a proposal with a deadline and a quorum. That is the
+difference between a commons and a treasury.
+
+### The goal, and where it isn't reached yet
+
+The paragraphs above describe the emission, and the emission is finished: the
+four rates are constants, and nothing on this chain can move ERTH from one
+pillar to another. **Power is not yet as balanced as the money is, and that is a
+concession rather than the design.** Stating the intended end state here so the
+gap can be measured against it:
+
+*The intent* is that each axis is sovereign over its own half — the persons axis
+decides who counts as a person and what the caretaker stream may fund, the
+capital axis decides the same for itself, and neither writes the other's rules.
+
+*Today*, three levers sit with stake-weighted `x/gov` on both sides of the line:
+
+- `MsgResetAllocations` takes a stream argument and `ValidateStream` accepts
+  either, so bonded stake can retire the caretaker slate. It confiscates
+  nothing — accrued ERTH stays with its options and humans can vote again — but
+  registered humans hold no matching power over the groundworks slate.
+- `params.verifying_keys` (`x/personhood`) and the DSC registry and CSCA trust
+  anchor (`x/pki`, gov-gated in `x/pki/keeper/msg_server.go`) are what a valid
+  registration is checked against. Stake therefore defines who is a person.
+- Binary upgrades, which is where the emission constants themselves live.
+
+*Why it is that way for now.* Proof-of-personhood is the young half. A bad
+verifying key, a compromised DSC, or a circuit flaw is a sybil break, and a
+sybil break with no outside recovery path is a caretaker stream captured by
+counterfeit humans with nothing able to clear it. The gov levers are a backstop
+for the axis that cannot yet defend itself — the trust anchors have to be
+maintained by someone, and today that is stake. The asymmetry is the price of
+that, and it is worth naming rather than dressing up: it is the one place where
+the four pillars are equal in funding and unequal in power.
+
+*What retires it.* When a compromised registry is less likely than a captured
+governance — a DSC registry that maintains itself from published national
+sources rather than by proposal, verifying keys pinned by something other than a
+stake vote, and a registered population large enough that a reset is a bigger
+risk than the sybil it guards against — `reset-allocations` on the caretaker
+stream should move to that stream's own voters, and personhood's trust anchors
+should follow. That is a chain upgrade like any other, and until it ships this
+section is the honest description.
+
+Everything below is the mechanism: what each pillar emits, who directs it, and
+where in the code it lives.
+
+## Tokenomics — 4 ERTH/sec, one per pillar
 
 ERTH is emitted at a **fixed 4 ERTH/sec** (prorated by block time), as four independent
-**1 ERTH/sec** streams grouped into two 2-ERTH/sec pillars:
+**1 ERTH/sec** streams — one per quadrant above:
 
-| Pillar | Stream (1 ERTH/sec each) | Directed by | Where |
-| --- | --- | --- | --- |
-| **Investor** | Base staking → stakers | validators/delegators (standard `x/distribution`) | `x/earth` |
-| | Groundworks allocation stream | **plutocratic** vote (bonded stake) | `x/allocation` |
-| **Democratic** | ANML buyback-and-burn | — (protocol) | `x/personhood/keeper/abci.go` |
-| | Caretaker allocation stream | **one-human-one-vote** (registered humans) | `x/allocation` |
+| Pillar | Decided by | Claim | Stream (1 ERTH/sec each) | Where |
+| --- | --- | --- | --- | --- |
+| **Investor** | bonded stake | individual | Base staking → stakers (standard `x/distribution`) | `x/earth` |
+| **Groundworks** | bonded stake | collective | Allocation stream, **plutocratic** vote | `x/allocation` |
+| **Individual** | personhood | individual | ANML buyback-and-burn (protocol, no vote) | `x/personhood/keeper/abci.go` |
+| **Caretaker** | personhood | collective | Allocation stream, **one-human-one-vote** | `x/allocation` |
 
 The **base staking** stream is the only part of issuance that touches the SDK's own
 reward machinery, and it uses it unmodified: `x/earth` mints its 1 ERTH/sec into the fee
@@ -176,8 +261,8 @@ lock is never on.
 
 ## Allocation streams — `x/allocation` (2 ERTH/sec)
 
-Two of the four streams are directed by *votes* rather than by protocol rules, and both
-run the same engine in **`x/allocation`**:
+The two **collective-claim** pillars are the ones directed by *votes* rather than by
+protocol rules, one per axis, and both run the same engine in **`x/allocation`**:
 
 | Stream | Who may vote | Weight |
 | --- | --- | --- |
@@ -248,11 +333,13 @@ earthd tx allocation set-allocations groundworks --percentages '{"option_id":1,"
 earthd q allocation option groundworks 1   # amount_allocated tracks your bonded stake
 ```
 
-## Democratic pillar — `x/personhood` (proof-of-personhood)
+## The persons axis — `x/personhood` (proof-of-personhood)
 
-The democratic pillar is gated on **proof-of-personhood registration**. Instead of a
-trusted backend, the app scans a passport and generates a **zk proof** on-device; the
-chain verifies a **Barretenberg UltraHonk** proof (`zk/ultrahonk`) against the
+Both persons-decide pillars are gated on **proof-of-personhood registration**: it is
+what makes one human one vote in the caretaker stream, and what mints the ANML the
+individual pillar buys back. Instead of a trusted backend, the app scans a passport
+and generates a **zk proof** on-device; the chain verifies a **Barretenberg
+UltraHonk** proof (`zk/ultrahonk`) against the
 governance-set verifying key selected by `signature_algorithm`
 (`params.verifying_keys`), pins `current_date` to block time, binds the proof to the
 live DSC-registry root (`x/pki`), and dedups on the nullifier. The passport register
@@ -263,7 +350,8 @@ the DSC registry and its CSCA trust anchor are `x/pki` — see
 - **ANML token** (`uanml`, 1 ANML = 1e6 uanml) — minted 1/day per registered human.
 - **Buyback-and-burn (1 ERTH/sec)** — `BeginBlock` mints ERTH, swaps it for ANML on the
   dex (`dexKeeper.SwapExactIn`), and burns the ANML (deflationary for ANML).
-- **The caretaker allocation stream (1 ERTH/sec)** lives in `x/allocation`; this module only
+- **The caretaker allocation stream (1 ERTH/sec)** — the collective half of the axis —
+  lives in `x/allocation`; this module only
   supplies its weight source (one live registration = one vote), clears a lapsed human's
   vote, and draws down the registration-reward pool.
 
