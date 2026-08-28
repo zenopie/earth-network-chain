@@ -23,6 +23,9 @@ service Msg {
 
   // ClaimAnml defines the ClaimAnml RPC.
   rpc ClaimAnml(MsgClaimAnml) returns (MsgClaimAnmlResponse);
+
+  // Unregister defines the Unregister RPC.
+  rpc Unregister(MsgUnregister) returns (MsgUnregisterResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -79,6 +82,10 @@ message MsgRegisterResponse {
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
     (gogoproto.nullable) = false
   ];
+  // switched is true when this proof moved an existing registration to a new
+  // wallet rather than creating one. A switch pays no reward and mints no ANML,
+  // so reward is zero when this is set — the person was already counted.
+  bool switched = 2;
 }
 
 // MsgClaimAnml defines the MsgClaimAnml message.
@@ -89,3 +96,27 @@ message MsgClaimAnml {
 
 // MsgClaimAnmlResponse defines the MsgClaimAnmlResponse message.
 message MsgClaimAnmlResponse {}
+
+// MsgUnregister retires the signer's own proof-of-personhood registration.
+//
+// Registration is otherwise only undone by the chain: it lapses after
+// registration_validity_seconds, or is purged when its Document Signer is
+// revoked. That left a person no way to leave, and no way to free a nullifier
+// they no longer wanted bound to a wallet — the only remedy was resetting the
+// whole chain, which is a thing that actually happened.
+//
+// It takes no proof. The signer is the registered address, and giving up a
+// registration is not a claim about who you are: the worst a wrong signature
+// could do is retire the signer's own registration. Re-registering needs the
+// passport again, so this is not a way to launder a nullifier.
+message MsgUnregister {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name) = "earth/x/personhood/MsgUnregister";
+
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgUnregisterResponse returns the nullifier that was freed.
+message MsgUnregisterResponse {
+  bytes nullifier = 1;
+}

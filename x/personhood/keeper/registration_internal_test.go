@@ -81,9 +81,10 @@ func TestVerifyRegistrationProof_DscBinding(t *testing.T) {
 
 	params := types.Params{
 		VerifyingKeys:             map[string][]byte{"lean_poa": vk},
-		NullifierIndex:            1,
-		DscKeyIndex:               2,
+		NullifierIndex:            2,
+		DscKeyIndex:               3,
 		CurrentDateIndex:          0,
+		AddressIndex:              1,
 		CurrentDateMaxSkewSeconds: 2 * 24 * 60 * 60,
 	}
 	blockTime := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC) // near current_date 250101
@@ -105,27 +106,27 @@ func TestVerifyRegistrationProof_DscBinding(t *testing.T) {
 	// the chain derives from its public key equals the proof's dsc_key input.
 	dscPub := readFileAt(t, filepath.Join(leanDir, "dsc_pubkey"))
 	kOK, ctxOK := newK(stubPki{pubkey: dscPub})
-	if _, _, err := kOK.verifyRegistrationProof(ctxOK, proof, signals, "lean_poa", []byte("der")); err != nil {
+	if _, _, err := kOK.verifyRegistrationProof(ctxOK, fixtureAddr(t), proof, signals, "lean_poa", []byte("der")); err != nil {
 		t.Fatalf("proof bound to its own DSC rejected: %v", err)
 	}
 
 	// A DSC the pki module refuses (untrusted, expired or revoked) is rejected
 	// even though the ZK proof itself is valid.
 	kBad, ctxBad := newK(stubPki{err: errors.New("no trusted issuing CSCA")})
-	if _, _, err := kBad.verifyRegistrationProof(ctxBad, proof, signals, "lean_poa", []byte("der")); err == nil {
+	if _, _, err := kBad.verifyRegistrationProof(ctxBad, fixtureAddr(t), proof, signals, "lean_poa", []byte("der")); err == nil {
 		t.Fatal("expected rejection: DSC not trusted by x/pki")
 	}
 
 	// A trusted DSC whose commitment does not match the proof is rejected: this
 	// is what stops signing with one key and presenting another.
 	kMismatch, ctxMismatch := newK(stubPki{pubkey: bytes.Repeat([]byte{0x01}, 64)})
-	if _, _, err := kMismatch.verifyRegistrationProof(ctxMismatch, proof, signals, "lean_poa", []byte("der")); err == nil {
+	if _, _, err := kMismatch.verifyRegistrationProof(ctxMismatch, fixtureAddr(t), proof, signals, "lean_poa", []byte("der")); err == nil {
 		t.Fatal("expected rejection: proof not bound to the supplied DSC")
 	}
 
 	// A missing certificate is rejected rather than silently skipping the bind.
 	kMissing, ctxMissing := newK(stubPki{pubkey: bytes.Repeat([]byte{0x01}, 64)})
-	if _, _, err := kMissing.verifyRegistrationProof(ctxMissing, proof, signals, "lean_poa", nil); err == nil {
+	if _, _, err := kMissing.verifyRegistrationProof(ctxMissing, fixtureAddr(t), proof, signals, "lean_poa", nil); err == nil {
 		t.Fatal("expected rejection: dsc certificate is required")
 	}
 }
@@ -194,20 +195,21 @@ func TestVerifyRegistrationProof_Wired(t *testing.T) {
 	if err := k.Params.Set(ctx, types.Params{
 		VerifyingKeys:               map[string][]byte{algo: vk},
 		RegistrationValiditySeconds: types.DefaultRegistrationValiditySeconds,
-		NullifierIndex:              1,
-		DscKeyIndex:                 2,
+		NullifierIndex:              2,
+		DscKeyIndex:                 3,
 		CurrentDateIndex:            0,
+		AddressIndex:                1,
 		CurrentDateMaxSkewSeconds:   types.DefaultCurrentDateMaxSkewSeconds,
 	}); err != nil {
 		t.Fatalf("set params: %v", err)
 	}
 
 	// Valid proof -> nullifier == public signal[NullifierIndex].
-	nullifier, _, err := k.verifyRegistrationProof(ctx, proof, signals, algo, nil)
+	nullifier, _, err := k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, signals, algo, nil)
 	if err != nil {
 		t.Fatalf("verifyRegistrationProof: %v", err)
 	}
-	want, err := signalToBytes32(signals[1])
+	want, err := signalToBytes32(signals[2])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,14 +219,14 @@ func TestVerifyRegistrationProof_Wired(t *testing.T) {
 	t.Log("valid UltraHonk registration proof verified; nullifier extracted")
 
 	// Unknown algorithm -> ErrNoVerifyingKey.
-	if _, _, err := k.verifyRegistrationProof(ctx, proof, signals, "nope", nil); err == nil {
+	if _, _, err := k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, signals, "nope", nil); err == nil {
 		t.Fatal("expected error for unknown algorithm")
 	}
 
 	// Tampered public signal -> proof invalid.
 	bad := append([]string(nil), signals...)
-	bad[1] = incLastDigit(bad[1])
-	if _, _, err := k.verifyRegistrationProof(ctx, proof, bad, algo, nil); err == nil {
+	bad[2] = incLastDigit(bad[2])
+	if _, _, err := k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, bad, algo, nil); err == nil {
 		t.Fatal("expected error for tampered public signal")
 	}
 }
@@ -277,7 +279,7 @@ func TestVerifyRegistrationProof_CurrentDatePinning(t *testing.T) {
 	for i := 0; i+32 <= len(pub); i += 32 {
 		signals = append(signals, new(big.Int).SetBytes(pub[i:i+32]).String())
 	}
-	if len(signals) != 3 || signals[0] != "250101" {
+	if len(signals) != 4 || signals[0] != "250101" {
 		t.Fatalf("unexpected lean_poa public inputs: %v", signals)
 	}
 
@@ -285,9 +287,10 @@ func TestVerifyRegistrationProof_CurrentDatePinning(t *testing.T) {
 	params := types.Params{
 		VerifyingKeys:               map[string][]byte{algo: vk},
 		RegistrationValiditySeconds: types.DefaultRegistrationValiditySeconds,
-		NullifierIndex:              1,
-		DscKeyIndex:                 2,
+		NullifierIndex:              2,
+		DscKeyIndex:                 3,
 		CurrentDateIndex:            0,
+		AddressIndex:                1,
 		CurrentDateMaxSkewSeconds:   2 * 24 * 60 * 60, // 2 days
 	}
 
@@ -299,22 +302,22 @@ func TestVerifyRegistrationProof_CurrentDatePinning(t *testing.T) {
 	if err := k.Params.Set(ctxOK, params); err != nil {
 		t.Fatalf("set params: %v", err)
 	}
-	nullifier, _, err := k.verifyRegistrationProof(ctxOK, proof, signals, algo, nil)
+	nullifier, _, err := k.verifyRegistrationProof(ctxOK, fixtureAddr(t), proof, signals, algo, nil)
 	if err != nil {
 		t.Fatalf("in-skew proof rejected: %v", err)
 	}
-	wantNull, _ := signalToBytes32(signals[1])
+	wantNull, _ := signalToBytes32(signals[2])
 	if !bytes.Equal(nullifier, wantNull) {
-		t.Fatalf("nullifier = %x, want %x (signal[1])", nullifier, wantNull)
+		t.Fatalf("nullifier = %x, want %x (signal[2])", nullifier, wantNull)
 	}
-	t.Log("lean_poa proof verified and current_date pinned to block time; nullifier from index 1")
+	t.Log("lean_poa proof verified and current_date pinned to block time; nullifier from index 2")
 
 	// Block time far from current_date (31 days) -> rejected as stale.
 	ctxStale := sdkCtx.WithBlockTime(time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC))
 	if err := k.Params.Set(ctxStale, params); err != nil {
 		t.Fatalf("set params (stale): %v", err)
 	}
-	if _, _, err := k.verifyRegistrationProof(ctxStale, proof, signals, algo, nil); err == nil {
+	if _, _, err := k.verifyRegistrationProof(ctxStale, fixtureAddr(t), proof, signals, algo, nil); err == nil {
 		t.Fatal("expected rejection: current_date far from block time")
 	}
 
@@ -326,7 +329,7 @@ func TestVerifyRegistrationProof_CurrentDatePinning(t *testing.T) {
 	if err := k.Params.Set(ctxOK, params); err != nil {
 		t.Fatalf("set params (unset skew): %v", err)
 	}
-	if _, _, err := k.verifyRegistrationProof(ctxOK, proof, signals, algo, nil); err == nil {
+	if _, _, err := k.verifyRegistrationProof(ctxOK, fixtureAddr(t), proof, signals, algo, nil); err == nil {
 		t.Fatal("expected rejection: zero skew must disable registration, not the check")
 	}
 }
@@ -378,4 +381,14 @@ func incLastDigit(s string) string {
 		b[i]++
 	}
 	return string(b)
+}
+
+// fixtureAddr is the account every regenerated fixture proof is bound to.
+//
+// The circuit takes the registrant's address as a public input, so a proof only
+// verifies for the account it was made for; tools/poafixtures writes that
+// account next to the proof rather than leaving tests to guess it.
+func fixtureAddr(t *testing.T) sdk.AccAddress {
+	t.Helper()
+	return sdk.AccAddress(readFileAt(t, filepath.Join(leanDir, "expected_address")))
 }

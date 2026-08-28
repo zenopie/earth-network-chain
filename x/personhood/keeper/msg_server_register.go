@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"strconv"
 
 	"cosmossdk.io/collections"
 	errorsmod "cosmossdk.io/errors"
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
@@ -23,7 +25,7 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 	}
 	creator := sdk.AccAddress(creatorBz)
 
-	nullifier, dsc, err := k.verifyRegistrationProof(ctx, msg.Proof, msg.PublicSignals, msg.SignatureAlgorithm, msg.DscDer)
+	nullifier, dsc, err := k.verifyRegistrationProof(ctx, creator, msg.Proof, msg.PublicSignals, msg.SignatureAlgorithm, msg.DscDer)
 	if err != nil {
 		return nil, err
 	}
@@ -60,15 +62,32 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		}
 	}
 
-	// Reject / clear an existing registration for this person (nullifier).
+	// Move an existing registration for this person to this wallet.
+	//
+	// A live nullifier used to be refused outright, so losing the wallet you
+	// registered from stranded your personhood until the registration lapsed --
+	// a year by default -- with your passport in your hand and no way to present
+	// it that the chain would accept.
+	//
+	// It is only safe to move it because the circuit binds the registrant's
+	// address as a public input: a proof verifies only against the address it
+	// was made for, so the proof that reached this line cannot have been lifted
+	// out of somebody else's transaction. Without that binding this branch is
+	// registration theft -- the proof bytes are public in every block.
+	//
+	// switched is what stops it also being a mint. A switch pays no registration
+	// reward and mints no ANML: the person is already counted, and paying again
+	// would let one human draw the reward pool down once per wallet.
+	switched := false
 	if reg, err := k.Registrations.Get(ctx, nullifier); err == nil {
 		expired, err := k.isExpired(ctx, reg)
 		if err != nil {
 			return nil, err
 		}
-		if !expired {
-			return nil, errorsmod.Wrapf(types.ErrAlreadyReg, "nullifier %s", hex.EncodeToString(nullifier))
-		}
+		// Only a live registration is a switch. An expired one is retired the
+		// same way, but that person is re-entering rather than moving, so it
+		// pays like any other registration.
+		switched = !expired
 		if err := k.removeRegistration(ctx, reg); err != nil {
 			return nil, err
 		}
@@ -138,19 +157,22 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		return nil, err
 	}
 
-	// Mint 1 ANML to the new human.
-	anml := sdk.NewCoins(sdk.NewInt64Coin(types.AnmlDenom, types.OneAnml))
-	if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, anml); err != nil {
-		return nil, err
-	}
-	if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, creator, anml); err != nil {
-		return nil, err
-	}
+	// Mint 1 ANML and pay the registration reward from the human stream's
+	// option #1 -- neither on a switch, which moves a person already counted.
+	reward := math.ZeroInt()
+	if !switched {
+		anml := sdk.NewCoins(sdk.NewInt64Coin(types.AnmlDenom, types.OneAnml))
+		if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, anml); err != nil {
+			return nil, err
+		}
+		if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, creator, anml); err != nil {
+			return nil, err
+		}
 
-	// Pay the registration reward from the human stream's option #1.
-	reward, err := k.payRegistrationReward(ctx, creator, referrer)
-	if err != nil {
-		return nil, err
+		reward, err = k.payRegistrationReward(ctx, creator, referrer)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
@@ -159,8 +181,9 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 			sdk.NewAttribute("address", msg.Creator),
 			sdk.NewAttribute("nullifier", hex.EncodeToString(nullifier)),
 			sdk.NewAttribute("reward", reward.String()),
+			sdk.NewAttribute("switched", strconv.FormatBool(switched)),
 		),
 	)
 
-	return &types.MsgRegisterResponse{Reward: reward}, nil
+	return &types.MsgRegisterResponse{Reward: reward, Switched: switched}, nil
 }

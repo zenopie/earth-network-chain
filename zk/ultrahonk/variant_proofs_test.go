@@ -48,11 +48,20 @@ func TestRegisterVariantProofs(t *testing.T) {
 			if !ok {
 				t.Fatal("variant proof did NOT verify on chain")
 			}
-			if len(pubInputs) != 3 {
-				t.Fatalf("expected 3 public inputs, got %d", len(pubInputs))
+			// [current_date, address, nullifier, dsc_key] -- address became a
+			// public input so a proof cannot be replayed from another wallet.
+			if len(pubInputs) != 4 {
+				t.Fatalf("expected 4 public inputs, got %d", len(pubInputs))
 			}
 			if cd := new(big.Int).SetBytes(pubInputs[0]); cd.String() != "250101" {
 				t.Fatalf("current_date public input = %s, want 250101", cd)
+			}
+			bound, err := os.ReadFile(filepath.Join(dir, "expected_address"))
+			if err != nil {
+				t.Fatalf("read expected_address: %v", err)
+			}
+			if got, want := new(big.Int).SetBytes(pubInputs[1]), new(big.Int).SetBytes(bound); got.Cmp(want) != 0 {
+				t.Fatalf("address public input = %s, want %s", got, want)
 			}
 			t.Logf("%s verified on chain", variant)
 		})

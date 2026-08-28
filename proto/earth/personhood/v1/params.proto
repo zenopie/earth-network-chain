@@ -51,6 +51,19 @@ message Params {
   // cannot be registered by backdating current_date.
   uint32 current_date_index = 6;
 
+  // address_index is the public-input position of the account the proof was
+  // made for.
+  //
+  // A proof travels in the clear inside MsgRegister, so anyone who reads a
+  // block has the bytes. Binding the registrant's address into the circuit is
+  // what stops those bytes being replayed from another wallet: the verifier
+  // checks the proof against the public inputs it is handed, so a proof made
+  // for one account does not verify against another.
+  //
+  // Without it, re-registering could only ever be a refusal -- which is what it
+  // was, and which stranded anyone who lost the wallet they registered from.
+  uint32 address_index = 20;
+
   // current_date_max_skew_seconds bounds how far the proof's current_date may
   // differ from the block time.
   //

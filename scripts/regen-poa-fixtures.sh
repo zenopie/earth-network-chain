@@ -58,14 +58,22 @@ for v in "${VARIANTS[@]}"; do
   mkdir -p "$dst"
   cp "$out/proof/proof" "$out/proof/public_inputs" "$out/vk/vk" "$dst/"
   cp "$out/dsc_pubkey" "$out/expected_dsc_key" "$out/expected_nullifier" "$dst/"
+  cp "$out/expected_address" "$dst/"
 
-  # x/caretaker: lean_poa additionally carries the certificate chain, for the
+  # x/personhood: lean_poa additionally carries the certificate chain, for the
   # end-to-end test against a real x/pki keeper.
+  #
+  # This said x/caretaker until 2026-08-27, which is the module's old name. The
+  # copy went on succeeding -- mkdir -p happily created the dead path -- so the
+  # module's fixtures silently stopped being refreshed while the script kept
+  # reporting success. They were three months stale by the time the public input
+  # vector changed shape and the tests started failing against them.
   if [ "$v" = "lean_poa" ]; then
-    ct="$CHAIN_DIR/x/caretaker/keeper/testdata/lean_poa"
+    ct="$CHAIN_DIR/x/personhood/keeper/testdata/lean_poa"
     mkdir -p "$ct"
     cp "$out/proof/proof" "$out/proof/public_inputs" "$out/vk/vk" "$ct/"
     cp "$out/dsc_pubkey" "$out/expected_dsc_key" "$out/expected_nullifier" "$ct/"
+    cp "$out/expected_address" "$ct/"
     cp "$out/csca.der" "$out/dsc.der" "$ct/"
   fi
 

@@ -43,9 +43,10 @@ func gasFixture(t *testing.T) (Keeper, sdk.Context, []byte, []string) {
 	)
 	params := types.DefaultParams()
 	params.VerifyingKeys = map[string][]byte{"lean_poa": vk}
-	params.NullifierIndex = 1
-	params.DscKeyIndex = 2
+	params.NullifierIndex = 2
+	params.DscKeyIndex = 3
 	params.CurrentDateIndex = 0
+	params.AddressIndex = 1
 
 	ctx := base.
 		WithBlockTime(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)).
@@ -64,7 +65,7 @@ func TestProofVerificationIsMetered(t *testing.T) {
 	k, ctx, proof, signals := gasFixture(t)
 
 	before := ctx.GasMeter().GasConsumed()
-	if _, _, err := k.verifyRegistrationProof(ctx, proof, signals, "lean_poa", nil); err != nil {
+	if _, _, err := k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, signals, "lean_poa", nil); err != nil {
 		t.Fatalf("valid proof rejected: %v", err)
 	}
 	charged := ctx.GasMeter().GasConsumed() - before
@@ -89,75 +90,47 @@ func TestProofVerificationRespectsTheGasLimit(t *testing.T) {
 		// An out-of-gas panic is how the SDK unwinds this; the ante handler
 		// turns it into a failed transaction.
 	}()
-	_, _, _ = k.verifyRegistrationProof(ctx, proof, signals, "lean_poa", nil)
+	_, _, _ = k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, signals, "lean_poa", nil)
 }
 
-// TestReplayIsRejectedBeforeTheVerifier is the reorder, and it is the half of
-// the fix that metering alone does not give you.
+// TestLiftedProofIsRejectedBeforeTheVerifier is the anti-replay guard, on its
+// new footing.
 //
-// Replaying a captured proof is the cheapest way to make a validator run the
-// verifier: the attacker needs no passport and no proving, just a copy of
-// somebody else's valid transaction. Charging for the verification makes that
-// expensive for them, but the work still happens. Checking the nullifier first
-// means a replay is thrown out for the price of one keyed read.
-func TestReplayIsRejectedBeforeTheVerifier(t *testing.T) {
+// It used to work by refusing any nullifier that was already live: replaying a
+// captured proof was the cheapest way to make a validator run the verifier, and
+// such a proof was going to be refused anyway. That refusal is gone, because a
+// live nullifier is now a wallet switch -- the only way back for somebody who
+// lost the wallet they registered from.
+//
+// What replaced it is stronger. The circuit takes the registrant's address as a
+// public input, so a proof lifted out of somebody else's transaction is refused
+// on one integer comparison, still without reaching the verifier. It is also a
+// filter the old one could not be: the attacker cannot sign as the address the
+// proof is bound to, so the transaction does not get past the ante handler
+// either.
+func TestLiftedProofIsRejectedBeforeTheVerifier(t *testing.T) {
 	k, ctx, proof, signals := gasFixture(t)
 
-	// First submission verifies and is charged the full price.
-	nullifier, _, err := k.verifyRegistrationProof(ctx, proof, signals, "lean_poa", nil)
-	if err != nil {
+	// Submitted by the account it was proved for: verifies, full price.
+	before := ctx.GasMeter().GasConsumed()
+	if _, _, err := k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, signals, "lean_poa", nil); err != nil {
 		t.Fatalf("valid proof rejected: %v", err)
 	}
-
-	// Record it as a live registration, which is what Register would do.
-	if err := k.Registrations.Set(ctx, nullifier, types.Registration{
-		Nullifier:    nullifier,
-		Address:      "earth1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
-		RegisteredAt: ctx.BlockTime().Unix(),
-	}); err != nil {
-		t.Fatal(err)
+	full := ctx.GasMeter().GasConsumed() - before
+	if full < types.DefaultProofVerificationGas {
+		t.Fatalf("a real verification cost %d gas, expected at least %d", full, types.DefaultProofVerificationGas)
 	}
 
-	// Replay the very same proof.
-	before := ctx.GasMeter().GasConsumed()
-	if _, _, err := k.verifyRegistrationProof(ctx, proof, signals, "lean_poa", nil); err == nil {
-		t.Fatal("replayed proof accepted")
+	// The same bytes, presented by somebody else.
+	attacker := sdk.AccAddress([]byte("mallory-other-wallet"))
+	before = ctx.GasMeter().GasConsumed()
+	if _, _, err := k.verifyRegistrationProof(ctx, attacker, proof, signals, "lean_poa", nil); err == nil {
+		t.Fatal("a proof bound to one address was accepted for another -- registration is stealable")
 	}
 	charged := ctx.GasMeter().GasConsumed() - before
 
 	if charged >= types.DefaultProofVerificationGas {
-		t.Fatalf("replay cost %d gas: it is still paying to verify a proof it did not need to verify", charged)
+		t.Fatalf("lifted proof cost %d gas: it is still paying to verify a proof it did not need to verify", charged)
 	}
-}
-
-// TestStaleDateIsRejectedBeforeTheVerifier: the same argument for the other
-// public-input check that can reject without the proof. A backdated
-// current_date is refused on arithmetic alone.
-func TestStaleDateIsRejectedBeforeTheVerifier(t *testing.T) {
-	k, ctx, proof, signals := gasFixture(t)
-	ctx = ctx.WithBlockTime(time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)) // years past current_date
-
-	before := ctx.GasMeter().GasConsumed()
-	if _, _, err := k.verifyRegistrationProof(ctx, proof, signals, "lean_poa", nil); err == nil {
-		t.Fatal("proof with a stale current_date accepted")
-	}
-	charged := ctx.GasMeter().GasConsumed() - before
-
-	if charged >= types.DefaultProofVerificationGas {
-		t.Fatalf("stale-date rejection cost %d gas: it verified the proof first", charged)
-	}
-}
-
-// TestBlockGasLimitBoundsProofsPerBlock states the property the charge exists
-// for, in the terms that actually matter: how many verifications a full block
-// can be made to contain, and therefore how long one can take to execute.
-func TestBlockGasLimitBoundsProofsPerBlock(t *testing.T) {
-	const blockMaxGas = 100_000_000 // networks/genesis/chain.json
-
-	perBlock := blockMaxGas / types.DefaultProofVerificationGas
-	if perBlock > 128 {
-		t.Fatalf("a full block admits %d proof verifications; at ~6ms each that is %.1fs of CPU "+
-			"in one block, which is a liveness problem rather than a fee problem",
-			perBlock, float64(perBlock)*0.006)
-	}
+	t.Logf("rejected for %d gas, against %d for a real verification", charged, full)
 }

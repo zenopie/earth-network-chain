@@ -31,7 +31,13 @@ type dscFacts struct {
 	country string // ISO 3166-1 alpha-2, "" if the certificate omits it
 }
 
-func (k Keeper) verifyRegistrationProof(ctx context.Context, proof []byte, publicSignals []string, algorithm string, dscDER []byte) ([]byte, dscFacts, error) {
+// creator is the account the registration is for. It is not incidental: the
+// circuit takes it as a public input, so a proof only verifies against the
+// address it was made for, and this is where the chain ties that address to the
+// one that actually signed the transaction. Drop the check and a proof read out
+// of any block becomes a bearer token for its owner's personhood -- see
+// zk/ultrahonk TestProofDoesNotVerifyForAnotherAddress.
+func (k Keeper) verifyRegistrationProof(ctx context.Context, creator sdk.AccAddress, proof []byte, publicSignals []string, algorithm string, dscDER []byte) ([]byte, dscFacts, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	params, err := k.Params.Get(ctx)
 	if err != nil {
@@ -45,6 +51,23 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, proof []byte, publi
 	nullifierIndex := int(params.NullifierIndex)
 	if nullifierIndex >= len(publicSignals) {
 		return nil, dscFacts{}, types.ErrBadPublicInputs.Wrapf("nullifier index %d out of range", nullifierIndex)
+	}
+	addressIndex := int(params.AddressIndex)
+	if addressIndex >= len(publicSignals) {
+		return nil, dscFacts{}, types.ErrBadPublicInputs.Wrapf("address index %d out of range", addressIndex)
+	}
+	// The address the proof was made for, as the circuit sees it: the twenty
+	// address bytes read big-endian as one field element. Compared as integers
+	// rather than strings because the signal arrives in decimal and has no
+	// leading zeroes.
+	boundAddr, ok := new(big.Int).SetString(publicSignals[addressIndex], 10)
+	if !ok {
+		return nil, dscFacts{}, types.ErrBadPublicInputs.Wrapf(
+			"address signal %q is not a decimal field element", publicSignals[addressIndex])
+	}
+	if boundAddr.Cmp(new(big.Int).SetBytes(creator)) != 0 {
+		return nil, dscFacts{}, types.ErrBadPublicInputs.Wrapf(
+			"proof is bound to a different address than the signer")
 	}
 
 	// Public inputs arrive as decimal field elements; UltraHonk wants 32-byte
@@ -109,32 +132,18 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, proof []byte, publi
 			skew, params.CurrentDateMaxSkewSeconds)
 	}
 
-	// Reject a replay before paying to verify it.
+	// A replay is already rejected, above, and more completely than a nullifier
+	// check ever managed.
 	//
-	// A registration whose nullifier is already held by a live human is going to
-	// be refused by Register regardless, so there is no reason to verify its
-	// proof first. This is the cheapest possible rejection — one keyed read —
-	// and it is the one that matters most, because replaying a real, valid proof
-	// is the least effort an attacker has to go to in order to make a validator
-	// run the verifier.
-	//
-	// Read-only, deliberately. The lapsed-registration case is handled in
-	// Register, which clears the old record and lets the new one through; doing
-	// that here would mutate state on the strength of a proof that has not been
-	// verified yet. So this rejects only what is certain — a nullifier that is
-	// currently live — and leaves every other case to the verified path.
-	if reg, err := k.Registrations.Get(ctx, pubInputs[nullifierIndex]); err == nil {
-		expired, err := k.isExpired(ctx, reg)
-		if err != nil {
-			return nil, dscFacts{}, err
-		}
-		if !expired {
-			return nil, dscFacts{}, types.ErrAlreadyReg.Wrapf(
-				"nullifier %s", hex.EncodeToString(pubInputs[nullifierIndex]))
-		}
-	} else if !errors.Is(err, collections.ErrNotFound) {
-		return nil, dscFacts{}, err
-	}
+	// This used to refuse any nullifier that was already live, before paying to
+	// verify -- because replaying a captured proof was the cheapest way to make
+	// a validator run the verifier, and such a proof was going to be refused
+	// regardless. Both halves of that stopped being true. A live nullifier is
+	// now a wallet switch, which must be allowed through; and the address check
+	// above rejects a lifted proof for one keyed comparison, without even
+	// reaching the verifier. It is also a stronger filter: the attacker cannot
+	// sign as the address the proof is bound to, so they cannot get a replay
+	// past the ante handler at all.
 
 	// Bind the proof to the Document Signer that actually signed the passport.
 	// The circuit proved the SOD was signed by the key committed to at

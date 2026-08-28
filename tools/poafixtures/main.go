@@ -186,6 +186,10 @@ func run(v variant, outDir string) error {
 		fmt.Fprintf(&b, "%s = [%s]\n", k, strings.Join(keyInputs[k], ", "))
 	}
 	fmt.Fprintf(&b, "current_date = \"%d\"\n", currentDate)
+	// The account the proof is bound to. A proof only verifies against the
+	// public input vector it was made for, so this is what stops a proof read
+	// out of one block being replayed from somebody else's wallet.
+	fmt.Fprintf(&b, "address = \"%s\"\n", AddressField(FixtureAddress))
 
 	if err := os.WriteFile(filepath.Join(outDir, "Prover.toml"), []byte(b.String()), 0o644); err != nil {
 		return err
@@ -194,6 +198,12 @@ func run(v variant, outDir string) error {
 	// Each run uses a fresh key (Go's ECDSA cannot be made reproducible), so the
 	// values the circuit will output are written next to the fixture rather than
 	// left for the caller to recompute.
+	// The address the fixture proof is bound to, so the chain's tests can feed
+	// the very same account rather than rediscovering it from the toml.
+	if err := os.WriteFile(filepath.Join(outDir, "expected_address"), FixtureAddress, 0o644); err != nil {
+		return err
+	}
+
 	null := nullifier(dg1[:])
 	if err := os.WriteFile(filepath.Join(outDir, "expected_nullifier"), []byte(null.String()), 0o644); err != nil {
 		return err
@@ -259,13 +269,15 @@ func commitment(pubkey []byte) fr.Element {
 // nullifier mirrors poa_core::finalize: Poseidon2 over the 39 name bytes
 // followed by the 6 date-of-birth bytes.
 func nullifier(dg1 []byte) fr.Element {
-	const nameOffset, nameLen, dobOffset = 10, 39, 62
-	elems := make([]fr.Element, 45)
-	for i := 0; i < nameLen; i++ {
-		elems[i].SetUint64(uint64(dg1[nameOffset+i]))
+	// Poseidon2(document number ‖ DOB) — must match poa_core::finalize exactly.
+	// MRZ line 2 starts at DG1[49]; the document number is its first 9 chars.
+	const docNumOffset, docNumLen, dobOffset = 49, 9, 62
+	elems := make([]fr.Element, 15)
+	for i := 0; i < docNumLen; i++ {
+		elems[i].SetUint64(uint64(dg1[docNumOffset+i]))
 	}
 	for i := 0; i < 6; i++ {
-		elems[nameLen+i].SetUint64(uint64(dg1[dobOffset+i]))
+		elems[docNumLen+i].SetUint64(uint64(dg1[dobOffset+i]))
 	}
 	return poseidon2.Hash(elems)
 }
@@ -338,4 +350,21 @@ func writeByteArray(b *strings.Builder, name string, data []byte) {
 		parts[i] = fmt.Sprintf("\"%d\"", v)
 	}
 	fmt.Fprintf(b, "%s = [%s]\n", name, strings.Join(parts, ", "))
+}
+
+// FixtureAddress is the account every generated fixture proof is bound to.
+//
+// Fixed rather than random: the chain's tests assert that a proof made for this
+// account is refused for any other, and that check is only meaningful if they
+// both mean the same twenty bytes.
+var FixtureAddress = []byte("earth-fixture-wallet")
+
+// AddressField encodes an account address as the circuit's `address` public
+// input: the twenty address bytes read big-endian as one field element.
+//
+// Twenty bytes is 160 bits and BN254's field is ~254, so an address is always
+// in range and the encoding is injective -- two accounts can never collide onto
+// one field element, which is the property the binding rests on.
+func AddressField(addr []byte) string {
+	return new(big.Int).SetBytes(addr).String()
 }

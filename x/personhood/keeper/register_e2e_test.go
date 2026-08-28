@@ -67,9 +67,10 @@ func TestRegisterEndToEnd_RealPki(t *testing.T) {
 
 	params := types.Params{
 		VerifyingKeys:             map[string][]byte{"lean_poa": vk},
-		NullifierIndex:            1,
-		DscKeyIndex:               2,
+		NullifierIndex:            2,
+		DscKeyIndex:               3,
 		CurrentDateIndex:          0,
+		AddressIndex:              1,
 		CurrentDateMaxSkewSeconds: 2 * 24 * 60 * 60,
 	}
 	if err := k.Params.Set(ctx, params); err != nil {
@@ -77,7 +78,7 @@ func TestRegisterEndToEnd_RealPki(t *testing.T) {
 	}
 
 	// The genuine DSC is accepted and the nullifier comes back.
-	nullifier, _, err := k.verifyRegistrationProof(ctx, proof, signals, "lean_poa", dscDER)
+	nullifier, _, err := k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, signals, "lean_poa", dscDER)
 	if err != nil {
 		t.Fatalf("registration with a genuine CSCA-issued DSC rejected: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestRegisterEndToEnd_RealPki(t *testing.T) {
 	// The verification also reports which Document Signer produced the proof and
 	// which country issued it — the facts the per-DSC query and the explorer's
 	// country map are built from.
-	_, facts, err := k.verifyRegistrationProof(ctx, proof, signals, "lean_poa", dscDER)
+	_, facts, err := k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, signals, "lean_poa", dscDER)
 	if err != nil {
 		t.Fatalf("re-verify: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestRegisterEndToEnd_RealPki(t *testing.T) {
 	if err := pki.RevokeDsc(ctx, pubkey); err != nil {
 		t.Fatalf("RevokeDsc: %v", err)
 	}
-	if _, _, err := k.verifyRegistrationProof(ctx, proof, signals, "lean_poa", dscDER); err == nil {
+	if _, _, err := k.verifyRegistrationProof(ctx, fixtureAddr(t), proof, signals, "lean_poa", dscDER); err == nil {
 		t.Fatal("expected rejection after the DSC was revoked")
 	}
 }

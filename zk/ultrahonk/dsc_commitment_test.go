@@ -33,7 +33,7 @@ func TestDscCommitmentMatchesCircuit(t *testing.T) {
 		"lean_poa_brainpool512",
 	}
 	// Public signals are [current_date, nullifier, dsc_key].
-	const dscKeyIndex = 2
+	const dscKeyIndex = 3
 
 	for _, variant := range variants {
 		t.Run(variant, func(t *testing.T) {
