@@ -432,6 +432,21 @@ func (pk *PublicKey) KeyType() KeyType {
 // CanonicalBytes returns the bytes hashed into the registry Merkle leaf, matching
 // the circuit: ECDSA -> x‖y (each coordinate padded to the curve byte length),
 // RSA -> the modulus in big-endian.
+//
+// These bytes are absorbed one-per-field-element into the same Poseidon2 sponge
+// on both sides (DscCommitment here, poa_core::dsc_commitment in the circuit),
+// and the sponge folds the input LENGTH into its capacity slot -- so the two
+// sides must agree on length, not just content. The RSA circuit emits a
+// fixed-width modulus (`RuntimeBigNum::to_be_bytes`, 256/512 bytes); big.Int's
+// Bytes() strips leading zeros. They coincide for every real key because a
+// full-strength RSA-2048/4096 modulus has its top bit set, so there are no
+// leading zeros to strip. A modulus with a zero most-significant byte would
+// produce a shorter slice here, a different capacity absorption, and a
+// commitment that never matches the circuit -- that key could not register
+// (liveness, never a forgery). Not reachable with CSCA-issued keys, but the
+// agreement is coincidental rather than enforced: if you make this fixed-width
+// (left-pad to the modulus bit length) do it as a matched change with the
+// circuit, or leave both exactly as they are. Do not "tidy" one side alone.
 func (pk *PublicKey) CanonicalBytes() []byte {
 	if pk.IsRSA {
 		return pk.RSAModulus.Bytes()
