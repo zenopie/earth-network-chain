@@ -70,6 +70,26 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 		return nil, types.ErrZeroShares
 	}
 
+	// Slippage. The shares above were priced against the reserves as they stand
+	// at execution, which is not the ratio the depositor saw when they signed:
+	// a trade landing in between moves it, and moving it deliberately either
+	// side of this message is the standard sandwich. Checked after the amount is
+	// known and before any coins move, so a deposit that would not have been
+	// worth making costs its sender the gas and nothing else.
+	//
+	// An empty min_shares is no minimum. Clients built before the field existed
+	// send nothing and keep working.
+	if msg.MinShares != "" {
+		minShares, ok := math.NewIntFromString(msg.MinShares)
+		if !ok || minShares.IsNegative() {
+			return nil, errorsmod.Wrap(types.ErrInvalidAmount, "invalid min_shares")
+		}
+		if shareAmt.LT(minShares) {
+			return nil, errorsmod.Wrapf(types.ErrSlippage,
+				"would mint %s shares, want >= %s", shareAmt, minShares)
+		}
+	}
+
 	if err := k.bankKeeper.SendCoinsFromAccountToModule(ctx, creator, types.ModuleName, sdk.NewCoins(depositErt, depositTok)); err != nil {
 		return nil, err
 	}

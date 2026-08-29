@@ -34,4 +34,9 @@ var (
 	// yet. See Keeper.PoolCreationLocked.
 	ErrPoolCreationLocked = errors.Register(ModuleName, 1115,
 		"pool creation is locked until the genesis liquidity auction settles")
+
+	// ErrLpShareDenom means someone tried to make an LP share coin the spoke
+	// side of a pool. See the guard in CreatePool for why that halts the chain.
+	ErrLpShareDenom = errors.Register(ModuleName, 1116,
+		"an lp share denom cannot be a pool asset")
 )

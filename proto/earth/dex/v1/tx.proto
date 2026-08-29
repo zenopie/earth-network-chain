@@ -89,6 +89,20 @@ message MsgAddLiquidity {
   uint64 pool_id = 2;
   cosmos.base.v1beta1.Coin amount_a = 3 [(gogoproto.nullable) = false];
   cosmos.base.v1beta1.Coin amount_b = 4 [(gogoproto.nullable) = false];
+
+  // The fewest shares the depositor will accept, as a decimal integer.
+  //
+  // A deposit is priced at whatever ratio the pool holds when it executes, so
+  // without this it is sandwichable in the ordinary way: move the reserves
+  // ahead of it, let it price against the moved ratio, move them back. MsgSwap
+  // has always had min_amount_out for exactly this and add-liquidity had
+  // nothing.
+  //
+  // Empty means no minimum, which is what every client sent before this field
+  // existed and is why it can be added without breaking them. It is not a
+  // recommendation -- a client that leaves it empty is choosing the old
+  // behaviour.
+  string min_shares = 5;
 }
 
 // MsgAddLiquidityResponse defines the MsgAddLiquidityResponse message.

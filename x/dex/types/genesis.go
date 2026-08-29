@@ -22,6 +22,18 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicated index for pool")
 		}
 		poolIndexMap[index] = struct{}{}
+		// See SetPool: an LP share denom on the spoke side makes the module's
+		// own share holdings read as a surplus and halts the chain from the
+		// EndBlocker. Refusing it here means a bad genesis fails to start
+		// rather than starting and stopping on the first block.
+		if IsLPShareDenom(elem.ReserveToken.Denom) {
+			return fmt.Errorf("pool %d: %s is an lp share denom and cannot be a pool asset",
+				elem.PoolId, elem.ReserveToken.Denom)
+		}
+		if IsLPShareDenom(elem.ReserveErth.Denom) {
+			return fmt.Errorf("pool %d: %s is an lp share denom and cannot be a pool asset",
+				elem.PoolId, elem.ReserveErth.Denom)
+		}
 	}
 
 	if a := gs.LiquidityAuction; a != nil {

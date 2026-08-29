@@ -79,6 +79,13 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 	// reward and mints no ANML: the person is already counted, and paying again
 	// would let one human draw the reward pool down once per wallet.
 	switched := false
+	// A switch carries the person's ANML clock across with them. Starting the
+	// new registration at today's midnight, as a fresh one does, means someone
+	// who claimed yesterday and moved wallets today cannot claim until
+	// tomorrow -- the move quietly costs them a day. Carrying the old value
+	// cannot be used to claim twice: ClaimAnml compares day numbers, so a clock
+	// already set to today still refuses today.
+	carriedAnmlClaim := int64(0)
 	if reg, err := k.Registrations.Get(ctx, nullifier); err == nil {
 		expired, err := k.isExpired(ctx, reg)
 		if err != nil {
@@ -88,6 +95,9 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		// same way, but that person is re-entering rather than moving, so it
 		// pays like any other registration.
 		switched = !expired
+		if switched {
+			carriedAnmlClaim = reg.LastAnmlClaim
+		}
 		if err := k.removeRegistration(ctx, reg); err != nil {
 			return nil, err
 		}
@@ -113,11 +123,12 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 
 	// Record the registration.
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	lastAnmlClaim := anmlClockFor(now, carriedAnmlClaim)
 	reg := types.Registration{
 		Nullifier:     nullifier,
 		Address:       msg.Creator,
 		RegisteredAt:  now,
-		LastAnmlClaim: (now / 86400) * 86400,
+		LastAnmlClaim: lastAnmlClaim,
 		DscKey:        dsc.key,
 		Country:       dsc.country,
 	}
@@ -186,4 +197,26 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 	)
 
 	return &types.MsgRegisterResponse{Reward: reward, Switched: switched}, nil
+}
+
+// anmlClockFor returns the LastAnmlClaim a registration should start life with.
+//
+// A new registration starts at today's midnight, which is what makes its first
+// claim open tomorrow rather than the moment it is made. A switch carries the
+// clock the person already had, because the registration moving between wallets
+// belongs to someone whose day has already been spent or has not -- and
+// starting them at today's midnight would spend it for them.
+//
+// It cannot be used to claim twice. ClaimAnml compares day numbers, so a
+// carried clock that already falls on today still reads as claimed today; the
+// only case it changes is a clock from an earlier day, which is a day genuinely
+// not yet claimed.
+//
+// carried is zero for a fresh registration and for one imported from a genesis
+// that predates the field, and both fall back to the new-registration rule.
+func anmlClockFor(now, carried int64) int64 {
+	if carried > 0 {
+		return carried
+	}
+	return (now / 86400) * 86400
 }

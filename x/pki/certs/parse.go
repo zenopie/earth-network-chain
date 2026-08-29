@@ -47,6 +47,30 @@ const (
 	oidPrimeField  = "1.2.840.10045.1.1"
 )
 
+// MaxPublicKeyBytes is the largest canonical public key a certificate may
+// present: a 16384-bit RSA modulus, or an EC point on an 8192-bit curve.
+//
+// A certificate is parsed on a consensus path, on bytes a stranger chose, under
+// a flat gas charge — so the cost of handling one has to have a ceiling that
+// does not depend on what the certificate claims. A small DER can declare an
+// enormous modulus, and two things then scale with it: the RSA verification
+// itself, and DscCommitment, which absorbs one Poseidon2 field element per byte
+// of the key.
+//
+// Set against measurement rather than against the specification. The largest
+// canonical key in the bundled ICAO master list is 768 bytes — a 6144-bit RSA
+// modulus, well past the 4096 the specification suggests — so a ceiling picked
+// from Doc 9303 alone would have rejected real passports. 2048 leaves that
+// room and still bounds the work: it is the ceiling on absurdity, not a policy
+// about key sizes.
+//
+// TestTrustStoreFitsTheCaps holds this against the real store, so a master list
+// update that outgrows it fails loudly instead of rejecting a country.
+const MaxPublicKeyBytes = 2048
+
+// ErrPublicKeyTooLarge is returned when a certificate exceeds that ceiling.
+var ErrPublicKeyTooLarge = errors.New("x509: public key exceeds the maximum size")
+
 // ParseCert leniently parses an X.509 certificate DER.
 func ParseCert(der []byte) (*Cert, error) {
 	input := cryptobyte.String(der)
@@ -230,11 +254,23 @@ func parseSPKI(body *cryptobyte.String) (*PublicKey, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Checked on the modulus rather than on keyBytes: the DER wrapping is a
+		// handful of bytes either way, and the modulus is the figure every cost
+		// downstream is proportional to.
+		if len(n.Bytes()) > MaxPublicKeyBytes {
+			return nil, ErrPublicKeyTooLarge
+		}
 		return &PublicKey{IsRSA: true, RSAModulus: n, RSAExp: e, Raw: keyBytes}, nil
 	case oidEcPublicKey:
 		curve, err := resolveCurve(algo) // remaining bytes of `algo` = EC params
 		if err != nil {
 			return nil, err
+		}
+		// An explicit-parameter curve carries its own field prime, so byteLen is
+		// whatever the certificate says. Every scalar multiplication in
+		// curves.go is quadratic in it.
+		if 2*curve.byteLen > MaxPublicKeyBytes {
+			return nil, ErrPublicKeyTooLarge
 		}
 		x, y, err := uncompressedPoint(keyBytes, curve)
 		if err != nil {
