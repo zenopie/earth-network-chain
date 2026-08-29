@@ -46,7 +46,21 @@ import (
 // k.Pool.Set directly is therefore a bug; CheckErthTotalAccounting exists to
 // catch one, and the exhaustive AssertInvariants runs it after every operation
 // the tests perform.
+// It is also the chokepoint for the one denom a pool may never hold. An LP
+// share is a claim on reserves already counted, which is why CheckBalances
+// skips LP denoms on the held side; a pool recording one as its reserve would
+// claim the protocol's own position and every escrowed withdrawal as its own,
+// and checkPoolTokenSolvency would report the rest as an unaccountable surplus
+// — a halt, from the EndBlocker. CreatePool, StartLiquidityAuction and genesis
+// validation all refuse it at the boundary, where the error reaches a user. The
+// check is repeated here because this is the one function every pool write goes
+// through, so a path added later cannot reintroduce it silently.
 func (k Keeper) SetPool(ctx context.Context, poolID uint64, pool types.Pool) error {
+	if types.IsLPShareDenom(pool.ReserveToken.Denom) || types.IsLPShareDenom(pool.ReserveErth.Denom) {
+		return types.ErrLpShareDenom.Wrapf("pool %d: reserves are %s and %s",
+			poolID, pool.ReserveErth.Denom, pool.ReserveToken.Denom)
+	}
+
 	prevErth := math.ZeroInt()
 	if prev, err := k.Pool.Get(ctx, poolID); err == nil {
 		if !prev.ReserveErth.Amount.IsNil() {

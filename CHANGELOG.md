@@ -11,6 +11,47 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
+## [v0.6.1] — unreleased
+
+Consensus-breaking. Must be scheduled through governance as upgrade name
+`v0.6.1`, and it must land **before the genesis liquidity auction opens** — see
+below for why the ordering is the safety property.
+
+### Fixed
+
+- **An LP share denom could be a pool's spoke asset, and anyone could use that
+  to halt the chain.** `MsgCreatePool` checked that one side was ERTH and
+  nothing about the other, so `dexlp/N` was accepted. The dex's solvency check
+  cannot survive one: `checkPoolTokenSolvency` compares a pool's spoke reserve
+  against the module's entire balance of that denom, which is exact only because
+  one pool per token means nothing else claims it. LP shares break that, because
+  the module also holds them as the protocol's own position and as escrow
+  against withdrawals in flight. A pool claiming one as its reserve turns every
+  other such coin into a surplus the module cannot account for, and a surplus
+  out of the EndBlocker halts the chain by design. Acquiring a dust amount of
+  any pool's shares is permissionless, so this was a halt available to anybody
+  from an ordinary transaction, and a CosmWasm contract could send it too.
+
+  Refused now at all four places a pool can come into being: `CreatePool`, the
+  auction bid denom, genesis validation, and `SetPool` — the single writer every
+  pool write passes through, so a path added later cannot reintroduce it.
+
+### Operators
+
+- **Not exploitable on `earth-1` before the auction settles.** `MsgCreatePool`
+  is refused while the genesis liquidity auction is unsettled, and at the time
+  of writing it is `AUCTION_STATUS_PENDING`. That is what makes this a scheduled
+  upgrade rather than an emergency — but it is also a deadline: settling the
+  auction opens pool creation, and the window closes the moment it does. Do not
+  start the auction until this upgrade has been applied.
+- **The upgrade handler refuses to run if the state it is fixing already
+  exists.** `SetPool` now rejects any write to a pool holding an LP denom, and
+  it is reached from EndBlocker paths, so a pool already carrying one would make
+  this upgrade cause the halt it prevents. The handler walks the pool set first
+  and fails at the upgrade height with the offending pool ids, which is a loud
+  failure with an operator present rather than a quiet one at 3am. It is not
+  expected to fire.
+
 ## [v0.5.2] — launch
 
 `earth-1` launched from this release. The v0.5.0 and v0.5.1 tags were released

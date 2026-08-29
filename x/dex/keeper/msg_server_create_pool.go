@@ -57,6 +57,20 @@ func (k msgServer) CreatePool(ctx context.Context, msg *types.MsgCreatePool) (*t
 		return nil, errorsmod.Wrapf(types.ErrInvalidDenom, "one side must be the hub asset %s", hub)
 	}
 
+	// An LP share is a claim on a pool, not an asset, and the solvency check is
+	// built on that distinction: CheckBalances skips LP denoms on the held side
+	// because the module's own holdings of them — the protocol's position, and
+	// shares escrowed against withdrawals in flight — are backed by reserves
+	// already counted elsewhere. A pool whose spoke side was an LP denom would
+	// claim exactly those coins as its reserve, and checkPoolTokenSolvency,
+	// which compares one pool's reserve against the whole module balance of its
+	// denom, would read the rest as a surplus it cannot account for. That is a
+	// halt, from the EndBlocker, reachable by anyone holding a dust amount of
+	// any pool's shares.
+	if types.IsLPShareDenom(token.Denom) {
+		return nil, errorsmod.Wrapf(types.ErrLpShareDenom, "%s", token.Denom)
+	}
+
 	if has, err := k.PoolByToken.Has(ctx, token.Denom); err != nil {
 		return nil, err
 	} else if has {

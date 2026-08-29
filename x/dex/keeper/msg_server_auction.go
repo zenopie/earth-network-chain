@@ -44,6 +44,13 @@ func (k msgServer) StartLiquidityAuction(ctx context.Context, msg *types.MsgStar
 	if msg.BidDenom == hub {
 		return nil, errorsmod.Wrap(types.ErrInvalidDenom, "bid denom must not be the hub asset")
 	}
+	// Settlement makes the bid denom a pool's spoke reserve, so it is subject to
+	// the same rule CreatePool enforces: an LP share denom there breaks the
+	// solvency check and halts the chain. Governance-gated rather than
+	// permissionless, but a proposal is a worse place to discover it.
+	if types.IsLPShareDenom(msg.BidDenom) {
+		return nil, errorsmod.Wrapf(types.ErrLpShareDenom, "%s", msg.BidDenom)
+	}
 
 	// Settlement creates a pool, and the dex allows one pool per spoke token. A
 	// denom that already has one would fail at settlement — after bids are taken
