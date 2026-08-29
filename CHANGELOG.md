@@ -11,11 +11,12 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
-## [v0.6.1] — unreleased
+## [v0.6.1]
 
-Consensus-breaking. Must be scheduled through governance as upgrade name
-`v0.6.1`, and it must land **before the genesis liquidity auction opens** — see
-below for why the ordering is the safety property.
+Consensus-breaking. Tagged and built, not yet scheduled: it must be proposed
+through governance as upgrade name `v0.6.1`, at a height after v0.6.0's, and it
+must land **before the genesis liquidity auction opens** — see below for why
+the ordering is the safety property.
 
 ### Fixed
 
@@ -81,6 +82,43 @@ below for why the ordering is the safety property.
     skips a certificate it cannot parse, which is correct and has always been
     so, and the first sign would be a country's passports failing to register
     for no visible reason.
+
+## [v0.6.0]
+
+Consensus-breaking. Scheduled through governance as upgrade name `v0.6.0`.
+
+### Removed
+
+- **`MsgUnregister`.** It freed the registration's nullifier, and a free
+  nullifier is a stranger to `Register` — which pays the registration reward
+  and mints 1 ANML for any nullifier that is not already live. So
+  unregister-then-register was a loop: one passport, once per block, for a full
+  payout each time. It was not hypothetical. On `earth-1` it ran in six blocks
+  (4827 unregister, 4833 register) for a second payout of 31,534 ERTH, and
+  63,070 ERTH drawn in total by one human.
+
+  What was mostly being used for is already covered: registering again from a
+  different wallet moves a live registration and deliberately pays nothing. The
+  circuit binds the registrant's address, which is what lets that branch exist
+  without being registration theft. What is genuinely given up is leaving the
+  registry outright, which now happens only on expiry or a Document Signer
+  revocation. That is a knowing trade, not an oversight.
+
+### Operators
+
+- **The message type is still registered and still decodes.** Only the handler
+  changed, and it now always returns `ErrUnregisterRemoved`. Deleting the type
+  would have unregistered it from the interface registry, and the historical
+  `MsgUnregister` in block 4827 would stop decoding — every transaction query
+  touching that block would fail rather than show what happened.
+- **No state migration and no store changes.** The change is entirely in what
+  the handler accepts, and registrations retired before the upgrade height stay
+  retired. `app_version` stays at 1: `chain.json` documents that it does not
+  move on its own, and editing it would change the genesis hash that
+  `RESET_ON_GENESIS_MISMATCH` is keyed to.
+- **Replay is unaffected.** Cosmovisor runs the pre-upgrade binary for
+  pre-upgrade blocks, so a node syncing from genesis sees the old behaviour up
+  to the upgrade height and the new behaviour after it.
 
 ## [v0.5.2] — launch
 
