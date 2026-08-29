@@ -76,8 +76,27 @@ jobs:
       - name: go test
         run: go test -mod=readonly -timeout 30m ./...
 
-      # Runs last because it builds earthd, which needs the verifier lib above.
-      # networks/genesis.json is an artifact: this fails if it has drifted from the
-      # sources in networks/genesis/ that produce it.
-      - name: make genesis-check
-        run: make genesis-check
+      # `make genesis-check` deliberately does NOT run here.
+      #
+      # It rebuilds networks/genesis.json from networks/genesis/ and demands a
+      # byte-identical result. That is a pre-launch check: it proves the artifact
+      # you are about to ship matches its inputs. earth-1 launched from that file
+      # on 2026-08-28 and it is now frozen history, so the check answers a
+      # question nobody can act on — any field added to any module's genesis
+      # proto breaks it, and the only way to satisfy it would be regenerating the
+      # launch genesis, which changes the hash RESET_ON_GENESIS_MISMATCH is keyed
+      # to and wipes every node's data directory.
+      #
+      # v0.7.0 is what made this concrete: it adds `residue` to the allocation
+      # genesis, so every rebuild now differs from the committed file.
+      #
+      # Run it by hand when building a new canonical chain -- that is the only
+      # time the answer means anything:
+      #
+      #     make genesis-check
+      #
+      # What still guards the committed file on every push is networks/genesis_test.go,
+      # which reads it and checks what actually matters about it: supply equals the
+      # sum of balances, only intended accounts hold coins, the dex module can cover
+      # its obligations, the verifying keys and CSCA trust store are seeded, and the
+      # header matches chain.json. Those run under `go test ./...` above.
