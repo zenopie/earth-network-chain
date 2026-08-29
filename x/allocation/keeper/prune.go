@@ -176,7 +176,28 @@ func (k Keeper) SweepPrunableOptions(ctx context.Context) error {
 		if !opt.Accumulated.IsNil() {
 			forfeited = opt.Accumulated
 		}
+		// Both halves of the ledger, or neither. The removal above bypasses
+		// setOption — deliberately, see the note at the top of this file, because
+		// a zero-weight option cannot move TotalWeight or SummedWeight — but
+		// SummedAccrued is a second running sum that setOption also maintains,
+		// and it is over Accumulated rather than AmountAllocated. A prunable
+		// option has zero weight by definition; it does NOT have a zero balance,
+		// which is the entire reason the burn below exists.
+		//
+		// Left out, the burn drops Held by forfeited while SummedAccrued keeps
+		// counting it, CheckSolvency reads Short, and AssertHotInvariants halts
+		// the chain in this very block — the sweep runs in BeginBlock and the
+		// assertion in EndBlock. The burn was added to protect solvency and
+		// would have been the thing that broke it.
 		if forfeited.IsPositive() {
+			acc, err := k.GetSummedAccrued(ctx)
+			if err != nil {
+				return err
+			}
+			if err := k.SummedAccrued.Set(ctx, acc.Sub(forfeited)); err != nil {
+				return err
+			}
+
 			denom, err := k.HubDenom(ctx)
 			if err != nil {
 				return err

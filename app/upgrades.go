@@ -70,12 +70,20 @@ var Upgrades = []Upgrade{
 		CreateHandler: defaultUpgradeHandler,
 	},
 
-	// Four consensus-affecting changes, shipped under one name because they ship
-	// in one binary. Nothing here lives in the handler except the two pre-flight
-	// checks: what actually changes is what these message handlers accept, so
-	// the upgrade name is the release, and the release is the tag CI builds.
+	// Everything after v0.6.0, under one name because it ships in one binary.
 	//
-	//  1. x/dex refuses an LP share denom as a pool asset -- the chain halt.
+	// This entry is the merge of two releases. v0.6.1 was tagged and built but
+	// never proposed — no MsgSoftwareUpgrade named "v0.6.1" ever existed on
+	// earth-1 — so folding it in costs nothing and removes a governance round
+	// trip. That is the whole reason the merge is legitimate: an upgrade name
+	// that was never voted on is not a promise anyone made. Had it been
+	// scheduled, this entry would have had to stay, because a node replaying
+	// history needs a handler for every name the chain actually halted on.
+	//
+	// From the tagged-but-unproposed v0.6.1:
+	//
+	//  1. x/dex refuses an LP share denom as a pool asset -- a chain halt
+	//     anyone could trigger from an ordinary message.
 	//  2. x/dex honours MsgAddLiquidity.min_shares, so a deposit can state what
 	//     it will accept rather than taking whatever ratio it lands on.
 	//  3. x/personhood carries a registration's ANML clock across a wallet
@@ -83,74 +91,43 @@ var Upgrades = []Upgrade{
 	//  4. x/pki bounds what one certificate verification can cost -- see
 	//     certs.MaxPublicKeyBytes and types.MaxIssuerCandidates.
 	//
-	// (1) is the one with a state precondition and the reason this handler is
-	// not the default one; (4) has one too, and both are checked below.
+	// New in v0.7.0, from the 2026-08-28 audit:
 	//
-	// --- (1) the halt ---
+	//  5. x/allocation decrements SummedAccrued when a pruned option's balance
+	//     is burned. Without it the sweep burned coins the ledger kept counting,
+	//     and the module went short in the same block -- BeginBlock prunes,
+	//     EndBlock asserts. Permissionlessly armable on a 30-day fuse, and
+	//     likelier still to fire by accident the first time a real option was
+	//     abandoned unclaimed.
+	//  6. x/allocation rebuilds SummedAccrued on genesis import and carries
+	//     Residue through it. Neither survived an export/import, which left the
+	//     solvency check reading a genuine shortfall as a tolerated surplus.
+	//  7. x/dex drops a malformed LP unbonding instead of halting on it, and
+	//     genesis validation refuses the three shapes that produce one. The old
+	//     behaviour was a permanent halt from a single bad row: the entry is
+	//     removed only after a successful payout, and the queue is ordered by
+	//     due time, so it sat at the head failing identically every block.
+	//  8. The DSC commitment absorbs a curve tag, so two same-width curves
+	//     cannot share a Document Signer identity. See certs.DscCommitment.
 	//
-	// x/dex allowed dexlp/N as a pool's spoke token, and the solvency check
-	// cannot survive one. checkPoolTokenSolvency compares a pool's spoke reserve
-	// against the module's whole balance of that denom, which is exact only
-	// because one pool per token means nothing else claims it. LP shares break
-	// that: the module also holds them as the protocol's own position and as
-	// escrow against withdrawals in flight, and CheckBalances skips LP denoms on
-	// the held side for exactly that reason. A pool claiming one as its reserve
-	// makes every other such coin an unaccountable surplus, and a surplus out of
-	// the EndBlocker halts the chain. Anyone can hold a dust amount of any
-	// pool's shares, so it was a halt available to anybody from an ordinary
-	// message. See x/dex/keeper/msg_server_create_pool.go.
-	//
-	// Its own upgrade rather than folding into v0.6.0, which is in its voting
-	// period and already tagged. The behaviour of both upgrades lives in the
-	// binary rather than in a handler, so adding this to that entry would put a
-	// change into a release voters had already approved without it.
+	// (1), (5) and (7) all have state preconditions, and (8) rewrites state, so
+	// the handler is emphatically not the default one. See upgrades_v070.go.
 	//
 	// No StoreUpgrades: the module set is unchanged. AppVersion stays at 1, for
 	// the reason v0.6.0 gives above.
 	//
-	// The handler is not the default one, because two of these add rules that
-	// existing state could violate, and state keeps moving between writing this
-	// and running it -- so both are checked at the upgrade height rather than by
-	// hand beforehand. SetPool now rejects a pool whose reserve is an LP denom
-	// and is reached from EndBlocker paths, so a pool already carrying one would
-	// turn this upgrade into the halt it prevents; and a CSCA already in the
-	// trust store that the new key ceiling rejects would stop being a trust
-	// anchor silently. See assertNoLpDenomPools and assertTrustStoreParses.
-	//
 	// (2) is wire-compatible: min_shares is a new field, and a client that sends
 	// nothing gets exactly the old behaviour, so transactions already signed and
 	// in flight are unaffected and historical ones still decode.
+	//
+	// (8) is NOT wire-compatible with an un-updated app: a proof from the old
+	// circuits produces an old-format commitment that this binary will not
+	// reproduce, so registration needs the new circuits in users' hands. That is
+	// the one item with a dependency outside this repository.
 	{
-		Name:          "v0.6.1",
-		CreateHandler: upgradeV061,
+		Name:          "v0.7.0",
+		CreateHandler: upgradeV070,
 	},
-}
-
-// upgradeV061 runs this release's two state preconditions, then the standard
-// migrations.
-//
-// The new guard in SetPool cannot distinguish a pool being created from a pool
-// being written for the thousandth time, so if legacy state contains one, every
-// later touch of it fails — from the EndBlocker, at an arbitrary height, with
-// no operator watching. Failing here instead puts the same problem at a
-// scheduled height with everyone already looking at the chain, and says what to
-// do about it.
-//
-// Expected never to fire. Creating such a pool needs MsgCreatePool, which is
-// refused while the genesis liquidity auction is unsettled, so as long as this
-// upgrade lands before the auction opens there is no window in which one can be
-// made. That ordering is the actual safety property; this check is what makes
-// it verified rather than assumed.
-func upgradeV061(app *App) upgradetypes.UpgradeHandler {
-	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
-		if err := assertNoLpDenomPools(ctx, app); err != nil {
-			return nil, err
-		}
-		if err := assertTrustStoreParses(ctx, app); err != nil {
-			return nil, err
-		}
-		return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
-	}
 }
 
 // assertTrustStoreParses checks that no CSCA already in the store is one the
@@ -174,11 +151,11 @@ func assertTrustStoreParses(ctx context.Context, app *App) error {
 		return false, nil
 	})
 	if err != nil {
-		return fmt.Errorf("v0.6.1: could not read the CSCA trust store: %w", err)
+		return fmt.Errorf("v0.7.0: could not read the CSCA trust store: %w", err)
 	}
 	if oversized > 0 {
 		return fmt.Errorf(
-			"v0.6.1 refuses to run: %d CSCA(s) in the trust store carry a public key "+
+			"v0.7.0 refuses to run: %d CSCA(s) in the trust store carry a public key "+
 				"larger than the new ceiling of %d bytes and would silently stop being "+
 				"trusted. Raise certs.MaxPublicKeyBytes to cover them before upgrading",
 			oversized, certs.MaxPublicKeyBytes)
@@ -198,11 +175,11 @@ func assertNoLpDenomPools(ctx context.Context, app *App) error {
 		return false, nil
 	})
 	if err != nil {
-		return fmt.Errorf("v0.6.1: could not read the pool set: %w", err)
+		return fmt.Errorf("v0.7.0: could not read the pool set: %w", err)
 	}
 	if len(offending) > 0 {
 		return fmt.Errorf(
-			"v0.6.1 refuses to run: %d pool(s) hold an lp share denom and the new "+
+			"v0.7.0 refuses to run: %d pool(s) hold an lp share denom and the new "+
 				"SetPool guard would halt the chain on the next write to them: %s. "+
 				"Retire these pools in a bespoke handler before upgrading",
 			len(offending), strings.Join(offending, ", "))

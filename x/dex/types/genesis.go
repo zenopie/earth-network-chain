@@ -34,6 +34,31 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("pool %d: %s is an lp share denom and cannot be a pool asset",
 				elem.PoolId, elem.ReserveErth.Denom)
 		}
+		// Reserves must be real numbers before anything prices against them.
+		// A nil math.Int survives proto import and panics on first use rather
+		// than erroring — payoutUnbonding multiplies by ReserveErth.Amount, and
+		// the swap maths divides by both — so a node importing such a genesis
+		// dies with no diagnosis. CheckVolumeAccounting already guards
+		// VolumeWeight.IsNil() for exactly this reason; the reserves had no
+		// equivalent.
+		//
+		// Non-positive is refused too, not merely nil: a zero reserve makes the
+		// constant-product maths degenerate and every share price undefined.
+		if elem.ReserveErth.Amount.IsNil() || !elem.ReserveErth.Amount.IsPositive() {
+			return fmt.Errorf("pool %d: reserve_erth must be positive, got %s",
+				elem.PoolId, elem.ReserveErth.Amount)
+		}
+		if elem.ReserveToken.Amount.IsNil() || !elem.ReserveToken.Amount.IsPositive() {
+			return fmt.Errorf("pool %d: reserve_token must be positive, got %s",
+				elem.PoolId, elem.ReserveToken.Amount)
+		}
+		if elem.VolumeWeight.IsNil() {
+			continue // read as zero on import; see keeper/genesis.go
+		}
+		if elem.VolumeWeight.IsNegative() {
+			return fmt.Errorf("pool %d: volume_weight must not be negative, got %s",
+				elem.PoolId, elem.VolumeWeight)
+		}
 	}
 
 	if a := gs.LiquidityAuction; a != nil {
@@ -98,6 +123,50 @@ func (gs GenesisState) Validate() error {
 		}
 		if b.StartTime < 0 {
 			return fmt.Errorf("pol burn for pool %d: start_time must not be negative", b.PoolId)
+		}
+	}
+
+	// The same treatment PolBurns gets, and for a sharper reason: this list had
+	// no validation at all, and keeper/genesis.go checked only that the address
+	// decoded.
+	//
+	// Every field here is one the sweep would otherwise trip over at maturity,
+	// in the EndBlocker, at a height nobody chose:
+	//
+	//   - a PoolId with no pool     -> Pool.Get errors
+	//   - nil or non-positive shares -> a nil big.Int deref, which PANICS
+	//   - a denom that is not this pool's -> burns one pool's supply while
+	//     paying out of another's reserves, and trips the invariant pointing at
+	//     the wrong module
+	//
+	// SweepMaturedUnbondings no longer halts on any of them — it drops the entry
+	// and says so — but a dropped entry is a provider's liquidity not being
+	// returned. Refusing the file is the outcome that loses nobody anything, and
+	// it is available here because a genesis is inspected before it is run.
+	unbondSeen := make(map[string]struct{}, len(gs.LpUnbondings))
+	for _, u := range gs.LpUnbondings {
+		if _, ok := poolIndexMap[fmt.Sprint(u.PoolId)]; !ok {
+			return fmt.Errorf("lp unbonding for %s: no pool %d", u.Address, u.PoolId)
+		}
+		// Completion time and pool and address form the store key, so a repeat
+		// would silently overwrite rather than restore both.
+		k := fmt.Sprintf("%d/%d/%s", u.CompletionTime, u.PoolId, u.Address)
+		if _, ok := unbondSeen[k]; ok {
+			return fmt.Errorf("duplicated lp unbonding for %s in pool %d at %d",
+				u.Address, u.PoolId, u.CompletionTime)
+		}
+		unbondSeen[k] = struct{}{}
+		if u.Shares.Amount.IsNil() || !u.Shares.Amount.IsPositive() {
+			return fmt.Errorf("lp unbonding for %s in pool %d: shares must be positive, got %s",
+				u.Address, u.PoolId, u.Shares.Amount)
+		}
+		if want := LPShareDenom(u.PoolId); u.Shares.Denom != want {
+			return fmt.Errorf("lp unbonding for %s in pool %d: shares are denominated in %s, not %s",
+				u.Address, u.PoolId, u.Shares.Denom, want)
+		}
+		if u.CompletionTime < 0 {
+			return fmt.Errorf("lp unbonding for %s in pool %d: completion_time must not be negative",
+				u.Address, u.PoolId)
 		}
 	}
 

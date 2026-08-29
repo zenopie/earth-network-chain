@@ -57,7 +57,7 @@ func dnKey(dn []byte) []byte {
 // types.MaxIssuerCandidates, enforced below. Worst case is therefore
 // MaxIssuerCandidates signature verifications over a key of at most
 // MaxPublicKeyBytes; move either constant and revisit the gas with it.
-func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
+func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, error) {
 	dsc, err := certs.ParseCert(der)
 	if err != nil {
 		return nil, types.ErrInvalidCert.Wrap(err.Error())
@@ -89,7 +89,11 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 	// point at genuinely different signing identities.
 	for _, csca := range cands {
 		if certs.VerifySignedBy(dsc, csca.PublicKey) == nil {
-			return pub, nil
+			// The parsed key rather than its bytes: the DSC commitment now needs
+			// the curve as well as the coordinates, and the bytes alone cannot
+			// say which curve produced them — which is the whole point of the
+			// tag. See certs.DscCommitment.
+			return dsc.PublicKey, nil
 		}
 	}
 	// A revoked issuer is the more specific answer than "nothing here verified
@@ -124,12 +128,21 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 // second is what lets registrations already on the books be recognised as
 // coming from a signer no longer trusted, which is the difference between
 // revocation that stops the bleeding and revocation that only closes the door.
-func (k Keeper) RevokeDsc(ctx context.Context, pubkey []byte) error {
-	hash := sha256.Sum256(pubkey)
+func (k Keeper) RevokeDsc(ctx context.Context, pk *certs.PublicKey) error {
+	hash := sha256.Sum256(pk.CanonicalBytes())
 	if err := k.RevokedDscs.Set(ctx, hash[:]); err != nil {
 		return err
 	}
-	c := certs.DscCommitment(pubkey)
+	// Takes the parsed key, not its bytes, so the commitment it computes is the
+	// one the registrations actually carry. Given only bytes this would have to
+	// guess the curve, and a wrong guess is the quiet failure: the sha256 half
+	// still closes the door to new registrations while the commitment half
+	// matches nothing, so existing registrations under the revoked signer are
+	// never retired.
+	c, err := certs.DscCommitmentOf(pk)
+	if err != nil {
+		return err
+	}
 	commitment := c.Bytes()
 	if err := k.RevokedDscCommitments.Set(ctx, commitment[:]); err != nil {
 		return err

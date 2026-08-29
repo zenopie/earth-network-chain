@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/earth-network/earth/x/pki/certs"
 	"github.com/earth-network/earth/x/pki/types"
 )
 
@@ -50,7 +51,12 @@ func TestVerifyRSADSC(t *testing.T) {
 	}
 	// For RSA the canonical key is the modulus big-endian, which is what the
 	// register circuits hash for lean_poa_rsa2048/4096.
-	if !bytes.Equal(pub, rsaPub.N.Bytes()) {
+	if !bytes.Equal(pub.CanonicalBytes(), rsaPub.N.Bytes()) {
 		t.Fatal("VerifyDsc returned a key other than the RSA modulus")
+	}
+	// Every modulus size shares one tag: RSA keys already differ in length, and
+	// the sponge separates lengths on its own.
+	if tag, err := pub.CurveTagOf(); err != nil || tag != certs.TagRSA {
+		t.Fatalf("CurveTagOf = %v, %v; want %v", tag, err, certs.TagRSA)
 	}
 }

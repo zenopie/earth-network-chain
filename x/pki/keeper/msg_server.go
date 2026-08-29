@@ -67,7 +67,7 @@ func (k msgServer) RevokeDsc(ctx context.Context, req *types.MsgRevokeDsc) (*typ
 	if err != nil {
 		return nil, types.ErrInvalidCert.Wrap(err.Error())
 	}
-	if err := k.Keeper.RevokeDsc(ctx, cert.PublicKey.CanonicalBytes()); err != nil {
+	if err := k.Keeper.RevokeDsc(ctx, cert.PublicKey); err != nil {
 		return nil, err
 	}
 	return &types.MsgRevokeDscResponse{}, nil

@@ -41,6 +41,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
+	"github.com/earth-network/earth/x/pki/certs"
 	"github.com/earth-network/earth/zk/poseidon2"
 )
 
@@ -138,7 +139,13 @@ func run(v variant, outDir string) error {
 		certKey, certPub = key, &key.PublicKey
 	}
 
-	dscKey := commitment(canonical)
+	// Tagged exactly as the chain tags it, from the same table, so a fixture
+	// cannot silently encode a different commitment format than production.
+	tag, err := v.curveTag()
+	if err != nil {
+		return err
+	}
+	dscKey := certs.DscCommitment(tag, canonical)
 
 	// --- certificates --------------------------------------------------------
 
@@ -258,14 +265,6 @@ func embed(hash []byte, offset int) ([signedAttrsMax]byte, int, int) {
 
 // commitment is the circuit's dsc_commitment: Poseidon2 over the key bytes, one
 // field element per byte.
-func commitment(pubkey []byte) fr.Element {
-	elems := make([]fr.Element, len(pubkey))
-	for i, b := range pubkey {
-		elems[i].SetUint64(uint64(b))
-	}
-	return poseidon2.Hash(elems)
-}
-
 // nullifier mirrors poa_core::finalize: Poseidon2 over the 39 name bytes
 // followed by the 6 date-of-birth bytes.
 func nullifier(dg1 []byte) fr.Element {

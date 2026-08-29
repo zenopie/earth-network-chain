@@ -15,6 +15,7 @@ func DefaultGenesis() *GenesisState {
 	return &GenesisState{
 		Params:                 DefaultParams(),
 		RegistrationRewardSeed: math.ZeroInt(),
+		Residue:                math.ZeroInt(),
 	}
 }
 
@@ -38,6 +39,11 @@ func (gs GenesisState) Validate() error {
 	// pool twice — once from the export and once from the seed.
 	if len(gs.Streams) > 0 && !gs.RegistrationRewardSeed.IsNil() && gs.RegistrationRewardSeed.IsPositive() {
 		return fmt.Errorf("registration_reward_seed is for a fresh chain; an import carries option balances in its streams")
+	}
+	// Nil reads as zero here like every other Int in this file, but a negative
+	// one would understate what the module owes and so overstate its solvency.
+	if !gs.Residue.IsNil() && gs.Residue.IsNegative() {
+		return fmt.Errorf("residue must not be negative, got %s", gs.Residue)
 	}
 
 	seenStream := make(map[StreamId]struct{}, len(gs.Streams))

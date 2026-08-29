@@ -166,7 +166,13 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, creator sdk.AccAddr
 		if err != nil {
 			return nil, dscFacts{}, err
 		}
-		commitment := certs.DscCommitment(pubkey)
+		// Fails closed on a curve with no commitment tag rather than falling back
+		// to an untagged hash: an untagged commitment is exactly the ambiguity the
+		// tag removes, and a registration is not worth admitting on those terms.
+		commitment, err := certs.DscCommitmentOf(pubkey)
+		if err != nil {
+			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrap(err.Error())
+		}
 		want := commitment.Bytes()
 		if !bytes.Equal(pubInputs[dscIndex], want[:]) {
 			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrap("proof is not bound to the supplied DSC")

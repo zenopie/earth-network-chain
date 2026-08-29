@@ -1,6 +1,15 @@
 # v0.7.0
 
-**Status: planned. Not implemented, not tagged, not proposed.**
+**Status: implemented on `upgrade/v0.7.0`. Not tagged, not proposed.**
+
+Implemented as the merge of this brief with the tagged-but-never-proposed
+v0.6.1, so the chain takes one governance round trip rather than two. That is
+only legitimate because no `MsgSoftwareUpgrade` named `v0.6.1` ever existed on
+`earth-1`: an upgrade name nobody voted on is not a promise, and nothing has to
+replay it. The v0.6.1 entry has been removed from `Upgrades`.
+
+See the CHANGELOG entry for the operator-facing version. What follows is the
+brief as written before implementation, annotated with what was found.
 
 Consensus-breaking, so it goes through governance as a `MsgSoftwareUpgrade`
 named `v0.7.0` — see [No in-place upgrades](../CHANGELOG.md) and the contract
@@ -18,6 +27,37 @@ bypassed somewhere else**. Read the pre-flight section before starting, because
 there is a third instance of that pattern nobody has looked at yet.
 
 ---
+
+## Pre-flight result: `LpTotalVolume` is sound — nothing to fold in
+
+**Audited. No third instance of the pattern.** Recorded here because a negative
+result that is not written down gets re-derived.
+
+- `setPoolVolume` (`x/dex/keeper/lp_rewards.go:208`) is the only writer, and the
+  only assignment to `pool.VolumeWeight` outside it is genesis's nil-guard and
+  the two `math.ZeroInt()` initialisers in `CreatePool` and the auction, which
+  move the total by zero.
+- Both `applyVolume` call sites (`msg_server_swap.go:205,234`) persist the pool
+  with `SetPool` immediately afterwards, inside the same atomic scope, so the
+  in-memory pool and the global denominator cannot part ways.
+- `InitGenesis` rebuilds `LpTotalVolume` by summing the imported pools
+  (`x/dex/keeper/genesis.go:40`) — exactly what `x/allocation` was failing to do
+  for `SummedAccrued`, which is item 2.
+- `AssertInvariants` already runs `CheckVolumeAccounting` after every operation
+  the tests perform, and the reasoning for keeping that O(pools) walk off the
+  hot path (`invariants.go:319`) is sound.
+
+The third running sum nobody had named is **`TotalPoolErth`**, and it is sound
+for the same reasons: `SetPool` is its only writer, it self-heals on import
+because it reads the previous record (absent on a fresh store), and
+`CheckErthTotalAccounting` walks it in `AssertInvariants`.
+
+So `x/dex` already has the discipline `x/allocation` was missing, which sharpens
+item 1: the bug there was never the arithmetic, it was that `AssertInvariants`
+omitted `CheckSolvency` while the dex's includes both walks.
+
+<details>
+<summary>The original pre-flight instruction, for reference</summary>
 
 ## Before you start: audit `LpTotalVolume`
 
@@ -249,6 +289,19 @@ this was deferred on 2026-08-28. Check the current count before deciding; past
 some threshold this stops being a fix and starts being a migration nobody can
 perform.
 
+**Resolved: nothing is stranded.** The count was still 1 at implementation. The
+input is gone *from state*, but not from history: the Document Signer's
+certificate travelled in the `MsgRegister` that created the registration
+(`earth-1` block 4833, algorithm `lean_poa_rsa2048`). It is embedded at
+`app/upgrades/v070/dsc-certs/`, and the handler rewrites the commitment in all
+six keyspaces that use it as an identity — the registration record, `RegByDsc`,
+`RegCountByDsc`, `DscRate`, `PendingDscPurge`, and x/pki's
+`RevokedDscCommitments`. A registration whose `dsc_key` no embedded certificate
+reproduces makes the handler refuse to run rather than strand it.
+
+This escape hatch does not scale. It works at one registration and would be
+unreasonable at a thousand.
+
 ### Done means
 
 Both implementations change **identically**, or every registration breaks — the
@@ -259,8 +312,21 @@ chain checks `commitment(cert key) == circuit output`. Then, in order:
    `lean_poa_brainpool384`, `lean_poa_brainpool512`, `lean_poa_rsa2048`,
    `lean_poa_rsa4096`.
 2. Regenerate seven verifying keys with `bb` 5.0.0. **These are governance
-   params** (`params.VerifyingKeys[algorithm]`), so this upgrade needs a
-   parameter change proposal and not only a binary.
+   params** (`params.VerifyingKeys[algorithm]`).
+
+   **Correction, from implementing it:** a separate parameter-change proposal is
+   not merely inconvenient, it is unsafe. A param change executes when its
+   proposal passes; the binary swaps at the plan height. Between the two,
+   registration is broken in *either* ordering — a new-circuit proof verifies
+   against a new key and then fails the commitment comparison against the old
+   binary, and an old-circuit proof fails the new key outright. The keys are
+   therefore written by the upgrade handler (`v070SwapVerifyingKeys`), so both
+   flip in one state transition and the release stays a single proposal.
+
+   The new keys live in `app/upgrades/v070/verifying-keys/` and are embedded.
+   `networks/genesis/verifying-keys/` and `networks/genesis.json` are **not**
+   regenerated: those are what block 0 installs, and the genesis hash is what
+   `RESET_ON_GENESIS_MISMATCH` is keyed to.
 3. Regenerate the real-proof fixture at
    `x/personhood/keeper/testdata/lean_poa`.
 4. Replace the ~14MB of compiled circuits shipped in the Android app and the
@@ -304,15 +370,54 @@ halts now; they are the ones with a real failure mode.
 
 ## Release checklist
 
-- [ ] `LpTotalVolume` audited (pre-flight above) and any finding folded in
-- [ ] `AssertInvariants` includes `CheckSolvency`
-- [ ] Regression tests for the prune halt and the unbonding halt, asserting the
+- [x] `LpTotalVolume` audited (pre-flight above) — sound, nothing to fold in
+- [x] `AssertInvariants` includes `CheckSolvency`, and walks the accrued sum
+- [x] Regression tests for the prune halt and the unbonding halt, asserting the
       **hot** invariants
-- [ ] Genesis validation covers `LpUnbondings` and pool reserves
-- [ ] `Residue` added to the allocation genesis proto, both directions
-- [ ] `v0.7.0` entry in `app/upgrades.go` with its preconditions
-- [ ] CHANGELOG entry, written for an operator deciding whether to restart
-- [ ] If item 4 is included: seven circuits recompiled, seven verifying keys
-      regenerated, param-change proposal drafted, mobile assets replaced
+- [x] Genesis validation covers `LpUnbondings` and pool reserves
+- [x] `Residue` added to the allocation genesis proto, both directions
+- [x] `v0.7.0` entry in `app/upgrades.go` with its preconditions, and the
+      `v0.6.1` entry removed
+- [x] CHANGELOG entry, written for an operator deciding whether to restart
+- [x] Item 4: seven circuits recompiled, seven verifying keys regenerated,
+      mobile assets replaced, the single existing registration's commitment
+      migrated rather than stranded
+- [x] Verifying keys swapped by the handler rather than a param-change proposal,
+      so the release is one proposal and has no broken window
+- [ ] Android release built and distributed carrying the new circuits — **must
+      be in users' hands at or before the upgrade height**, or registration
+      breaks for anyone who has not updated
+- [ ] iOS: still blocked on distribution; it reads circuits from the Android
+      asset path and has no separate bundle to update
+- [x] `v0.6.1` tag and GitHub release withdrawn, so nobody proposes a name this
+      binary has no handler for — `v0.6.0` is Latest again, which is the release
+      actually in its voting period
+- [ ] Tag `v0.7.0` and let CI build the release binaries
 - [ ] `MsgSoftwareUpgrade` proposed with name `v0.7.0` at a height that leaves
-      operators time to build
+      operators time to build, after v0.6.0's height (30100) and **before the
+      genesis liquidity auction is started**
+
+## What was verified, and how
+
+Each fix was confirmed to fail before it and pass after, rather than merely
+passing:
+
+- **Prune halt** — reintroducing the missing decrement makes the *pre-existing*
+  `TestUnclaimedRewardsAreForfeitedWithTheOption` fail, which is what the brief
+  predicted would happen once `AssertInvariants` walked the accrued sum. The
+  dedicated `TestPruningAnOptionWithABalanceKeepsTheModuleSolvent` asserts
+  `AssertHotInvariants` specifically.
+- **Genesis blindness** — forcing `SummedAccrued` back to zero on import fails
+  `TestSummedAccruedSurvivesAGenesisRoundTrip`.
+- **Unbonding halt** — restoring the `return err` fails all three subtests of
+  `TestOneBadUnbondingDoesNotHaltTheSweep`, including the nil-shares case that
+  used to panic.
+- **DSC commitment** — `TestDscCommitmentMatchesCircuit` passes for all seven
+  variants against freshly generated proofs, so the chain's tagged commitment
+  and each recompiled circuit's public output agree.
+- **The remap** — `TestV070RemapReproducesTheLiveRegistrationsKey` pins the
+  old commitment to the literal value in public signal [3] of earth-1 block
+  4833, so an embedded certificate swap cannot go unnoticed.
+- **Genesis untouched** — the `networks` package tests still pass, and
+  `networks/genesis.json` hashes to the committed
+  `7c7d9f25f842e36496fe6c00f9436b38f33dbad282a08fe2468d1a44b02be28d`.

@@ -39,4 +39,15 @@ var (
 	// side of a pool. See the guard in CreatePool for why that halts the chain.
 	ErrLpShareDenom = errors.Register(ModuleName, 1116,
 		"an lp share denom cannot be a pool asset")
+
+	// ErrInvalidUnbonding means a queued LP withdrawal is malformed — a missing
+	// pool, nil or non-positive shares, or shares of the wrong pool.
+	//
+	// It cannot be produced by MsgRemoveLiquidity, which validates all three
+	// before queueing. It exists for entries that arrive through genesis import,
+	// where none of those checks used to run, and it is deliberately an error
+	// rather than a panic: SweepMaturedUnbondings drops the entry it names
+	// instead of halting the chain on it.
+	ErrInvalidUnbonding = errors.Register(ModuleName, 1117,
+		"malformed lp unbonding entry")
 )
