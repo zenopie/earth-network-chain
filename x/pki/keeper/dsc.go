@@ -48,6 +48,15 @@ func dnKey(dn []byte) []byte {
 // This is the whole trust decision for a registration: the circuit proves the
 // passport's SOD was signed by this key, and this proves the key is a genuine,
 // still-trusted Document Signer.
+//
+// The work it does is bounded, which matters because x/personhood charges one
+// flat DscVerificationGas for the whole call and that number is only meaningful
+// against a stated ceiling. The two inputs a submitter could otherwise use to
+// set the cost are capped: the declared key size by certs.MaxPublicKeyBytes,
+// enforced in the parser, and the number of issuer certificates tried by
+// types.MaxIssuerCandidates, enforced below. Worst case is therefore
+// MaxIssuerCandidates signature verifications over a key of at most
+// MaxPublicKeyBytes; move either constant and revisit the gas with it.
 func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 	dsc, err := certs.ParseCert(der)
 	if err != nil {
@@ -70,7 +79,7 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 		return nil, types.ErrDscRevoked
 	}
 
-	cands, sawRevoked, err := k.issuerCandidates(ctx, dsc)
+	cands, sawRevoked, truncated, err := k.issuerCandidates(ctx, dsc)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +99,15 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) ([]byte, error) {
 	// is unaffected by a revocation elsewhere in the candidate set.
 	if sawRevoked {
 		return nil, types.ErrCscaRevoked
+	}
+	// Nothing verified it AND the candidate list was cut short, so the real
+	// issuer may be one of the certificates never examined. Said plainly,
+	// because the fix is to prune the trust store and "no issuer found" would
+	// send an operator looking for a missing CSCA that is in fact present.
+	if truncated {
+		return nil, types.ErrTooManyIssuers.Wrapf(
+			"stopped after examining %d candidate issuers and none verified this DSC",
+			types.MaxIssuerCandidates)
 	}
 	if len(cands) == 0 {
 		return nil, types.ErrNoIssuerCsca
@@ -222,12 +240,33 @@ func (k Keeper) IsCscaRevoked(ctx context.Context, pubkey []byte) (bool, error) 
 // the one place every trust decision about an issuer passes through. Filtering
 // at the call site would leave the next caller of issuerCandidates verifying
 // against certificates governance has withdrawn.
-func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs.Cert, bool, error) {
+func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs.Cert, bool, bool, error) {
 	var out []*certs.Cert
 	sawRevoked := false
+	truncated := false
 	seen := map[string]bool{}
 	add := func(id []byte) error {
 		if seen[string(id)] {
+			return nil
+		}
+		// Stop collecting rather than fail. The budget bounds the work either
+		// way, but refusing outright would mean that a country whose DN carries
+		// more certificates than this could not register anybody at all, while
+		// truncating still verifies every DSC whose issuer is among the ones
+		// examined. A cap that locks out a country is a worse outcome than the
+		// cost it was imposed to bound.
+		//
+		// Order is what makes that a good bet. The SKI lookup runs first and
+		// matches on the authority key identifier, which names the signing key
+		// itself, so a DSC carrying an AKI finds its real issuer in the first
+		// entries and never reaches the ceiling. Only the DN sweep — the
+		// fallback for a DSC with no AKI — can be cut short.
+		//
+		// The ceiling is on certificates examined, not on certificates
+		// returned: parsing one and testing it for revocation is most of the
+		// cost of considering it, so the check belongs before that work.
+		if len(seen) >= types.MaxIssuerCandidates {
+			truncated = true
 			return nil
 		}
 		seen[string(id)] = true
@@ -262,11 +301,11 @@ func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs
 
 	if len(dsc.AKI) > 0 {
 		if err := collect(k.CscaBySKI, dsc.AKI); err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
 	}
 	if err := collect(k.CscaByDN, dnKey(dsc.IssuerRaw)); err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
-	return out, sawRevoked, nil
+	return out, sawRevoked, truncated, nil
 }

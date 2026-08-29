@@ -36,6 +36,31 @@ below for why the ordering is the safety property.
   auction bid denom, genesis validation, and `SetPool` — the single writer every
   pool write passes through, so a path added later cannot reintroduce it.
 
+### Changed
+
+- **`MsgAddLiquidity` takes a `min_shares`.** A deposit is priced at whatever
+  ratio the pool holds when it executes, so a trade landing between signing and
+  execution changes what it mints — the ordinary sandwich, which `MsgSwap` has
+  always had `min_amount_out` to refuse and add-liquidity had nothing against.
+  Wire-compatible: the field is new, and a client that sends nothing gets the
+  old behaviour exactly, so transactions already in flight are unaffected.
+- **A wallet switch keeps the person's ANML clock.** Moving a live registration
+  to a new wallet rebuilt it from scratch, which set the claim clock to today's
+  midnight — the value a brand new registration gets so its first claim opens
+  tomorrow. Applied to someone who had been registered for months and had not
+  yet claimed today, that quietly took the day. It cannot be turned into a
+  second claim: `ClaimAnml` compares day numbers, so a carried clock already on
+  today still reads as claimed.
+- **Certificate verification has a stated worst case.** `VerifyDsc` was charged
+  one flat `dsc_verification_gas` for work whose size the submitter chose: how
+  large a public key the certificate declares, and how many trust-store
+  certificates its issuer names. Both are now bounded — 2048 bytes and 32
+  candidates. Neither is near real data (the bundled master list tops out at 768
+  bytes and 13 certificates under one DN), and `TestTrustStoreFitsTheCaps` fails
+  the build if a future trust-store update comes within 2x of either. The
+  candidate cap truncates rather than refusing, and the AKI lookup runs first,
+  so a Document Signer that names its issuer finds it well before the ceiling.
+
 ### Operators
 
 - **Not exploitable on `earth-1` before the auction settles.** `MsgCreatePool`
@@ -44,13 +69,18 @@ below for why the ordering is the safety property.
   upgrade rather than an emergency — but it is also a deadline: settling the
   auction opens pool creation, and the window closes the moment it does. Do not
   start the auction until this upgrade has been applied.
-- **The upgrade handler refuses to run if the state it is fixing already
-  exists.** `SetPool` now rejects any write to a pool holding an LP denom, and
-  it is reached from EndBlocker paths, so a pool already carrying one would make
-  this upgrade cause the halt it prevents. The handler walks the pool set first
-  and fails at the upgrade height with the offending pool ids, which is a loud
-  failure with an operator present rather than a quiet one at 3am. It is not
-  expected to fire.
+- **The upgrade handler checks two state preconditions before it runs.** Both
+  fail loudly at the scheduled height, with an operator present, rather than
+  producing a quiet failure later. Neither is expected to fire.
+  - A pool already holding an LP denom would make this upgrade cause the halt it
+    prevents, because `SetPool` now rejects every write to one and is reached
+    from EndBlocker paths. The handler walks the pool set and names the
+    offending ids.
+  - A CSCA already in the trust store whose key exceeds the new 2048-byte
+    ceiling would stop being a trust anchor *silently* — `issuerCandidates`
+    skips a certificate it cannot parse, which is correct and has always been
+    so, and the first sign would be a country's passports failing to register
+    for no visible reason.
 
 ## [v0.5.2] — launch
 
