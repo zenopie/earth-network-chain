@@ -44,6 +44,22 @@ message GenesisState {
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
     (gogoproto.nullable) = false
   ];
+
+  // residue is minted emission that no option can collect — the per-option
+  // truncation dust AdvanceIndex leaves behind — awaiting SweepResidue.
+  //
+  // Unlike summed_accrued, which is the sum of what the exported options carry
+  // and so is rebuilt on import, this is not derivable from anything else in
+  // this file. Leaving it out strands it twice over: the coins backing it stay
+  // on the module account while SweepResidue has nothing to move, so emission
+  // earmarked for the community pool never arrives; and CheckSolvency computes
+  // owed = accrued + residue, so an import that forgets it understates what the
+  // module owes and reads the gap as a tolerated surplus.
+  string residue = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
 }
 
 // StreamState is one emission stream at a point in time: its reward accounting,

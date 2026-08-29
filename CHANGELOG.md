@@ -11,12 +11,22 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
-## [v0.6.1]
+## [v0.7.0]
 
-Consensus-breaking. Tagged and built, not yet scheduled: it must be proposed
-through governance as upgrade name `v0.6.1`, at a height after v0.6.0's, and it
-must land **before the genesis liquidity auction opens** — see below for why
-the ordering is the safety property.
+Consensus-breaking. **Not yet proposed.** It goes through governance as a single
+`MsgSoftwareUpgrade` named `v0.7.0`, at a height after v0.6.0's, and it must
+land **before the genesis liquidity auction opens** — see the LP-share item
+below for why that ordering is the safety property.
+
+**This release absorbs v0.6.1.** That tag was built but never proposed: no
+`MsgSoftwareUpgrade` named `v0.6.1` ever existed on `earth-1`, so nothing has
+ever halted on that name and no node has to replay it. Its four changes are
+listed here and its upgrade entry is gone. **Do not propose `v0.6.1`** — this
+binary has no handler for it and would halt at the plan height. The v0.6.1 tag
+and its release have been withdrawn to stop anyone doing so by mistake.
+
+**Registration needs the updated app.** This is the one change with a
+dependency outside this repository — see *Document Signer identity* below.
 
 ### Fixed
 
@@ -36,6 +46,70 @@ the ordering is the safety property.
   Refused now at all four places a pool can come into being: `CreatePool`, the
   auction bid denom, genesis validation, and `SetPool` — the single writer every
   pool write passes through, so a path added later cannot reintroduce it.
+
+- **Pruning an abandoned allocation option halted the chain.** `SweepPrunableOptions`
+  burns a dead option's forfeited balance — the coins are real, because emission
+  is minted as it accrues — but removed the option record directly rather than
+  through `setOption`, so the module's balance fell while `SummedAccrued` kept
+  counting it. `CheckSolvency` then read the module as short and
+  `AssertHotInvariants` turned that into a halt **in the same block**: the sweep
+  runs in BeginBlock and the assertion in EndBlock. The burn had been added to
+  protect solvency and was the thing that broke it.
+
+  Arming it needed no privileges — add an ADDRESS option, vote for it until it
+  accrues, stop voting, never claim, wait out the 30-day `OptionIdleGrace` — but
+  the likelier route was an accident: the first time a real option was abandoned
+  with an unclaimed balance.
+
+  The three-line fix is not the important half. `AssertInvariants` — the
+  assertion the test suite runs after every operation — checked only the two
+  weight invariants, while `AssertHotInvariants`, the one the EndBlocker runs,
+  checks solvency first. `prune_test` did everything right and passed anyway. It
+  now walks the accrued sum and runs `CheckSolvency`, so the existing test
+  catches this without a new one, and the next `setOption` bypass cannot land
+  the same way.
+
+- **One malformed LP unbonding froze every withdrawal, permanently.**
+  `SweepMaturedUnbondings` returned the first payout error, `x/dex/module` sends
+  that out of `EndBlock`, and baseapp does not recover EndBlocker errors — so
+  every validator stopped at once. It could not clear itself: an entry is removed
+  only *after* its payout succeeds, and the queue is ordered by completion time
+  with the loop breaking at the first entry not yet due, so the bad entry sat at
+  the head failing identically every block with everyone else's withdrawal behind
+  it. Only an upgrade could remove it.
+
+  No transaction could create such an entry — `MsgRemoveLiquidity` validates the
+  pool, the share amount and the denom. **Genesis import had no validation at
+  all**, and `earth-1` relaunched from a fresh genesis on 2026-08-28 while
+  upgrades round-trip state through `ExportGenesis`/`InitGenesis`.
+
+  The sweep now drops a bad entry instead of dying on it: it logs, emits
+  `lp_unbond_payout_failed` naming the pool, provider and shares, and removes the
+  key. Each payout runs in a cache branch, so a payout that fails halfway leaves
+  nothing behind. Genesis validation refuses the three shapes up front — a pool
+  that does not exist, shares that are nil or non-positive, a denom that is not
+  the pool's — and pool reserves must now be non-nil and positive for the same
+  reason: a nil `math.Int` survives import and **panics** on first use, which
+  kills the node with no diagnosis at all.
+
+  `AssertHotInvariants` is untouched. Its halt is deliberate and is a different
+  thing: it fires over a module already known to be wrong.
+
+- **Solvency went blind after a genesis round-trip.** Neither `SummedAccrued`
+  nor `Residue` survived an export/import. `SummedAccrued` is derived, and
+  `InitGenesis` rebuilt `SummedWeight` from the imported options but not it; so
+  after any relaunch it read zero while the options carried real balances and the
+  module account held the coins backing them. `owed` collapsed to roughly
+  `residue`, and because `SolvencyReport.Broken()` tests only `Short` the gap
+  read as a tolerated surplus — the check stayed green while unable to see a
+  shortfall up to the size of the whole un-imported balance. `Residue` is not
+  derivable and is now a genesis field in both directions; without it the coins
+  behind it sat on the module account with `SweepResidue` having nothing to move,
+  stranding emission earmarked for the community pool.
+
+  `InitGenesis` also now refuses a genesis the module account cannot back,
+  reusing `CheckSolvency` so an import is held to exactly the rule the EndBlocker
+  enforces afterwards.
 
 ### Changed
 
@@ -61,27 +135,85 @@ the ordering is the safety property.
   the build if a future trust-store update comes within 2x of either. The
   candidate cap truncates rather than refusing, and the AKI lookup runs first,
   so a Document Signer that names its issuer finds it well before the ceiling.
+- **Document Signer identity now includes the curve.** The DSC commitment —
+  `Poseidon2` over a signer's canonical public key, which is what
+  `Registration.dsc_key` stores, what `RegCountByDsc` rate-limits on and what
+  `RevokedDscCommitments` is keyed by — carried no indication of which curve
+  produced those bytes. Length was never the gap: the sponge absorbs the input
+  length into its capacity slot, so RSA collides with nothing. Same-width curves
+  were: **P-256 against brainpoolP256r1** (64 bytes each) and **P-384 against
+  brainpoolP384r1** (96 each). Two such certificates with coinciding coordinates
+  would have shared one on-chain identity, so revoking one signer would have
+  retired the other's registrations.
+
+  Not exploitable — it needs two certificates a trusted CSCA actually signed
+  whose coordinates coincide — and shipped now because the cost only grows: the
+  chain never stores the public key behind a commitment, so every registration
+  made before the fix is one a format change strands. There was **one** on
+  `earth-1`, and it is migrated rather than stranded (below).
 
 ### Operators
 
+- **Propose `v0.7.0`, never `v0.6.1`.** This binary carries handlers for
+  `v0.6.0` and `v0.7.0` only. A plan named `v0.6.1` would halt the chain at its
+  height with no binary able to continue.
 - **Not exploitable on `earth-1` before the auction settles.** `MsgCreatePool`
   is refused while the genesis liquidity auction is unsettled, and at the time
   of writing it is `AUCTION_STATUS_PENDING`. That is what makes this a scheduled
   upgrade rather than an emergency — but it is also a deadline: settling the
   auction opens pool creation, and the window closes the moment it does. Do not
   start the auction until this upgrade has been applied.
-- **The upgrade handler checks two state preconditions before it runs.** Both
+- **The verifying keys are swapped by the upgrade handler, not by a separate
+  proposal.** New circuits mean new verifying keys, and those live in
+  `x/personhood` params — normally a `MsgUpdateParams` vote. That would be
+  actively unsafe here: a param change executes when its proposal passes and the
+  binary swaps at the plan height, so between the two, registration breaks in
+  either ordering — a new-circuit proof verifies against a new key and then fails
+  the commitment comparison against the old binary, and an old-circuit proof
+  fails the new key outright. Doing it in the handler makes both flip in one
+  state transition, and keeps this release a single proposal.
+- **The genesis file is untouched, and must stay that way.**
+  `networks/genesis.json` still carries the *old* verifying keys, because that is
+  what block 0 installs and its sha256 is what `RESET_ON_GENESIS_MISMATCH` is
+  keyed to. The new keys are embedded separately, under
+  `app/upgrades/v070/verifying-keys/`, and are read only by the handler.
+- **Replay and archive nodes are unaffected, but need the binary chain.**
+  Cosmovisor runs the pre-upgrade binary for pre-upgrade blocks, so the old
+  commitment format and the old keys apply below the upgrade height and the new
+  pair above it; the handler's writes are ordinary deterministic state
+  transitions and replay identically. The v0.7.0 binary **cannot** replay from
+  genesis on its own — it needs v0.5.2 and v0.6.0 in the cosmovisor
+  `upgrades/` tree. That has been true since v0.6.0.
+- **The one existing registration is migrated, not stranded.** The chain stores
+  a commitment and never the key behind it, so an old-format `dsc_key` cannot be
+  recomputed from state. The Document Signer's certificate was recovered from the
+  `MsgRegister` in block 4833 and is embedded, and the handler rewrites the
+  commitment in all six places it is used as an identity: the registration
+  record, `RegByDsc`, `RegCountByDsc`, `DscRate`, `PendingDscPurge`, and x/pki's
+  `RevokedDscCommitments`. A registration whose `dsc_key` no embedded certificate
+  reproduces makes the handler **refuse to run** rather than strand it.
+- **Registration requires the updated app.** The seven compiled circuits shipped
+  in the app produce the commitment this binary checks against, so a proof from a
+  pre-v0.7.0 app is rejected after the upgrade height. Have the app update out
+  before proposing.
+- **The handler checks five state preconditions before it writes anything.** All
   fail loudly at the scheduled height, with an operator present, rather than
-  producing a quiet failure later. Neither is expected to fire.
-  - A pool already holding an LP denom would make this upgrade cause the halt it
-    prevents, because `SetPool` now rejects every write to one and is reached
-    from EndBlocker paths. The handler walks the pool set and names the
-    offending ids.
+  producing a quiet failure later. None is expected to fire.
+  - A pool already holding an LP denom, which would make this upgrade cause the
+    halt it prevents, because `SetPool` now rejects every write to one and is
+    reached from EndBlocker paths.
   - A CSCA already in the trust store whose key exceeds the new 2048-byte
-    ceiling would stop being a trust anchor *silently* — `issuerCandidates`
-    skips a certificate it cannot parse, which is correct and has always been
-    so, and the first sign would be a country's passports failing to register
-    for no visible reason.
+    ceiling, which would stop being a trust anchor *silently* —
+    `issuerCandidates` skips a certificate it cannot parse, and the first sign
+    would be a country's passports failing to register for no visible reason.
+  - A malformed LP unbonding already queued, which the new sweep would drop
+    unpaid rather than halt on.
+  - An allocation ledger that does not already balance, which would halt the
+    chain on the first block after the upgrade with the fix apparently to blame.
+  - A registration whose `dsc_key` cannot be migrated.
+- **No state migration for the module set, and no store changes.** `app_version`
+  stays at 1: `chain.json` documents that it does not move on its own, and
+  editing it would change the genesis hash.
 
 ## [v0.6.0]
 

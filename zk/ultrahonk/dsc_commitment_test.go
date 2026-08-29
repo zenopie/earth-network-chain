@@ -23,21 +23,28 @@ import (
 // crypto/x509 cannot encode those curves, so no test certificate can be built
 // for them, but the key bytes and the proof are enough to check the agreement.
 func TestDscCommitmentMatchesCircuit(t *testing.T) {
-	variants := []string{
-		"lean_poa",
-		"lean_poa_p384",
-		"lean_poa_rsa2048",
-		"lean_poa_rsa4096",
-		"lean_poa_brainpool256",
-		"lean_poa_brainpool384",
-		"lean_poa_brainpool512",
+	// The tag each circuit was compiled with, stated here rather than looked up
+	// through certs.CurveTagByName. This test exists to catch the two sides
+	// disagreeing, so it names the mapping independently: derive it from the
+	// same table production uses and a wrong table agrees with itself.
+	variants := []struct {
+		name string
+		tag  certs.CurveTag
+	}{
+		{"lean_poa", certs.TagP256},
+		{"lean_poa_p384", certs.TagP384},
+		{"lean_poa_rsa2048", certs.TagRSA},
+		{"lean_poa_rsa4096", certs.TagRSA},
+		{"lean_poa_brainpool256", certs.TagBrainpoolP256r1},
+		{"lean_poa_brainpool384", certs.TagBrainpoolP384r1},
+		{"lean_poa_brainpool512", certs.TagBrainpoolP512r1},
 	}
 	// Public signals are [current_date, nullifier, dsc_key].
 	const dscKeyIndex = 3
 
 	for _, variant := range variants {
-		t.Run(variant, func(t *testing.T) {
-			dir := filepath.Join("testdata", variant)
+		t.Run(variant.name, func(t *testing.T) {
+			dir := filepath.Join("testdata", variant.name)
 			pubkey, err := os.ReadFile(filepath.Join(dir, "dsc_pubkey"))
 			if err != nil {
 				t.Skip(err)
@@ -52,13 +59,13 @@ func TestDscCommitmentMatchesCircuit(t *testing.T) {
 
 			fromProof := new(big.Int).SetBytes(signals[dscKeyIndex*32 : (dscKeyIndex+1)*32])
 
-			commitment := certs.DscCommitment(pubkey)
+			commitment := certs.DscCommitment(variant.tag, pubkey)
 			bz := commitment.Bytes()
 			fromChain := new(big.Int).SetBytes(bz[:])
 
 			if fromChain.Cmp(fromProof) != 0 {
-				t.Fatalf("commitment mismatch over a %d-byte key:\n  chain   = %s\n  circuit = %s",
-					len(pubkey), fromChain, fromProof)
+				t.Fatalf("commitment mismatch over a %d-byte key with tag %d:\n  chain   = %s\n  circuit = %s",
+					len(pubkey), variant.tag, fromChain, fromProof)
 			}
 		})
 	}

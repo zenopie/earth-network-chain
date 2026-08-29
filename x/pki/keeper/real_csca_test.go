@@ -79,7 +79,7 @@ func TestVerifyRealSelfSignedCsca(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyDsc against the real trust store: %v", err)
 	}
-	if len(pub) == 0 {
+	if pub == nil || len(pub.CanonicalBytes()) == 0 {
 		t.Fatal("VerifyDsc returned an empty canonical public key")
 	}
 

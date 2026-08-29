@@ -20,6 +20,7 @@ import (
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
+	"github.com/earth-network/earth/x/pki/certs"
 	"github.com/earth-network/earth/x/pki/types"
 )
 
@@ -89,8 +90,12 @@ func TestVerifyDscFlow(t *testing.T) {
 	var xb, yb [32]byte
 	ecPub.X.FillBytes(xb[:])
 	ecPub.Y.FillBytes(yb[:])
-	if !bytes.Equal(pub, append(xb[:], yb[:]...)) {
+	if !bytes.Equal(pub.CanonicalBytes(), append(xb[:], yb[:]...)) {
 		t.Fatal("VerifyDsc returned a different canonical public key")
+	}
+	// And it carries the curve, which is what the commitment tag is taken from.
+	if tag, err := pub.CurveTagOf(); err != nil || tag != certs.TagP256 {
+		t.Fatalf("CurveTagOf = %v, %v; want %v", tag, err, certs.TagP256)
 	}
 
 	// A DSC from an untrusted CA has no issuer in the store.

@@ -8,6 +8,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
+	"github.com/earth-network/earth/x/pki/certs"
 )
 
 // AllocationKeeper is the slice of x/allocation this module needs. The human
@@ -75,10 +76,13 @@ type DexKeeper interface {
 type PkiKeeper interface {
 	// VerifyDsc checks that a DER-encoded Document Signer certificate chains to
 	// a trusted CSCA, is currently valid, and has not been revoked. It returns
-	// the DSC's canonical public-key bytes (ECDSA: x‖y, RSA: modulus
-	// big-endian), from which this module recomputes the commitment the
-	// register circuit exposes as a public input.
-	VerifyDsc(ctx context.Context, der []byte) ([]byte, error)
+	// the DSC's parsed public key, from which this module recomputes the
+	// commitment the register circuit exposes as a public input.
+	//
+	// The parsed key rather than its canonical bytes, because the commitment is
+	// over a curve tag as well as the coordinates and the bytes cannot say which
+	// curve produced them — see certs.DscCommitment.
+	VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, error)
 	// IsCommitmentRevoked answers the same question for a signer this module has
 	// already recorded, which knows it only by the Poseidon2 commitment stored
 	// on the Registration — not by the certificate VerifyDsc takes.

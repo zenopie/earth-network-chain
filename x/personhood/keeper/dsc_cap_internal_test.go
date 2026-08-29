@@ -15,12 +15,15 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
+	"github.com/earth-network/earth/x/pki/certs"
 )
 
 // revocablePki is a PkiKeeper whose revocation set the test drives.
 type revocablePki struct{ revoked map[string]bool }
 
-func (p *revocablePki) VerifyDsc(context.Context, []byte) ([]byte, error) { return nil, nil }
+func (p *revocablePki) VerifyDsc(context.Context, []byte) (*certs.PublicKey, error) {
+	return nil, nil
+}
 func (p *revocablePki) IsCommitmentRevoked(_ context.Context, c []byte) (bool, error) {
 	return p.revoked[string(c)], nil
 }

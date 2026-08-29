@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
@@ -18,17 +19,87 @@ import (
 // hand out option id 1 a second time and silently repoint every voter who had
 // allocated to the first one.
 func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) error {
+	if err := k.initGenesis(ctx, genState); err != nil {
+		return err
+	}
+	return k.assertGenesisFunded(ctx)
+}
+
+// assertGenesisFunded refuses an import the module account cannot back.
+//
+// This is the accrued-balance counterpart to the total_weight check in
+// types.Validate(), and it lives here rather than there for a plain reason:
+// Validate sees only this module's own file, and the coins are a bank balance
+// declared in another module's. InitGenesis can see both, and the module init
+// order runs bank well before allocation, so by the time this fires the balance
+// is real.
+//
+// It reuses CheckSolvency rather than reimplementing the comparison, so genesis
+// is held to the exact rule the EndBlocker enforces every block afterwards. A
+// genesis that fails here would otherwise start a chain that halts on its own
+// invariant at height 1 — which reads as a consensus failure and is far harder
+// to diagnose than a refused genesis file.
+func (k Keeper) assertGenesisFunded(ctx context.Context) error {
+	rep, err := k.CheckSolvency(ctx)
+	if err != nil {
+		return err
+	}
+	if rep.Broken() {
+		return fmt.Errorf(
+			"allocation genesis is underfunded: the options carry %s accrued and residue is %s, "+
+				"so the module account needs %s uerth, but genesis gives it %s (short %s). "+
+				"Fund the module account in the bank genesis, or export again with the balances that match",
+			rep.Accrued, rep.Residue, rep.Accrued.Add(rep.Residue), rep.Held, rep.Short)
+	}
+	return nil
+}
+
+func (k Keeper) initGenesis(ctx context.Context, genState types.GenesisState) error {
 	if err := k.Params.Set(ctx, genState.Params); err != nil {
 		return err
 	}
 
+	// Residue is carried rather than derived — see the field's note in
+	// genesis.proto. Restored before anything else so it is in place for the
+	// solvency check the moment the module has options to be solvent about.
+	residue := math.ZeroInt()
+	if !genState.Residue.IsNil() {
+		residue = genState.Residue
+	}
+	if err := k.Residue.Set(ctx, residue); err != nil {
+		return err
+	}
+
 	if len(genState.Streams) > 0 {
+		// SummedAccrued gets exactly the treatment SummedWeight gets in
+		// restoreStream, and for the same reason: the options come back verbatim
+		// rather than through setOption, so nothing else moves it.
+		//
+		// Left at zero, the module was blind rather than wrong. Every option keeps
+		// its real Accumulated and the module account keeps the coins backing
+		// them, but owed = accrued + residue collapses to roughly residue, so
+		// Held sails past it and SolvencyReport.Broken() — which tests only Short
+		// — reports a tolerated surplus. The check stayed green while unable to
+		// see a shortfall up to the size of the whole un-imported balance.
+		//
+		// It is derived state, so it is not exported and needs no proto field.
+		summedAccrued := math.ZeroInt()
 		for _, st := range genState.Streams {
 			if err := k.restoreStream(ctx, st); err != nil {
 				return err
 			}
+			for _, opt := range st.Options {
+				summedAccrued = summedAccrued.Add(accruedOf(opt))
+			}
 		}
-		return nil
+		return k.SummedAccrued.Set(ctx, summedAccrued)
+	}
+
+	// Zeroed explicitly, mirroring SummedWeight below, so a fresh chain does not
+	// depend on the getter's not-found default. It must be set before the seeded
+	// options are appended: those go through setOption, which moves it.
+	if err := k.SummedAccrued.Set(ctx, math.ZeroInt()); err != nil {
+		return err
 	}
 
 	for _, stream := range types.Streams {
@@ -187,6 +258,15 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return nil, err
 	}
 	genesis.Params = params
+
+	// The one figure here that no option carries. See genesis.proto: dropping it
+	// strands the coins behind it and blinds the solvency check by the same
+	// amount.
+	residue, err := k.GetResidue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	genesis.Residue = residue
 
 	for _, stream := range types.Streams {
 		st, err := k.exportStream(ctx, stream)

@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
+	"github.com/earth-network/earth/x/pki/certs"
 	"math/big"
 	"sort"
 )
@@ -290,4 +291,16 @@ func ecdsaKeyFor(c *weierstrass, d *big.Int, pub point) (*ecdsa.PrivateKey, *ecd
 	}
 	pk := &ecdsa.PublicKey{Curve: std, X: pub.x, Y: pub.y}
 	return &ecdsa.PrivateKey{PublicKey: *pk, D: d}, pk
+}
+
+// curveTag is the commitment domain tag for this variant's key algorithm.
+//
+// Read from x/pki/certs rather than restated here: the fixtures exist to prove
+// the chain and the circuits agree, and a second copy of the table is a second
+// thing that can drift from the circuits.
+func (v variant) curveTag() (certs.CurveTag, error) {
+	if v.rsa != nil {
+		return certs.TagRSA, nil
+	}
+	return certs.CurveTagByName(v.ec.curve.name)
 }

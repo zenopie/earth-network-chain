@@ -186,7 +186,65 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 				stream, running, rep.Summed)
 		}
 	}
+
+	// The accrued sum gets the same treatment as the weight sum, and for the
+	// same reason: it is a running total with one maintainer, so the only way to
+	// know it still means what it says is to walk what it claims to sum.
+	//
+	// This is the check whose absence let the prune halt ship. prune_test did
+	// everything right — positive Accumulated, prune, assert — and passed anyway,
+	// because the assertion the tests call checked only the two weight
+	// invariants while the one the EndBlocker calls checks solvency first. The
+	// suite's "assert after every operation" discipline had a hole in exactly
+	// the place the chain halts.
+	//
+	// It also catches the genesis case, where nothing bypasses setOption at all:
+	// InitGenesis rebuilds SummedWeight from the imported options and used to
+	// leave SummedAccrued at zero, which reads as a tolerated surplus rather
+	// than as the blindness it is.
+	declared, err := k.GetSummedAccrued(ctx)
+	if err != nil {
+		return err
+	}
+	summed, err := k.walkAccrued(ctx)
+	if err != nil {
+		return err
+	}
+	if !declared.Equal(summed) {
+		return types.ErrInvariantBroken.Wrapf(
+			"summed_accrued is %s but the options' accrued balances sum to %s — "+
+				"something removed or wrote an option without maintaining it",
+			declared, summed)
+	}
+
+	// Cheap once the sum above is trusted, and it is the check the EndBlocker
+	// actually runs. Including it here is what makes a test that prunes, or one
+	// that round-trips genesis, fail in the suite rather than on a live chain.
+	sol, err := k.CheckSolvency(ctx)
+	if err != nil {
+		return err
+	}
+	if sol.Broken() {
+		return types.ErrInvariantBroken.Wrapf(
+			"module holds %s but its options and residue are owed %s — short by %s",
+			sol.Held, sol.Accrued.Add(sol.Residue), sol.Short)
+	}
 	return nil
+}
+
+// walkAccrued sums every option's Accumulated across every stream. O(options),
+// which is why it lives here and not on the block path — CheckSolvency reads
+// the maintained figure instead.
+func (k Keeper) walkAccrued(ctx context.Context) (math.Int, error) {
+	sum := math.ZeroInt()
+	err := k.Options.Walk(ctx, nil, func(_ collections.Pair[uint32, uint64], opt types.AllocationOption) (bool, error) {
+		sum = sum.Add(accruedOf(opt))
+		return false, nil
+	})
+	if err != nil {
+		return math.Int{}, err
+	}
+	return sum, nil
 }
 
 // --- solvency ----------------------------------------------------------------

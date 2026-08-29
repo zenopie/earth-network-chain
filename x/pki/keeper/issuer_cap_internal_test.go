@@ -43,7 +43,7 @@ func TestIssuerCapDoesNotBlockAVerifiableDsc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a DSC with a valid AKI must still verify past the cap: %v", err)
 	}
-	if len(pub) == 0 {
+	if pub == nil || len(pub.CanonicalBytes()) == 0 {
 		t.Fatal("VerifyDsc returned an empty canonical public key")
 	}
 }

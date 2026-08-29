@@ -57,9 +57,51 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 	}
 	iter.Close()
 
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	for _, m := range due {
-		if err := k.payoutUnbonding(ctx, m.entry); err != nil {
-			return err
+		// Each payout gets its own branch, and the entry is dropped whether or not
+		// it settles.
+		//
+		// This used to return the error, which took the chain down and kept it
+		// down. The queue is ordered by completion time and the loop breaks at the
+		// first entry not yet due, so a failing entry sits at the head; because it
+		// is removed only after its payout succeeds, the next block reaches the
+		// same entry and fails the same way. EndBlock errors are not recovered by
+		// baseapp and every validator computes the same state, so that is a
+		// permanent chain halt, from one malformed row, freezing every withdrawal
+		// queued behind it. Only an upgrade could clear it. The doc comment above
+		// claimed the remainder was never stranded; that is true of the sweep
+		// limit it was written about and false when the oldest entry is the one
+		// erroring.
+		//
+		// Dropping beats retrying: a retry changes nothing, and the escrowed
+		// shares stay on the module account where CheckShareBacking reports them
+		// rather than vanishing. Anything that did move coins wrongly is still
+		// caught by AssertHotInvariants, which is deliberately left alone — its
+		// halt is over a module already known to be wrong, which is a different
+		// thing from this one.
+		//
+		// The cache branch is what makes the drop safe. payoutUnbonding settles
+		// the pool, burns shares and writes reserves before it can fail, so
+		// letting a half-finished payout persist would be its own corruption. On
+		// failure the branch is discarded and only the removal below survives.
+		cacheCtx, write := sdkCtx.CacheContext()
+		if err := k.payoutUnbonding(cacheCtx, m.entry); err != nil {
+			sdkCtx.Logger().Error("lp unbonding payout failed — dropping the entry",
+				"pool_id", m.entry.PoolId,
+				"provider", m.entry.Address,
+				"shares", m.entry.Shares.String(),
+				"height", sdkCtx.BlockHeight(),
+				"err", err)
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"lp_unbond_payout_failed",
+				sdk.NewAttribute("pool_id", strconv.FormatUint(m.entry.PoolId, 10)),
+				sdk.NewAttribute("provider", m.entry.Address),
+				sdk.NewAttribute("shares", m.entry.Shares.String()),
+				sdk.NewAttribute("error", err.Error()),
+			))
+		} else {
+			write()
 		}
 		if err := k.LpUnbondings.Remove(ctx, m.key); err != nil {
 			return err
@@ -87,9 +129,33 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 		return err
 	}
 
+	// Nil-checked before anything touches the arithmetic, because a nil math.Int
+	// panics rather than erroring and a panic out of the EndBlocker kills the node
+	// without saying why — strictly worse than the error path, and not something
+	// the caller's cache branch can contain, since discarding writes does not
+	// unwind a panic. Genesis validation now refuses these at import; this is the
+	// second line, for state that predates it.
+	//
+	// The denom is checked for the same reason MsgRemoveLiquidity checks it
+	// (msg_server_remove_liquidity.go): shares of the wrong pool would burn one
+	// pool's supply while paying out of another's reserves, and the invariant
+	// that caught it would name the wrong module.
+	if entry.Shares.Amount.IsNil() || !entry.Shares.Amount.IsPositive() {
+		return types.ErrInvalidUnbonding.Wrapf(
+			"pool %d: unbonding for %s carries %s shares", entry.PoolId, entry.Address, entry.Shares.Amount)
+	}
+	if want := types.LPShareDenom(entry.PoolId); entry.Shares.Denom != want {
+		return types.ErrInvalidUnbonding.Wrapf(
+			"pool %d: unbonding is denominated in %s, not %s", entry.PoolId, entry.Shares.Denom, want)
+	}
+
 	pool, err := k.Pool.Get(ctx, entry.PoolId)
 	if err != nil {
 		return err
+	}
+	if pool.ReserveErth.Amount.IsNil() || pool.ReserveToken.Amount.IsNil() {
+		return types.ErrInvalidUnbonding.Wrapf(
+			"pool %d holds a nil reserve (%s / %s)", entry.PoolId, pool.ReserveErth, pool.ReserveToken)
 	}
 	// Compound pending rewards into the reserve before pricing against it: the
 	// unbonding position held its shares the whole period, so it is owed its slice

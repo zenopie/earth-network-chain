@@ -22,6 +22,7 @@ import (
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"github.com/earth-network/earth/x/personhood/types"
+	"github.com/earth-network/earth/x/pki/certs"
 )
 
 // stubAllocation stands in for x/allocation in the proof-verification tests
@@ -42,7 +43,7 @@ func (stubAllocation) PayOut(context.Context, sdk.AccAddress, math.Int) error { 
 // stubPki is a test PkiKeeper: it either rejects the DSC outright or returns a
 // fixed canonical public key for it.
 type stubPki struct {
-	pubkey  []byte
+	pubkey  *certs.PublicKey
 	err     error
 	revoked bool
 }
@@ -51,7 +52,7 @@ func (s stubPki) IsCommitmentRevoked(context.Context, []byte) (bool, error) {
 	return s.revoked, nil
 }
 
-func (s stubPki) VerifyDsc(_ context.Context, _ []byte) ([]byte, error) {
+func (s stubPki) VerifyDsc(_ context.Context, _ []byte) (*certs.PublicKey, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -101,8 +102,14 @@ func TestVerifyRegistrationProof_DscBinding(t *testing.T) {
 
 	// The DSC the fixture was actually signed with is accepted: the commitment
 	// the chain derives from its public key equals the proof's dsc_key input.
-	dscPub := readFileAt(t, filepath.Join(leanDir, "dsc_pubkey"))
-	kOK, ctxOK := newK(stubPki{pubkey: dscPub})
+	// Parsed from the certificate rather than assembled from dsc_pubkey: the
+	// commitment now covers the curve as well as the coordinates, and only the
+	// certificate says which curve that is.
+	dscCert, err := certs.ParseCert(readFileAt(t, filepath.Join(leanDir, "dsc.der")))
+	if err != nil {
+		t.Fatalf("parse fixture DSC: %v", err)
+	}
+	kOK, ctxOK := newK(stubPki{pubkey: dscCert.PublicKey})
 	if _, _, err := kOK.verifyRegistrationProof(ctxOK, fixtureAddr(t), proof, signals, "lean_poa", []byte("der")); err != nil {
 		t.Fatalf("proof bound to its own DSC rejected: %v", err)
 	}
@@ -116,13 +123,17 @@ func TestVerifyRegistrationProof_DscBinding(t *testing.T) {
 
 	// A trusted DSC whose commitment does not match the proof is rejected: this
 	// is what stops signing with one key and presenting another.
-	kMismatch, ctxMismatch := newK(stubPki{pubkey: bytes.Repeat([]byte{0x01}, 64)})
+	cscaCert, err := certs.ParseCert(readFileAt(t, filepath.Join(leanDir, "csca.der")))
+	if err != nil {
+		t.Fatalf("parse fixture CSCA: %v", err)
+	}
+	kMismatch, ctxMismatch := newK(stubPki{pubkey: cscaCert.PublicKey})
 	if _, _, err := kMismatch.verifyRegistrationProof(ctxMismatch, fixtureAddr(t), proof, signals, "lean_poa", []byte("der")); err == nil {
 		t.Fatal("expected rejection: proof not bound to the supplied DSC")
 	}
 
 	// A missing certificate is rejected rather than silently skipping the bind.
-	kMissing, ctxMissing := newK(stubPki{pubkey: bytes.Repeat([]byte{0x01}, 64)})
+	kMissing, ctxMissing := newK(stubPki{pubkey: cscaCert.PublicKey})
 	if _, _, err := kMissing.verifyRegistrationProof(ctxMissing, fixtureAddr(t), proof, signals, "lean_poa", nil); err == nil {
 		t.Fatal("expected rejection: dsc certificate is required")
 	}

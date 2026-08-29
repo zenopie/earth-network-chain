@@ -175,3 +175,103 @@ func countUnbondings(t *testing.T, k keeper.Keeper, ctx sdk.Context) int {
 		}))
 	return n
 }
+
+// One malformed entry must not take the chain down, and must not block the
+// entries queued behind it.
+//
+// This was a permanent halt. SweepMaturedUnbondings returned the first payout
+// error, module.go propagates it out of EndBlock, and baseapp does not recover
+// EndBlocker errors — so every validator, computing the same state, stops. The
+// entry is removed only after a successful payout, so the next block reached the
+// same head-of-queue entry and failed identically. Nothing but an upgrade could
+// clear it, and every withdrawal behind it was frozen with it.
+//
+// The entries here are ones only a genesis import could produce; genesis
+// validation now refuses all three. This is the second line: state that predates
+// that validation, or arrives some way nobody has thought of yet, degrades to a
+// dropped entry and an event rather than to a stopped chain.
+func TestOneBadUnbondingDoesNotHaltTheSweep(t *testing.T) {
+	cases := []struct {
+		name  string
+		mutit func(*types.LpUnbonding)
+	}{
+		{
+			// Pool.Get errors.
+			name:  "pool does not exist",
+			mutit: func(u *types.LpUnbonding) { u.PoolId = 99 },
+		},
+		{
+			// The one that PANICS rather than erroring: entry.Shares.Amount.GT(total)
+			// dereferences a nil big.Int, and a panic out of EndBlock kills the node
+			// without a diagnosis. A cache branch cannot contain it, which is why
+			// payoutUnbonding checks this before touching the arithmetic.
+			name:  "nil shares",
+			mutit: func(u *types.LpUnbonding) { u.Shares = sdk.Coin{Denom: types.LPShareDenom(1)} },
+		},
+		{
+			// Burns one pool's supply while paying out of another's reserves.
+			name:  "shares of the wrong pool",
+			mutit: func(u *types.LpUnbonding) { u.Shares = sdk.NewInt64Coin(types.LPShareDenom(7), 100) },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ctx, bank, addr, addrStr := unbondFixture(t, 1_000)
+			ms := keeper.NewMsgServerImpl(k)
+			// The module actually holds the reserves it claims, so the solvency
+			// assertion at the end means something.
+			bank.fundModule(sdk.NewInt64Coin("uerth", 1_000_000), sdk.NewInt64Coin("utok", 1_000_000))
+
+			// A good withdrawal, queued behind the bad one so the test proves the
+			// queue keeps moving rather than merely that it does not crash.
+			_, err := ms.RemoveLiquidity(ctx, &types.MsgRemoveLiquidity{
+				Creator: addrStr,
+				PoolId:  1,
+				Shares:  sdk.NewInt64Coin(types.LPShareDenom(1), 400),
+			})
+			require.NoError(t, err)
+
+			// The bad entry matures first, so it sits at the head of the queue —
+			// which is what made the original halt permanent.
+			bad := types.LpUnbonding{
+				Address:        addrStr,
+				PoolId:         1,
+				Shares:         sdk.NewInt64Coin(types.LPShareDenom(1), 100),
+				CompletionTime: ctx.BlockTime().Unix() + 1,
+			}
+			tc.mutit(&bad)
+			require.NoError(t, k.LpUnbondings.Set(ctx,
+				collections.Join3(bad.CompletionTime, bad.PoolId, []byte(addr)), bad))
+
+			due := ctx.WithBlockTime(ctx.BlockTime().Add(types.DefaultLpUnbondingSeconds * time.Second))
+
+			// The assertion the whole item is about.
+			require.NotPanics(t, func() {
+				require.NoError(t, k.SweepMaturedUnbondings(due),
+					"a malformed entry must not error out of the EndBlocker")
+			})
+
+			// It is reported rather than swallowed.
+			var reported bool
+			for _, ev := range due.EventManager().Events() {
+				if ev.Type == "lp_unbond_payout_failed" {
+					reported = true
+				}
+			}
+			require.True(t, reported, "a dropped entry must emit lp_unbond_payout_failed")
+
+			// Dropped, not retried: a retry changes nothing and the queue would
+			// never move again.
+			_, err = k.LpUnbondings.Get(due, collections.Join3(bad.CompletionTime, bad.PoolId, []byte(addr)))
+			require.ErrorIs(t, err, collections.ErrNotFound, "the bad entry must be removed")
+
+			// And the good one behind it was paid.
+			require.Equal(t, math.NewInt(400_000), bank.sentTo(addr).AmountOf("uerth"),
+				"the withdrawal queued behind the bad entry must still be paid")
+
+			// The failed payout left nothing half-written.
+			require.NoError(t, k.AssertHotInvariants(due))
+		})
+	}
+}

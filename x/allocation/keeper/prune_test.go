@@ -260,3 +260,74 @@ func TestPruneScheduleIsRebuiltOnImport(t *testing.T) {
 	require.False(t, fresh.hasOption(id))
 	require.NoError(t, fresh.k.AssertInvariants(fresh.ctx))
 }
+
+// The prune halt, asserted against the check that actually halts the chain.
+//
+// TestUnclaimedRewardsAreForfeitedWithTheOption above covers the same bug now
+// that AssertInvariants walks the accrued sum, and that is the more valuable
+// half — it means the next setOption bypass is caught by a test nobody had to
+// remember to write. This one exists because the two assertions are not the
+// same function and the gap between them is exactly where this shipped:
+// AssertInvariants is what the suite calls, AssertHotInvariants is what the
+// EndBlocker calls, and for a while only the second one checked solvency.
+//
+// The sequencing is the point. SweepPrunableOptions runs in BeginBlock and
+// AssertHotInvariants in EndBlock, so a prune that unbalances the ledger halts
+// the chain in the same block that performed it — no delay, no operator warning,
+// and permanent, because the burn already happened and replaying the block
+// reproduces it.
+func TestPruningAnOptionWithABalanceKeepsTheModuleSolvent(t *testing.T) {
+	e := newTestEnv(t)
+	require.NoError(t, e.k.InitGenesis(e.ctx, *types.DefaultGenesis()))
+	ms := NewMsgServerImpl(e.k)
+	id := addDeadOption(t, e, "accrues, then is abandoned")
+
+	_, voter := e.addr("voter")
+	e.staking.bonded[voter] = math.NewInt(1_000_000)
+	_, err := ms.SetAllocations(e.ctx, &types.MsgSetAllocations{
+		Creator: voter, Stream: types.STREAM_ID_GROUNDWORKS,
+		Percentages: []types.AllocationWeight{{OptionId: id, Percent: 100}},
+	})
+	require.NoError(t, err)
+
+	// Accrue a real balance, then withdraw the vote so the option is prunable
+	// while still holding coins the module minted for it.
+	e.advance(time.Hour)
+	_, err = ms.SetAllocations(e.ctx, &types.MsgSetAllocations{
+		Creator: voter, Stream: types.STREAM_ID_GROUNDWORKS,
+		Percentages: []types.AllocationWeight{{OptionId: types.LPRewardsOptionID, Percent: 100}},
+	})
+	require.NoError(t, err)
+
+	opt, err := e.k.Options.Get(e.ctx, optionKey(types.STREAM_ID_GROUNDWORKS, id))
+	require.NoError(t, err)
+	require.True(t, opt.Accumulated.IsPositive(), "nothing is being tested unless there is a balance to forfeit")
+
+	before, err := e.k.GetSummedAccrued(e.ctx)
+	require.NoError(t, err)
+
+	// The EndBlocker's own check must pass before the sweep, or the test proves
+	// nothing about what the sweep did.
+	require.NoError(t, e.k.AssertHotInvariants(e.ctx), "precondition: solvent before the prune")
+
+	e.advance(time.Duration(graceSeconds+1) * time.Second)
+	require.NoError(t, e.k.BeginBlocker(e.ctx))
+	require.False(t, e.hasOption(id), "the option should have been swept")
+
+	// The ledger moved by exactly what was burned.
+	after, err := e.k.GetSummedAccrued(e.ctx)
+	require.NoError(t, err)
+	require.Equal(t, before.Sub(opt.Accumulated).String(), after.String(),
+		"summed_accrued must fall by the forfeited balance the burn removed")
+
+	// The check the EndBlocker runs, in the block the sweep ran in.
+	require.NoError(t, e.k.AssertHotInvariants(e.ctx),
+		"burning a forfeited balance without decrementing summed_accrued halts the chain here")
+
+	// And the exhaustive walk agrees, so neither figure is merely self-consistent.
+	require.NoError(t, e.k.AssertInvariants(e.ctx))
+
+	sol, err := e.k.CheckSolvency(e.ctx)
+	require.NoError(t, err)
+	require.True(t, sol.Short.IsZero(), "module must not be short after a prune")
+}
