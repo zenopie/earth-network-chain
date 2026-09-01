@@ -128,6 +128,23 @@ var Upgrades = []Upgrade{
 		Name:          "v0.7.0",
 		CreateHandler: upgradeV070,
 	},
+
+	// Makes the caretaker slate un-resettable. MsgResetAllocations now rejects
+	// STREAM_ID_CARETAKER outright: stake-weighted x/gov is the capital axis, and
+	// a repeatable reset of the human slate is a mute button the persons axis has
+	// no matching lever against. See
+	// x/allocation/keeper/msg_server_reset_allocations.go for the trade this
+	// accepts -- it gives up the sybil backstop, and recovery from a captured
+	// caretaker slate becomes a binary upgrade.
+	//
+	// No state migration, no StoreUpgrades: the change is entirely in what the
+	// handler accepts. Existing votes, epochs and accrued balances are untouched,
+	// and a caretaker reset that already happened stays happened. AppVersion
+	// stays at 1 for the reason given on v0.6.0.
+	{
+		Name:          "v0.8.0",
+		CreateHandler: defaultUpgradeHandler,
+	},
 }
 
 // assertTrustStoreParses checks that no CSCA already in the store is one the

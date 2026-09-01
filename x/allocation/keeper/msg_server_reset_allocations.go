@@ -12,10 +12,24 @@ import (
 )
 
 // ResetAllocations clears every vote in one stream so it is only directed by
-// voters who come back and vote again. Governance-gated.
+// voters who come back and vote again. Governance-gated, and groundworks-only.
+//
+// The caretaker slate is not resettable. Stake-weighted x/gov is the capital
+// axis; letting it retire the caretaker slate is the capital axis writing the
+// persons axis's rules, and no matching lever points the other way. A reset
+// confiscates nothing, but between the reset and the first new vote the stream
+// accrues to nothing, so the power to fire it repeatedly is the power to
+// silence the fund. That belongs to registered humans, who direct the slate by
+// voting, and to nobody else — so the message rejects the stream outright
+// rather than gating it on an authority.
+//
+// What this gives up is the sybil backstop: if counterfeit humans ever capture
+// the caretaker slate, no on-chain lever clears it, and recovery is a binary
+// upgrade. That is the trade — see readme.md, "The goal, and where it isn't
+// reached yet".
 //
 // The other stream is untouched — the epochs are per stream precisely so that
-// retiring a stale human slate does not also wipe out every staker's vote.
+// retiring a stale staker slate does not reach across to the human one.
 // Stake and registrations are untouched either way, and options keep any ERTH
 // they have already accrued: this redirects the future stream without
 // confiscating anything already earned. Between the reset and the first new vote
@@ -24,6 +38,10 @@ import (
 func (k msgServer) ResetAllocations(ctx context.Context, msg *types.MsgResetAllocations) (*types.MsgResetAllocationsResponse, error) {
 	if err := ValidateStream(msg.Stream); err != nil {
 		return nil, err
+	}
+	if msg.Stream == types.STREAM_ID_CARETAKER {
+		return nil, errorsmod.Wrap(types.ErrStreamNotResettable,
+			"the caretaker slate is directed by registered humans and cannot be retired by governance")
 	}
 	authBz, err := k.addressCodec.StringToBytes(msg.Authority)
 	if err != nil {

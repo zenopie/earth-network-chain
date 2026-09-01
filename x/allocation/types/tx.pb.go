@@ -569,10 +569,16 @@ func (m *MsgAddAddressOptionResponse) GetId() uint64 {
 // MsgResetAllocations clears every vote in one stream, so its emission is only
 // directed by voters who show up and vote again.
 //
+// Groundworks only. STREAM_ID_CARETAKER is rejected: the caretaker slate is
+// directed by registered humans, and stake-weighted governance holds no lever
+// over it. A reset takes nothing, but a stream with no votes accrues to
+// nothing, so a repeatable reset is a mute button — one the persons axis has no
+// matching power to press on the capital side.
+//
 // Votes are cast once and then persist indefinitely, so over time the split
 // reflects whoever was active when they last voted rather than who is active
-// now. This retires the whole slate at once — for one stream only; the other
-// stream's votes and epoch are untouched.
+// now. This retires the whole slate at once — for the groundworks stream only;
+// the caretaker stream's votes and epoch are untouched.
 //
 // Options survive along with any ERTH they have already accrued, so no recipient
 // loses a claimable balance and nobody re-pays the address-option fee. Stake and
@@ -769,7 +775,8 @@ type MsgClient interface {
 	AddIntegratedOption(ctx context.Context, in *MsgAddIntegratedOption, opts ...grpc.CallOption) (*MsgAddIntegratedOptionResponse, error)
 	// AddAddressOption adds an ADDRESS option to a stream (permissionless, fee-gated).
 	AddAddressOption(ctx context.Context, in *MsgAddAddressOption, opts ...grpc.CallOption) (*MsgAddAddressOptionResponse, error)
-	// ResetAllocations clears every vote in one stream (governance-gated).
+	// ResetAllocations clears every vote in the groundworks stream
+	// (governance-gated). The caretaker stream is rejected.
 	ResetAllocations(ctx context.Context, in *MsgResetAllocations, opts ...grpc.CallOption) (*MsgResetAllocationsResponse, error)
 }
 
@@ -848,7 +855,8 @@ type MsgServer interface {
 	AddIntegratedOption(context.Context, *MsgAddIntegratedOption) (*MsgAddIntegratedOptionResponse, error)
 	// AddAddressOption adds an ADDRESS option to a stream (permissionless, fee-gated).
 	AddAddressOption(context.Context, *MsgAddAddressOption) (*MsgAddAddressOptionResponse, error)
-	// ResetAllocations clears every vote in one stream (governance-gated).
+	// ResetAllocations clears every vote in the groundworks stream
+	// (governance-gated). The caretaker stream is rejected.
 	ResetAllocations(context.Context, *MsgResetAllocations) (*MsgResetAllocationsResponse, error)
 }
 

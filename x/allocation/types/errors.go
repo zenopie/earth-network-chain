@@ -21,6 +21,11 @@ var (
 	// MaxDescriptionLen for why a permissionless field needs a hard bound.
 	ErrDescriptionTooLong = errors.Register(ModuleName, 1109, "allocation option description is too long")
 
+	// ErrStreamNotResettable means the message named a stream whose slate
+	// governance may not retire. The caretaker slate answers to registered
+	// humans alone; see msg_server_reset_allocations.go.
+	ErrStreamNotResettable = errors.Register(ModuleName, 1110, "allocation stream cannot be reset by governance")
+
 	// ErrInvariantBroken means a stream's declared total weight no longer equals
 	// the sum of its options' allocations. Returned from the EndBlocker, so it
 	// halts the chain — see keeper/invariants.go for why.

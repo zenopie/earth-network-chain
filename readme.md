@@ -60,33 +60,39 @@ gap can be measured against it:
 decides who counts as a person and what the caretaker stream may fund, the
 capital axis decides the same for itself, and neither writes the other's rules.
 
-*Today*, three levers sit with stake-weighted `x/gov` on both sides of the line:
+*Today*, two levers sit with stake-weighted `x/gov` on both sides of the line:
 
-- `MsgResetAllocations` takes a stream argument and `ValidateStream` accepts
-  either, so bonded stake can retire the caretaker slate. It confiscates
-  nothing — accrued ERTH stays with its options and humans can vote again — but
-  registered humans hold no matching power over the groundworks slate.
 - `params.verifying_keys` (`x/personhood`) and the DSC registry and CSCA trust
   anchor (`x/pki`, gov-gated in `x/pki/keeper/msg_server.go`) are what a valid
   registration is checked against. Stake therefore defines who is a person.
 - Binary upgrades, which is where the emission constants themselves live.
 
-*Why it is that way for now.* Proof-of-personhood is the young half. A bad
-verifying key, a compromised DSC, or a circuit flaw is a sybil break, and a
-sybil break with no outside recovery path is a caretaker stream captured by
-counterfeit humans with nothing able to clear it. The gov levers are a backstop
-for the axis that cannot yet defend itself — the trust anchors have to be
-maintained by someone, and today that is stake. The asymmetry is the price of
-that, and it is worth naming rather than dressing up: it is the one place where
-the four pillars are equal in funding and unequal in power.
+*A third lever is gone.* `MsgResetAllocations` used to take either stream, so
+bonded stake could retire the caretaker slate; it now rejects
+`STREAM_ID_CARETAKER` outright. A reset confiscated nothing — accrued ERTH stays
+with its options and humans can vote again — but a stream with no votes accrues
+to nothing, so a repeatable reset was a mute button on the fund, and registered
+humans held no matching power over the groundworks slate. The caretaker slate is
+now redirected only the way it was meant to be: by humans voting.
 
-*What retires it.* When a compromised registry is less likely than a captured
+*What that costs.* The reset was also the sybil backstop. A bad verifying key, a
+compromised DSC, or a circuit flaw is a sybil break, and a caretaker stream
+captured by counterfeit humans can no longer be cleared by proposal — recovery
+is a binary upgrade. That is deliberate: a reset is a live weapon pointed at the
+persons axis every day, while a sybil break is a contingency, and the two
+remaining levers still let stake decide what counts as a valid registration
+going forward.
+
+*Why the other two stay for now.* Proof-of-personhood is the young half, and its
+trust anchors have to be maintained by someone; today that is stake. So stake
+still defines who is a person, even though it can no longer touch what the
+caretaker stream funds.
+
+*What retires them.* When a compromised registry is less likely than a captured
 governance — a DSC registry that maintains itself from published national
-sources rather than by proposal, verifying keys pinned by something other than a
-stake vote, and a registered population large enough that a reset is a bigger
-risk than the sybil it guards against — `reset-allocations` on the caretaker
-stream should move to that stream's own voters, and personhood's trust anchors
-should follow. That is a chain upgrade like any other, and until it ships this
+sources rather than by proposal, and verifying keys pinned by something other
+than a stake vote — personhood's trust anchors should follow the reset lever off
+the stake side. That is a chain upgrade like any other, and until it ships this
 section is the honest description.
 
 Everything below is the mechanism: what each pillar emits, who directs it, and
@@ -321,7 +327,7 @@ There are two kinds of allocation option, differing in how they deliver their ER
 | `earthd tx allocation claim-allocation [stream] [option-id]` | Pay an ADDRESS option's accrued ERTH to its recipient. |
 | `earthd tx allocation add-address-option [stream] [recipient] [description] [--claimer addr]` | Permissionless: add an ADDRESS option (burns the fee). |
 | `earthd tx allocation add-integrated-option` | Governance-gated (authority = x/gov): add an INTEGRATED option. |
-| `earthd tx allocation reset-allocations` | Governance-gated: retire one stream's whole slate of votes. |
+| `earthd tx allocation reset-allocations` | Governance-gated: retire the groundworks slate of votes. Caretaker is rejected. |
 
 **Queries**: `earthd q allocation options [stream]`, `earthd q allocation option [stream] [id]`,
 `earthd q allocation voter [stream] [address]`, `earthd q allocation params`.

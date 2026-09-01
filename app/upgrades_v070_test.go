@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// The upgrade this binary can perform is v0.7.0, and v0.6.1 is not among them.
+// The upgrades this binary can perform are v0.6.0, v0.7.0 and v0.8.0, and
+// v0.6.1 is not among them.
 //
 // v0.6.1 was tagged and built but never proposed, so no chain ever halted on
 // that name and nothing has to replay it. Keeping a handler for it would imply
@@ -23,7 +24,7 @@ func TestUpgradeSetIsTheMergedRelease(t *testing.T) {
 			t.Fatalf("upgrade %q has no handler", u.Name)
 		}
 	}
-	want := []string{"v0.6.0", "v0.7.0"}
+	want := []string{"v0.6.0", "v0.7.0", "v0.8.0"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("Upgrades = %v, want %v", names, want)
 	}
