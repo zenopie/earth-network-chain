@@ -430,5 +430,36 @@ else
     || bad "statesync: died for the wrong reason" "$(tail -3 "$LOG")"
 fi
 
+# REQUIRE_NO_CONSENSUS_KEY: the guard against a volume that was once a validator
+# signing again from the key still on its disk. See the entrypoint for the fork
+# this exists to prevent.
+H="$WORK/keyless-clean"; mkdir -p "$H"
+if run "$H" REQUIRE_NO_CONSENSUS_KEY=1; then
+  ok "keyless: starts when the volume really has no consensus key"
+else
+  bad "keyless: refused a genuinely keyless volume" "$(tail -3 "$LOG")"
+fi
+
+H="$WORK/keyless-dirty"; mkdir -p "$H/config"
+printf '{"address":"AA","priv_key":{"type":"tendermint/PrivKeyEd25519","value":"x"}}' \
+  > "$H/config/priv_validator_key.json"
+if run "$H" REQUIRE_NO_CONSENSUS_KEY=1; then
+  bad "keyless: started on a volume that still holds a consensus key" \
+      "this is the 69-block fork of 2026-09-01"
+else
+  grep -q "priv_validator_key.json already exists" "$LOG" \
+    && ok "keyless: refuses a volume that still holds a consensus key" \
+    || bad "keyless: died for the wrong reason" "$(tail -3 "$LOG")"
+fi
+
+H="$WORK/keyless-contradiction"; mkdir -p "$H"
+if run "$H" REQUIRE_NO_CONSENSUS_KEY=1 PRIV_VALIDATOR_KEY_B64=Zm9v; then
+  bad "keyless: accepted REQUIRE_NO_CONSENSUS_KEY alongside a key to inject"
+else
+  grep -q "These contradict" "$LOG" \
+    && ok "keyless: refuses REQUIRE_NO_CONSENSUS_KEY plus PRIV_VALIDATOR_KEY_B64" \
+    || bad "keyless: died for the wrong reason" "$(tail -3 "$LOG")"
+fi
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

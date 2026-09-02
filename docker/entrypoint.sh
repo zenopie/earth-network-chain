@@ -74,6 +74,11 @@ EXTERNAL_ADDRESS="${EXTERNAL_ADDRESS:-}"
 # comma-separated `nodeid@host:port`. A node with neither and no peer book has
 # no way to find the network — the address book is the only other source, and on
 # a fresh volume it is empty.
+# Record whether these were SET, not just whether they are non-empty. An
+# explicitly empty PERSISTENT_PEERS means "this node is deliberately alone"
+# and has to CLEAR config.toml; leaving the value already written there is
+# how a node keeps dialling a peer whose lease was closed.
+PERSISTENT_PEERS_SET="${PERSISTENT_PEERS+yes}"
 SEEDS="${SEEDS:-}"
 PERSISTENT_PEERS="${PERSISTENT_PEERS:-}"
 
@@ -400,6 +405,46 @@ fi
 # double-signs. Prefer PRIV_VALIDATOR_LADDR and a remote signer for anything
 # with real stake behind it — see akash/REMOTE_SIGNER.md in the deploy repo.
 #
+# REQUIRE_NO_CONSENSUS_KEY=1 says this node must not be able to sign, and this
+# is the check that makes that true rather than merely intended.
+#
+# The failure it exists for, 2026-09-01: a lease that had been the validator was
+# redeployed with an SDL carrying no consensus key, on the belief that "no key in
+# the SDL" meant "no key". It does not. The block below only ever OVERWRITES
+# priv_validator_key.json; it never removes one, so the file from that volume's
+# validator days was still there. CometBFT loaded it, the node saw 100% voting
+# power, found no peers, and produced 69 blocks of its own chain at heights the
+# real validator was also signing. Nothing was slashed only because it happened
+# to be isolated -- had it reached a peer, that is equivocation evidence on a
+# chain where one key holds all the stake.
+#
+# So: refuse to start, loudly, rather than delete. Deleting a consensus key on a
+# node's say-so is worse than halting one that should not have been started, and
+# the operator may be looking at the only copy.
+if [ "${REQUIRE_NO_CONSENSUS_KEY:-0}" = "1" ]; then
+  if [ -n "${PRIV_VALIDATOR_KEY_B64:-}" ]; then
+    die "REQUIRE_NO_CONSENSUS_KEY=1 and PRIV_VALIDATOR_KEY_B64 is set.
+      These contradict. One of them is a mistake, and guessing which would
+      either strand a validator or start a second one."
+  fi
+  if [ -f "$EARTH_HOME/config/priv_validator_key.json" ]; then
+    die "this node is configured to hold NO consensus key, but
+      $EARTH_HOME/config/priv_validator_key.json already exists on the volume.
+
+      A key in that file signs whether or not the SDL mentions one. If this
+      volume was ever a validator, starting now risks signing at heights another
+      node is also signing -- equivocation, and on this chain one key holds all
+      the voting power.
+
+      If this node is genuinely meant to be keyless, move the file aside first:
+        mv $EARTH_HOME/config/priv_validator_key.json \\
+           $EARTH_HOME/config/priv_validator_key.json.REMOVED
+      (the key is also in .env, so this is reversible.) If this node IS meant to
+      sign, drop REQUIRE_NO_CONSENSUS_KEY and pass the key instead."
+  fi
+  say "verified: no consensus key on this volume, this node cannot sign"
+fi
+
 # priv_validator_state.json is deliberately NOT injected. It tracks the last
 # height signed, and restoring a stale copy is how a validator double-signs.
 if [ -n "${PRIV_VALIDATOR_KEY_B64:-}" ]; then
@@ -509,9 +554,20 @@ if [ -n "$SEEDS" ]; then
   set_config seeds "$SEEDS" "$EARTH_HOME/config/config.toml"
   say "seeds = $SEEDS"
 fi
-if [ -n "$PERSISTENT_PEERS" ]; then
+if [ -n "$PERSISTENT_PEERS_SET" ]; then
+  # Written even when empty. config.toml lives on the volume and persists across
+  # deploys, so the only way to un-set a peer is to write the empty value over
+  # it. Skipping that on empty leaves a closed lease's address in the config for
+  # ever, and CometBFT retries it every few seconds.
   set_config persistent_peers "$PERSISTENT_PEERS" "$EARTH_HOME/config/config.toml"
-  say "persistent_peers = $PERSISTENT_PEERS"
+  if [ -n "$PERSISTENT_PEERS" ]; then
+    say "persistent_peers = $PERSISTENT_PEERS"
+  else
+    say "persistent_peers cleared — this node is deliberately alone"
+    # The address book is a separate cache, also on the volume. Without dropping
+    # it, PEX keeps dialling the peers it remembers regardless of config.toml.
+    rm -f "$EARTH_HOME/config/addrbook.json"
+  fi
 fi
 
 # Bind to every interface. The defaults listen on loopback, which inside a
