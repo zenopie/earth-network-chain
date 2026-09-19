@@ -39,7 +39,8 @@ enum AllocationKind {
   // handler selected by `handler` (e.g. "lp_rewards"). Governance-permissioned to add.
   ALLOCATION_KIND_INTEGRATED = 1;
   // ALLOCATION_KIND_ADDRESS accrues ERTH claimable by a fixed recipient address.
-  // Permissionless to add (guarded by an address-option fee).
+  // Permissionless to add on the caretaker stream (guarded by an address-option
+  // fee); governance-gated on the groundworks stream.
   ALLOCATION_KIND_ADDRESS = 2;
 }
 
@@ -73,6 +74,22 @@ message AllocationOption {
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
     (gogoproto.nullable) = false
   ];
+  // removed reports that the assembly has struck this option.
+  //
+  // A struck option keeps its record rather than being deleted outright, because
+  // voters still name it in their stored splits and resyncVoter walks those on
+  // every stake change — deleting it would strand them. It carries no weight,
+  // refuses new votes, accrues nothing, and is collected by the ordinary idle
+  // sweep once OptionIdleGrace is up.
+  //
+  // Named for the dead state rather than the live one so that absence is the
+  // right default: proto3 decodes a missing bool as false, and every option that
+  // existed before this field did is one nobody has removed. An `active` field
+  // would have read false for exactly those, turning the whole slate off at the
+  // upgrade height — and it would have needed a migration walking every option
+  // to say so.
+  bool removed = 11;
+
   // accumulated is ERTH (uerth) owed to this option, awaiting distribution/claim.
   string accumulated = 7 [
     (cosmos_proto.scalar) = "cosmos.Int",

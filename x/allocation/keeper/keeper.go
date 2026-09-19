@@ -76,6 +76,12 @@ type Keeper struct {
 	// by every copy.
 	weightSources      map[types.StreamId]types.WeightSource
 	integratedHandlers map[string]integratedHandler
+
+	// chamber holds the address x/assembly registers itself under. A pointer
+	// because the keeper is passed by value and RegisterChamber is called after
+	// the copies have been made — the same problem the maps above avoid by being
+	// reference types.
+	chamber *chamberRef
 	// residueSink is where truncation dust goes, registered from app.go for the
 	// same reason the community-pool handler is. A pointer for the same reason
 	// the maps above are: the Keeper is copied by value, so a late registration
@@ -134,6 +140,7 @@ func NewKeeper(
 
 		weightSources:      map[types.StreamId]types.WeightSource{},
 		integratedHandlers: map[string]integratedHandler{},
+		chamber:            &chamberRef{},
 		residueSink:        &residueSink{},
 	}
 
@@ -161,6 +168,9 @@ func (k Keeper) GetAuthority() []byte {
 func (k Keeper) HubDenom(ctx context.Context) (string, error) {
 	return k.stakingKeeper.BondDenom(ctx)
 }
+
+// chamberRef carries the assembly's address. See the field comment on Keeper.
+type chamberRef struct{ addr []byte }
 
 // RegisterWeightSource attaches a stream's weight source. Called once, from
 // module wiring, by whichever module owns the notion of weight for that stream.

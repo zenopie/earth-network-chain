@@ -441,8 +441,18 @@ func (m *MsgAddIntegratedOptionResponse) GetId() uint64 {
 }
 
 // MsgAddAddressOption adds an ADDRESS option payable to `recipient`.
-// Permissionless: any account may add one by paying params.address_option_fee
-// (burned).
+//
+// Caretaker is permissionless: any account may add one by paying
+// params.address_option_fee (burned).
+//
+// Groundworks is governance-gated — `submitter` must be the module authority,
+// and no fee is charged. Weight on that stream is bonded stake, so an option
+// payable to whoever listed it would make self-voting the dominant strategy:
+// every staker lists their own address, votes their own weight to it, and the
+// fund pays out pro rata to stake instead of building anything. Requiring the
+// authority removes the unilateral move. The same rule on the caretaker stream
+// would only produce an equal split among registered humans, which is a
+// dividend rather than a capture, so entry there stays open.
 type MsgAddAddressOption struct {
 	Submitter   string   `protobuf:"bytes,1,opt,name=submitter,proto3" json:"submitter,omitempty"`
 	Stream      StreamId `protobuf:"varint,2,opt,name=stream,proto3,enum=earth.allocation.v1.StreamId" json:"stream,omitempty"`
@@ -773,7 +783,8 @@ type MsgClient interface {
 	ClaimAllocation(ctx context.Context, in *MsgClaimAllocation, opts ...grpc.CallOption) (*MsgClaimAllocationResponse, error)
 	// AddIntegratedOption adds an INTEGRATED option to a stream (governance-gated).
 	AddIntegratedOption(ctx context.Context, in *MsgAddIntegratedOption, opts ...grpc.CallOption) (*MsgAddIntegratedOptionResponse, error)
-	// AddAddressOption adds an ADDRESS option to a stream (permissionless, fee-gated).
+	// AddAddressOption adds an ADDRESS option to a stream (permissionless and
+	// fee-gated on caretaker, governance-gated on groundworks).
 	AddAddressOption(ctx context.Context, in *MsgAddAddressOption, opts ...grpc.CallOption) (*MsgAddAddressOptionResponse, error)
 	// ResetAllocations clears every vote in the groundworks stream
 	// (governance-gated). The caretaker stream is rejected.
@@ -853,7 +864,8 @@ type MsgServer interface {
 	ClaimAllocation(context.Context, *MsgClaimAllocation) (*MsgClaimAllocationResponse, error)
 	// AddIntegratedOption adds an INTEGRATED option to a stream (governance-gated).
 	AddIntegratedOption(context.Context, *MsgAddIntegratedOption) (*MsgAddIntegratedOptionResponse, error)
-	// AddAddressOption adds an ADDRESS option to a stream (permissionless, fee-gated).
+	// AddAddressOption adds an ADDRESS option to a stream (permissionless and
+	// fee-gated on caretaker, governance-gated on groundworks).
 	AddAddressOption(context.Context, *MsgAddAddressOption) (*MsgAddAddressOptionResponse, error)
 	// ResetAllocations clears every vote in the groundworks stream
 	// (governance-gated). The caretaker stream is rejected.

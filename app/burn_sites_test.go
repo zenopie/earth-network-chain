@@ -27,6 +27,10 @@ var burnSites = map[string]string{
 	"x/personhood/keeper/abci.go":                  "anml_buyback",
 	"x/allocation/keeper/prune.go":                 "allocation",
 	"x/allocation/keeper/msg_server_add_option.go": "allocation",
+	// The assembly striking a groundworks option forfeits what it had accrued.
+	// Those coins were minted as they accrued, so writing the balance off without
+	// burning them would leave the module holding supply no option claims.
+	"x/allocation/keeper/removal.go": "allocation",
 
 	// Deliberately uncounted. Withdrawing liquidity burns the shares that
 	// represented the claim; the assets behind them go back to their owner and

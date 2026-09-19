@@ -1,0 +1,39 @@
+syntax = "proto3";
+package earth.assembly.v1;
+
+import "earth/assembly/v1/assembly.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+
+option go_package = "github.com/earth-network/earth/x/assembly/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // ProposalTally returns the human tally on an x/gov proposal, and whether it
+  // currently clears the two-thirds bar.
+  rpc ProposalTally(QueryProposalTallyRequest) returns (QueryProposalTallyResponse) {
+    option (google.api.http).get = "/earth/assembly/v1/proposal_tally/{proposal_id}";
+  }
+
+  // RemovalBallots lists every open removal ballot.
+  rpc RemovalBallots(QueryRemovalBallotsRequest) returns (QueryRemovalBallotsResponse) {
+    option (google.api.http).get = "/earth/assembly/v1/removal_ballots";
+  }
+}
+
+message QueryProposalTallyRequest {
+  uint64 proposal_id = 1;
+}
+
+message QueryProposalTallyResponse {
+  Tally tally = 1 [(gogoproto.nullable) = false];
+  // approved reports whether the tally as it stands clears two thirds. A
+  // proposal with no human votes is not approved — silence is not assent here.
+  bool approved = 2;
+}
+
+message QueryRemovalBallotsRequest {}
+
+message QueryRemovalBallotsResponse {
+  repeated RemovalBallot ballots = 1 [(gogoproto.nullable) = false];
+}

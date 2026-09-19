@@ -60,6 +60,13 @@ import (
 //
 // An unclaimed balance does not save it — see the note on forfeiture above.
 func prunable(opt types.AllocationOption) bool {
+	// A struck option goes whatever kind it was. Removal zeroes its weight and
+	// its balance and takes an INTEGRATED one out of the handler set, so there is
+	// nothing left for it to be idle *on purpose* about — left out of this, a
+	// struck INTEGRATED option would sit in state forever.
+	if opt.Removed {
+		return true
+	}
 	if opt.Kind != types.ALLOCATION_KIND_ADDRESS {
 		// INTEGRATED options are governance's, resolved by a protocol handler
 		// every block. An idle one is idle on purpose.

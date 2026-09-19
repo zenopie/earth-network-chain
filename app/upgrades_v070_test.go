@@ -4,12 +4,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"path"
+	"reflect"
 	"strings"
 	"testing"
+
+	storetypes "cosmossdk.io/store/types"
+
+	assemblymoduletypes "github.com/earth-network/earth/x/assembly/types"
 )
 
-// The upgrades this binary can perform are v0.6.0, v0.7.0 and v0.8.0, and
-// v0.6.1 is not among them.
+// The upgrades this binary can perform are v0.6.0, v0.7.0, v0.8.0 and v0.9.0,
+// and v0.6.1 is not among them.
 //
 // v0.6.1 was tagged and built but never proposed, so no chain ever halted on
 // that name and nothing has to replay it. Keeping a handler for it would imply
@@ -24,20 +29,32 @@ func TestUpgradeSetIsTheMergedRelease(t *testing.T) {
 			t.Fatalf("upgrade %q has no handler", u.Name)
 		}
 	}
-	want := []string{"v0.6.0", "v0.7.0", "v0.8.0"}
+	want := []string{"v0.6.0", "v0.7.0", "v0.8.0", "v0.9.0"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("Upgrades = %v, want %v", names, want)
 	}
 }
 
-// The module set does not change, so nothing may declare a store upgrade. A
-// stray one is not cosmetic: UpgradeStoreLoader would try to mount, rename or
-// delete a store that does not need it, and the chain fails to start.
-func TestV070AddsNoStores(t *testing.T) {
+// Only the upgrades that genuinely change the module set may declare a store
+// upgrade, and they must declare exactly the right one. A stray declaration is
+// not cosmetic: UpgradeStoreLoader would try to mount, rename or delete a store
+// that does not need it, and the chain fails to start. A missing one is worse —
+// the new module's store is never mounted and the node cannot load it at all.
+func TestStoreUpgradesMatchTheModuleSet(t *testing.T) {
+	want := map[string]storetypes.StoreUpgrades{
+		"v0.9.0": {Added: []string{assemblymoduletypes.StoreKey}},
+	}
 	for _, u := range Upgrades {
-		s := u.StoreUpgrades
-		if len(s.Added)+len(s.Renamed)+len(s.Deleted) != 0 {
-			t.Fatalf("upgrade %q declares store upgrades: %+v", u.Name, s)
+		expected, changes := want[u.Name]
+		if !changes {
+			s := u.StoreUpgrades
+			if len(s.Added)+len(s.Renamed)+len(s.Deleted) != 0 {
+				t.Fatalf("upgrade %q declares store upgrades but changes no modules: %+v", u.Name, s)
+			}
+			continue
+		}
+		if !reflect.DeepEqual(u.StoreUpgrades, expected) {
+			t.Fatalf("upgrade %q store upgrades = %+v, want %+v", u.Name, u.StoreUpgrades, expected)
 		}
 	}
 }

@@ -11,12 +11,155 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
+## [v0.9.0]
+
+Consensus-breaking. **Not yet proposed.** It goes through governance as a
+`MsgSoftwareUpgrade` named `v0.9.0`, and it adds a module store, so the binary
+must be in place at the plan height or the node will not start.
+
+**Read the assembly item before voting on anything else.** After this height a
+governance proposal that no human votes on cannot pass, whatever stake is behind
+it. Make sure you can cast an assembly vote first.
+
+### Added
+
+- **Governance is bicameral: `x/assembly`.** Every `x/gov` proposal now also
+  needs **two thirds of the human votes cast on it** — one live proof-of-personhood
+  registration is one vote — and a proposal that does not get them is failed
+  before x/gov tallies it. There are no capital-only proposals any more. Binary
+  upgrades, `params.verifying_keys`, the `x/pki` trust anchors, allocation
+  options: stake can still originate all of them and can no longer carry any of
+  them alone.
+
+  The persons axis had no organ at all before this. `readme.md` has said so
+  plainly — stake defined who counted as a person and owned the upgrades where
+  the emission constants live — and this is the answer to the first half of it.
+  Note what it is not: the chamber cannot originate anything, cannot spend, and
+  cannot change a parameter. It agrees or it refuses. A body that can only say no
+  cannot direct money to itself, which is what makes giving it reach over the
+  whole of governance affordable.
+
+  **There is no quorum and no minimum turnout, deliberately.** Two consequences
+  follow and both are accepted rather than overlooked. A proposal nobody votes on
+  **fails**, including an upgrade fixing a live bug — apathy freezes governance
+  instead of waving things through, and the fallback is what it has always been
+  for a stuck chain: operators running a binary they choose. And a single YES
+  vote is one of one, which clears two thirds, so while the registry is small the
+  chamber's decisions rest on whoever shows up.
+
+  The chamber's rules are compile-time constants in
+  `x/assembly/types/keys.go`. There is no `Params` and no `MsgUpdateParams`
+  anywhere in the module, which is the point: if x/gov could set the threshold
+  the assembly checks it with, it could set it out of reach and the check would
+  be decorative. Moving it means shipping a binary every validator chooses to
+  run — the same protection the emission split has.
+
+  Mechanically it does not fork x/gov. `x/assembly`'s EndBlocker runs
+  immediately **before** x/gov's and removes a refused proposal from the active
+  queue, so x/gov's own tally only ever sees proposals that cleared both houses.
+  A refused proposal is recorded with x/gov's stake tally intact, so both
+  houses' verdicts stay visible, and its deposit is refunded — losing a vote you
+  entered correctly is not the thing deposit burning is for.
+
+- **The expedited track asks the assembly for three quarters, and a refusal
+  there demotes rather than kills.** x/gov's fast track buys a one-day voting
+  period instead of seven and pays for it in agreement — `expedited_threshold`
+  is 0.75 against 0.667 — so the chamber asks the same of it rather than less.
+
+  An expedited proposal the chamber declines is converted to a regular one with
+  a full voting period ahead of it, which is exactly what x/gov does when its own
+  expedited tally falls short. Its deposit rides along untouched, and the
+  chamber's one-day tally is discarded so the longer round is counted from zero
+  under the ordinary two-thirds bar. Declining on the fast track can mean "not in
+  one day" as readily as "never", and nobody who refused it has to return: silence
+  fails the second round too.
+
+  **Operators: this lengthens the emergency path.** A compromised Document
+  Signer is revoked on the expedited track precisely because it is fast, and
+  that revocation now needs three quarters of the human votes cast within
+  twenty-four hours. Falling short does not kill it, but it does mean seven more
+  days before it can pass. The trust-store runbook should be read with that in
+  mind.
+
+- **The assembly alone can remove a groundworks option.** Its one affirmative
+  power, by `MsgProposeRemoval` and a seven-day ballot at the same two thirds.
+  Stake gets no say: a groundworks option is paid by a stake-weighted vote, so
+  letting stake veto a removal would leave humans able to object to a capture and
+  unable to end one.
+
+  A removed option is marked rather than deleted. The idle sweep in
+  `x/allocation/keeper/prune.go` can delete outright only because it touches
+  nothing that carries weight; a struck option has weight *and* voters naming it
+  in splits that `resyncVoter` replays on every stake change, without a
+  transaction. So the strike zeroes the weight, burns what the option had
+  accrued — those coins were minted as it accrued — and leaves the record, which
+  is what keeps a replay from erroring out of a staking hook. The now-idle record
+  is collected by the sweep that already exists.
+
+### Changed
+
+- **Adding a groundworks ADDRESS option needs governance.** Listing one was
+  permissionless in both streams, guarded only by the burned
+  `address_option_fee`. That is safe on the caretaker stream and not on the
+  groundworks one, because the two weight votes differently. Groundworks weight
+  is bonded stake, so an option payable to whoever listed it makes self-voting
+  the dominant strategy — point your own weight at your own option and you keep
+  everything it draws, against a diffuse share of anything shared. The
+  equilibrium is every staker listing their own address: the fund pays out pro
+  rata to stake, a second staking yield that builds none of the infrastructure
+  it exists for. Nothing already in the design pushes back on it. Revoking votes
+  does not, because a self-voter is funded entirely by their own weight and
+  other voters leaving raises their share; the fee does not, because it is
+  priced against volume and one burn against a perpetual pro-rata claim pays for
+  itself.
+
+  `MsgAddAddressOption` on `STREAM_ID_GROUNDWORKS` now requires the module
+  authority as `submitter`, and charges no fee — a proposal deposit is that
+  path's brake, and burning from the authority account would destroy protocol
+  funds rather than a submitter's. The caretaker stream is unchanged and stays
+  open to anyone for the fee: one human, one vote means the same move only
+  splits the fund equally among registered humans, which is a dividend rather
+  than a capture, and personhood caps it at one share each.
+
+  Existing options are untouched; only new listings are affected. Note the
+  interaction left standing for now: `MsgResetAllocations` zeroes every
+  groundworks option's weight, which schedules the whole slate for pruning at
+  `OptionIdleGrace`, and re-listing what gets swept is now a governance cycle
+  rather than a fee.
+
+## [v0.8.0]
+
+Consensus-breaking, and **shipped**: tagged 2026-09-01 and registered in
+`app/upgrades.go` as the plan name `v0.8.0`.
+
+### Changed
+
+- **The caretaker slate is not governance's to retire.** `MsgResetAllocations`
+  now rejects `STREAM_ID_CARETAKER` outright rather than gating it on the
+  authority. Stake-weighted `x/gov` is the capital axis, and a reset confiscates
+  nothing — accrued ERTH stays with its options and humans can vote again — but a
+  stream with no votes accrues to nothing, so the power to fire it repeatedly was
+  a mute button on the fund, and registered humans held no matching lever over
+  the groundworks slate. The caretaker slate is now redirected the way it was
+  meant to be: by humans voting.
+
+  What this gives up is the sybil backstop. A bad verifying key, a compromised
+  DSC or a circuit flaw is a sybil break, and a caretaker slate captured by
+  counterfeit humans can no longer be cleared by proposal — recovery becomes a
+  binary upgrade. That is deliberate: a reset is a live weapon pointed at the
+  persons axis every day, while a sybil break is a contingency.
+
+  No state migration and no store changes; the difference is entirely in what
+  the handler accepts. Existing votes, epochs and accrued balances are untouched,
+  and a caretaker reset that already happened stays happened.
+
 ## [v0.7.0]
 
-Consensus-breaking. **Not yet proposed.** It goes through governance as a single
-`MsgSoftwareUpgrade` named `v0.7.0`, at a height after v0.6.0's, and it must
-land **before the genesis liquidity auction opens** — see the LP-share item
-below for why that ordering is the safety property.
+Consensus-breaking, and **shipped**: tagged 2026-08-29 and registered in
+`app/upgrades.go` as the plan name `v0.7.0`. It went through governance as a
+single `MsgSoftwareUpgrade` at a height after v0.6.0's, and had to land **before
+the genesis liquidity auction opened** — see the LP-share item below for why that
+ordering was the safety property.
 
 **This release absorbs v0.6.1.** That tag was built but never proposed: no
 `MsgSoftwareUpgrade` named `v0.6.1` ever existed on `earth-1`, so nothing has

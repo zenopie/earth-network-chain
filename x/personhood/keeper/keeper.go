@@ -138,6 +138,35 @@ func (k Keeper) GetAuthority() []byte {
 	return k.authority
 }
 
+// LiveNullifier returns the nullifier of addr's live registration, for x/assembly.
+//
+// The nullifier rather than the address is what the chamber records a vote
+// against, and that is the whole point of this method existing. A registration
+// can be moved to a new wallet — MsgRegister rebinds it, carrying the ANML clock
+// with it — so a vote filed under the address it was cast from could be cast
+// again from the next one. The nullifier is derived from the passport and does
+// not move, so one person is one vote however many wallets they hold.
+//
+// A lapsed registration reports false, the same as no registration at all: the
+// franchise is live registrations, checked when the vote is cast.
+func (k Keeper) LiveNullifier(ctx context.Context, addr []byte) ([]byte, bool, error) {
+	reg, ok, err := k.getRegistrationByAddr(ctx, addr)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	expired, err := k.isExpired(ctx, reg)
+	if err != nil {
+		return nil, false, err
+	}
+	if expired {
+		return nil, false, nil
+	}
+	return reg.Nullifier, true, nil
+}
+
 // Weight implements the human stream's allocation weight source: every live
 // registration carries the same fixed weight, and anything else carries none.
 // That equality is the whole of one-human-one-vote — there is no scaling knob

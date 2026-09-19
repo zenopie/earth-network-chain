@@ -60,12 +60,56 @@ gap can be measured against it:
 decides who counts as a person and what the caretaker stream may fund, the
 capital axis decides the same for itself, and neither writes the other's rules.
 
-*Today*, two levers sit with stake-weighted `x/gov` on both sides of the line:
+*The persons axis now has an organ.* `x/assembly` makes governance bicameral:
+every `x/gov` proposal also needs **two thirds of the human votes cast on it**,
+one live registration to a vote, and a proposal that does not get them is failed
+before x/gov tallies it. There are no capital-only proposals. The two levers
+below still sit with stake in the sense that stake alone can *propose* them —
+but stake alone can no longer *pass* them:
 
 - `params.verifying_keys` (`x/personhood`) and the DSC registry and CSCA trust
   anchor (`x/pki`, gov-gated in `x/pki/keeper/msg_server.go`) are what a valid
-  registration is checked against. Stake therefore defines who is a person.
+  registration is checked against. Stake still writes what a person is; it can no
+  longer write it over the objection of the people it is describing.
 - Binary upgrades, which is where the emission constants themselves live.
+
+*The expedited track* asks the chamber for three quarters rather than two
+thirds, matching what the stake house asks of the same proposal — the fast track
+buys one day of deliberation instead of seven and pays for it in agreement. A
+proposal the chamber declines there is demoted to an ordinary one with a full
+voting period ahead of it, rather than killed, which is what `x/gov` already does
+when its own expedited tally falls short. The practical edge of this is the
+trust-store runbook: revoking a compromised Document Signer is expedited
+precisely because it is fast, and it now needs human turnout inside a day or it
+takes the slow road.
+
+*What the chamber cannot do* is the other half of the design. It originates
+nothing, spends nothing and sets no parameter — with one exception below, it can
+only refuse. That is what makes handing it the whole of governance affordable: a
+body that can only say no cannot direct money to itself, so there is nothing in
+it worth capturing for gain, only for obstruction.
+
+*The exception* is that the assembly alone can remove a groundworks allocation
+option, by its own ballot, with no stake vote involved. A groundworks option is
+paid by a stake-weighted vote; letting stake veto its removal would leave humans
+able to object to a capture and unable to end one. The power only ever subtracts
+— it takes an option off the slate and can put nothing in its place.
+
+*What it costs, plainly.* There is no quorum and no minimum turnout. A proposal
+nobody votes on **fails**, including an upgrade fixing a live bug: apathy now
+freezes governance rather than waving things through, and the fallback is what it
+has always been for a stuck chain — operators running a binary they choose rather
+than one a vote installed. And a single yes vote is one of one, which clears two
+thirds, so while the registry is small the chamber's decisions rest on whoever
+shows up. Both were chosen over the alternative, which is a quorum that stake
+would have to be trusted not to set out of reach.
+
+*Why its rules are constants.* The assembly has no `Params` and no
+`MsgUpdateParams` (`x/assembly/types/keys.go`). If governance could set the
+threshold the assembly checks it with, it could set it unreachable and the check
+would be decorative. Changing it means shipping a binary every validator chooses
+to run, which is the same protection the emission split gets and for the same
+reason.
 
 *A third lever is gone.* `MsgResetAllocations` used to take either stream, so
 bonded stake could retire the caretaker slate; it now rejects
@@ -83,17 +127,18 @@ persons axis every day, while a sybil break is a contingency, and the two
 remaining levers still let stake decide what counts as a valid registration
 going forward.
 
-*Why the other two stay for now.* Proof-of-personhood is the young half, and its
-trust anchors have to be maintained by someone; today that is stake. So stake
-still defines who is a person, even though it can no longer touch what the
-caretaker stream funds.
+*Why the trust anchors still originate with stake.* Proof-of-personhood is the
+young half, and its anchors have to be maintained by someone; today that is
+stake, which can now only propose a change rather than impose one. The remaining
+gap is that the persons axis cannot originate a fix of its own — if the registry
+needs updating and no proposal comes, the chamber has no way to write one.
 
-*What retires them.* When a compromised registry is less likely than a captured
+*What retires that.* When a compromised registry is less likely than a captured
 governance — a DSC registry that maintains itself from published national
 sources rather than by proposal, and verifying keys pinned by something other
 than a stake vote — personhood's trust anchors should follow the reset lever off
-the stake side. That is a chain upgrade like any other, and until it ships this
-section is the honest description.
+the stake side entirely. That is a chain upgrade like any other, and until it
+ships this section is the honest description.
 
 Everything below is the mechanism: what each pillar emits, who directs it, and
 where in the code it lives.
@@ -147,6 +192,21 @@ pillars' 4: **ERTH supply falls by 630,720,000 over the first five years**, then
 grows at 4 ERTH/sec once the schedule is spent.
 
 ## Get started
+
+The shortest path to a running local chain, with no tooling beyond the binary:
+
+```
+make install
+scripts/testnet-3val.sh up      # three validators, from networks/genesis.json
+scripts/testnet-3val.sh down
+```
+
+That builds genesis from the same file earth-1 launched with, so the local chain
+carries the real trust store, verifying keys and pools rather than an
+approximation. `GOV_VOTING_PERIOD=30s` shortens governance if you want to drive a
+proposal through by hand.
+
+Ignite still works and is what `config.yml` describes:
 
 ```
 ignite chain serve
@@ -312,12 +372,34 @@ There are two kinds of allocation option, differing in how they deliver their ER
     block; the pool stacks and is drawn down on each new registration, **50% registree /
     50% referrer**. Registered by `x/personhood`.
 - **`ALLOCATION_KIND_ADDRESS`** — accrues ERTH claimable by a fixed `recipient` via
-  `claim-allocation`. **Permissionless to add** in either stream: any account may add one
-  by burning `params.address_option_fee` ERTH (default 1 ERTH) as anti-spam. These settle
-  *lazily* on claim rather than per-block, so permissionless additions cost no per-block
-  work. An optional `--claimer` restricts who may trigger the claim; leave it empty (the
-  default) and anyone can trigger it. The payout always goes to `recipient` either way — a
-  triggerer only spends the gas.
+  `claim-allocation`. Who may add one depends on the stream. **Caretaker is
+  permissionless**: any account may add one by burning `params.address_option_fee` ERTH
+  (default 1 ERTH) as anti-spam. **Groundworks is governance-gated** and charges no fee.
+  These settle *lazily* on claim rather than per-block, so permissionless additions cost no
+  per-block work. An optional `--claimer` restricts who may trigger the claim; leave it
+  empty (the default) and anyone can trigger it. The payout always goes to `recipient`
+  either way — a triggerer only spends the gas.
+
+  *Why the two streams differ.* Groundworks weight is bonded stake, so an option payable to
+  whoever listed it makes self-voting dominant: point your own weight at your own option and
+  you keep everything it draws, against a diffuse share of anything shared. The equilibrium
+  is every staker listing their own address and the fund paying out pro-rata to stake — a
+  second staking yield that builds none of the infrastructure it exists for. Revoking votes
+  is no discipline, because a self-voter is funded by their own weight and other voters
+  leaving raises their share; nor is the fee, priced against volume rather than against a
+  perpetual pro-rata claim. One human one vote turns the same move into an equal split among
+  registered humans — a dividend rather than a capture, capped at one share each — so
+  caretaker entry stays open.
+
+  *The asymmetry this creates.* Governance is bicameral (`x/assembly`), so a groundworks
+  listing needs the assent of both houses while a caretaker listing needs neither: humans
+  hold a veto over the capital slate's menu and capital holds none over theirs. The
+  assembly can also **remove** a live groundworks option on its own, by its own ballot,
+  with no stake vote — see `x/allocation/keeper/removal.go`. A removed option is marked
+  rather than deleted, because voters still name it in splits that `resyncVoter` replays on
+  every stake change; it keeps its record, carries no weight, refuses new votes, and is
+  collected by the idle sweep. All of that runs the same direction as the
+  `MsgResetAllocations` rule above, deliberately.
 
 **Messages / CLI** — every command names the stream (`caretaker` or `groundworks`):
 
@@ -325,9 +407,23 @@ There are two kinds of allocation option, differing in how they deliver their ER
 | --- | --- |
 | `earthd tx allocation set-allocations [stream] --percentages '{"option_id":2,"percent":100}'` | Set your split in that stream (must sum to 100; empty clears it). |
 | `earthd tx allocation claim-allocation [stream] [option-id]` | Pay an ADDRESS option's accrued ERTH to its recipient. |
-| `earthd tx allocation add-address-option [stream] [recipient] [description] [--claimer addr]` | Permissionless: add an ADDRESS option (burns the fee). |
+| `earthd tx allocation add-address-option [stream] [recipient] [description] [--claimer addr]` | Add an ADDRESS option. Permissionless on the caretaker stream (burns the fee); groundworks entry is governance-gated. |
 | `earthd tx allocation add-integrated-option` | Governance-gated (authority = x/gov): add an INTEGRATED option. |
 | `earthd tx allocation reset-allocations` | Governance-gated: retire the groundworks slate of votes. Caretaker is rejected. |
+
+**The assembly** — the democratic chamber (`x/assembly`). Every command needs a live
+proof-of-personhood registration, and each one counts for exactly one vote:
+
+| Command | What it does |
+| --- | --- |
+| `earthd tx assembly vote-proposal [proposal-id] [yes\|no]` | Vote as a human on a governance proposal. Two thirds of the votes cast are required before x/gov's result takes effect. |
+| `earthd tx assembly propose-removal [option-id]` | Open a ballot to remove a groundworks allocation option. No deposit; stake gets no say. |
+| `earthd tx assembly vote-removal [option-id] [yes\|no]` | Vote on an open removal ballot. |
+| `earthd q assembly proposal-tally [proposal-id]` | The human tally on a proposal, and whether it clears two thirds. |
+| `earthd q assembly removal-ballots` | Open removal ballots. |
+
+There is no abstain: approval is measured against the votes cast, so abstaining and not
+voting come to the same arithmetic.
 
 **Queries**: `earthd q allocation options [stream]`, `earthd q allocation option [stream] [id]`,
 `earthd q allocation voter [stream] [address]`, `earthd q allocation params`.
@@ -437,7 +533,8 @@ container image is `ghcr.io/zenopie/earth-network-chain`, pinned by digest.
 cd third_party/barretenberg-go && ./scripts/build-wrapper.sh --platform darwin_arm64
 cd ../.. && make install
 
-ignite chain serve          # local devnet from config.yml
+scripts/testnet-3val.sh up  # local 3-validator chain, binary only
+ignite chain serve          # or a single-node devnet from config.yml
 go test ./...
 ```
 

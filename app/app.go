@@ -52,6 +52,7 @@ import (
 	"github.com/earth-network/earth/openapi"
 	allocationmodulekeeper "github.com/earth-network/earth/x/allocation/keeper"
 	allocationmoduletypes "github.com/earth-network/earth/x/allocation/types"
+	assemblymodulekeeper "github.com/earth-network/earth/x/assembly/keeper"
 	dexmodulekeeper "github.com/earth-network/earth/x/dex/keeper"
 	earthmodulekeeper "github.com/earth-network/earth/x/earth/keeper"
 	personhoodmodulekeeper "github.com/earth-network/earth/x/personhood/keeper"
@@ -119,6 +120,7 @@ type App struct {
 	EarthKeeper      earthmodulekeeper.Keeper
 	DexKeeper        dexmodulekeeper.Keeper
 	AllocationKeeper allocationmodulekeeper.Keeper
+	AssemblyKeeper   assemblymodulekeeper.Keeper
 	PersonhoodKeeper personhoodmodulekeeper.Keeper
 	PkiKeeper        pkimodulekeeper.Keeper
 }
@@ -201,6 +203,7 @@ func New(
 		&app.EarthKeeper,
 		&app.DexKeeper,
 		&app.AllocationKeeper,
+		&app.AssemblyKeeper,
 		&app.PersonhoodKeeper,
 		&app.PkiKeeper,
 	); err != nil {

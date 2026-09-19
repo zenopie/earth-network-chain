@@ -27,7 +27,9 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 // Params defines the parameters for the module.
 type Params struct {
 	// address_option_fee is the ERTH (uerth) burned to add an ADDRESS allocation
-	// option. Adding one is permissionless in either stream; this fee deters spam.
+	// option to the caretaker stream, where adding one is permissionless; this fee
+	// deters spam. Groundworks entry is governance-gated and pays no fee — a
+	// proposal deposit is its brake.
 	AddressOptionFee uint64 `protobuf:"varint,1,opt,name=address_option_fee,json=addressOptionFee,proto3" json:"address_option_fee,omitempty"`
 }
 

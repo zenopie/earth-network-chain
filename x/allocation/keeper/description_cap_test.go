@@ -9,9 +9,9 @@ import (
 	"github.com/earth-network/earth/x/allocation/types"
 )
 
-// Adding an ADDRESS option is permissionless, so its one free-text field is the
-// cheapest way to buy permanent per-block work: every option in a stream is
-// decoded in every EndBlock by CheckStreamWeight.
+// Adding a caretaker ADDRESS option is permissionless, so its one free-text
+// field is the cheapest way to buy permanent per-block work: every option in a
+// stream is decoded in every EndBlock by CheckStreamWeight.
 func TestAddressOptionDescriptionIsCapped(t *testing.T) {
 	e := newTestEnv(t)
 	require.NoError(t, e.k.InitGenesis(e.ctx, *types.DefaultGenesis()))
@@ -19,7 +19,7 @@ func TestAddressOptionDescriptionIsCapped(t *testing.T) {
 	_, alice := e.addr("alice")
 
 	_, err := ms.AddAddressOption(e.ctx, &types.MsgAddAddressOption{
-		Submitter: alice, Stream: types.STREAM_ID_GROUNDWORKS, Recipient: alice,
+		Submitter: alice, Stream: types.STREAM_ID_CARETAKER, Recipient: alice,
 		Description: strings.Repeat("a", types.MaxDescriptionLen+1),
 	})
 	require.ErrorIs(t, err, types.ErrDescriptionTooLong)
@@ -31,11 +31,11 @@ func TestAddressOptionDescriptionIsCapped(t *testing.T) {
 	// The cap is bytes, not characters, because bytes are what state costs — and
 	// exactly at the limit is allowed.
 	ok, err := ms.AddAddressOption(e.ctx, &types.MsgAddAddressOption{
-		Submitter: alice, Stream: types.STREAM_ID_GROUNDWORKS, Recipient: alice,
+		Submitter: alice, Stream: types.STREAM_ID_CARETAKER, Recipient: alice,
 		Description: strings.Repeat("a", types.MaxDescriptionLen),
 	})
 	require.NoError(t, err)
-	opt, err := e.k.Options.Get(e.ctx, optionKey(types.STREAM_ID_GROUNDWORKS, ok.Id))
+	opt, err := e.k.Options.Get(e.ctx, optionKey(types.STREAM_ID_CARETAKER, ok.Id))
 	require.NoError(t, err)
 	require.Len(t, opt.Description, types.MaxDescriptionLen)
 }

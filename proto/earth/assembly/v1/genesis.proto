@@ -1,0 +1,50 @@
+syntax = "proto3";
+package earth.assembly.v1;
+
+import "earth/assembly/v1/assembly.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/assembly/types";
+
+// GenesisState defines the assembly module's genesis state.
+//
+// There are no params. Everything this chamber does is decided by constants in
+// types/keys.go, which is what keeps it out of reach of the governance it
+// checks.
+message GenesisState {
+  // proposal_votes carries the human votes cast on x/gov proposals still in
+  // their voting period. An export mid-vote must not silently discard them: the
+  // proposals themselves come back through x/gov's own genesis, and a proposal
+  // that returned with its stake votes intact but its human votes dropped would
+  // fail for want of a quorum that had in fact been reached.
+  repeated ProposalVoteEntry proposal_votes = 1 [(gogoproto.nullable) = false];
+
+  // removal_ballots carries open removal ballots and the votes cast on them.
+  repeated RemovalBallotEntry removal_ballots = 2 [(gogoproto.nullable) = false];
+}
+
+// ProposalVoteEntry is one human's vote on one proposal. The nullifier is the
+// registration that cast it — see MsgVoteProposal for why votes are keyed by
+// registration rather than by address.
+message ProposalVoteEntry {
+  uint64 proposal_id = 1;
+  bytes nullifier = 2;
+  VoteOption option = 3;
+}
+
+// RemovalBallotEntry is one open removal ballot with the votes cast on it.
+//
+// The ballot's own tally is not exported: it is rebuilt from the votes on
+// import. A count carried separately from the things it counts is a number that
+// can drift from them, and an import is exactly where that drift would enter
+// unnoticed.
+message RemovalBallotEntry {
+  RemovalBallot ballot = 1 [(gogoproto.nullable) = false];
+  repeated RemovalVoteEntry votes = 2 [(gogoproto.nullable) = false];
+}
+
+// RemovalVoteEntry is one human's vote on one removal ballot.
+message RemovalVoteEntry {
+  bytes nullifier = 1;
+  VoteOption option = 2;
+}

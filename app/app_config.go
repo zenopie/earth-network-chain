@@ -70,6 +70,8 @@ import (
 	ibcexported "github.com/cosmos/ibc-go/v10/modules/core/exported"
 	_ "github.com/earth-network/earth/x/allocation/module"
 	allocationmoduletypes "github.com/earth-network/earth/x/allocation/types"
+	_ "github.com/earth-network/earth/x/assembly/module"
+	assemblymoduletypes "github.com/earth-network/earth/x/assembly/types"
 	_ "github.com/earth-network/earth/x/dex/module"
 	dexmoduletypes "github.com/earth-network/earth/x/dex/types"
 	_ "github.com/earth-network/earth/x/earth/module"
@@ -198,6 +200,16 @@ var (
 						// this line is used by starport scaffolding # stargate/app/beginBlockers
 					},
 					EndBlockers: []string{
+						// assembly BEFORE gov, and this ordering is the whole
+						// mechanism rather than a preference. x/gov's EndBlocker
+						// tallies a proposal whose voting period has closed and
+						// executes its messages in the same pass, so there is no
+						// later point at which a decision can be taken back. The
+						// chamber has to remove a proposal the humans refused
+						// from the active queue before x/gov reads that queue.
+						// Move this line below govtypes and every refusal
+						// silently stops working.
+						assemblymoduletypes.ModuleName,
 						govtypes.ModuleName,
 						stakingtypes.ModuleName,
 						feegrant.ModuleName,
@@ -251,6 +263,7 @@ var (
 						allocationmoduletypes.ModuleName,
 						personhoodmoduletypes.ModuleName,
 						pkimoduletypes.ModuleName,
+						assemblymoduletypes.ModuleName,
 						// wasm last: a contract in genesis may call any other
 						// module, so every module it could reach has to have
 						// initialised first.
@@ -358,6 +371,10 @@ var (
 			{
 				Name:   dexmoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&dexmoduletypes.Module{}),
+			},
+			{
+				Name:   assemblymoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&assemblymoduletypes.Module{}),
 			},
 			{
 				Name:   allocationmoduletypes.ModuleName,

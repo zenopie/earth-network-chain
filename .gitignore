@@ -36,3 +36,4 @@ third_party/barretenberg-go/lib/*
 
 # make proto-gen scratch
 .proto-gen/
+__pycache__/

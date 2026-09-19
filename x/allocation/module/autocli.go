@@ -72,10 +72,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Skip:      true, // authority (governance) gated
 				},
 				{
-					RpcMethod:      "AddAddressOption",
-					Use:            "add-address-option [stream] [recipient] [description]",
-					Short:          "Add a claim-based ADDRESS option (permissionless; burns a fee)",
-					Long:           "Add a claim-based ADDRESS option.\n\n" + streamUsage,
+					RpcMethod: "AddAddressOption",
+					Use:       "add-address-option [stream] [recipient] [description]",
+					Short:     "Add a claim-based ADDRESS option (caretaker only; burns a fee)",
+					Long: "Add a claim-based ADDRESS option.\n\n" +
+						"Only the caretaker stream can be added to this way. Groundworks entry is\n" +
+						"governance-gated: submit it as a proposal message with the gov account as\n" +
+						"the submitter.\n\n" + streamUsage,
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "stream"}, {ProtoField: "recipient"}, {ProtoField: "description"}},
 					FlagOptions: map[string]*autocliv1.FlagOptions{
 						"claimer": {Usage: "address allowed to trigger the claim (default: anyone; payout always goes to recipient)"},

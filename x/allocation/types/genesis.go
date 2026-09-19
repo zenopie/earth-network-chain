@@ -85,6 +85,26 @@ func (gs GenesisState) Validate() error {
 			if err := ValidateDescription(opt.Description); err != nil {
 				return fmt.Errorf("stream %s: option %d: %w", st.Stream, opt.Id, err)
 			}
+			// A struck option is kept on file so that voters still naming it are
+			// not stranded, but the strike zeroed both of its figures and burned
+			// the coins behind the balance. One coming back from an import with
+			// either still set would put the stream's weight totals or the
+			// module's solvency out by that much, at height one, with nothing to
+			// point at.
+			if opt.Removed {
+				if !opt.AmountAllocated.IsNil() && !opt.AmountAllocated.IsZero() {
+					return fmt.Errorf("stream %s: removed option %d still carries weight %s",
+						st.Stream, opt.Id, opt.AmountAllocated)
+				}
+				if !opt.Accumulated.IsNil() && !opt.Accumulated.IsZero() {
+					return fmt.Errorf("stream %s: removed option %d still carries a balance of %s",
+						st.Stream, opt.Id, opt.Accumulated)
+				}
+				if st.Stream != STREAM_ID_GROUNDWORKS {
+					return fmt.Errorf("stream %s: option %d is marked removed, which only the groundworks stream can be",
+						st.Stream, opt.Id)
+				}
+			}
 			if opt.Stream != st.Stream {
 				return fmt.Errorf("stream %s: option %d claims stream %s",
 					st.Stream, opt.Id, opt.Stream)

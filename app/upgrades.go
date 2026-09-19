@@ -10,6 +10,7 @@ import (
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 
+	assemblymoduletypes "github.com/earth-network/earth/x/assembly/types"
 	dextypes "github.com/earth-network/earth/x/dex/types"
 	"github.com/earth-network/earth/x/pki/certs"
 	pkitypes "github.com/earth-network/earth/x/pki/types"
@@ -144,6 +145,34 @@ var Upgrades = []Upgrade{
 	{
 		Name:          "v0.8.0",
 		CreateHandler: defaultUpgradeHandler,
+	},
+
+	// Adds x/assembly: governance becomes bicameral.
+	//
+	// From this height every x/gov proposal also needs two thirds of the human
+	// votes cast on it — one live proof-of-personhood registration is one vote —
+	// and a proposal that does not get them is failed before x/gov tallies it.
+	// There are no capital-only proposals any more, upgrades included. The
+	// chamber originates nothing except the removal of a groundworks allocation
+	// option, which it does alone.
+	//
+	// OPERATORS: there is no quorum and no minimum turnout, by design. A proposal
+	// nobody votes on FAILS. After this height, a governance proposal that is not
+	// voted in the assembly cannot pass, however much stake is behind it — see
+	// x/assembly/types/keys.go. Make sure you can cast an assembly vote before
+	// voting on anything else.
+	//
+	// StoreUpgrades is required: the new module's store has to be declared to the
+	// commit multistore or the node will not start. No state migration — the
+	// chamber begins empty, since it holds only votes in flight and there are
+	// none at the upgrade height. Existing allocation options decode unchanged:
+	// AllocationOption.removed is a new field, and proto3 reads a missing bool as
+	// false, which is the correct answer for every option that predates it.
+	// AppVersion stays at 1 for the reason given on v0.6.0.
+	{
+		Name:          "v0.9.0",
+		CreateHandler: defaultUpgradeHandler,
+		StoreUpgrades: storetypes.StoreUpgrades{Added: []string{assemblymoduletypes.StoreKey}},
 	},
 }
 

@@ -26,6 +26,11 @@ var (
 	// humans alone; see msg_server_reset_allocations.go.
 	ErrStreamNotResettable = errors.Register(ModuleName, 1110, "allocation stream cannot be reset by governance")
 
+	// ErrOptionRemoved means the option named by a vote has been struck by the
+	// assembly. The record survives so that voters already naming it are not
+	// stranded (see keeper/removal.go), but nothing may be allocated to it again.
+	ErrOptionRemoved = errors.Register(ModuleName, 1111, "allocation option has been removed")
+
 	// ErrInvariantBroken means a stream's declared total weight no longer equals
 	// the sum of its options' allocations. Returned from the EndBlocker, so it
 	// halts the chain — see keeper/invariants.go for why.

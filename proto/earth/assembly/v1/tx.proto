@@ -1,0 +1,77 @@
+syntax = "proto3";
+package earth.assembly.v1;
+
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/assembly/v1/assembly.proto";
+
+option go_package = "github.com/earth-network/earth/x/assembly/types";
+
+// Msg is the assembly: the chamber where weight is a person rather than a coin.
+//
+// Every message here requires a live proof-of-personhood registration from its
+// signer, and every one of them counts for exactly one. There is no
+// UpdateParams: the assembly exists to check stake-weighted governance, so
+// nothing about it is a governance parameter.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // VoteProposal casts the sender's vote on an x/gov proposal that is in its
+  // voting period. Two thirds of the votes cast here are required before x/gov's
+  // own result is allowed to take effect.
+  rpc VoteProposal(MsgVoteProposal) returns (MsgVoteProposalResponse);
+
+  // ProposeRemoval opens a ballot to remove a live groundworks allocation
+  // option.
+  rpc ProposeRemoval(MsgProposeRemoval) returns (MsgProposeRemovalResponse);
+
+  // VoteRemoval casts the sender's vote on an open removal ballot.
+  rpc VoteRemoval(MsgVoteRemoval) returns (MsgVoteRemovalResponse);
+}
+
+// MsgVoteProposal votes on an x/gov proposal as a human.
+//
+// This is not x/gov's MsgVote and cannot be. That message is weighted by bonded
+// stake, and the votes it records are deleted by the tally that counts them — a
+// human vote cast there would be both miscounted and destroyed.
+//
+// The vote is recorded against the registration behind the signer rather than
+// against the address, because a registration can be moved to a new wallet. Keyed
+// by address, one person could vote, move, and vote again.
+message MsgVoteProposal {
+  option (cosmos.msg.v1.signer) = "voter";
+  string voter = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 proposal_id = 2;
+  VoteOption option = 3;
+}
+
+// MsgVoteProposalResponse defines the MsgVoteProposal response type.
+message MsgVoteProposalResponse {}
+
+// MsgProposeRemoval opens a ballot to remove groundworks option option_id.
+//
+// No deposit. A deposit would price this in ERTH, and a chamber whose whole
+// premise is that holdings do not count cannot charge for entry in holdings. The
+// brake is instead structural: one open ballot per option, and a live
+// registration to open it.
+message MsgProposeRemoval {
+  option (cosmos.msg.v1.signer) = "proposer";
+  string proposer = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 option_id = 2;
+}
+
+// MsgProposeRemovalResponse reports when the ballot closes, in unix seconds.
+message MsgProposeRemovalResponse {
+  int64 closes_at = 1;
+}
+
+// MsgVoteRemoval votes on an open removal ballot.
+message MsgVoteRemoval {
+  option (cosmos.msg.v1.signer) = "voter";
+  string voter = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 option_id = 2;
+  VoteOption option = 3;
+}
+
+// MsgVoteRemovalResponse defines the MsgVoteRemoval response type.
+message MsgVoteRemovalResponse {}

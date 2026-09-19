@@ -185,6 +185,8 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	// The same registrations the app performs from x/dex and x/personhood.
 	k.RegisterWeightSource(types.STREAM_ID_CARETAKER, humans)
+	// And the one x/assembly performs: the chamber allowed to strike an option.
+	k.RegisterChamber(chamberAddr())
 	k.RegisterIntegratedHandler(types.STREAM_ID_GROUNDWORKS, types.HandlerLPRewards,
 		func(_ context.Context, accrued math.Int) (math.Int, error) {
 			dex.distributed = dex.distributed.Add(accrued)
@@ -265,9 +267,10 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 		t.Fatal("capital option #1 not in the integrated set")
 	}
 
-	// AddAddressOption is permissionless and burns the fee; option is NOT integrated.
+	// AddAddressOption on caretaker is permissionless and burns the fee; option
+	// is NOT integrated.
 	added, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
-		Submitter: alice, Stream: types.STREAM_ID_GROUNDWORKS, Recipient: alice, Description: "grant",
+		Submitter: alice, Stream: types.STREAM_ID_CARETAKER, Recipient: alice, Description: "grant",
 	})
 	if err != nil {
 		t.Fatalf("AddAddressOption: %v", err)
@@ -275,10 +278,10 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 	if got := e.bank.burned.AmountOf("uerth"); !got.Equal(math.NewInt(types.DefaultAddressOptionFee)) {
 		t.Fatalf("fee burned = %s, want %d", got, types.DefaultAddressOptionFee)
 	}
-	if opt, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, added.Id)); opt.Kind != types.ALLOCATION_KIND_ADDRESS {
+	if opt, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_CARETAKER, added.Id)); opt.Kind != types.ALLOCATION_KIND_ADDRESS {
 		t.Fatalf("option #%d kind = %v, want ADDRESS", added.Id, opt.Kind)
 	}
-	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, added.Id)); has {
+	if has, _ := k.IntegratedOptions.Has(ctx, optionKey(types.STREAM_ID_CARETAKER, added.Id)); has {
 		t.Fatal("ADDRESS option must NOT be in the integrated set")
 	}
 
@@ -315,9 +318,9 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 		o.Accumulated = math.NewInt(amt)
 		_ = k.Options.Set(ctx, optionKey(stream, id), o)
 	}
-	set(types.STREAM_ID_GROUNDWORKS, 1, 500)        // integrated (lp_rewards)
-	set(types.STREAM_ID_GROUNDWORKS, added.Id, 300) // address
-	set(types.STREAM_ID_CARETAKER, 1, 700)          // integrated, but its handler resolves nothing
+	set(types.STREAM_ID_GROUNDWORKS, 1, 500)      // integrated (lp_rewards)
+	set(types.STREAM_ID_CARETAKER, added.Id, 300) // address
+	set(types.STREAM_ID_CARETAKER, 1, 700)        // integrated, but its handler resolves nothing
 	ctx = ctx.WithBlockTime(time.Unix(1000, 0))
 	if err := k.BeginBlocker(ctx); err != nil {
 		t.Fatalf("BeginBlocker: %v", err)
@@ -328,12 +331,61 @@ func TestIntegratedAndAddressOptions(t *testing.T) {
 	if o1, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, 1)); !o1.Accumulated.IsZero() {
 		t.Fatalf("integrated option accumulated = %s, want 0 (resolved)", o1.Accumulated)
 	}
-	if o2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, added.Id)); !o2.Accumulated.Equal(math.NewInt(300)) {
+	if o2, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_CARETAKER, added.Id)); !o2.Accumulated.Equal(math.NewInt(300)) {
 		t.Fatalf("ADDRESS option accumulated = %s, want 300 (untouched, lazy)", o2.Accumulated)
 	}
 	if h1, _ := k.Options.Get(ctx, optionKey(types.STREAM_ID_CARETAKER, 1)); !h1.Accumulated.Equal(math.NewInt(700)) {
 		t.Fatalf("registration-rewards pool = %s, want 700 (stacks until a registration draws it)", h1.Accumulated)
 	}
+}
+
+// TestGroundworksAddressOptionIsGovernanceGated pins the asymmetry in who may
+// list an ADDRESS option.
+//
+// The rule exists because the groundworks stream weights votes by bonded stake.
+// An option payable to whoever listed it makes self-voting dominant there —
+// point your own weight at your own option and you keep everything it draws —
+// so the equilibrium is every staker listing themselves and the fund paying out
+// pro rata to stake, building none of the infrastructure it exists for. On the
+// caretaker stream the same move only splits the fund equally among registered
+// humans, so entry stays open.
+func TestGroundworksAddressOptionIsGovernanceGated(t *testing.T) {
+	e := newTestEnv(t)
+	k, ctx := e.k, e.ctx
+	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
+	ms := NewMsgServerImpl(k)
+	authority, _ := k.addressCodec.BytesToString(k.GetAuthority())
+	_, alice := e.addr("alice")
+
+	// A staker cannot list themselves on the groundworks slate.
+	_, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
+		Submitter: alice, Stream: types.STREAM_ID_GROUNDWORKS, Recipient: alice, Description: "pay me",
+	})
+	require.ErrorIs(t, err, types.ErrInvalidSigner)
+	require.True(t, e.bank.burned.IsZero(), "a rejected option must not burn the fee")
+
+	// Governance can, and pays no fee: the burn is the open path's spam brake,
+	// and taking it from the authority account would destroy protocol funds.
+	gov, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
+		Submitter: authority, Stream: types.STREAM_ID_GROUNDWORKS, Recipient: alice, Description: "grant",
+	})
+	require.NoError(t, err)
+	require.True(t, e.bank.burned.IsZero(), "the gov-gated path charges no fee")
+	opt, err := k.Options.Get(ctx, optionKey(types.STREAM_ID_GROUNDWORKS, gov.Id))
+	require.NoError(t, err)
+	require.Equal(t, types.ALLOCATION_KIND_ADDRESS, opt.Kind)
+	require.Equal(t, alice, opt.Recipient)
+
+	// The caretaker slate is unaffected: anyone may list, for the fee.
+	own, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
+		Submitter: alice, Stream: types.STREAM_ID_CARETAKER, Recipient: alice, Description: "pay me",
+	})
+	require.NoError(t, err)
+	require.Equal(t, math.NewInt(types.DefaultAddressOptionFee), e.bank.burned.AmountOf("uerth"))
+	require.True(t, func() bool {
+		_, err := k.Options.Get(ctx, optionKey(types.STREAM_ID_CARETAKER, own.Id))
+		return err == nil
+	}())
 }
 
 // TestAddressOptionClaimer covers the optional claimer on ADDRESS options: with
@@ -350,7 +402,7 @@ func TestAddressOptionClaimer(t *testing.T) {
 	_, claimer := e.addr("claimer")
 	_, stranger := e.addr("stranger")
 
-	stream := types.STREAM_ID_GROUNDWORKS
+	stream := types.STREAM_ID_CARETAKER
 	open, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
 		Submitter: recipient, Stream: stream, Recipient: recipient, Description: "open",
 	})

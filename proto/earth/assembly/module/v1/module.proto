@@ -1,0 +1,16 @@
+syntax = "proto3";
+package earth.assembly.module.v1;
+
+import "cosmos/app/v1alpha1/module.proto";
+
+option go_package = "github.com/earth-network/earth/x/assembly/types";
+
+// Module is the config object for the module.
+//
+// There is no authority field, unlike every other module here. The assembly is
+// the chamber that checks stake-weighted governance, so nothing about it may be
+// set by a governance proposal — its thresholds are compile-time constants and
+// it has no params message at all.
+message Module {
+  option (cosmos.app.v1alpha1.module) = {go_import: "github.com/earth-network/earth/x/assembly"};
+}

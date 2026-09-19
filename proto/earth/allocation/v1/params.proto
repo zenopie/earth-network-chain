@@ -12,6 +12,8 @@ message Params {
   option (gogoproto.equal) = true;
 
   // address_option_fee is the ERTH (uerth) burned to add an ADDRESS allocation
-  // option. Adding one is permissionless in either stream; this fee deters spam.
+  // option to the caretaker stream, where adding one is permissionless; this fee
+  // deters spam. Groundworks entry is governance-gated and pays no fee — a
+  // proposal deposit is its brake.
   uint64 address_option_fee = 1;
 }

@@ -2,6 +2,9 @@ package keeper
 
 import (
 	"context"
+	"errors"
+
+	"cosmossdk.io/collections"
 
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -53,12 +56,20 @@ func (k msgServer) SetAllocations(ctx context.Context, msg *types.MsgSetAllocati
 			return nil, errorsmod.Wrapf(types.ErrBadPercentages, "duplicate option %d", w.OptionId)
 		}
 		seen[w.OptionId] = struct{}{}
-		has, err := k.Options.Has(ctx, optionKey(msg.Stream, w.OptionId))
+		opt, err := k.Options.Get(ctx, optionKey(msg.Stream, w.OptionId))
 		if err != nil {
+			if errors.Is(err, collections.ErrNotFound) {
+				return nil, errorsmod.Wrapf(types.ErrOptionNotFound, "option %d", w.OptionId)
+			}
 			return nil, err
 		}
-		if !has {
-			return nil, errorsmod.Wrapf(types.ErrOptionNotFound, "option %d", w.OptionId)
+		// Refused here rather than silently ignored. resyncVoter skips a struck
+		// option when it replays a stored split, because by then the alternative
+		// is erroring out of a staking hook — but a voter casting a split now is
+		// present to be told, and quietly accepting a share that will never
+		// accrue anything is worse than rejecting it.
+		if opt.Removed {
+			return nil, errorsmod.Wrapf(types.ErrOptionRemoved, "option %d", w.OptionId)
 		}
 		sum += w.Percent
 	}

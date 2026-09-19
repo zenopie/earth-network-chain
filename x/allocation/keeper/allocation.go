@@ -358,6 +358,13 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 			if err != nil {
 				continue
 			}
+			// A struck option had its whole weight taken out of TotalWeight and
+			// SummedWeight when it was struck, this voter's share included.
+			// Subtracting that share again here would count it twice and drive
+			// both figures below what the live options actually hold.
+			if opt.Removed {
+				continue
+			}
 			settleOption(&opt, rewardIndex)
 			amt := old.Weight.MulRaw(int64(w.Percent)).QuoRaw(100)
 			opt.AmountAllocated = opt.AmountAllocated.Sub(amt)
@@ -371,10 +378,28 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 	}
 
 	// Add the new contribution.
+	//
+	// Both skips below are for replays rather than for votes. A voter's split is
+	// stored and re-applied whenever their weight moves — a delegation, an
+	// unbond, a registration lapsing — with no transaction behind it and nobody
+	// watching. MsgSetAllocations refuses both of these cases at the point the
+	// split is cast; by the time it is being replayed, refusing is not an option,
+	// because the error would come out of a staking hook and leave the voter
+	// unable to bond or unbond at all.
 	for _, w := range percentages {
 		opt, err := k.Options.Get(ctx, optionKey(stream, w.OptionId))
 		if err != nil {
-			return types.ErrOptionNotFound.Wrapf("option %d", w.OptionId)
+			// The option is gone: struck long enough ago that the idle sweep has
+			// collected it, or pruned after the voter's own weight fell to zero
+			// and left it unsupported. Their remaining shares still apply.
+			if errors.Is(err, collections.ErrNotFound) {
+				continue
+			}
+			return err
+		}
+		// Struck, but still on file. Nothing may be allocated to it again.
+		if opt.Removed {
+			continue
 		}
 		settleOption(&opt, rewardIndex)
 		amt := weight.MulRaw(int64(w.Percent)).QuoRaw(100)

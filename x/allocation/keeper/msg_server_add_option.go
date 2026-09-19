@@ -57,9 +57,27 @@ func (k msgServer) AddIntegratedOption(ctx context.Context, msg *types.MsgAddInt
 	return &types.MsgAddIntegratedOptionResponse{Id: id}, nil
 }
 
-// AddAddressOption adds a claim-based ADDRESS option. Permissionless: any
-// account may add one to either stream by burning params.address_option_fee
-// (ERTH).
+// AddAddressOption adds a claim-based ADDRESS option. Who may add one depends
+// on the stream, because the same permissionless rule has opposite consequences
+// on the two axes.
+//
+// Caretaker: permissionless. Any account may add one by burning
+// params.address_option_fee. Weight there is one human, one vote, so the worst
+// case — every human lists their own address and votes for it — is an equal
+// split among registered humans. That is a dividend, not a capture: proof of
+// personhood caps it at one share each, and it is what that constituency chose.
+//
+// Groundworks: governance-gated. Weight there is bonded stake, and an option
+// payable to whoever listed it makes self-voting the dominant strategy — point
+// your weight at your own option and you keep everything it draws, against a
+// diffuse fraction of anything shared. Played out, every staker lists
+// themselves and the stream pays out pro rata to stake: a second staking yield
+// that builds none of the infrastructure the fund exists for. The revocability
+// that disciplines every other option is no help, since a self-voter is funded
+// entirely by their own weight and other voters leaving raises their share
+// rather than lowering it. Neither is the fee, which is priced against volume —
+// one burn against a perpetual pro-rata claim pays for itself. Requiring the
+// authority is what takes the unilateral move away.
 func (k msgServer) AddAddressOption(ctx context.Context, msg *types.MsgAddAddressOption) (*types.MsgAddAddressOptionResponse, error) {
 	if err := ValidateStream(msg.Stream); err != nil {
 		return nil, err
@@ -73,6 +91,11 @@ func (k msgServer) AddAddressOption(ctx context.Context, msg *types.MsgAddAddres
 	if err != nil {
 		return nil, errorsmod.Wrap(err, "invalid submitter address")
 	}
+	gated := msg.Stream == types.STREAM_ID_GROUNDWORKS
+	if gated && !bytes.Equal(subBz, k.GetAuthority()) {
+		return nil, errorsmod.Wrap(types.ErrInvalidSigner,
+			"expected authority to add an address option to the groundworks stream")
+	}
 	if _, err := k.addressCodec.StringToBytes(msg.Recipient); err != nil {
 		return nil, errorsmod.Wrap(err, "invalid recipient address")
 	}
@@ -83,24 +106,30 @@ func (k msgServer) AddAddressOption(ctx context.Context, msg *types.MsgAddAddres
 		}
 	}
 
-	params, err := k.Params.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if params.AddressOptionFee > 0 {
-		denom, err := k.HubDenom(ctx)
+	// The fee is the open path's spam brake, so it is charged only where that
+	// path exists. Governance pays a proposal deposit instead, and burning from
+	// the authority account would destroy protocol funds rather than a
+	// submitter's.
+	if !gated {
+		params, err := k.Params.Get(ctx)
 		if err != nil {
 			return nil, err
 		}
-		fee := sdk.NewCoins(sdk.NewCoin(denom, math.NewIntFromUint64(params.AddressOptionFee)))
-		if err := k.bankKeeper.SendCoinsFromAccountToModule(ctx, sdk.AccAddress(subBz), types.ModuleName, fee); err != nil {
-			return nil, err
-		}
-		if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, fee); err != nil {
-			return nil, err
-		}
-		if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceAllocation, fee); err != nil {
-			return nil, err
+		if params.AddressOptionFee > 0 {
+			denom, err := k.HubDenom(ctx)
+			if err != nil {
+				return nil, err
+			}
+			fee := sdk.NewCoins(sdk.NewCoin(denom, math.NewIntFromUint64(params.AddressOptionFee)))
+			if err := k.bankKeeper.SendCoinsFromAccountToModule(ctx, sdk.AccAddress(subBz), types.ModuleName, fee); err != nil {
+				return nil, err
+			}
+			if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, fee); err != nil {
+				return nil, err
+			}
+			if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceAllocation, fee); err != nil {
+				return nil, err
+			}
 		}
 	}
 

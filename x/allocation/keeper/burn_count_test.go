@@ -22,7 +22,7 @@ func TestOptionFeeIsCounted(t *testing.T) {
 	_, alice := e.addr("alice")
 
 	_, err := ms.AddAddressOption(e.ctx, &types.MsgAddAddressOption{
-		Submitter: alice, Stream: types.STREAM_ID_GROUNDWORKS, Recipient: alice, Description: "grant",
+		Submitter: alice, Stream: types.STREAM_ID_CARETAKER, Recipient: alice, Description: "grant",
 	})
 	require.NoError(t, err)
 

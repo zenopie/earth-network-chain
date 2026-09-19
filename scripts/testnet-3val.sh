@@ -5,11 +5,20 @@
 #   ./scripts/testnet-3val.sh up      # build genesis, start 3 nodes, promote 2
 #   ./scripts/testnet-3val.sh down    # stop everything and clean up
 #
-# Node 0 is the genesis validator (from config.yml via `ignite chain init`, so it
-# carries the seeded CSCAs, verifying keys and the ANML/ERTH pool). Nodes 1 and 2
-# sync, then join the validator set with MsgCreateValidator — the same path a
-# real operator takes, which also exercises validator-set changes at runtime
-# rather than only at genesis.
+# Node 0 is the genesis validator, built from networks/genesis.json — the same
+# file earth-1 launched with, so it carries the real CSCAs, verifying keys and
+# ANML/ERTH pool rather than an approximation of them. Nodes 1 and 2 sync, then
+# join the validator set with MsgCreateValidator — the same path a real operator
+# takes, which also exercises validator-set changes at runtime rather than only
+# at genesis.
+#
+# This used to shell out to `ignite chain init`. ignite is no longer part of
+# building this chain — `make proto-gen` calls buf directly — and this script was
+# the last thing dragging it back in, so the local testnet stopped working the
+# moment ignite's own toolchain handling broke (it tries to fetch a pinned Go
+# version and fails if it is not there). Building genesis from the file we
+# actually ship removes the dependency and tests something closer to the real
+# chain.
 #
 # Voting power is deliberately uneven (see STAKES): it makes the >2/3 liveness
 # threshold observable — losing the largest validator halts the chain, losing a
@@ -18,16 +27,20 @@ set -euo pipefail
 
 CHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EARTHD="${EARTHD:-$HOME/go/bin/earthd}"
-# Read from the genesis ignite builds, never assumed.
+# Deliberately NOT earth-1, even though the genesis it is built from carries that
+# id. This is a throwaway local network, and sharing the mainnet chain id would
+# make a transaction signed here replayable there.
 #
-# It was hardcoded to earth-1, which is what networks/genesis.json carries — but
-# `ignite chain init` names the chain from config.yml, config.yml sets no chain
-# id, and ignite then defaults to `earth`. Every transaction below was signed
-# for a chain that was not this one and came back "signature verification
-# failed", which the script discarded. Nodes 1 and 2 synced and silently never
-# joined the validator set, and `up` reported success.
-CHAIN_ID=
+# It is set once, here, and every transaction below is signed for it. This used
+# to be assumed rather than set, and was wrong: every tx came back "signature
+# verification failed", the script discarded the output, nodes 1 and 2 silently
+# never joined the validator set, and `up` reported success anyway.
+CHAIN_ID="${CHAIN_ID:-earth-3val}"
 BASE=/tmp/earth-3val
+GENESIS_SRC="$CHAIN_DIR/networks/genesis.json"
+# Optional: shorten governance so a proposal can be driven end to end by hand.
+# Unset keeps what the launch genesis carries, which is a seven-day vote.
+GOV_VOTING_PERIOD="${GOV_VOTING_PERIOD:-}"
 
 # node index -> RPC / P2P / API / gRPC ports
 RPC=(26657 26667 26677)
@@ -59,20 +72,57 @@ except Exception:
     echo "error: transaction rejected (code $code):" >&2; echo "$out" >&2; exit 1; }
 }
 
+# wait_blocks waits for node0 to advance N blocks.
+#
+# This replaces a `sleep 4` between transactions. A fixed sleep is a bet on the
+# block time, and it lost the moment genesis stopped coming from ignite: the
+# launch genesis leaves CometBFT's 5s timeout_commit alone, 4s is less than one
+# block, and the second transaction from the same key was therefore built
+# against a sequence the first had not yet consumed. It failed with "account
+# sequence mismatch, expected 2, got 1" and took the whole script down with it.
+wait_blocks() {
+  local want="$1" start now
+  start=$(node0_height)
+  for _ in $(seq 120); do
+    now=$(node0_height)
+    [ "${now:-0}" -ge $(( ${start:-0} + want )) ] && return 0
+    sleep 1
+  done
+  echo "error: node0 stopped producing blocks" >&2; exit 1
+}
+
+node0_height() {
+  curl -s "http://127.0.0.1:${RPC[0]}/status" 2>/dev/null \
+    | python3 -c "import json,sys;print(json.load(sys.stdin)['result']['sync_info']['latest_block_height'])" 2>/dev/null \
+    || echo 0
+}
+
 up() {
-  command -v ignite >/dev/null || { echo "error: ignite not on PATH" >&2; exit 1; }
   [ -x "$EARTHD" ] || { echo "error: no earthd at $EARTHD" >&2; exit 1; }
+  [ -f "$GENESIS_SRC" ] || { echo "error: no genesis at $GENESIS_SRC" >&2; exit 1; }
 
   rm -rf "$BASE"; mkdir -p "$BASE"
 
-  say "node0: building genesis via ignite chain init (~1 min, silent)"
-  ( cd "$CHAIN_DIR" && ignite chain init --home "$BASE/n0" >"$BASE/init.log" 2>&1 ) \
-    || { echo "ignite chain init failed; see $BASE/init.log" >&2; exit 1; }
-  CHAIN_ID="$(python3 -c "import json;print(json.load(open('$BASE/n0/config/genesis.json'))['chain_id'])")"
-  [ -n "$CHAIN_ID" ] || { echo "error: no chain_id in the genesis ignite just built" >&2; exit 1; }
-  say "node0: genesis ready, chain id $CHAIN_ID"
+  say "node0: building genesis from networks/genesis.json (chain id $CHAIN_ID)"
+  "$EARTHD" init node0 --chain-id "$CHAIN_ID" --home "$BASE/n0" >/dev/null 2>&1
+  "$EARTHD" keys add alice --keyring-backend test --home "$BASE/n0" >/dev/null 2>&1
+  cp "$GENESIS_SRC" "$BASE/n0/config/genesis.json"
 
-  node0_id=$("$EARTHD" tendermint show-node-id --home "$BASE/n0")
+  # Rewrite only what a local network cannot inherit: its own chain id, a
+  # genesis_time of now so it does not spend its first minutes catching up, and
+  # the gentx list, which collect-gentxs replaces below.
+  python3 "$CHAIN_DIR/scripts/lib/localize-genesis.py" \
+    "$BASE/n0/config/genesis.json" "$CHAIN_ID" "$GOV_VOTING_PERIOD"
+
+  alice_addr=$("$EARTHD" keys show alice -a --keyring-backend test --home "$BASE/n0")
+  "$EARTHD" genesis add-genesis-account "$alice_addr" 500000000000uerth \
+    --keyring-backend test --home "$BASE/n0" >/dev/null
+  "$EARTHD" genesis gentx alice 100000000000uerth --chain-id "$CHAIN_ID" \
+    --keyring-backend test --home "$BASE/n0" >/dev/null 2>&1
+  "$EARTHD" genesis collect-gentxs --home "$BASE/n0" >/dev/null 2>&1
+  say "node0: genesis ready"
+
+  node0_id=$("$EARTHD" comet show-node-id --home "$BASE/n0")
 
   for i in 1 2; do
     say "node$i: init + copy genesis"
@@ -87,6 +137,8 @@ up() {
     cfg="$BASE/n$i/config/config.toml"
     perl -0777 -pi -e 's|^allow_duplicate_ip = false|allow_duplicate_ip = true|m' "$cfg"
     perl -0777 -pi -e 's|^addr_book_strict = true|addr_book_strict = false|m' "$cfg"
+    # A local network has no reason to take five seconds a block.
+    perl -0777 -pi -e 's|^timeout_commit = .*|timeout_commit = "1s"|m' "$cfg"
   done
 
   for i in 0 1 2; do
@@ -104,8 +156,7 @@ up() {
 
   say "waiting for node0 to produce blocks"
   for _ in $(seq 60); do
-    h=$(curl -s "http://127.0.0.1:${RPC[0]}/status" 2>/dev/null \
-        | python3 -c "import json,sys;print(json.load(sys.stdin)['result']['sync_info']['latest_block_height'])" 2>/dev/null || echo 0)
+    h=$(node0_height)
     [ "${h:-0}" -ge 3 ] && break
     sleep 1
   done
@@ -119,11 +170,11 @@ up() {
       --from alice --keyring-backend test --home "$BASE/n0" \
       --node "tcp://127.0.0.1:${RPC[0]}" --chain-id "$CHAIN_ID" \
       --gas auto --gas-adjustment 1.5 --fees 5000uerth
-    sleep 4
+    wait_blocks 2
   done
 
   for i in 1 2; do
-    pubkey=$("$EARTHD" tendermint show-validator --home "$BASE/n$i")
+    pubkey=$("$EARTHD" comet show-validator --home "$BASE/n$i")
     cat > "$BASE/n$i/val.json" <<EOF
 {
   "pubkey": $pubkey,
@@ -139,7 +190,7 @@ EOF
       --from "val$i" --keyring-backend test --home "$BASE/n$i" \
       --node "tcp://127.0.0.1:${RPC[0]}" --chain-id "$CHAIN_ID" \
       --gas auto --gas-adjustment 1.5 --fees 5000uerth
-    sleep 4
+    wait_blocks 2
   done
 
   say "up. RPC: ${RPC[*]}  logs: $BASE/n{0,1,2}.log"
