@@ -96,3 +96,15 @@ type PkiKeeper interface {
 type BurnRecorder interface {
 	RecordBurn(ctx context.Context, source string, coins sdk.Coins) error
 }
+
+// RetirementListener is told when a registration stops counting as a human —
+// expired and swept, purged under a revoked Document Signer, or replaced by the
+// same wallet re-registering — so a module holding records filed under its
+// nullifier can take them back.
+//
+// Not told about a wallet switch. A switch moves the same person to a new
+// address under the same nullifier, and nothing filed under that nullifier
+// stops being theirs.
+type RetirementListener interface {
+	OnRegistrationRetired(ctx context.Context, nullifier []byte) error
+}

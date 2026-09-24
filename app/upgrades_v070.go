@@ -367,9 +367,20 @@ func v070RemapBytesKeySet(ctx context.Context, s collections.KeySet[[]byte], rem
 // with the old keys — which are the ones networks/genesis.json installs — up to
 // this height, and the new pair after it.
 func v070SwapVerifyingKeys(ctx context.Context, app *App) error {
-	entries, err := v070Assets.ReadDir(v070VerifyingKeyDir)
+	return swapVerifyingKeys(ctx, app, v070Assets, v070VerifyingKeyDir, "v0.7.0")
+}
+
+// swapVerifyingKeys replaces every verifying key in x/personhood's params with
+// the one embedded under dir, refusing unless the embedded set and the params
+// name exactly the same circuits. release prefixes every error.
+//
+// Shared by every upgrade that recompiles the register circuits. It must stay
+// behaviourally identical for v0.7.0, which a node replaying from genesis runs
+// at its historical height.
+func swapVerifyingKeys(ctx context.Context, app *App, assets embed.FS, dir, release string) error {
+	entries, err := assets.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("v0.7.0: could not read the embedded verifying keys: %w", err)
+		return fmt.Errorf("%s: could not read the embedded verifying keys: %w", release, err)
 	}
 
 	params, err := app.PersonhoodKeeper.Params.Get(ctx)
@@ -383,16 +394,16 @@ func v070SwapVerifyingKeys(ctx context.Context, app *App) error {
 	installed := make([]string, 0, len(entries))
 	for _, e := range entries {
 		algo := strings.TrimSuffix(e.Name(), ".vk.b64")
-		raw, err := v070Assets.ReadFile(path.Join(v070VerifyingKeyDir, e.Name()))
+		raw, err := assets.ReadFile(path.Join(dir, e.Name()))
 		if err != nil {
-			return fmt.Errorf("v0.7.0: could not read %s: %w", e.Name(), err)
+			return fmt.Errorf("%s: could not read %s: %w", release, e.Name(), err)
 		}
 		vk, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
 		if err != nil {
-			return fmt.Errorf("v0.7.0: %s is not valid base64: %w", e.Name(), err)
+			return fmt.Errorf("%s: %s is not valid base64: %w", release, e.Name(), err)
 		}
 		if len(vk) == 0 {
-			return fmt.Errorf("v0.7.0: %s decodes to nothing", e.Name())
+			return fmt.Errorf("%s: %s decodes to nothing", release, e.Name())
 		}
 		// Every algorithm the chain already knows must be replaced, not merely
 		// added to. A circuit left on its old key would verify old-format proofs
@@ -401,8 +412,8 @@ func v070SwapVerifyingKeys(ctx context.Context, app *App) error {
 		// broken-window failure, made permanent.
 		if _, ok := params.VerifyingKeys[algo]; !ok {
 			return fmt.Errorf(
-				"v0.7.0 refuses to run: the embedded key set names %q, which the chain's params "+
-					"do not carry. The two must describe the same circuits", algo)
+				"%s refuses to run: the embedded key set names %q, which the chain's params "+
+					"do not carry. The two must describe the same circuits", release, algo)
 		}
 		params.VerifyingKeys[algo] = vk
 		installed = append(installed, algo)
@@ -420,13 +431,13 @@ func v070SwapVerifyingKeys(ctx context.Context, app *App) error {
 		}
 		if !found {
 			return fmt.Errorf(
-				"v0.7.0 refuses to run: the chain's params carry %q but no recompiled verifying "+
-					"key was embedded for it, so registration under it would break at this height", algo)
+				"%s refuses to run: the chain's params carry %q but no recompiled verifying "+
+					"key was embedded for it, so registration under it would break at this height", release, algo)
 		}
 	}
 
 	if err := params.Validate(); err != nil {
-		return fmt.Errorf("v0.7.0: the swapped params do not validate: %w", err)
+		return fmt.Errorf("%s: the swapped params do not validate: %w", release, err)
 	}
 	return app.PersonhoodKeeper.Params.Set(ctx, params)
 }

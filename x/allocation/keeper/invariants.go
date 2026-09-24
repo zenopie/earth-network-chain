@@ -261,10 +261,13 @@ func (k Keeper) walkAccrued(ctx context.Context) (math.Int, error) {
 // that shows up as a number instead of as a failed send months later.
 //
 // The comparison is >= rather than ==, and the slack is real rather than
-// tolerated. settleOption credits each option AmountAllocated*(idx-last)/1e18,
-// truncating per option, so the options between them collect a hair less than
-// the interval released — sub-uerth per option per block. That surplus sits on
-// the account. It is reported so it can be watched, because a surplus growing
+// tolerated. AdvanceIndex reserves delta*total/1e18 rounded up, and
+// settleOption credits each option AmountAllocated*(idx-last)/1e18 rounded
+// down, so the options between them collect at most what was reserved — the
+// difference is under one uerth per block plus one per option settle. That
+// surplus sits on the account. (It was once the other way round: the reserve was
+// rounded down, and a lazily-settled option could collect more than it, which
+// this check caught as a halt.) It is reported so it can be watched, because a surplus growing
 // faster than dust means something is minting without accruing.
 
 // SolvencyReport is what the module's options say they hold against what it has.

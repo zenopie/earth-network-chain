@@ -3,6 +3,7 @@ syntax = "proto3";
 package earth.dex.v1;
 
 import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
 import "earth/dex/v1/auction.proto";
 import "earth/dex/v1/params.proto";
 import "earth/dex/v1/pool.proto";
@@ -37,4 +38,39 @@ message GenesisState {
   // carries one for the ANML/ERTH pool; the auction's is added when it settles,
   // because until then there is no pool and no shares to retire.
   repeated PolBurn pol_burns = 6 [(gogoproto.nullable) = false];
+
+  // pending_lp_rewards is LP reward ERTH the module holds that no pool is owed.
+  //
+  // ExportGenesis settles every pool into its reserve before writing it, because
+  // InitGenesis restarts the LP reward index at zero and a pool's unsettled
+  // share would not survive that. What is left after settling is sub-uerth
+  // truncation dust — still on the module account, so it has to be carried or
+  // the solvency check reads it as ERTH nobody can account for and halts.
+  string pending_lp_rewards = 7 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // volume_index and volume_index_day are the scaling index every pool's
+  // volume_weight was recorded against. Restarting it at 1.0 would leave every
+  // imported volume inflated relative to new trades by however far the index had
+  // grown. Empty means unset: the index starts at 1.0 on the first trade.
+  string volume_index = 8 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  uint64 volume_index_day = 9;
+
+  // pool_stale_due is when each pool with volume falls due for the staleness
+  // sweep. A pool with volume and no entry here would never be swept.
+  repeated PoolStaleDue pool_stale_due = 10 [(gogoproto.nullable) = false];
+}
+
+// PoolStaleDue is one pool's place in the staleness queue.
+message PoolStaleDue {
+  uint64 pool_id = 1;
+  // due is the unix time at which the pool's volume is retired.
+  int64 due = 2;
 }

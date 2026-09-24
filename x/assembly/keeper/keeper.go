@@ -31,16 +31,27 @@ type Keeper struct {
 
 	Schema collections.Schema
 
-	// ProposalVotes and ProposalTally are the human half of an x/gov proposal.
-	// The tally is maintained on every vote so the EndBlocker can resolve a
-	// proposal without walking what may be a great many votes in the block that
-	// several proposals happen to close in.
-	ProposalVotes collections.Map[collections.Pair[uint64, []byte], int32]
-	ProposalTally collections.Map[uint64, types.Tally]
+	// Every round of voting is a ballot with its own id. See types.BallotSeqKey.
+	BallotSeq   collections.Sequence
+	BallotVotes collections.Map[collections.Pair[uint64, []byte], int32]
+	BallotTally collections.Map[uint64, types.Tally]
 
-	RemovalBallots collections.Map[uint64, types.RemovalBallot]
-	RemovalVotes   collections.Map[collections.Pair[uint64, []byte], int32]
-	RemovalQueue   collections.KeySet[collections.Pair[int64, uint64]]
+	ProposalBallot  collections.Map[uint64, uint64]
+	RemovalBallots  collections.Map[uint64, types.RemovalBallot]
+	RemovalBallotID collections.Map[uint64, uint64]
+	RemovalQueue    collections.KeySet[collections.Pair[int64, uint64]]
+
+	// VotedBallots is every vote, by nullifier. It is what makes taking back a
+	// retired registration's votes cost what that person voted on, rather than a
+	// walk of every ballot.
+	VotedBallots  collections.KeySet[collections.Pair[[]byte, uint64]]
+	ClosedBallots collections.KeySet[uint64]
+
+	// The v0.9.0 layout, for the v0.9.1 upgrade to move out of. See
+	// MigrateToBallots.
+	LegacyProposalVotes collections.Map[collections.Pair[uint64, []byte], int32]
+	LegacyProposalTally collections.Map[uint64, types.Tally]
+	LegacyRemovalVotes  collections.Map[collections.Pair[uint64, []byte], int32]
 }
 
 func NewKeeper(
@@ -62,17 +73,32 @@ func NewKeeper(
 		allocation:   allocation,
 		chamberAddr:  chamberAddr,
 
-		ProposalVotes: collections.NewMap(sb, types.ProposalVotesKey, "proposal_votes",
+		BallotSeq: collections.NewSequence(sb, types.BallotSeqKey, "ballot_seq"),
+		BallotVotes: collections.NewMap(sb, types.BallotVotesKey, "ballot_votes",
 			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), collections.Int32Value),
-		ProposalTally: collections.NewMap(sb, types.ProposalTallyKey, "proposal_tally",
+		BallotTally: collections.NewMap(sb, types.BallotTallyKey, "ballot_tally",
 			collections.Uint64Key, codec.CollValue[types.Tally](cdc)),
 
+		ProposalBallot: collections.NewMap(sb, types.ProposalBallotKey, "proposal_ballot",
+			collections.Uint64Key, collections.Uint64Value),
 		RemovalBallots: collections.NewMap(sb, types.RemovalBallotsKey, "removal_ballots",
 			collections.Uint64Key, codec.CollValue[types.RemovalBallot](cdc)),
-		RemovalVotes: collections.NewMap(sb, types.RemovalVotesKey, "removal_votes",
-			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), collections.Int32Value),
+		RemovalBallotID: collections.NewMap(sb, types.RemovalBallotIDKey, "removal_ballot_id",
+			collections.Uint64Key, collections.Uint64Value),
 		RemovalQueue: collections.NewKeySet(sb, types.RemovalQueueKey, "removal_queue",
 			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
+
+		VotedBallots: collections.NewKeySet(sb, types.VotedBallotsKey, "voted_ballots",
+			collections.PairKeyCodec(collections.BytesKey, collections.Uint64Key)),
+		ClosedBallots: collections.NewKeySet(sb, types.ClosedBallotsKey, "closed_ballots",
+			collections.Uint64Key),
+
+		LegacyProposalVotes: collections.NewMap(sb, types.LegacyProposalVotesKey, "proposal_votes",
+			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), collections.Int32Value),
+		LegacyProposalTally: collections.NewMap(sb, types.LegacyProposalTallyKey, "proposal_tally",
+			collections.Uint64Key, codec.CollValue[types.Tally](cdc)),
+		LegacyRemovalVotes: collections.NewMap(sb, types.LegacyRemovalVotesKey, "removal_votes",
+			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), collections.Int32Value),
 	}
 
 	schema, err := sb.Build()

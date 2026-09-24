@@ -78,19 +78,52 @@ func approves(yes, no, num, den uint64) bool {
 }
 
 var (
-	// ProposalVotesKey holds human votes on x/gov proposals.
+	// BallotSeqKey hands out ballot ids. Every round of voting is its own
+	// ballot: a proposal's round, the longer round it gets after the chamber
+	// declines it on the expedited track, and each removal ballot. Votes are
+	// filed under the ballot, so a round that has closed can never be read as
+	// part of the next one, and closing a round is O(1) — its votes are left to
+	// be cleared in capped batches (ClosedBallotsKey) instead of in the block it
+	// closes in.
+	BallotSeqKey = collections.NewPrefix("ballot_seq")
+
+	// BallotVotesKey holds human votes on every ballot of both kinds.
 	//
 	// Keyed by the registration's nullifier rather than by the voter's address:
 	// x/personhood lets a registration move to a new wallet, so an address key
 	// would let one person vote, move, and vote again.
-	ProposalVotesKey = collections.NewPrefix("proposal_votes") // (proposal id, nullifier) -> VoteOption
-	// ProposalTallyKey is the running count, so resolving a proposal does not
-	// have to walk its votes in the EndBlocker.
-	ProposalTallyKey = collections.NewPrefix("proposal_tally") // proposal id -> Tally
+	BallotVotesKey = collections.NewPrefix("ballot_votes") // (ballot id, nullifier) -> VoteOption
+	// BallotTallyKey is each OPEN ballot's running count, kept true as votes
+	// arrive and as voters retire, so a ballot is decided without walking its
+	// votes. A ballot with an entry here is open; closing it removes the entry.
+	BallotTallyKey = collections.NewPrefix("ballot_tally") // ballot id -> Tally
+
+	// ProposalBallotKey is the open ballot on each x/gov proposal in voting.
+	ProposalBallotKey = collections.NewPrefix("proposal_ballot") // proposal id -> ballot id
 
 	RemovalBallotsKey = collections.NewPrefix("removal_ballots") // option id -> RemovalBallot
-	RemovalVotesKey   = collections.NewPrefix("removal_votes")   // (option id, nullifier) -> VoteOption
+	// RemovalBallotIDKey is the ballot behind each open removal record.
+	RemovalBallotIDKey = collections.NewPrefix("removal_ballot_id") // option id -> ballot id
 	// RemovalQueueKey orders open ballots by when they close, so the EndBlocker
 	// can stop at the first one that is not due rather than walking them all.
 	RemovalQueueKey = collections.NewPrefix("removal_queue") // (closes_at unix, option id)
+
+	// VotedBallotsKey indexes every vote by the voter's nullifier, so a
+	// registration that stops counting can have its votes taken back without
+	// walking any ballot. See Keeper.OnRegistrationRetired.
+	VotedBallotsKey = collections.NewPrefix("voted_ballots") // (nullifier, ballot id)
+
+	// ClosedBallotsKey is the ballots whose votes are still to be cleared.
+	ClosedBallotsKey = collections.NewPrefix("closed_ballots") // ballot id
+
+	// The v0.9.0 layout, keyed by proposal and option id. Read once, by the
+	// v0.9.1 upgrade, which moves anything in them into ballots and empties them.
+	LegacyProposalVotesKey = collections.NewPrefix("proposal_votes") // (proposal id, nullifier) -> VoteOption
+	LegacyProposalTallyKey = collections.NewPrefix("proposal_tally") // proposal id -> Tally
+	LegacyRemovalVotesKey  = collections.NewPrefix("removal_votes")  // (option id, nullifier) -> VoteOption
 )
+
+// ClosedVotePurgeLimit caps how many votes of closed ballots one block clears.
+// The rest wait for the next block; a closed ballot's votes are no longer read
+// by anything, so the only cost of a backlog is the space it holds.
+const ClosedVotePurgeLimit = 1000

@@ -164,6 +164,20 @@ const (
 	// the skipped steps would have applied to has been swept regardless.
 	VolumeIndexMaxCatchUpDays = 90
 
+	// VolumeIndexRebaseAt and VolumeIndexRebaseFactor keep the scaling index, and
+	// every volume scaled by it, inside a range the arithmetic can carry.
+	//
+	// The index compounds by 14/13 a day and never comes back down on its own.
+	// Left alone, the LP total volume outgrows one block's reward times
+	// lpIndexPrecision after some months of trading — the reward index then
+	// stops moving and LP rewards stall — and a few years later a multiply
+	// passes math.Int's 256 bits and panics. Once the index reaches
+	// VolumeIndexRebaseAt times its starting value, EndBlock divides it and every
+	// pool's volume by VolumeIndexRebaseFactor. Shares are ratios, so nobody's
+	// share moves. At 14/13 a day a factor of a million is about six months.
+	VolumeIndexRebaseAt     = 1_000_000
+	VolumeIndexRebaseFactor = 1_000_000
+
 	// PoolStaleSeconds is how long a pool keeps its volume weight without
 	// trading: sixty days.
 	//

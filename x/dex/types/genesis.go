@@ -2,13 +2,18 @@ package types
 
 import (
 	"fmt"
+
+	"cosmossdk.io/math"
 )
 
 // DefaultGenesis returns the default genesis state
 func DefaultGenesis() *GenesisState {
 	return &GenesisState{
-		Params:  DefaultParams(),
-		PoolMap: []Pool{}}
+		Params:           DefaultParams(),
+		PoolMap:          []Pool{},
+		PendingLpRewards: math.ZeroInt(),
+		VolumeIndex:      math.ZeroInt(),
+	}
 }
 
 // Validate performs basic genesis state validation returning an error upon any
@@ -168,6 +173,27 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("lp unbonding for %s in pool %d: completion_time must not be negative",
 				u.Address, u.PoolId)
 		}
+	}
+
+	if !gs.PendingLpRewards.IsNil() && gs.PendingLpRewards.IsNegative() {
+		return fmt.Errorf("pending_lp_rewards must not be negative, got %s", gs.PendingLpRewards)
+	}
+	if !gs.VolumeIndex.IsNil() && gs.VolumeIndex.IsNegative() {
+		return fmt.Errorf("volume_index must not be negative, got %s", gs.VolumeIndex)
+	}
+	pools := make(map[uint64]struct{}, len(gs.PoolMap))
+	for _, p := range gs.PoolMap {
+		pools[p.PoolId] = struct{}{}
+	}
+	stale := make(map[uint64]struct{}, len(gs.PoolStaleDue))
+	for _, d := range gs.PoolStaleDue {
+		if _, ok := pools[d.PoolId]; !ok {
+			return fmt.Errorf("pool_stale_due names pool %d, which does not exist", d.PoolId)
+		}
+		if _, ok := stale[d.PoolId]; ok {
+			return fmt.Errorf("pool_stale_due names pool %d twice", d.PoolId)
+		}
+		stale[d.PoolId] = struct{}{}
 	}
 
 	return gs.Params.Validate()

@@ -272,13 +272,15 @@ func TestResidueCollectsFromBothStreams(t *testing.T) {
 		}
 	}
 
-	// Weights that do not divide the emission evenly, so both indexes truncate.
+	// Weights large enough that the options' reserve, rounded up to a whole
+	// uerth, still falls short of the reward. Below indexPrecision the round-up
+	// always reaches the whole reward and there is no residue to collect.
 	if err := e.k.resyncVoter(e.ctx, types.STREAM_ID_CARETAKER, human,
-		[]types.AllocationWeight{{OptionId: caretakerOpt, Percent: 100}}, math.NewInt(3)); err != nil {
+		[]types.AllocationWeight{{OptionId: caretakerOpt, Percent: 100}}, bigWeight(3)); err != nil {
 		t.Fatalf("resyncVoter caretaker: %v", err)
 	}
 	if err := e.k.resyncVoter(e.ctx, types.STREAM_ID_GROUNDWORKS, staker,
-		[]types.AllocationWeight{{OptionId: groundworksOpt, Percent: 100}}, math.NewInt(7)); err != nil {
+		[]types.AllocationWeight{{OptionId: groundworksOpt, Percent: 100}}, bigWeight(7)); err != nil {
 		t.Fatalf("resyncVoter groundworks: %v", err)
 	}
 
@@ -320,4 +322,10 @@ func TestResidueCollectsFromBothStreams(t *testing.T) {
 	if !left.IsZero() {
 		t.Fatalf("residue still %s after the sweep", left)
 	}
+}
+
+// bigWeight is n * 10^23: over indexPrecision, so an interval's reward does not
+// divide into whole uerth across it.
+func bigWeight(n int64) math.Int {
+	return math.NewInt(n).Mul(math.NewIntWithDecimal(1, 23))
 }

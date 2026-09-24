@@ -308,3 +308,96 @@ func countRegistrations(t *testing.T, k Keeper, ctx sdk.Context) int {
 	}
 	return n
 }
+
+// TestRevocationStopsTheVoteImmediately is the franchise's version of the
+// test above. The chamber asks LiveNullifier when a vote is cast and the
+// allocation stream asks Weight; both have to see the revocation before the
+// purge reaches the registration, which may be many blocks later.
+func TestRevocationStopsTheVoteImmediately(t *testing.T) {
+	k, pki, ctx := capKeeper(t)
+	addr := sdk.AccAddress("voter_______________")
+	nullifier := []byte("nullifier-v")
+	reg := types.Registration{
+		Nullifier:    nullifier,
+		Address:      addr.String(),
+		RegisteredAt: ctx.BlockTime().Unix(),
+		DscKey:       testDsc,
+	}
+	if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.RegByAddr.Set(ctx, addr.Bytes(), nullifier); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(wantLive bool) {
+		t.Helper()
+		_, live, err := k.LiveNullifier(ctx, addr)
+		if err != nil || live != wantLive {
+			t.Fatalf("LiveNullifier = %v, %v; want %v", live, err, wantLive)
+		}
+		w, err := k.Weight(ctx, addr)
+		if err != nil || w.IsPositive() != wantLive {
+			t.Fatalf("Weight = %s, %v; want positive=%v", w, err, wantLive)
+		}
+	}
+	check(true)
+	pki.revoked[string(testDsc)] = true
+	check(false)
+}
+
+type recordingListener struct{ retired [][]byte }
+
+func (l *recordingListener) OnRegistrationRetired(_ context.Context, nullifier []byte) error {
+	l.retired = append(l.retired, nullifier)
+	return nil
+}
+
+// TestRetirementIsAnnounced: every registration the revocation purge and the
+// expiry sweep retire is announced to the listeners, which is how x/assembly
+// takes back the votes filed under it.
+func TestRetirementIsAnnounced(t *testing.T) {
+	k, _, ctx := capKeeper(t)
+	listener := &recordingListener{}
+	k.RegisterRetirementListener(listener)
+
+	add := func(i int, dsc []byte, at int64) {
+		nullifier := []byte{byte(i), 'n'}
+		addr := sdk.AccAddress([]byte{byte(i), 'a', 'd', 'd', 'r'})
+		reg := types.Registration{Nullifier: nullifier, Address: addr.String(), RegisteredAt: at, DscKey: dsc}
+		if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
+			t.Fatal(err)
+		}
+		if err := k.RegByAddr.Set(ctx, addr.Bytes(), nullifier); err != nil {
+			t.Fatal(err)
+		}
+		if err := k.RegByDsc.Set(ctx, collections.Join(dsc, nullifier)); err != nil {
+			t.Fatal(err)
+		}
+		if err := k.RegByRegisteredAt.Set(ctx, collections.Join(at, nullifier)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := ctx.BlockTime().Unix()
+	add(1, testDsc, now)              // revoked
+	add(2, []byte("other-signer"), 0) // long expired
+	add(3, []byte("other-signer"), now)
+
+	if err := k.StartDscPurge(ctx, testDsc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.purgeRevokedDscs(ctx, types.DefaultRegistrationSweepLimit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.sweepExpiredRegistrations(ctx, types.DefaultRegistrationSweepLimit); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]bool{}
+	for _, n := range listener.retired {
+		got[string(n)] = true
+	}
+	if len(got) != 2 || !got[string([]byte{1, 'n'})] || !got[string([]byte{2, 'n'})] {
+		t.Fatalf("announced %q, want the revoked and the expired registration only", listener.retired)
+	}
+}

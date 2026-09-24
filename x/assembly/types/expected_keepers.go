@@ -6,14 +6,16 @@ import (
 
 // PersonhoodKeeper is the chamber's electoral roll.
 //
-// One method, and it returns a nullifier rather than a weight: this chamber has
-// no scale. A live registration votes once and an account without one does not
+// It deals in nullifiers rather than weights: this chamber has no scale. A live registration votes once and an account without one does not
 // vote, so there is no number for this interface to carry.
 type PersonhoodKeeper interface {
 	// LiveNullifier returns the nullifier of addr's live registration. The bool
 	// is false when the account holds no registration, or holds one that has
 	// lapsed.
 	LiveNullifier(ctx context.Context, addr []byte) ([]byte, bool, error)
+	// RegistrationDsc returns the Document Signer commitment the registration
+	// filed under nullifier was made with, or nil if there is none.
+	RegistrationDsc(ctx context.Context, nullifier []byte) ([]byte, error)
 }
 
 // The chamber depends on *govkeeper.Keeper concretely rather than through an

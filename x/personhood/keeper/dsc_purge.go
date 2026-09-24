@@ -119,7 +119,7 @@ func (k Keeper) purgeRevokedDscs(ctx context.Context, budget int) (int, error) {
 			}
 			return 0, err
 		}
-		if err := k.removeRegistration(ctx, reg); err != nil {
+		if err := k.retireRegistration(ctx, reg); err != nil {
 			return 0, err
 		}
 	}

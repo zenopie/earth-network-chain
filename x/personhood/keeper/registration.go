@@ -429,7 +429,7 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int,
 			}
 			return 0, err
 		}
-		if err := k.removeRegistration(ctx, reg); err != nil {
+		if err := k.retireRegistration(ctx, reg); err != nil {
 			return 0, err
 		}
 	}
@@ -450,8 +450,8 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int,
 	return len(expired), nil
 }
 
-// requireValidHuman returns the registration for addr, erroring if it is missing
-// or expired.
+// requireValidHuman returns the registration for addr, erroring if it is missing,
+// expired, or signed by a revoked Document Signer.
 func (k Keeper) requireValidHuman(ctx context.Context, addr sdk.AccAddress) (types.Registration, error) {
 	reg, ok, err := k.getRegistrationByAddr(ctx, addr)
 	if err != nil {
@@ -460,12 +460,21 @@ func (k Keeper) requireValidHuman(ctx context.Context, addr sdk.AccAddress) (typ
 	if !ok {
 		return types.Registration{}, types.ErrNotRegistered
 	}
-	expired, err := k.isExpired(ctx, reg)
-	if err != nil {
+	if err := k.checkNotExpiredOrRevoked(ctx, reg); err != nil {
 		return types.Registration{}, err
 	}
+	return reg, nil
+}
+
+// checkNotExpiredOrRevoked returns ErrRegExpired or ErrDscRevoked when reg no
+// longer counts as a human, and nil when it does.
+func (k Keeper) checkNotExpiredOrRevoked(ctx context.Context, reg types.Registration) error {
+	expired, err := k.isExpired(ctx, reg)
+	if err != nil {
+		return err
+	}
 	if expired {
-		return types.Registration{}, types.ErrRegExpired
+		return types.ErrRegExpired
 	}
 	// A registration is only as good as the Document Signer behind it. Once
 	// governance revokes that signer this stops being a human the chain will
@@ -476,11 +485,11 @@ func (k Keeper) requireValidHuman(ctx context.Context, addr sdk.AccAddress) (typ
 	if k.pkiKeeper != nil && len(reg.DscKey) > 0 {
 		revoked, err := k.pkiKeeper.IsCommitmentRevoked(ctx, reg.DscKey)
 		if err != nil {
-			return types.Registration{}, err
+			return err
 		}
 		if revoked {
-			return types.Registration{}, types.ErrDscRevoked
+			return types.ErrDscRevoked
 		}
 	}
-	return reg, nil
+	return nil
 }

@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"cosmossdk.io/collections"
@@ -71,6 +72,11 @@ type Keeper struct {
 	// pkiKeeper binds registration proofs to the live DSC-registry root history
 	// (Option C). Optional: nil falls back to the static params.DscRoot check.
 	pkiKeeper types.PkiKeeper
+
+	// retirementListeners are told when a registration stops counting. A
+	// pointer, so the copies of Keeper that module wiring hands around share
+	// one list and a listener registered on any of them is heard by all.
+	retirementListeners *[]types.RetirementListener
 }
 
 func NewKeeper(
@@ -92,15 +98,16 @@ func NewKeeper(
 	sb := collections.NewSchemaBuilder(storeService)
 
 	k := Keeper{
-		storeService:     storeService,
-		cdc:              cdc,
-		addressCodec:     addressCodec,
-		authority:        authority,
-		bankKeeper:       bankKeeper,
-		dexKeeper:        dexKeeper,
-		burnRecorder:     burnRecorder,
-		pkiKeeper:        pkiKeeper,
-		allocationKeeper: allocationKeeper,
+		retirementListeners: &[]types.RetirementListener{},
+		storeService:        storeService,
+		cdc:                 cdc,
+		addressCodec:        addressCodec,
+		authority:           authority,
+		bankKeeper:          bankKeeper,
+		dexKeeper:           dexKeeper,
+		burnRecorder:        burnRecorder,
+		pkiKeeper:           pkiKeeper,
+		allocationKeeper:    allocationKeeper,
 
 		Params:            collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		Registrations:     collections.NewMap(sb, types.RegistrationsKey, "registrations", collections.BytesKey, codec.CollValue[types.Registration](cdc)),
@@ -157,14 +164,64 @@ func (k Keeper) LiveNullifier(ctx context.Context, addr []byte) ([]byte, bool, e
 	if !ok {
 		return nil, false, nil
 	}
-	expired, err := k.isExpired(ctx, reg)
-	if err != nil {
+	live, err := k.isLive(ctx, reg)
+	if err != nil || !live {
 		return nil, false, err
 	}
-	if expired {
-		return nil, false, nil
-	}
 	return reg.Nullifier, true, nil
+}
+
+// RegistrationDsc returns the Document Signer commitment of the registration
+// filed under nullifier, for x/assembly to keep a signer's registrations out of
+// the vote on revoking it. Nil when there is no such registration.
+func (k Keeper) RegistrationDsc(ctx context.Context, nullifier []byte) ([]byte, error) {
+	reg, err := k.Registrations.Get(ctx, nullifier)
+	if errors.Is(err, collections.ErrNotFound) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return reg.DscKey, nil
+}
+
+// RegisterRetirementListener attaches a listener. Called once, from module
+// wiring, by whichever module files records under a nullifier.
+func (k Keeper) RegisterRetirementListener(l types.RetirementListener) {
+	*k.retirementListeners = append(*k.retirementListeners, l)
+}
+
+// retireRegistration removes a registration that has stopped counting as a
+// human and tells the listeners. Every removal goes through here except a
+// wallet switch, which calls removeRegistration directly — see
+// RetirementListener.
+func (k Keeper) retireRegistration(ctx context.Context, reg types.Registration) error {
+	if err := k.removeRegistration(ctx, reg); err != nil {
+		return err
+	}
+	for _, l := range *k.retirementListeners {
+		if err := l.OnRegistrationRetired(ctx, reg.Nullifier); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isLive is the franchise test the chamber and the allocation stream share:
+// unexpired, and not signed by a revoked Document Signer.
+//
+// Revocation has to be checked here and not left to the purge sweep. The sweep
+// is bounded per block, so a revoked signer's registrations stay in state for
+// as long as it takes to reach them, and every one of them would otherwise keep
+// voting and keep its allocation weight until then — including on the proposal
+// that revoked their signer.
+func (k Keeper) isLive(ctx context.Context, reg types.Registration) (bool, error) {
+	if err := k.checkNotExpiredOrRevoked(ctx, reg); err != nil {
+		if errors.Is(err, types.ErrRegExpired) || errors.Is(err, types.ErrDscRevoked) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // Weight implements the human stream's allocation weight source: every live
@@ -179,11 +236,11 @@ func (k Keeper) Weight(ctx context.Context, addr []byte) (math.Int, error) {
 	if !ok {
 		return math.ZeroInt(), nil
 	}
-	expired, err := k.isExpired(ctx, reg)
+	live, err := k.isLive(ctx, reg)
 	if err != nil {
 		return math.Int{}, err
 	}
-	if expired {
+	if !live {
 		return math.ZeroInt(), nil
 	}
 	return math.NewInt(types.VoterWeight), nil

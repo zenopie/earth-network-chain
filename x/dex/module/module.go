@@ -144,7 +144,8 @@ func (AppModule) ConsensusVersion() uint64 { return 1 }
 // The stale-pool sweep is bounded the same way (PoolStaleSweepLimit) and runs
 // before retirement for the same reason the option prune does in x/allocation:
 // it settles each pool it retires, and settling has to happen while the block's
-// other writes are still ahead of it rather than after.
+// other writes are still ahead of it rather than after. The volume-index rebase
+// follows it, so pools the sweep just retired are not walked twice.
 func (am AppModule) EndBlock(ctx context.Context) error {
 	if err := am.keeper.SweepMaturedUnbondings(ctx); err != nil {
 		return err
@@ -153,6 +154,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		return err
 	}
 	if err := am.keeper.SweepStalePools(ctx); err != nil {
+		return err
+	}
+	if err := am.keeper.MaybeRebaseVolumeIndex(ctx); err != nil {
 		return err
 	}
 	if err := am.keeper.BurnDuePol(ctx); err != nil {

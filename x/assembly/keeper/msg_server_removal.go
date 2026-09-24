@@ -59,6 +59,15 @@ func (k msgServer) ProposeRemoval(ctx context.Context, msg *types.MsgProposeRemo
 	if err := k.RemovalQueue.Set(ctx, collections.Join(closesAt, msg.OptionId)); err != nil {
 		return nil, err
 	}
+	// Its own ballot, so a later ballot on the same option starts from nothing
+	// even while this one's votes are still being cleared.
+	id, err := k.newBallot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.RemovalBallotID.Set(ctx, msg.OptionId, id); err != nil {
+		return nil, err
+	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 		"assembly_removal_opened",
@@ -86,11 +95,12 @@ func (k msgServer) VoteRemoval(ctx context.Context, msg *types.MsgVoteRemoval) (
 		return nil, err
 	}
 
-	ballot.Tally, err = castVote(ctx, k.RemovalVotes, collKey(msg.OptionId, nullifier), ballot.Tally, msg.Option)
+	id, err := k.RemovalBallotID.Get(ctx, msg.OptionId)
 	if err != nil {
 		return nil, err
 	}
-	if err := k.RemovalBallots.Set(ctx, msg.OptionId, ballot); err != nil {
+	ballot.Tally, err = k.recordVote(ctx, id, nullifier, msg.Option)
+	if err != nil {
 		return nil, err
 	}
 

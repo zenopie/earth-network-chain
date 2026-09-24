@@ -11,11 +11,98 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
-## [v0.9.0]
+## [v0.9.1]
 
 Consensus-breaking. **Not yet proposed.** It goes through governance as a
-`MsgSoftwareUpgrade` named `v0.9.0`, and it adds a module store, so the binary
-must be in place at the plan height or the node will not start.
+`MsgSoftwareUpgrade` named `v0.9.1`. No store changes. Since v0.9.0 the proposal
+needs two thirds of the human votes cast as well as stake.
+
+**Wallet apps must ship the recompiled circuits at or before the upgrade
+height.** A proof from the old circuits does not verify against the new keys, so
+registration from an un-updated app fails from this height on.
+
+### Fixed
+
+- **A genuine passport could mint unlimited registrations.** The register
+  circuits checked that each embedded hash — DG1's in the eContent, the
+  eContent's in the signed attributes — fitted inside its fixed-size array, but
+  not inside the bytes that were actually hashed. `sha256_var` ignores
+  everything past its length, so a prover could keep a real SOD's signed prefix
+  and park the hash of an invented DG1 in the unhashed tail: any document
+  number, any date of birth, any expiry, a fresh nullifier each time, all under
+  a genuine Document Signer's signature. The circuits now bound each hash by the
+  hashed length, require it directly after its DER prefix (DG1's DataGroupHash
+  entry, the messageDigest attribute), and require a whole 93-byte TD3 DG1 with
+  its header. All seven circuits are recompiled; the upgrade handler replaces
+  every key in `params.verifying_keys`. Registrations made before this height
+  were proved under the unsound circuits — earth-1 had one, its operator's.
+- **A lazily-settled allocation option could halt the chain.** `AdvanceIndex`
+  rounded the options' share of each interval's emission down and booked the
+  fraction to residue, but an option that settles once over many blocks
+  collects those fractions. The first settle after enough blocks left the module
+  short of what its options were owed, and EndBlock's solvency check halted the
+  chain. The share is now rounded up. Unreachable on earth-1 so far only because
+  every option on it is INTEGRATED and settles every block; the first ADDRESS
+  option with votes would have armed it. The upgrade refuses to run if the
+  allocation ledger does not already balance.
+
+  Operators will see residue swept to the community pool fall to zero: below a
+  stream weight of 10^18 the rounded-up share is the whole reward. The
+  per-option truncation dust stays on the module account as solvency surplus
+  instead, bounded by one uerth per block plus one per settle.
+- **The dex LP reward share is rounded up too, for the same reason.** Pools
+  settle lazily, so a pool could collect more than `DistributeLPRewards` had
+  booked, and `PendingLpRewards` went negative — reserves backed by ERTH that
+  was never paid in, about 1 uerth a block, which the solvency check could not
+  see because pools plus pending was unchanged.
+- **The dex volume index no longer grows without bound.** It compounds by 14/13
+  a day. Months into trading, the LP total outgrew one block's reward times the
+  index precision and LP rewards stopped being paid; a few years in, a multiply
+  passed 256 bits and panicked, halting the chain through the ANML buyback's
+  quote. EndBlock now divides the index and every traded pool's volume by a
+  million once the index has grown a millionfold — about every six months —
+  settling each pool first. Shares are ratios, so nobody's share moves. It runs
+  in a cache branch: a failure emits `volume_index_rebase_failed` and retries
+  next block rather than halting. Watch for `volume_index_rebased`.
+- **Registrations under a revoked Document Signer stop voting at once, and
+  retired registrations' votes are taken back.** `LiveNullifier` and the
+  allocation `Weight` checked expiry but not revocation, so a revoked signer's
+  registrations could keep voting until the bounded purge reached them. And
+  votes already cast were never taken back when a registration expired, was
+  purged or was revoked. x/personhood now tells the assembly whenever it retires
+  a registration (not on a wallet switch, which keeps the nullifier), and the
+  assembly removes that nullifier's votes from every open ballot and its tally.
+  A new index, `voted_ballots`, finds them without walking any ballot; the
+  upgrade moves votes already cast into it. Retirement is already capped per
+  block, so this work comes in bounded pieces.
+- **Closing a ballot no longer grows with turnout.** It used to delete every
+  vote on the ballot in the block it closed. Each round of voting is now its own
+  ballot — a proposal's round, the longer round after an expedited demotion, and
+  each removal ballot — so a closed round can never be read as part of the next.
+  Closing is O(1): the tally is read and dropped, and the votes are cleared from
+  EndBlock afterwards, at most 1,000 per block. The upgrade moves any votes in
+  the v0.9.0 layout onto ballots. Queries and genesis are unchanged in shape.
+- **A Document Signer's registrations do not vote on its revocation.** A
+  proposal carrying `MsgRevokeDsc` refuses a vote from any registration made
+  under a signer it revokes (`ErrVoterIsSubject`), so they never reach the
+  tally. Without this a compromised signer that had
+  registered enough people could vote down its own revocation, and no stake
+  could override the chamber. Everyone else votes on it as normal.
+
+### Changed
+
+- **Dex genesis carries LP reward state.** `pending_lp_rewards`,
+  `volume_index`, `volume_index_day` and `pool_stale_due` are new genesis
+  fields, and export settles every pool into its reserve first, because import
+  restarts the LP reward index. An export/import used to halt the first block
+  after it, holding ERTH the module could not account for. No effect on a
+  running chain; it matters to any relaunch from an export.
+
+## [v0.9.0]
+
+Consensus-breaking, and **shipped**: tagged 2026-09-18, proposed as proposal 5,
+and applied on earth-1 at height 391277 under the plan name `v0.9.0`. It adds a
+module store, so the binary had to be in place at the plan height.
 
 **Read the assembly item before voting on anything else.** After this height a
 governance proposal that no human votes on cannot pass, whatever stake is behind

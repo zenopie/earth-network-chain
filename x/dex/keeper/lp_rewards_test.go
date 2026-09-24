@@ -422,7 +422,11 @@ func TestStalePoolIsSweptOutOfTheDenominator(t *testing.T) {
 	require.True(t, total.IsZero(), "and must leave the denominator with it")
 	pending, err := k.PendingLpRewards.Get(late)
 	require.NoError(t, err)
-	require.True(t, pending.IsZero(), "the sweep must settle before it retires, %s stranded", pending)
+	// The one distribution rounds its reserve up to a whole uerth, so at most
+	// that uerth of dust remains. Anything more was stranded by the sweep, and a
+	// negative figure means a pool collected more than was paid in.
+	require.True(t, !pending.IsNegative() && pending.LTE(math.OneInt()),
+		"the sweep must settle before it retires, %s stranded", pending)
 }
 
 // TestNewPoolCannotClaimPastRewards pins the index initialization: a pool created

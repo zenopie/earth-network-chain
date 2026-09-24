@@ -6,6 +6,7 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/dex/types"
 )
@@ -39,6 +40,48 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	}
 	if err := k.LpTotalVolume.Set(ctx, totalVolume); err != nil {
 		return err
+	}
+	// The index restarts at zero above, so nothing is owed against it yet; what
+	// is carried here is the dust ExportGenesis left after settling every pool.
+	pending := genState.PendingLpRewards
+	if pending.IsNil() {
+		pending = math.ZeroInt()
+	}
+	if err := k.PendingLpRewards.Set(ctx, pending); err != nil {
+		return err
+	}
+	if !genState.VolumeIndex.IsNil() && genState.VolumeIndex.IsPositive() {
+		if err := k.VolumeIndex.Set(ctx, genState.VolumeIndex); err != nil {
+			return err
+		}
+	}
+	if genState.VolumeIndexDay > 0 {
+		if err := k.VolumeIndexDay.Set(ctx, genState.VolumeIndexDay); err != nil {
+			return err
+		}
+	}
+	// Every pool with volume has to be on the staleness clock or it is never
+	// swept. A genesis that predates carrying the queue gets a fresh timer from
+	// the genesis block, which is the most a pool could have had left anyway.
+	due := make(map[uint64]int64, len(genState.PoolStaleDue))
+	for _, d := range genState.PoolStaleDue {
+		due[d.PoolId] = d.Due
+	}
+	genesisTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	for _, elem := range genState.PoolMap {
+		if elem.VolumeWeight.IsNil() || !elem.VolumeWeight.IsPositive() {
+			continue
+		}
+		at, ok := due[elem.PoolId]
+		if !ok {
+			at = genesisTime + types.PoolStaleSeconds
+		}
+		if err := k.PoolStaleDue.Set(ctx, elem.PoolId, at); err != nil {
+			return err
+		}
+		if err := k.PoolStaleQueue.Set(ctx, collections.Join(at, elem.PoolId)); err != nil {
+			return err
+		}
 	}
 	// Resume the id sequence past the highest imported pool id.
 	if maxID > 0 {
@@ -119,8 +162,53 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := k.Pool.Walk(ctx, nil, func(_ uint64, val types.Pool) (stop bool, err error) {
+	// Each pool is written as if settled. InitGenesis restarts the LP reward
+	// index at zero, so a share accrued against the old index and not yet in
+	// a reserve would otherwise be lost to the pool and left on the module
+	// account as ERTH nobody is owed.
+	lpIdx, err := k.getLpRewardIndex(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settled := math.ZeroInt()
+	if err := k.Pool.Walk(ctx, nil, func(id uint64, val types.Pool) (stop bool, err error) {
+		last, err := k.getPoolLpIndex(ctx, id)
+		if err != nil {
+			return true, err
+		}
+		if vol := val.VolumeWeight; !vol.IsNil() && vol.IsPositive() {
+			owed := vol.Mul(lpIdx.Sub(last)).Quo(lpIndexPrecision)
+			if owed.IsPositive() {
+				val.ReserveErth = val.ReserveErth.AddAmount(owed)
+				settled = settled.Add(owed)
+			}
+		}
 		genesis.PoolMap = append(genesis.PoolMap, val)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	pending, err := k.getPendingLpRewards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	genesis.PendingLpRewards = pending.Sub(settled)
+	if genesis.PendingLpRewards.IsNegative() {
+		return nil, types.ErrInvariantBroken.Wrapf(
+			"pools are owed %s of LP rewards but only %s is pending", settled, pending)
+	}
+	if v, err := k.VolumeIndex.Get(ctx); err == nil {
+		genesis.VolumeIndex = v
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
+	if d, err := k.VolumeIndexDay.Get(ctx); err == nil {
+		genesis.VolumeIndexDay = d
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
+	if err := k.PoolStaleDue.Walk(ctx, nil, func(id uint64, at int64) (stop bool, err error) {
+		genesis.PoolStaleDue = append(genesis.PoolStaleDue, types.PoolStaleDue{PoolId: id, Due: at})
 		return false, nil
 	}); err != nil {
 		return nil, err

@@ -30,4 +30,8 @@ var (
 	// it does not exist, it is not on the groundworks stream, or it has already
 	// been removed.
 	ErrNotRemovable = errors.Register(ModuleName, 1105, "option is not removable by the assembly")
+
+	// ErrVoterIsSubject means the proposal revokes the Document Signer the
+	// voter's own registration was made under.
+	ErrVoterIsSubject = errors.Register(ModuleName, 1106, "registration is under a Document Signer this proposal revokes")
 )

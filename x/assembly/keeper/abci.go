@@ -27,7 +27,12 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	if err := k.resolveDueProposals(ctx); err != nil {
 		return err
 	}
-	return k.resolveDueRemovals(ctx)
+	if err := k.resolveDueRemovals(ctx); err != nil {
+		return err
+	}
+	// Last, and capped: clearing the votes of ballots that have closed. Closing
+	// a ballot does not touch its votes, so no block's work grows with turnout.
+	return k.purgeClosedBallots(ctx, types.ClosedVotePurgeLimit)
 }
 
 // resolveDueProposals applies the human result to every proposal whose voting
@@ -55,22 +60,24 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 	for _, entry := range due {
 		id := entry.Key.K2()
 
-		tally, err := k.proposalTally(ctx, id)
-		if err != nil {
-			return err
-		}
-
 		proposal, err := k.gov.Proposals.Get(ctx, id)
 		if err != nil {
 			// A proposal x/gov itself cannot decode is x/gov's to fail, and it
 			// has a path for exactly that. Leaving it alone is what keeps this
 			// module from having to reimplement that handling.
 			if errors.Is(err, collections.ErrEncoding) {
-				if err := k.purgeProposalVotes(ctx, id); err != nil {
+				if err := k.endProposalRound(ctx, id); err != nil {
 					return err
 				}
 				continue
 			}
+			return err
+		}
+
+		// The running tally is kept true as registrations retire — see
+		// OnRegistrationRetired — so it is decided on as it stands.
+		tally, err := k.proposalTally(ctx, id)
+		if err != nil {
 			return err
 		}
 
@@ -82,11 +89,12 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 			approved = types.ApprovesExpedited(tally.Yes, tally.No)
 		}
 
-		// This round of voting is over in all three outcomes, so the chamber's
-		// record of it goes in all three. For a demotion that is not tidying: the
-		// regular round is a longer deliberation under a different bar, and it
-		// should be counted from zero rather than inherit a one-day tally.
-		if err := k.purgeProposalVotes(ctx, id); err != nil {
+		// This round of voting is over in all three outcomes, so its ballot
+		// closes in all three: O(1), its votes cleared later. For a demotion
+		// that is not tidying. The regular round is a longer deliberation under
+		// a different bar, and it opens a ballot of its own rather than inherit
+		// a one-day tally.
+		if err := k.endProposalRound(ctx, id); err != nil {
 			return err
 		}
 
@@ -250,6 +258,9 @@ func (k Keeper) resolveDueRemovals(ctx context.Context) error {
 		optionID := key.K2()
 		ballot, err := k.RemovalBallots.Get(ctx, optionID)
 		if err != nil {
+			return err
+		}
+		if ballot.Tally, err = k.removalTally(ctx, optionID); err != nil {
 			return err
 		}
 

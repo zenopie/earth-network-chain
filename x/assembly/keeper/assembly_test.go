@@ -260,9 +260,9 @@ func TestGenesisRoundTrip(t *testing.T) {
 	require.Equal(t, uint64(1), tally.Yes)
 	require.Equal(t, uint64(1), tally.No)
 
-	ballot, err := fresh.k.RemovalBallots.Get(fresh.ctx, 7)
+	rtally, err := fresh.k.removalTally(fresh.ctx, 7)
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), ballot.Tally.Yes,
+	require.Equal(t, uint64(1), rtally.Yes,
 		"the tally is rebuilt from the votes, not carried alongside them")
 
 	again, err := fresh.k.ExportGenesis(fresh.ctx)

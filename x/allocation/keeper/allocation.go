@@ -202,6 +202,17 @@ func (k Keeper) getEpoch(ctx context.Context, stream types.StreamId) (uint64, er
 // residue for the community pool, the same place x/distribution puts the dust
 // from its own per-validator split.
 //
+// The reserve kept back for the options is delta*total ROUNDED UP to a whole
+// uerth, not down. An option that settles every block truncates its share every
+// block, but one that settles lazily truncates once over the sum of many deltas,
+// and so collects the fractional uerth of every block in between. Rounding the
+// reserve down booked each of those fractions to residue instead, so a
+// lazily-settled ADDRESS option could claim ~1 uerth per block the module no
+// longer held, and the first settle after enough blocks tripped CheckSolvency
+// in EndBlock and halted the chain. Rounded up, the reserve is never less than
+// what any settle order can collect, and never more than the reward, because
+// delta*total <= reward*indexPrecision and reward is whole.
+//
 // Exported because x/personhood has to settle the human stream before it retires
 // a lapsed registration: the vote weight being unwound has to be credited
 // against a current index or the option loses the emission it earned this block.
@@ -227,13 +238,18 @@ func (k Keeper) AdvanceIndex(ctx context.Context, stream types.StreamId) error {
 				if err := k.RewardIndex.Set(ctx, key(stream), idx.Add(delta)); err != nil {
 					return err
 				}
-				if err := k.mintEmission(ctx, reward, delta.Mul(total).Quo(indexPrecision)); err != nil {
+				if err := k.mintEmission(ctx, reward, ceilQuo(delta.Mul(total), indexPrecision)); err != nil {
 					return err
 				}
 			}
 		}
 	}
 	return k.LastUpkeep.Set(ctx, key(stream), now)
+}
+
+// ceilQuo is n/d rounded up, for non-negative n and positive d.
+func ceilQuo(n, d math.Int) math.Int {
+	return n.Add(d).SubRaw(1).Quo(d)
 }
 
 // mintEmission issues one interval's emission into the module account and books

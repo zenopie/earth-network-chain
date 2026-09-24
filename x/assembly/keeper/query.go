@@ -32,7 +32,12 @@ func (q queryServer) ProposalTally(ctx context.Context, req *types.QueryProposal
 // so the list is bounded by a slate that governance itself has to admit to.
 func (q queryServer) RemovalBallots(ctx context.Context, _ *types.QueryRemovalBallotsRequest) (*types.QueryRemovalBallotsResponse, error) {
 	var ballots []types.RemovalBallot
-	if err := q.k.RemovalBallots.Walk(ctx, nil, func(_ uint64, b types.RemovalBallot) (bool, error) {
+	if err := q.k.RemovalBallots.Walk(ctx, nil, func(optionID uint64, b types.RemovalBallot) (bool, error) {
+		tally, err := q.k.removalTally(ctx, optionID)
+		if err != nil {
+			return true, err
+		}
+		b.Tally = tally
 		ballots = append(ballots, b)
 		return false, nil
 	}); err != nil {

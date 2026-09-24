@@ -36,15 +36,35 @@ func (k msgServer) VoteProposal(ctx context.Context, msg *types.MsgVoteProposal)
 		return nil, errorsmod.Wrapf(types.ErrProposalNotVoting, "proposal %d", msg.ProposalId)
 	}
 
-	tally, err := k.proposalTally(ctx, msg.ProposalId)
+	// A registration made under a signer this proposal revokes is what the
+	// proposal is about, and does not vote on it. See revokedSigners.
+	proposal, err := k.gov.Proposals.Get(ctx, msg.ProposalId)
 	if err != nil {
 		return nil, err
 	}
-	tally, err = castVote(ctx, k.ProposalVotes, collKey(msg.ProposalId, nullifier), tally, msg.Option)
+	if subject, err := k.isSubject(ctx, revokedSigners(proposal), nullifier); err != nil {
+		return nil, err
+	} else if subject {
+		return nil, errorsmod.Wrapf(types.ErrVoterIsSubject, "proposal %d", msg.ProposalId)
+	}
+
+	// The proposal's current round, opened by its first vote. After an
+	// expedited demotion that is a new ballot, so the declined round's votes do
+	// not carry into the longer one.
+	ballot, ok, err := k.proposalBallot(ctx, msg.ProposalId)
 	if err != nil {
 		return nil, err
 	}
-	if err := k.ProposalTally.Set(ctx, msg.ProposalId, tally); err != nil {
+	if !ok {
+		if ballot, err = k.newBallot(ctx); err != nil {
+			return nil, err
+		}
+		if err := k.ProposalBallot.Set(ctx, msg.ProposalId, ballot); err != nil {
+			return nil, err
+		}
+	}
+	tally, err := k.recordVote(ctx, ballot, nullifier, msg.Option)
+	if err != nil {
 		return nil, err
 	}
 

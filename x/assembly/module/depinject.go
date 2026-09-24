@@ -73,6 +73,9 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		allocationkeeper.NewChamberFacade(in.AllocationKeeper),
 	)
 	in.AllocationKeeper.RegisterChamber(chamberAddr)
+	// Votes are filed under a nullifier, so the chamber has to hear when one
+	// stops counting and take its votes back.
+	in.PersonhoodKeeper.RegisterRetirementListener(k)
 
 	return ModuleOutputs{
 		AssemblyKeeper: k,

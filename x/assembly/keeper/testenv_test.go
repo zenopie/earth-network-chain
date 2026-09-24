@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/earth-network/earth/x/assembly/types"
+	pkitypes "github.com/earth-network/earth/x/pki/types"
 )
 
 // A real x/gov keeper, stubbed only at its edges.
@@ -91,7 +92,11 @@ func (stubRouter) HandlerByTypeURL(string) baseapp.MsgServiceHandler { return ni
 // stubPersonhood is the electoral roll: a set of addresses, each standing for
 // one registration. The nullifier is what a vote is filed under, so two
 // addresses can deliberately share one — that is a person who moved wallets.
-type stubPersonhood struct{ nullifiers map[string][]byte }
+type stubPersonhood struct {
+	nullifiers map[string][]byte
+	// dsc is each nullifier's Document Signer commitment, where a test sets one.
+	dsc map[string][]byte
+}
 
 func (s *stubPersonhood) register(addr sdk.AccAddress, nullifier string) {
 	s.nullifiers[addr.String()] = []byte(nullifier)
@@ -101,6 +106,10 @@ func (s *stubPersonhood) lapse(addr sdk.AccAddress) { delete(s.nullifiers, addr.
 func (s *stubPersonhood) LiveNullifier(_ context.Context, addr []byte) ([]byte, bool, error) {
 	n, ok := s.nullifiers[sdk.AccAddress(addr).String()]
 	return n, ok, nil
+}
+
+func (s *stubPersonhood) RegistrationDsc(_ context.Context, nullifier []byte) ([]byte, error) {
+	return s.dsc[string(nullifier)], nil
 }
 
 // stubAllocation records what the chamber asked of x/allocation.
@@ -131,6 +140,10 @@ type testEnv struct {
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	encCfg := moduletestutil.MakeTestEncodingConfig()
+	// Proposals carry their messages as Any, and x/gov unpacks them on read, so
+	// any message a test puts in a proposal has to be known here — as it is in
+	// the app, where every module registers its own.
+	pkitypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 	ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
 
 	govStoreKey := storetypes.NewKVStoreKey(govtypes.StoreKey)
@@ -156,7 +169,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	)
 	require.NoError(t, gov.Params.Set(ctx, v1.DefaultParams()))
 
-	humans := &stubPersonhood{nullifiers: map[string][]byte{}}
+	humans := &stubPersonhood{nullifiers: map[string][]byte{}, dsc: map[string][]byte{}}
 	allocation := &stubAllocation{removable: map[uint64]bool{}}
 
 	k := NewKeeper(

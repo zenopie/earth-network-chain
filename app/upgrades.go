@@ -174,6 +174,52 @@ var Upgrades = []Upgrade{
 		CreateHandler: defaultUpgradeHandler,
 		StoreUpgrades: storetypes.StoreUpgrades{Added: []string{assemblymoduletypes.StoreKey}},
 	},
+
+	// The 2026-09-23 review: two criticals, and the chain-side highs.
+	//
+	//  1. The register circuits bound every embedded hash by the length that was
+	//     actually hashed, anchor it behind its DER prefix, and require a whole
+	//     TD3 DG1. sha256_var ignores bytes past its length, and the circuits
+	//     only checked the hash fit the fixed-size array, so one genuine SOD
+	//     could carry the hash of an invented DG1 in its unhashed tail — any
+	//     document number, any expiry, one registration each. All seven
+	//     circuits are recompiled and their verifying keys replaced by the
+	//     handler. Registrations made before this height were proved under the
+	//     unsound circuits; earth-1 had one, its operator's.
+	//  2. x/allocation rounds the options' reserve up rather than down. A
+	//     lazily-settled option collects the fractional uerth of every block it
+	//     skipped, which the old rounding had already booked to residue, so the
+	//     first settle after enough blocks left the module short and EndBlock
+	//     halted the chain. Unreachable on earth-1 so far only because every
+	//     option on it is INTEGRATED and settles each block. See AdvanceIndex.
+	//
+	//
+	// And the review's highs that are chain-side:
+	//
+	//  3. x/dex rounds the LP reward share up, for the reason (2) does.
+	//  4. x/dex rebases the volume index from EndBlock before it grows past what
+	//     the arithmetic carries. See RebaseVolumeIndex.
+	//  5. x/personhood's liveness checks see a revoked Document Signer, and a
+	//     retired registration's votes come off every open ballot. A proposal
+	//     revoking a signer takes no votes from that signer's own registrations.
+	//     Votes are filed by ballot, one per round, and a closed ballot's votes
+	//     are cleared in capped batches rather than in the block it closes.
+	//  6. x/dex genesis carries pending LP rewards, the volume index and the
+	//     staleness queue. Genesis code only; nothing to migrate.
+	//
+	// Of (3)–(6), only (5) touches state at the upgrade height: it moves the
+	// assembly's open votes onto ballots. See upgradeV091.
+	//
+	// Like v0.7.0's, (1) needs the recompiled circuits in users' hands: a proof
+	// from the old ones does not verify against the new keys.
+	//
+	// No StoreUpgrades: the module set is unchanged. AppVersion stays at 1 for
+	// the reason given on v0.6.0. And since v0.9.0, this proposal needs two
+	// thirds of the human votes cast as well as stake.
+	{
+		Name:          "v0.9.1",
+		CreateHandler: upgradeV091,
+	},
 }
 
 // assertTrustStoreParses checks that no CSCA already in the store is one the

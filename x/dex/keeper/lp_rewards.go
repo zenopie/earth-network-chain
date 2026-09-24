@@ -80,29 +80,117 @@ func (k Keeper) getVolumeIndex(ctx context.Context) (math.Int, error) {
 	return v, nil
 }
 
-// The index only ever grows, and nothing here shrinks it back.
+// RebaseVolumeIndex divides the scaling index, and every pool's volume, by
+// VolumeIndexRebaseFactor once the index has grown by VolumeIndexRebaseAt.
 //
-// That is deliberate rather than overlooked. At 14/13 a day it passes 2^128 in
-// about 21 months and 2^256 in about five years, which costs a few extra machine
-// words per multiply and a few dozen bytes per pool — real but not interesting,
-// and math.Int has no ceiling, so nothing breaks if it is never dealt with.
+// The index only grows, and "math.Int has no ceiling" was not true: it is capped
+// at 256 bits and Mul panics past them, and long before that the LP total grows
+// so large that DistributeLPRewards' delta truncates to zero every block and
+// rewards stop being paid. Both are consequences of magnitude alone. Every
+// consumer of these numbers takes a ratio — a pool's share is its volume over the
+// total, the depth cap is scaled by the same index as the volume it caps — so a
+// uniform division changes nothing anyone is owed.
 //
-// If it is ever worth tidying, it belongs in an upgrade handler and not in
-// consensus: a migration runs once at a known height on every node and may walk
-// every pool, which is the budget an in-block rebase does not have. The order
-// matters:
+// The order is the one the old note on this prescribed for an upgrade handler:
 //
-//  1. settle every pool first. Owed rewards are Volume*(index-poolIndex); divide
+//  1. settle each pool first. Owed rewards are Volume*(index-poolIndex); divide
 //     Volume without settling and every unsettled reward is underpaid by exactly
-//     the rebase factor.
-//  2. divide VolumeIndex and every pool's Volume by the same factor.
-//  3. recompute LpTotalVolume by summing the pools. Do NOT divide it on its own —
-//     the sum of truncated divisions is not the truncated division of the sum,
-//     and CheckVolumeAccounting compares the two every block.
-//  4. drop pools whose volume truncated to zero from the stale queue.
+//     the factor.
+//  2. divide each pool's volume through setPoolVolume, so LpTotalVolume moves by
+//     exactly the sum of the pools' changes and stays equal to their sum — the
+//     sum of truncated divisions is not the truncated division of the sum.
+//  3. drop pools whose volume truncated to zero from the stale queue.
 //
-// Shares are ratios, so a uniform division leaves every pool earning what it
-// earned before.
+// The pools are the stale queue, which holds every pool with volume and nothing
+// else. It runs from EndBlock rather than from a swap because it walks them, and
+// that cost belongs to no one trader's gas. Twice a year, and bounded by pools
+// that traded in the last PoolStaleSeconds.
+func (k Keeper) RebaseVolumeIndex(ctx context.Context) error {
+	idx, err := k.getVolumeIndex(ctx)
+	if err != nil {
+		return err
+	}
+	if idx.LT(volumeIndexPrecision.MulRaw(types.VolumeIndexRebaseAt)) {
+		return nil
+	}
+
+	var ids []uint64
+	iter, err := k.PoolStaleQueue.Iterate(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for ; iter.Valid(); iter.Next() {
+		entry, err := iter.Key()
+		if err != nil {
+			iter.Close()
+			return err
+		}
+		ids = append(ids, entry.K2())
+	}
+	iter.Close()
+
+	for _, poolID := range ids {
+		pool, err := k.Pool.Get(ctx, poolID)
+		if errors.Is(err, collections.ErrNotFound) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		if err := k.settlePoolRewards(ctx, poolID, &pool); err != nil {
+			return err
+		}
+		vol := pool.VolumeWeight
+		if vol.IsNil() {
+			vol = math.ZeroInt()
+		}
+		scaled := vol.QuoRaw(types.VolumeIndexRebaseFactor)
+		// The pool's last traded day is not this one; the rebase is not a trade.
+		if err := k.setPoolVolume(ctx, &pool, scaled, pool.LastTradedDay); err != nil {
+			return err
+		}
+		if !scaled.IsPositive() {
+			if err := k.scheduleStale(ctx, poolID, false); err != nil {
+				return err
+			}
+		}
+		if err := k.SetPool(ctx, poolID, pool); err != nil {
+			return err
+		}
+	}
+
+	rebased := idx.QuoRaw(types.VolumeIndexRebaseFactor)
+	if err := k.VolumeIndex.Set(ctx, rebased); err != nil {
+		return err
+	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		"volume_index_rebased",
+		sdk.NewAttribute("pools", strconv.Itoa(len(ids))),
+		sdk.NewAttribute("index", rebased.String()),
+	))
+	return nil
+}
+
+// MaybeRebaseVolumeIndex runs RebaseVolumeIndex in a cache branch and keeps the
+// result only if all of it succeeded.
+//
+// A failed rebase must not halt the chain — the magnitudes it exists to tame are
+// months from mattering when it first becomes due — and must not half-apply,
+// which would leave some pools divided and the index not. So a failure discards
+// the branch, emits an event, and the next block tries again from scratch.
+func (k Keeper) MaybeRebaseVolumeIndex(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	cacheCtx, write := sdkCtx.CacheContext()
+	if err := k.RebaseVolumeIndex(cacheCtx); err != nil {
+		sdkCtx.Logger().Error("volume index rebase failed; retrying next block", "err", err)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"volume_index_rebase_failed",
+			sdk.NewAttribute("error", err.Error()),
+		))
+		return nil
+	}
+	write()
+	return nil
+}
 
 // AdvanceVolumeIndex grows the scaling index by one step per whole day elapsed.
 //
@@ -294,9 +382,14 @@ func (k Keeper) DistributeLPRewards(ctx context.Context, amount math.Int) (math.
 	if err := k.LpRewardIndex.Set(ctx, idx.Add(delta)); err != nil {
 		return math.ZeroInt(), err
 	}
-	// Report back only what the (truncated) index bump really represents, so the
-	// rounding dust stays in the option and is not silently written off.
-	resolved := delta.Mul(total).Quo(lpIndexPrecision)
+	// Report back what the index bump represents, rounded UP to a whole uerth,
+	// and the rest stays in the option. Rounded down, it was less than the pools
+	// can collect: each settles vol*(idx-last) truncated once over however many
+	// bumps it skipped, so a lazily-settled pool collected the fractions this
+	// had already handed back, and PendingLpRewards went negative. Rounded up it
+	// covers any settle order, and it never exceeds amount, because
+	// delta*total <= amount*lpIndexPrecision and amount is whole.
+	resolved := delta.Mul(total).Add(lpIndexPrecision).SubRaw(1).Quo(lpIndexPrecision)
 
 	// Book it as owed before the caller transfers it in. The index has moved, so
 	// from this instant the pools are collectively owed `resolved` whether or not

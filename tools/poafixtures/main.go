@@ -77,12 +77,13 @@ func run(v variant, outDir string) error {
 
 	// eContent embeds sha256(dg1) at a known offset; signedAttrs embeds
 	// sha256(eContent). The circuit re-derives both and asserts the placements,
-	// which is what ties the signature to this exact DG1.
+	// which is what ties the signature to this exact DG1. Each hash sits behind
+	// the DER the circuit requires ahead of it, inside the hashed length.
 	dg1Hash := sha256.Sum256(dg1[:dg1Len])
-	eContent, eContentLen, dg1HashOffset := embed(dg1Hash[:], 40)
+	eContent, eContentLen, dg1HashOffset := embed(dg1Hash[:], dg1HashPrefix, 40)
 
 	eContentHash := sha256.Sum256(eContent[:eContentLen])
-	signedAttrs, signedAttrsLen, eContentHashOffset := embed(eContentHash[:], 24)
+	signedAttrs, signedAttrsLen, eContentHashOffset := embed(eContentHash[:], messageDigestPrefix, 24)
 
 	msgHash := sha256.Sum256(signedAttrs[:signedAttrsLen])
 
@@ -251,14 +252,26 @@ func buildDG1() [dg1Max]byte {
 	return dg1
 }
 
-// embed places a 32-byte hash at `offset` inside a fixed-size buffer of
-// otherwise arbitrary bytes, returning the buffer, its logical length and the
-// offset — mirroring how a real SOD carries the hash inside DER structure.
-func embed(hash []byte, offset int) ([signedAttrsMax]byte, int, int) {
+// The DER poa_core requires directly ahead of each embedded hash: DG1's
+// DataGroupHash entry in the LDS security object, and the messageDigest
+// attribute in the signed attributes.
+var (
+	dg1HashPrefix       = []byte{0x30, 0x25, 0x02, 0x01, 0x01, 0x04, 0x20}
+	messageDigestPrefix = []byte{
+		0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04, 0x31, 0x22, 0x04, 0x20,
+	}
+)
+
+// embed places a 32-byte hash at `offset`, directly after `prefix`, inside a
+// fixed-size buffer of otherwise arbitrary bytes, returning the buffer, its
+// logical length and the offset — mirroring how a real SOD carries the hash
+// inside DER structure.
+func embed(hash, prefix []byte, offset int) ([signedAttrsMax]byte, int, int) {
 	var buf [signedAttrsMax]byte
 	for i := range buf {
 		buf[i] = byte(i * 7) // deterministic filler
 	}
+	copy(buf[offset-len(prefix):], prefix)
 	copy(buf[offset:], hash)
 	return buf, offset + 32 + 8, offset
 }

@@ -57,7 +57,7 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		if !expired {
 			return nil, errorsmod.Wrap(types.ErrAlreadyReg, "wallet already registered")
 		}
-		if err := k.removeRegistration(ctx, reg); err != nil {
+		if err := k.retireRegistration(ctx, reg); err != nil {
 			return nil, err
 		}
 	}
@@ -98,7 +98,13 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 		if switched {
 			carriedAnmlClaim = reg.LastAnmlClaim
 		}
-		if err := k.removeRegistration(ctx, reg); err != nil {
+		// A switch is the same person keeping their place, so what is filed
+		// under their nullifier stays; a lapsed one re-entering is retired.
+		remove := k.retireRegistration
+		if switched {
+			remove = k.removeRegistration
+		}
+		if err := remove(ctx, reg); err != nil {
 			return nil, err
 		}
 	} else if !errors.Is(err, collections.ErrNotFound) {
