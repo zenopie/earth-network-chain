@@ -427,3 +427,25 @@ func TestRefusedProposalKeepsStakesDepositJudgement(t *testing.T) {
 		require.False(t, has, "the deposit is settled one way or the other")
 	}
 }
+
+// TestCancelledProposalsBallotCloses: x/gov deletes a proposal cancelled while
+// voting, with no hook, and its ballot used to stay open forever.
+func TestCancelledProposalsBallotCloses(t *testing.T) {
+	e := newTestEnv(t)
+	end := e.ctx.BlockTime().Add(time.Hour)
+	e.openProposal(t, 1, end)
+	e.voteAll(t, 1, types.VOTE_OPTION_YES, "alice")
+	ballot, ok, err := e.k.proposalBallot(e.ctx, 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, e.gov.DeleteProposal(e.ctx, 1))
+	require.NoError(t, e.k.EndBlocker(e.ctx))
+
+	_, ok, err = e.k.proposalBallot(e.ctx, 1)
+	require.NoError(t, err)
+	require.False(t, ok, "the cancelled proposal's ballot is closed")
+	has, err := e.k.BallotTally.Has(e.ctx, ballot)
+	require.NoError(t, err)
+	require.False(t, has)
+}

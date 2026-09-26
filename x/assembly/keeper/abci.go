@@ -30,6 +30,9 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	if err := k.resolveDueRemovals(ctx); err != nil {
 		return err
 	}
+	if err := k.closeOrphanedBallots(ctx, types.OrphanBallotCheckLimit); err != nil {
+		return err
+	}
 	// Last, and capped: clearing the votes of ballots that have closed. Closing
 	// a ballot does not touch its votes, so no block's work grows with turnout.
 	return k.purgeClosedBallots(ctx, types.ClosedVotePurgeLimit)
@@ -238,6 +241,44 @@ func (k Keeper) failProposal(ctx context.Context, proposal v1.Proposal, tally ty
 		sdk.NewAttribute("yes", strconv.FormatUint(tally.Yes, 10)),
 		sdk.NewAttribute("no", strconv.FormatUint(tally.No, 10)),
 	))
+	return nil
+}
+
+// closeOrphanedBallots closes the ballot of any proposal x/gov no longer has.
+//
+// A proposal cancelled in its voting period is deleted by x/gov outright: it
+// leaves the active queue, so resolveDueProposals never reaches it, and x/gov
+// has no hook for cancellation. Its ballot stayed open for good, and every
+// vote on it with it — including the index entries each retirement walks.
+func (k Keeper) closeOrphanedBallots(ctx context.Context, limit int) error {
+	var orphans []uint64
+	checked := 0
+	err := k.ProposalBallot.Walk(ctx, nil, func(proposalID, _ uint64) (bool, error) {
+		if checked >= limit {
+			return true, nil
+		}
+		checked++
+		has, err := k.gov.Proposals.Has(ctx, proposalID)
+		if err != nil {
+			return true, err
+		}
+		if !has {
+			orphans = append(orphans, proposalID)
+		}
+		return false, nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, id := range orphans {
+		if err := k.endProposalRound(ctx, id); err != nil {
+			return err
+		}
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+			"assembly_closed_orphaned_ballot",
+			sdk.NewAttribute("proposal_id", strconv.FormatUint(id, 10)),
+		))
+	}
 	return nil
 }
 

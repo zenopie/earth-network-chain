@@ -127,3 +127,10 @@ var (
 // The rest wait for the next block; a closed ballot's votes are no longer read
 // by anything, so the only cost of a backlog is the space it holds.
 const ClosedVotePurgeLimit = 1000
+
+// OrphanBallotCheckLimit caps how many open proposal ballots one block checks
+// for a proposal that no longer exists. Every open ballot belongs to a
+// proposal in its voting period, each of which cost a deposit to get there, so
+// the set is small; the cap only keeps a pathological one from costing a block
+// more than a bounded number of reads.
+const OrphanBallotCheckLimit = 100
