@@ -13,6 +13,9 @@
 # on either side stops relaying silently.
 set -eu
 
+# shellcheck source=drop-root.sh
+. "$(dirname "$0")/drop-root.sh"
+
 say() { printf '[relayer] %s\n' "$*"; }
 
 if [ "${ENABLED:-false}" != "true" ]; then

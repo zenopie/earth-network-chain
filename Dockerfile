@@ -165,7 +165,14 @@ COPY docker/relayer.sh /usr/local/bin/relayer.sh
 COPY networks/genesis.json /etc/earth/genesis.json
 COPY networks/genesis.json.sha256 /etc/earth/genesis.json.sha256
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY docker/drop-root.sh /usr/local/bin/drop-root.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/relayer.sh
+
+# The account the node and relayer run as; see docker/drop-root.sh. setpriv is
+# util-linux, which Debian ships in every image — checked here so a base image
+# without it fails the build rather than every start.
+RUN useradd --system --uid 10001 --home-dir /data --no-create-home --shell /usr/sbin/nologin earth \
+    && command -v setpriv >/dev/null
 
 # Node home. Mount a volume here — without one, every redeploy is a brand new
 # chain with a new genesis, new keys and no history.

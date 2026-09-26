@@ -25,6 +25,9 @@
 # starting a new one.
 set -euo pipefail
 
+# shellcheck source=drop-root.sh
+. "$(dirname "$0")/drop-root.sh"
+
 EARTH_HOME="${EARTH_HOME:-/data}"
 CHAIN_ID="${CHAIN_ID:-earth-1}"
 MONIKER="${MONIKER:-earth-node}"
