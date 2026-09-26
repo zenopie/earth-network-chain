@@ -1,6 +1,7 @@
 package types_test
 
 import (
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/math"
@@ -92,7 +93,7 @@ func validPool(id uint64) types.Pool {
 	return types.Pool{
 		PoolId:       id,
 		ReserveErth:  sdk.NewInt64Coin("uerth", 1_000_000),
-		ReserveToken: sdk.NewInt64Coin("uanml", 1_000_000),
+		ReserveToken: sdk.NewInt64Coin(fmt.Sprintf("utoken%d", id), 1_000_000),
 		VolumeWeight: math.ZeroInt(),
 	}
 }
@@ -168,4 +169,41 @@ func TestGenesisRejectsMalformedLpUnbondings(t *testing.T) {
 		gs.LpUnbondings = []types.LpUnbonding{entry(), entry()}
 		require.Error(t, gs.Validate())
 	})
+}
+
+func TestGenesisRejectsInconsistentPoolsAndBids(t *testing.T) {
+	sameToken := validPool(1)
+	sameToken.ReserveToken.Denom = validPool(0).ReserveToken.Denom
+	selfPair := validPool(0)
+	selfPair.ReserveToken.Denom = "uerth"
+
+	auction := func(raised int64) *types.LiquidityAuction {
+		return &types.LiquidityAuction{
+			Status:         types.AUCTION_STATUS_OPEN,
+			BidDenom:       "uusdc",
+			ErthForBidders: sdk.NewInt64Coin("uerth", 100),
+			ErthForPool:    sdk.NewInt64Coin("uerth", 100),
+			TotalRaised:    math.NewInt(raised),
+			Claimed:        math.ZeroInt(),
+		}
+	}
+	bids := []types.AuctionBid{{Bidder: "a", Amount: math.NewInt(3)}, {Bidder: "b", Amount: math.NewInt(4)}}
+
+	for name, gs := range map[string]types.GenesisState{
+		"two pools for one token":  {PoolMap: []types.Pool{validPool(0), sameToken}},
+		"pool paired with the hub": {PoolMap: []types.Pool{selfPair}},
+		"bids above total_raised":  {LiquidityAuction: auction(5), AuctionBids: bids},
+		"bids below total_raised":  {LiquidityAuction: auction(9), AuctionBids: bids},
+		"bids with no auction":     {AuctionBids: bids},
+	} {
+		gs.Params = types.DefaultParams()
+		if err := gs.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+
+	ok := types.GenesisState{Params: types.DefaultParams(), LiquidityAuction: auction(7), AuctionBids: bids}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("bids summing to total_raised: %v", err)
+	}
 }

@@ -20,6 +20,11 @@ func DefaultGenesis() *GenesisState {
 // failure.
 func (gs GenesisState) Validate() error {
 	poolIndexMap := make(map[string]struct{})
+	// Every pool is the hub against one spoke token, and a spoke has one pool:
+	// swaps and quotes find a pool by its token denom, so a second pool for the
+	// same token is unreachable and its reserves unaccounted for.
+	tokenPool := make(map[string]uint64)
+	hubDenom := ""
 
 	for _, elem := range gs.PoolMap {
 		index := fmt.Sprint(elem.PoolId)
@@ -57,6 +62,20 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("pool %d: reserve_token must be positive, got %s",
 				elem.PoolId, elem.ReserveToken.Amount)
 		}
+		if prev, dup := tokenPool[elem.ReserveToken.Denom]; dup {
+			return fmt.Errorf("pools %d and %d both trade %s", prev, elem.PoolId, elem.ReserveToken.Denom)
+		}
+		tokenPool[elem.ReserveToken.Denom] = elem.PoolId
+		if hubDenom == "" {
+			hubDenom = elem.ReserveErth.Denom
+		}
+		if elem.ReserveErth.Denom != hubDenom {
+			return fmt.Errorf("pool %d: hub side is %s, other pools use %s",
+				elem.PoolId, elem.ReserveErth.Denom, hubDenom)
+		}
+		if elem.ReserveToken.Denom == hubDenom {
+			return fmt.Errorf("pool %d: pairs %s with itself", elem.PoolId, hubDenom)
+		}
 		if elem.VolumeWeight.IsNil() {
 			continue // read as zero on import; see keeper/genesis.go
 		}
@@ -93,6 +112,7 @@ func (gs GenesisState) Validate() error {
 	}
 
 	seen := make(map[string]struct{}, len(gs.AuctionBids))
+	bidTotal := math.ZeroInt()
 	for _, b := range gs.AuctionBids {
 		if _, ok := seen[b.Bidder]; ok {
 			return fmt.Errorf("duplicated auction bid for %s", b.Bidder)
@@ -101,6 +121,30 @@ func (gs GenesisState) Validate() error {
 		if b.Amount.IsNil() || !b.Amount.IsPositive() {
 			return fmt.Errorf("auction bid for %s must be positive", b.Bidder)
 		}
+		bidTotal = bidTotal.Add(b.Amount)
+		if b.Claimed && (gs.LiquidityAuction == nil || gs.LiquidityAuction.Status != AUCTION_STATUS_SETTLED) {
+			return fmt.Errorf("auction bid for %s is claimed but the auction has not settled", b.Bidder)
+		}
+	}
+	// The bids are what total_raised is the sum of, and every payout divides
+	// by it. A total larger than the bids strands the difference's share of the
+	// earmark; a smaller one pays bidders out of the pool's reserves, which
+	// share the module account. Bids stay on the books after claiming, so the
+	// equality holds in every state.
+	if a := gs.LiquidityAuction; a != nil {
+		raised := a.TotalRaised
+		if raised.IsNil() {
+			raised = math.ZeroInt()
+		}
+		if !bidTotal.Equal(raised) {
+			return fmt.Errorf("liquidity auction: bids sum to %s, total_raised is %s", bidTotal, raised)
+		}
+		if !a.Claimed.IsNil() && (a.Claimed.IsNegative() || a.Claimed.GT(a.ErthForBidders.Amount)) {
+			return fmt.Errorf("liquidity auction: claimed %s is outside the bidders' earmark %s",
+				a.Claimed, a.ErthForBidders.Amount)
+		}
+	} else if len(gs.AuctionBids) > 0 {
+		return fmt.Errorf("%d auction bids with no liquidity auction", len(gs.AuctionBids))
 	}
 
 	// A retirement schedule with no pool, or one written twice, would either
