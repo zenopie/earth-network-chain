@@ -278,18 +278,30 @@ func embed(hash, prefix []byte, offset int) ([signedAttrsMax]byte, int, int) {
 
 // commitment is the circuit's dsc_commitment: Poseidon2 over the key bytes, one
 // field element per byte.
-// nullifier mirrors poa_core::finalize: Poseidon2 over the 39 name bytes
-// followed by the 6 date-of-birth bytes.
+// nullifier mirrors poa_core::nullifier_preimage and must match it exactly:
+// Poseidon2 over the issuing state (MRZ line 1, chars 2..4), the document
+// number and its check digit (line 2, chars 0..9), the date of birth (line 2,
+// chars 13..18) and the optional data (line 2, chars 28..41), one field element
+// per byte. DG1 carries a 5-byte header, so line 1 starts at DG1[5] and line 2
+// at DG1[49].
 func nullifier(dg1 []byte) fr.Element {
-	// Poseidon2(document number ‖ DOB) — must match poa_core::finalize exactly.
-	// MRZ line 2 starts at DG1[49]; the document number is its first 9 chars.
-	const docNumOffset, docNumLen, dobOffset = 49, 9, 62
-	elems := make([]fr.Element, 15)
-	for i := 0; i < docNumLen; i++ {
-		elems[i].SetUint64(uint64(dg1[docNumOffset+i]))
+	spans := []struct{ at, n int }{
+		{7, 3},   // issuing state
+		{49, 9},  // document number
+		{58, 1},  // its check digit
+		{62, 6},  // date of birth
+		{77, 14}, // optional data
 	}
-	for i := 0; i < 6; i++ {
-		elems[docNumLen+i].SetUint64(uint64(dg1[dobOffset+i]))
+	var elems []fr.Element
+	for _, sp := range spans {
+		for i := 0; i < sp.n; i++ {
+			var e fr.Element
+			e.SetUint64(uint64(dg1[sp.at+i]))
+			elems = append(elems, e)
+		}
+	}
+	if len(elems) != 33 {
+		panic("nullifier preimage is not 33 elements")
 	}
 	return poseidon2.Hash(elems)
 }
