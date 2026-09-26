@@ -15,21 +15,54 @@ package ultrahonk
 
 import (
 	"fmt"
+	"math/big"
 
 	bb "github.com/burnt-labs/barretenberg-go/barretenberg"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
 
 // FieldSize is the byte length of a BN254 field element.
 const FieldSize = 32
 
+// PairingPointInputs is how many public inputs a bb v5.0.0 UltraHonk
+// verifying key counts beyond the circuit's own: the aggregated pairing point
+// object, eight limbs, which the proof carries itself. A key's declared count
+// minus this is the number of inputs a caller supplies.
+const PairingPointInputs = 8
+
 // Verify checks a bb v5.0.0 UltraHonk proof against vk with the given public
 // inputs (each a 32-byte big-endian field element). It returns true iff the
 // proof is valid. A malformed vk/proof yields an error; a well-formed but
 // invalid proof yields (false, nil).
+//
+// Each input must be exactly FieldSize bytes holding a value below the BN254
+// scalar modulus, and there must be exactly as many as the key declares. The
+// library checks neither. A value of p or more is reduced mod p inside the
+// verifier, so p+x verifies wherever x does — two encodings of one input, and
+// any caller comparing the bytes it passed in against something else is then
+// comparing the wrong thing. The count went unchecked on the Go side and was
+// left to the native code to notice.
 func Verify(vk, proof []byte, publicInputs [][]byte) (bool, error) {
+	modulus := fr.Modulus()
+	for i, in := range publicInputs {
+		if len(in) != FieldSize {
+			return false, fmt.Errorf("public input %d is %d bytes, want %d", i, len(in), FieldSize)
+		}
+		if new(big.Int).SetBytes(in).Cmp(modulus) >= 0 {
+			return false, fmt.Errorf("public input %d is not a canonical field element", i)
+		}
+	}
 	v, err := bb.NewVerifierFromBytes(vk)
 	if err != nil {
 		return false, fmt.Errorf("parse verification key: %w", err)
+	}
+	defer v.Close()
+	declared, err := v.NumPublicInputs()
+	if err != nil {
+		return false, fmt.Errorf("read verification key: %w", err)
+	}
+	if want := declared - PairingPointInputs; len(publicInputs) != want {
+		return false, fmt.Errorf("got %d public inputs, the verification key takes %d", len(publicInputs), want)
 	}
 	p, err := bb.ParseProof(proof)
 	if err != nil {
