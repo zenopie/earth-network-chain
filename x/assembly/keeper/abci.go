@@ -320,8 +320,24 @@ func (k Keeper) resolveDueRemovals(ctx context.Context) error {
 			// is already gone. Removing it twice is not an error worth halting
 			// the chain over, so the allocation keeper reports it and the ballot
 			// simply closes.
-			if err := k.allocation.RemoveGroundworksOption(ctx, k.chamberAddr, optionID); err != nil {
-				return err
+			//
+			// Isolated in a cache context. This runs in EndBlock, where an
+			// error halts the chain on every validator at once, and it calls
+			// into another module whose failure modes this one cannot see. A
+			// strike that errors is rolled back whole, reported, and the ballot
+			// closes as if it had fallen short; governance can strike the
+			// option by proposal. Halting is not a proportionate response to
+			// one option failing to come off the slate.
+			cacheCtx, write := sdkCtx.CacheContext()
+			if err := k.allocation.RemoveGroundworksOption(cacheCtx, k.chamberAddr, optionID); err != nil {
+				sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+					"assembly_removal_failed",
+					sdk.NewAttribute("option_id", strconv.FormatUint(optionID, 10)),
+					sdk.NewAttribute("error", err.Error()),
+				))
+				carried = false
+			} else {
+				write()
 			}
 		}
 

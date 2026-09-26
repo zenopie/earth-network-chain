@@ -121,9 +121,13 @@ func (s *stubPersonhood) RegistrationDsc(_ context.Context, nullifier []byte) ([
 type stubAllocation struct {
 	removable map[uint64]bool
 	removed   []uint64
+	failWith  error
 }
 
 func (s *stubAllocation) RemoveGroundworksOption(_ context.Context, _ []byte, id uint64) error {
+	if s.failWith != nil {
+		return s.failWith
+	}
 	s.removed = append(s.removed, id)
 	s.removable[id] = false
 	return nil

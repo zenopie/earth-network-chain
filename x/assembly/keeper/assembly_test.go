@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"cosmossdk.io/collections"
+	"errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"testing"
 	"time"
@@ -448,4 +449,26 @@ func TestCancelledProposalsBallotCloses(t *testing.T) {
 	has, err := e.k.BallotTally.Has(e.ctx, ballot)
 	require.NoError(t, err)
 	require.False(t, has)
+}
+
+// TestFailedStrikeDoesNotHaltTheChain: the strike runs in EndBlock, where an
+// error used to halt every validator at once.
+func TestFailedStrikeDoesNotHaltTheChain(t *testing.T) {
+	e := newTestEnv(t)
+	e.allocation.removable[7] = true
+	e.allocation.failWith = errors.New("allocation refused")
+
+	_, alice := e.addr(t, "alice", "null-alice")
+	opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Proposer: alice, OptionId: 7})
+	require.NoError(t, err)
+	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Voter: alice, OptionId: 7, Option: types.VOTE_OPTION_YES})
+	require.NoError(t, err)
+
+	e.ctx = e.ctx.WithBlockTime(time.Unix(opened.ClosesAt+1, 0))
+	require.NoError(t, e.k.EndBlocker(e.ctx))
+	require.Empty(t, e.allocation.removed)
+
+	has, err := e.k.RemovalBallots.Has(e.ctx, 7)
+	require.NoError(t, err)
+	require.False(t, has, "the ballot still closes")
 }
