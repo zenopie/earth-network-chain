@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 
@@ -70,6 +71,15 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, er
 	if now.Before(dsc.NotBefore) || now.After(dsc.NotAfter) {
 		return nil, types.ErrCertExpired
 	}
+	// It has to be a Document Signer, not an issuer. The chain check below
+	// only asks whether some trusted key signed this certificate, and a CSCA
+	// signs its own self-signed root and its link certificates — so a CSCA
+	// certificate used to pass as a DSC, making the country's root key a
+	// "signer" that registrations could be made under. A DSC is not a CA,
+	// may not sign certificates, and is issued by someone other than itself.
+	if dsc.IsCA || dsc.CertSign || dsc.IsSelfIssued() {
+		return nil, types.ErrNotDsc
+	}
 
 	pub := dsc.PublicKey.CanonicalBytes()
 	hash := sha256.Sum256(pub)
@@ -88,6 +98,12 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, er
 	// rest are never reached; the list matters when the AKI and the issuer DN
 	// point at genuinely different signing identities.
 	for _, csca := range cands {
+		// A certificate signed by its own key is a root whatever its subject
+		// says; one that re-issues a trusted key is that key's issuer, not a
+		// signer under it.
+		if bytes.Equal(csca.PublicKey.CanonicalBytes(), pub) {
+			continue
+		}
 		if certs.VerifySignedBy(dsc, csca.PublicKey) == nil {
 			// The parsed key rather than its bytes: the DSC commitment now needs
 			// the curve as well as the coordinates, and the bytes alone cannot

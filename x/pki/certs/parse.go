@@ -39,6 +39,12 @@ type Cert struct {
 	PublicKey  *PublicKey
 	SKI        []byte // subjectKeyIdentifier (2.5.29.14)
 	AKI        []byte // authorityKeyIdentifier keyIdentifier (2.5.29.35)
+	// IsCA is basicConstraints cA (2.5.29.19). False when the extension is
+	// absent, which is what ICAO 9303 part 12 asks of a Document Signer.
+	IsCA bool
+	// CertSign is keyUsage keyCertSign (2.5.29.15, bit 5): the key may sign
+	// certificates. A Document Signer's key signs SODs, never certificates.
+	CertSign bool
 }
 
 const (
@@ -143,7 +149,8 @@ func ParseCert(der []byte) (*Cert, error) {
 }
 
 // parseExtensions reads the optional uniqueIDs + extensions [3] and pulls out the
-// subject/authority key identifiers used to match a DSC/link cert to its issuer.
+// subject/authority key identifiers used to match a DSC/link cert to its issuer,
+// and the two extensions that say whether the certificate belongs to an issuer.
 func parseExtensions(body *cryptobyte.String, c *Cert) {
 	body.SkipOptionalASN1(cbasn1.Tag(1).ContextSpecific()) // issuerUniqueID [1]
 	body.SkipOptionalASN1(cbasn1.Tag(2).ContextSpecific()) // subjectUniqueID [2]
@@ -185,6 +192,20 @@ func parseExtensions(body *cryptobyte.String, c *Cert) {
 			var p bool
 			if seq.ReadOptionalASN1(&keyid, &p, cbasn1.Tag(0).ContextSpecific()) && p {
 				c.AKI = append([]byte(nil), keyid...)
+			}
+		case "2.5.29.19": // basicConstraints: SEQUENCE { cA BOOLEAN DEFAULT FALSE, ... }
+			var seq cryptobyte.String
+			if !val.ReadASN1(&seq, cbasn1.SEQUENCE) {
+				continue
+			}
+			var ca bool
+			if seq.PeekASN1Tag(cbasn1.BOOLEAN) && seq.ReadASN1Boolean(&ca) {
+				c.IsCA = ca
+			}
+		case "2.5.29.15": // keyUsage: BIT STRING, keyCertSign is bit 5
+			var bits asn1.BitString
+			if val.ReadASN1BitString(&bits) {
+				c.CertSign = bits.At(5) == 1
 			}
 		}
 	}

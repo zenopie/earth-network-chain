@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -51,11 +52,11 @@ func TestAddCscaLongSubjectDN(t *testing.T) {
 	}
 }
 
-// TestVerifyRealSelfSignedCsca runs a real ICAO certificate through the whole
-// trust decision: issuer lookup against the seeded store and signature
-// verification. CSCAs are self-signed roots, so one doubles as a certificate the
-// store should accept.
-func TestVerifyRealSelfSignedCsca(t *testing.T) {
+// TestRealCscaIsNotADsc runs a real ICAO root through VerifyDsc. It used to be
+// accepted — the store's own key verifies it — which made every country's root
+// usable as a Document Signer. Its issuer is still found and its signature
+// still checks; what refuses it is that it is a CA.
+func TestRealCscaIsNotADsc(t *testing.T) {
 	der, err := os.ReadFile("testdata/csca_self_signed.der")
 	if err != nil {
 		t.Skip("testdata/csca_self_signed.der not present")
@@ -64,9 +65,11 @@ func TestVerifyRealSelfSignedCsca(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	if !parsed.IsCA || !parsed.CertSign {
+		t.Fatalf("real CSCA parsed as IsCA=%v CertSign=%v; want both", parsed.IsCA, parsed.CertSign)
+	}
 
 	k, ctx := newKeeperForTest(t)
-	// Block time must fall inside the certificate's validity window.
 	ctx = ctx.WithBlockTime(parsed.NotBefore.Add(time.Hour))
 	if err := k.InitGenesis(ctx, types.GenesisState{
 		Params: types.NewParams(),
@@ -75,19 +78,7 @@ func TestVerifyRealSelfSignedCsca(t *testing.T) {
 		t.Fatalf("InitGenesis: %v", err)
 	}
 
-	pub, err := k.VerifyDsc(ctx, der)
-	if err != nil {
-		t.Fatalf("VerifyDsc against the real trust store: %v", err)
-	}
-	if pub == nil || len(pub.CanonicalBytes()) == 0 {
-		t.Fatal("VerifyDsc returned an empty canonical public key")
-	}
-
-	// Revoking that key withdraws trust from the same certificate.
-	if err := k.RevokeDsc(ctx, pub); err != nil {
-		t.Fatalf("RevokeDsc: %v", err)
-	}
-	if _, err := k.VerifyDsc(ctx, der); err == nil {
-		t.Fatal("expected rejection after revocation")
+	if _, err := k.VerifyDsc(ctx, der); !errors.Is(err, types.ErrNotDsc) {
+		t.Fatalf("VerifyDsc(real CSCA) = %v, want ErrNotDsc", err)
 	}
 }

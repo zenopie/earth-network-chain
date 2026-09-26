@@ -19,4 +19,7 @@ var (
 	// ErrTooManyIssuers means more than MaxIssuerCandidates trust-store
 	// certificates named themselves as this DSC's issuer.
 	ErrTooManyIssuers = errorsmod.Register(ModuleName, 13, "too many candidate issuing CSCAs")
+	// ErrNotDsc means the certificate presented as a Document Signer is an
+	// issuer's: a CA, a certificate-signing key, or self-issued.
+	ErrNotDsc = errorsmod.Register(ModuleName, 14, "certificate is not a Document Signer")
 )
