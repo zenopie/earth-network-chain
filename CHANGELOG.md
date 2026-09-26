@@ -11,10 +11,86 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
-## [v0.9.1]
+## [v0.9.2]
 
 Consensus-breaking. **Not yet proposed.** It goes through governance as a
-`MsgSoftwareUpgrade` named `v0.9.1`. No store changes. Since v0.9.0 the proposal
+`MsgSoftwareUpgrade` named `v0.9.2`. No store changes. The proposal needs two
+thirds of the human votes cast as well as stake.
+
+**Wallet apps must ship the recompiled circuits at or before the upgrade
+height**, as for v0.9.1: the nullifier changes, and a proof from the old
+circuits does not verify against the new keys. The apps' registration gas limit
+also rises from 3M to 6M.
+
+**Every registration is retired at the upgrade height.** A registration made
+under the old nullifier cannot be matched by a proof under the new one, so the
+same passport could otherwise register twice. Each person registers again, once.
+ANML already paid stays with its holder. earth-1 had one registration.
+
+The rest of the 2026-09-23 review. The deployment items and automatic upgrade
+downloads (kept on, deliberately) are not in this release.
+
+### Fixed
+
+- **The nullifier separates issuing states and covers long document numbers.**
+  It was Poseidon2(document number ‖ DOB); document numbers are unique only
+  within a state, so two people from different states with the same number and
+  birth date shared a nullifier, and the second to register took over the
+  first's registration as a wallet switch. Numbers longer than nine characters
+  were cut to nine. The preimage is now issuing state ‖ document number ‖ check
+  digit ‖ DOB ‖ optional data. New verifying keys for all seven circuits.
+- **A CA certificate passed as a Document Signer.** `VerifyDsc` only asked
+  whether a trusted key signed the certificate, so a country's self-signed CSCA,
+  its link certificates or anything it issued with `cA` or `keyCertSign` could
+  be a registration's signer. Refused now with `ErrNotDsc`.
+- **The per-country cap is keyed by the issuing CSCA.** It read the country from
+  the DSC's own subject, which the issuer can set to anything, and skipped the
+  cap when it was empty. A missing country now shares one capped bucket, `??`.
+- **The network has a daily registration cap.** It was counted and never
+  enforced, so every country's allowance added up without bound. New params
+  `network_daily_registration_floor` (5000) and
+  `network_daily_registration_growth_bps` (30000, three times yesterday).
+- **A wallet switch no longer spends the day's allowance**, and is not refused
+  on a day the signer or country is at its cap.
+- **Proof and certificate verification cost more gas:** 3,000,000 and 300,000,
+  from 1,000,000 and 100,000. Set by the handler. A block holds at most 33
+  proofs, which the validator's CPU share can verify within the block time.
+- **The proof verifier refuses non-canonical inputs** (a value of p or more,
+  which aliases a smaller one) and a public-input count other than the key's.
+- **Parameter validation** bounds `registration_validity_seconds` to 1s–3 years
+  and requires the four public-input indexes to differ once a key is set.
+- **A refused proposal's deposit follows stake's tally.** The assembly refunded
+  every deposit it failed, so a proposal stake vetoed as spam got its deposit
+  back whenever humans also said no. It is burned whenever x/gov would burn it.
+- **A Groundworks strike cannot halt the chain.** It runs in a cache context;
+  if x/allocation errors, the strike is rolled back, `assembly_removal_failed`
+  is emitted, and the ballot closes as not carried.
+- **A cancelled proposal's ballot closes.** x/gov deletes a proposal cancelled
+  in its voting period without a hook, and its assembly ballot stayed open.
+- **A delegation change no longer revives a split governance reset.**
+- **Importing a genesis no longer mints the gap since its export.** x/earth's
+  mint clock and x/allocation's upkeep clocks resume at the genesis time.
+- **Exchange genesis validation** rejects two pools for one token, a pool
+  paired with the hub, pools disagreeing on the hub denom, and auction bids that
+  do not sum to `total_raised`.
+- **Re-seeding an empty pool burns its residue** (recorded as `dex_residue`)
+  instead of handing it to the depositor.
+- **The LP unbondings query reads an address index** instead of every
+  withdrawal on the chain. The handler builds the index.
+
+### Changed
+
+- **Interchain accounts** may run an explicit list of messages (bank, staking,
+  distribution, gov votes and deposits, IBC transfer, the exchange, capital
+  allocation, contract execution) instead of `*`.
+- **The node image runs as uid 10001** (`earth`). On the first start the
+  entrypoint hands an existing root-owned `$EARTH_HOME` to it, once. The
+  Barretenberg headers and msgpack-c are pinned by commit and checked.
+
+## [v0.9.1]
+
+Consensus-breaking. Applied on earth-1 at height 467,500 (governance proposal 6).
+It went through governance as a `MsgSoftwareUpgrade` named `v0.9.1`. No store changes. Since v0.9.0 the proposal
 needs two thirds of the human votes cast as well as stake.
 
 **Wallet apps must ship the recompiled circuits at or before the upgrade
