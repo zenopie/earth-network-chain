@@ -171,3 +171,33 @@ func TestResetAllocationsRequiresAuthority(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, epoch, "a rejected reset must not bump the epoch")
 }
+
+// TestResetIsNotUndoneByAStakeChange: a staking hook replayed the voter's
+// pre-reset split at their new weight, so any delegation change put their old
+// vote back after governance had cleared it.
+func TestResetIsNotUndoneByAStakeChange(t *testing.T) {
+	e := newTestEnv(t)
+	require.NoError(t, e.k.InitGenesis(e.ctx, *types.DefaultGenesis()))
+	id, voter := addVotedOption(t, e, 1_000_000)
+	ms := NewMsgServerImpl(e.k)
+	authority, err := e.k.addressCodec.BytesToString(e.k.GetAuthority())
+	require.NoError(t, err)
+	_, err = ms.ResetAllocations(e.ctx, &types.MsgResetAllocations{Authority: authority, Stream: types.STREAM_ID_GROUNDWORKS})
+	require.NoError(t, err)
+
+	addrBz, err := e.k.addressCodec.StringToBytes(voter)
+	require.NoError(t, err)
+	e.staking.bonded[voter] = math.NewInt(2_000_000)
+	require.NoError(t, e.k.Hooks().AfterDelegationModified(e.ctx, sdk.AccAddress(addrBz), sdk.ValAddress{}))
+
+	opt, err := e.k.Options.Get(e.ctx, optionKey(types.STREAM_ID_GROUNDWORKS, id))
+	require.NoError(t, err)
+	require.True(t, opt.AmountAllocated.IsZero(), "the reset vote came back: %s", opt.AmountAllocated)
+	total, err := e.k.getTotalWeight(e.ctx, types.STREAM_ID_GROUNDWORKS)
+	require.NoError(t, err)
+	require.True(t, total.IsZero())
+	has, err := e.k.Voters.Has(e.ctx, voterKey(types.STREAM_ID_GROUNDWORKS, addrBz))
+	require.NoError(t, err)
+	require.False(t, has, "the stale split is dropped")
+	require.NoError(t, e.k.AssertInvariants(e.ctx))
+}

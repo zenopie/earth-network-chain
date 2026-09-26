@@ -32,6 +32,19 @@ func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, re
 		return nil // not a voter (or not found) — nothing to do
 	}
 
+	// A split cast before the stream was last reset is not a vote any more.
+	// resyncVoter already declines to subtract it, because the reset zeroed
+	// the aggregates; but it then added it straight back at the new weight,
+	// so the next delegation change undid governance's reset for that voter.
+	// Drop the stale record instead, and let them vote again.
+	epoch, err := k.getEpoch(ctx, types.STREAM_ID_GROUNDWORKS)
+	if err != nil {
+		return err
+	}
+	if voter.Epoch != epoch {
+		return k.Voters.Remove(ctx, voterKey(types.STREAM_ID_GROUNDWORKS, addrBz))
+	}
+
 	if err := k.AdvanceIndex(ctx, types.STREAM_ID_GROUNDWORKS); err != nil {
 		return err
 	}
