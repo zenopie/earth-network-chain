@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"testing"
+	"time"
 
 	"cosmossdk.io/math"
 
@@ -86,6 +87,9 @@ func TestBurnsSurviveExportImport(t *testing.T) {
 	require.NoError(t, exported.Validate())
 
 	fresh := initFixture(t)
+	// Imported at the moment it was exported. A later genesis time moves the
+	// clock up to it instead; see TestResumeClockSkipsTheGapBeforeGenesis.
+	fresh.ctx = sdk.UnwrapSDKContext(fresh.ctx).WithBlockTime(time.Unix(0, 1_700_000_000_000_000_000))
 	require.NoError(t, fresh.keeper.InitGenesis(fresh.ctx, *exported))
 
 	total, err := fresh.keeper.TotalBurned(fresh.ctx)

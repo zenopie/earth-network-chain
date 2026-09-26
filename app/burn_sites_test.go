@@ -24,6 +24,7 @@ var burnSites = map[string]string{
 	"x/earth/keeper/fees.go":                       "gas_fees",
 	"x/dex/keeper/msg_server_swap.go":              "swap_fee",
 	"x/dex/keeper/pol_burn.go":                     "pol_retire",
+	"x/dex/keeper/msg_server_add_liquidity.go":     "dex_residue",
 	"x/personhood/keeper/abci.go":                  "anml_buyback",
 	"x/allocation/keeper/prune.go":                 "allocation",
 	"x/allocation/keeper/msg_server_add_option.go": "allocation",

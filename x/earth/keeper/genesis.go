@@ -3,6 +3,8 @@ package keeper
 import (
 	"context"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+
 	"github.com/earth-network/earth/x/earth/types"
 )
 
@@ -20,7 +22,22 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	// MintEmission already treats as a signal to start the clock rather than
 	// mint against the unix epoch. Writing it unconditionally is therefore safe
 	// and keeps the import symmetric with the export.
-	return k.LastMintTime.Set(ctx, genState.LastMintTime)
+	return k.LastMintTime.Set(ctx, resumeClock(ctx, genState.LastMintTime))
+}
+
+// resumeClock is an imported emission timestamp, moved up to the genesis time.
+//
+// An export carries the time of the last block it saw, and the chain that
+// imports it starts at its own genesis time, however much later that is. The
+// first block used to mint the whole gap in one go — a relaunch a month after
+// the export paid a month of staking emission to whoever was validating in
+// block one. Time between export and genesis is not time the chain ran.
+// Zero, "never minted", stays zero.
+func resumeClock(ctx context.Context, last int64) int64 {
+	if genesis := sdk.UnwrapSDKContext(ctx).BlockTime().UnixNano(); last != 0 && genesis > last {
+		return genesis
+	}
+	return last
 }
 
 // ExportGenesis returns the module's exported genesis.

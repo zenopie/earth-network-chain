@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
@@ -193,7 +194,13 @@ func (k Keeper) restoreStream(ctx context.Context, st types.StreamState) error {
 	if err := k.Epoch.Set(ctx, kk, st.Epoch); err != nil {
 		return err
 	}
-	if err := k.LastUpkeep.Set(ctx, kk, st.LastUpkeep); err != nil {
+	// Moved up to the genesis time, for the same reason as x/earth's mint
+	// clock: the gap between export and relaunch is not emission anyone earned.
+	lastUpkeep := st.LastUpkeep
+	if genesis := sdk.UnwrapSDKContext(ctx).BlockTime().UnixNano(); lastUpkeep != 0 && genesis > lastUpkeep {
+		lastUpkeep = genesis
+	}
+	if err := k.LastUpkeep.Set(ctx, kk, lastUpkeep); err != nil {
 		return err
 	}
 	if err := k.OptionSeq.Set(ctx, kk, st.OptionSeq); err != nil {
