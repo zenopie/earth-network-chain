@@ -1,5 +1,6 @@
 {
   "aztec_tag": "v5.0.0",
+  "aztec_commit": "7aa2bd616d632801fe65d97ee8a4434f26886b40",
   "aztec_repo": "https://github.com/AztecProtocol/aztec-packages",
   "msgpack_commit": "c0334576ed657fb3b3c49e8e61402989fb84146d",
   "assets": {

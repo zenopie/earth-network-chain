@@ -30,6 +30,7 @@ INCLUDE_DIR="$REPO_ROOT/include"
 BB_AZTEC_TAG="$(python3 -c "import json; print(json.load(open('$REPO_ROOT/checksums.json'))['aztec_tag'])")"
 BB_AZTEC_REPO="$(python3 -c "import json; print(json.load(open('$REPO_ROOT/checksums.json'))['aztec_repo'])")"
 MSGPACK_COMMIT="$(python3 -c "import json; print(json.load(open('$REPO_ROOT/checksums.json'))['msgpack_commit'])")"
+BB_AZTEC_COMMIT="$(python3 -c "import json; print(json.load(open('$REPO_ROOT/checksums.json'))['aztec_commit'])")"
 
 PLATFORM=""
 
@@ -160,7 +161,16 @@ git clone \
     "$BB_AZTEC_REPO.git" \
     "$HEADERS_DIR"
 git -C "$HEADERS_DIR" sparse-checkout set barretenberg/cpp/src
-echo "  Headers at: $HEADERS_DIR/barretenberg/cpp/src"
+# The tag is how the headers are found; the commit is what they must be. A tag
+# can be moved to other code by whoever controls the repository, and these
+# headers are compiled into the verifier every validator runs. A git commit id
+# is a hash of the tree, so matching it pins every header byte.
+GOT_COMMIT="$(git -C "$HEADERS_DIR" rev-parse HEAD)"
+if [[ "$GOT_COMMIT" != "$BB_AZTEC_COMMIT" ]]; then
+    echo "error: $BB_AZTEC_TAG is at $GOT_COMMIT, checksums.json pins $BB_AZTEC_COMMIT" >&2
+    exit 1
+fi
+echo "  Headers at: $HEADERS_DIR/barretenberg/cpp/src ($GOT_COMMIT)"
 
 # ── Step 2b: Create stubs for external headers not in the barretenberg source tree ──
 echo ""
@@ -200,10 +210,18 @@ echo "  Created stubs/tracy/Tracy.hpp"
 echo ""
 echo "▶ Step 2c: Downloading msgpack-c include headers..."
 MSGPACK_DIR="$WORK_DIR/msgpack-c"
-mkdir -p "$MSGPACK_DIR"
-curl -fsSL "https://github.com/AztecProtocol/msgpack-c/archive/${MSGPACK_COMMIT}.tar.gz" \
-    | tar -xz -C "$MSGPACK_DIR" --strip-components=1
-echo "  msgpack-c include at: $MSGPACK_DIR/include"
+# Fetched as a git commit and checked, not as a GitHub archive tarball: an
+# archive's bytes are generated on request and nothing verified them, while a
+# commit id pins the tree it names.
+git init -q "$MSGPACK_DIR"
+git -C "$MSGPACK_DIR" fetch -q --depth=1 https://github.com/AztecProtocol/msgpack-c.git "$MSGPACK_COMMIT"
+git -C "$MSGPACK_DIR" checkout -q FETCH_HEAD
+GOT_COMMIT="$(git -C "$MSGPACK_DIR" rev-parse HEAD)"
+if [[ "$GOT_COMMIT" != "$MSGPACK_COMMIT" ]]; then
+    echo "error: msgpack-c fetched $GOT_COMMIT, checksums.json pins $MSGPACK_COMMIT" >&2
+    exit 1
+fi
+echo "  msgpack-c include at: $MSGPACK_DIR/include ($GOT_COMMIT)"
 
 # ── Step 3: Compile barretenberg_wrapper.cpp ─────────────────────────────────
 echo ""
@@ -290,6 +308,16 @@ fi
 ${AR:-ar} t "$OUTPUT_CANDIDATE" >/dev/null
 mv -f "$OUTPUT_CANDIDATE" "$OUTPUT_A"
 echo "  Output: $(du -sh "$OUTPUT_A" | cut -f1) $OUTPUT_A"
+# Recorded, not compared: the wrapper is compiled here, and its bytes depend on
+# the compiler, so the output cannot be pinned across toolchains the way the
+# inputs are. Written beside the library so a release can publish it and two
+# builds from the same image can be checked against each other.
+if command -v sha256sum &>/dev/null; then
+    sha256sum "$OUTPUT_A" | awk '{print $1}' > "$OUTPUT_A.sha256"
+else
+    shasum -a 256 "$OUTPUT_A" | awk '{print $1}' > "$OUTPUT_A.sha256"
+fi
+echo "  sha256: $(cat "$OUTPUT_A.sha256")"
 
 echo ""
 echo "Done! libbarretenberg.a built for $PLATFORM (Aztec $BB_AZTEC_TAG)"
