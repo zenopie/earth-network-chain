@@ -185,6 +185,30 @@ func (p Params) Validate() error {
 	if p.CurrentDateMaxSkewSeconds == 0 {
 		return errors.New("current_date_max_skew_seconds must be positive: 0 leaves passport expiry unenforced")
 	}
+	if p.RegistrationValiditySeconds == 0 || p.RegistrationValiditySeconds > MaxRegistrationValiditySeconds {
+		return fmt.Errorf("registration_validity_seconds must be in 1..%d, got %d",
+			uint64(MaxRegistrationValiditySeconds), p.RegistrationValiditySeconds)
+	}
+	// Each index names a different public input. Two pointing at the same one
+	// make a single value serve as both — the nullifier doubling as the bound
+	// address, say — and the check on each then constrains nothing the other
+	// did not. Only once there is a verifying key: until then registration is
+	// off, and the indexes sit at their zero defaults with nothing to index.
+	indexes := map[uint32]string{}
+	for _, idx := range []struct {
+		name string
+		at   uint32
+	}{
+		{"nullifier_index", p.NullifierIndex},
+		{"dsc_key_index", p.DscKeyIndex},
+		{"current_date_index", p.CurrentDateIndex},
+		{"address_index", p.AddressIndex},
+	} {
+		if other, dup := indexes[idx.at]; dup && len(p.VerifyingKeys) > 0 {
+			return fmt.Errorf("%s and %s both name public input %d", other, idx.name, idx.at)
+		}
+		indexes[idx.at] = idx.name
+	}
 	// Governance may leave these at zero to take the default (see the
 	// *OrDefault accessors), but it may not set them to a value that is present
 	// and wrong. Only the upper bound needs policing: a deviation tolerance at

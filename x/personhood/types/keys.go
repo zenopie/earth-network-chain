@@ -49,6 +49,13 @@ const (
 	// DefaultRegistrationValiditySeconds is the default registration lifetime (1 year).
 	DefaultRegistrationValiditySeconds = 365 * 24 * 60 * 60
 
+	// MaxRegistrationValiditySeconds bounds how long a registration may go
+	// without its Document Signer being checked again. Renewal is when a
+	// revoked CSCA's registrations lapse on their own, so an unbounded validity
+	// made CSCA revocation never take effect — and past 2^63 the expiry sum
+	// wraps negative in isExpired. Three years.
+	MaxRegistrationValiditySeconds = 3 * DefaultRegistrationValiditySeconds
+
 	// DefaultCurrentDateMaxSkewSeconds bounds how far the prover-supplied
 	// current_date may sit from block time (48h).
 	//
