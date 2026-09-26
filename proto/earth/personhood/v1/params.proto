@@ -206,4 +206,20 @@ message Params {
   // country legitimately has several signers active at once.
   uint64 country_daily_registration_floor = 18;
   uint64 country_daily_registration_share_bps = 19;
+
+  // network_daily_registration_floor and network_daily_registration_growth_bps
+  // bound registrations across the whole network in a day:
+  //
+  //   cap = max(floor, growth_bps * yesterday's network registrations / 10000)
+  //
+  // The per-signer and per-country caps each bound one source, and together
+  // they bound nothing: every country in the trust store has its own full
+  // allowance, so several compromised roots at once — or one root issuing
+  // under many country codes — add up without limit. This is the ceiling on
+  // the sum. Growth rather than share, since the network is the whole: 30000
+  // lets a day triple the one before, which real adoption can do and a
+  // sudden flood of forged registrations is shaped like. Zero on either falls
+  // back to the default.
+  uint64 network_daily_registration_floor = 21;
+  uint64 network_daily_registration_growth_bps = 22;
 }

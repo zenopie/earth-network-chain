@@ -32,6 +32,8 @@ func DefaultParams() Params {
 	p.DscDailyRegistrationShareBps = DefaultDscDailyRegistrationShareBps
 	p.CountryDailyRegistrationFloor = DefaultCountryDailyRegistrationFloor
 	p.CountryDailyRegistrationShareBps = DefaultCountryDailyRegistrationShareBps
+	p.NetworkDailyRegistrationFloor = DefaultNetworkDailyRegistrationFloor
+	p.NetworkDailyRegistrationGrowthBps = DefaultNetworkDailyRegistrationGrowthBps
 	return p
 }
 
@@ -84,6 +86,19 @@ func (p Params) CountryDailyCap(networkPreviousDay uint64) uint64 {
 		share = DefaultCountryDailyRegistrationShareBps
 	}
 	return DailyRegistrationCap(floor, share, networkPreviousDay)
+}
+
+// NetworkDailyCap returns the network-wide registration cap for the current day.
+func (p Params) NetworkDailyCap(networkPreviousDay uint64) uint64 {
+	floor := p.NetworkDailyRegistrationFloor
+	if floor == 0 {
+		floor = DefaultNetworkDailyRegistrationFloor
+	}
+	growth := p.NetworkDailyRegistrationGrowthBps
+	if growth == 0 {
+		growth = DefaultNetworkDailyRegistrationGrowthBps
+	}
+	return DailyRegistrationCap(floor, growth, networkPreviousDay)
 }
 
 // The five knobs below all read zero as "unset, use the compiled-in default"

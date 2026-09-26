@@ -46,17 +46,18 @@ type stubPki struct {
 	pubkey  *certs.PublicKey
 	err     error
 	revoked bool
+	country string
 }
 
 func (s stubPki) IsCommitmentRevoked(context.Context, []byte) (bool, error) {
 	return s.revoked, nil
 }
 
-func (s stubPki) VerifyDsc(_ context.Context, _ []byte) (*certs.PublicKey, error) {
+func (s stubPki) VerifyDscIssuer(_ context.Context, _ []byte) (*certs.PublicKey, string, error) {
 	if s.err != nil {
-		return nil, s.err
+		return nil, "", s.err
 	}
-	return s.pubkey, nil
+	return s.pubkey, s.country, nil
 }
 
 // TestVerifyRegistrationProof_DscBinding covers the check that replaced

@@ -66,3 +66,35 @@ func TestIssuerCertificatesAreNotDscs(t *testing.T) {
 		t.Fatalf("genuine DSC: %v", err)
 	}
 }
+
+// TestCountryComesFromTheIssuer: the per-country cap was keyed by the country
+// a DSC names for itself, which its issuer is free to set to anything.
+func TestCountryComesFromTheIssuer(t *testing.T) {
+	k, ctx := newKeeperForTest(t)
+	ctx = ctx.WithBlockTime(time.Now())
+	ca, caKey := makeCA(t) // C=XX
+	if err := k.InitGenesis(ctx, types.GenesisState{
+		Params: types.DefaultParams(),
+		Cscas:  []types.Csca{{CertificateDer: ca.Raw}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber:   big.NewInt(3),
+		Subject:        pkix.Name{CommonName: "DSC", Country: []string{"YY"}},
+		NotBefore:      time.Now().Add(-time.Hour),
+		NotAfter:       time.Now().Add(time.Hour),
+		AuthorityKeyId: ca.SubjectKeyId,
+	}, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, country, err := k.VerifyDscIssuer(ctx, der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if country != "XX" {
+		t.Fatalf("country = %q, want the issuing CSCA's XX, not the DSC's own YY", country)
+	}
+}

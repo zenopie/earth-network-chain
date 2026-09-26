@@ -35,8 +35,17 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 	// certificate: before that the signer named here is merely claimed, and
 	// counting a claim would let anyone exhaust a legitimate signer's daily
 	// allowance with junk that names it.
-	if err := k.checkRegistrationRate(ctx, dsc.key, dsc.country); err != nil {
+	//
+	// A wallet switch is exempt, and is decided here, before anything below
+	// retires or moves the registration it would be judged by.
+	isSwitch, err := k.isLiveRegistration(ctx, nullifier)
+	if err != nil {
 		return nil, err
+	}
+	if !isSwitch {
+		if err := k.checkRegistrationRate(ctx, dsc.key, dsc.country); err != nil {
+			return nil, err
+		}
 	}
 
 	// Settle the human stream up front: clearing a lapsed registration below
@@ -170,8 +179,10 @@ func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types
 			return nil, err
 		}
 	}
-	if err := k.recordRegistrationRate(ctx, dsc.key, dsc.country); err != nil {
-		return nil, err
+	if !switched {
+		if err := k.recordRegistrationRate(ctx, dsc.key, dsc.country); err != nil {
+			return nil, err
+		}
 	}
 
 	// Mint 1 ANML and pay the registration reward from the human stream's

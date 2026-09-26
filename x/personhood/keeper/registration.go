@@ -28,7 +28,7 @@ import (
 // registration, recorded so a compromised signer's registrations stay findable.
 type dscFacts struct {
 	key     []byte // Poseidon2 commitment, as the proof exposed it
-	country string // ISO 3166-1 alpha-2, "" if the certificate omits it
+	country string // ISO 3166-1 alpha-2 of the issuing CSCA, "" if it names none
 }
 
 // creator is the account the registration is for. It is not incidental: the
@@ -162,7 +162,7 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, creator sdk.AccAddr
 		// Metered: DER parsing and public-key operations over attacker-supplied
 		// bytes, cheap next to the SNARK but not free.
 		sdkCtx.GasMeter().ConsumeGas(params.DscVerificationGasOrDefault(), "personhood: dsc chain verification")
-		pubkey, err := k.pkiKeeper.VerifyDsc(ctx, dscDER)
+		pubkey, country, err := k.pkiKeeper.VerifyDscIssuer(ctx, dscDER)
 		if err != nil {
 			return nil, dscFacts{}, err
 		}
@@ -178,9 +178,7 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, creator sdk.AccAddr
 			return nil, dscFacts{}, types.ErrBadPublicInputs.Wrap("proof is not bound to the supplied DSC")
 		}
 		facts.key = append([]byte(nil), want[:]...)
-		if cert, err := certs.ParseCert(dscDER); err == nil {
-			facts.country = cert.Country()
-		}
+		facts.country = country
 	}
 
 	// Reject a registration whose country or signer is already at its daily cap
@@ -204,8 +202,15 @@ func (k Keeper) verifyRegistrationProof(ctx context.Context, creator sdk.AccAddr
 	// compares; recordRegistrationRate, which increments them, runs only after a
 	// registration has fully succeeded. So an attempt refused here cannot move
 	// anyone else's allowance.
-	if err := k.checkRegistrationRate(ctx, facts.key, facts.country); err != nil {
+	//
+	// Not for a wallet switch, which is never rate-limited: see
+	// isLiveRegistration.
+	if live, err := k.isLiveRegistration(ctx, pubInputs[nullifierIndex]); err != nil {
 		return nil, dscFacts{}, err
+	} else if !live {
+		if err := k.checkRegistrationRate(ctx, facts.key, facts.country); err != nil {
+			return nil, dscFacts{}, err
+		}
 	}
 
 	// Charge for the verification before running it.
@@ -292,6 +297,26 @@ func (k Keeper) getRegistrationByAddr(ctx context.Context, addr sdk.AccAddress) 
 }
 
 // isExpired reports whether a registration is past the validity window.
+// isLiveRegistration reports whether a nullifier already has an unexpired
+// registration, which makes registering it again a wallet switch.
+//
+// A switch moves a person already counted, so it is not held to the daily
+// caps and does not count against them. It used to do both: moving a wallet
+// spent one of the signer's and the country's registrations for the day, and
+// on a day a country was at its cap, someone who had lost their wallet could
+// not move to a new one.
+func (k Keeper) isLiveRegistration(ctx context.Context, nullifier []byte) (bool, error) {
+	reg, err := k.Registrations.Get(ctx, nullifier)
+	if errors.Is(err, collections.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	expired, err := k.isExpired(ctx, reg)
+	return !expired, err
+}
+
 func (k Keeper) isExpired(ctx context.Context, reg types.Registration) (bool, error) {
 	params, err := k.Params.Get(ctx)
 	if err != nil {

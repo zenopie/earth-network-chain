@@ -115,6 +115,20 @@ const (
 	// CSCA minting unlimited signers, not to police which countries register.
 	DefaultCountryDailyRegistrationShareBps = 6_000
 
+	// DefaultNetworkDailyRegistrationFloor is the least the whole network may
+	// register in a day: five country floors. Launch-scale adoption fits under
+	// it with room; five compromised roots at once do not fit twice over.
+	DefaultNetworkDailyRegistrationFloor = 5_000
+
+	// DefaultNetworkDailyRegistrationGrowthBps lets a day's registrations reach
+	// three times the day before's once that is above the floor.
+	DefaultNetworkDailyRegistrationGrowthBps = 30_000
+
+	// UnknownCountry is the rate-limit bucket for a signer whose issuer names no
+	// country. One shared bucket rather than no bucket: an empty country used
+	// to skip the country cap altogether.
+	UnknownCountry = "??"
+
 	// DefaultProofVerificationGas is the gas charged for one UltraHonk proof
 	// verification.
 	//

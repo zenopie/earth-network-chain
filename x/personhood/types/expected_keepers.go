@@ -82,7 +82,11 @@ type PkiKeeper interface {
 	// The parsed key rather than its canonical bytes, because the commitment is
 	// over a curve tag as well as the coordinates and the bytes cannot say which
 	// curve produced them — see certs.DscCommitment.
-	VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, error)
+	//
+	// Also returns the issuing country, taken from the trusted CSCA that
+	// verified it rather than from the certificate itself, which could name
+	// any country — or none.
+	VerifyDscIssuer(ctx context.Context, der []byte) (*certs.PublicKey, string, error)
 	// IsCommitmentRevoked answers the same question for a signer this module has
 	// already recorded, which knows it only by the Poseidon2 commitment stored
 	// on the Registration — not by the certificate VerifyDsc takes.

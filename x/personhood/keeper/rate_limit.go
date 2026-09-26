@@ -75,8 +75,17 @@ func (k Keeper) networkPreviousDay(ctx context.Context, day uint64) (uint64, err
 	return c.PreviousCount, nil
 }
 
+// countryBucket is the rate-limit key for a country: the code itself, or the
+// shared UnknownCountry bucket when there is none.
+func countryBucket(country string) string {
+	if country == "" {
+		return types.UnknownCountry
+	}
+	return country
+}
+
 // checkRegistrationRate rejects a registration that would take its Document
-// Signer, or its issuing country, past the day's allowance.
+// Signer, its issuing country, or the network past the day's allowance.
 //
 // Read-only: nothing is counted here. The count moves in recordRegistrationRate
 // after the proof has verified and been bound to the certificate, because until
@@ -90,9 +99,16 @@ func (k Keeper) checkRegistrationRate(ctx context.Context, dscKey []byte, countr
 		return err
 	}
 	day := dayOf(sdk.UnwrapSDKContext(ctx).BlockTime().Unix())
-	prev, err := k.networkPreviousDay(ctx, day)
+	network, err := k.getRateCounter(ctx, func() (types.RateCounter, error) { return k.NetworkRate.Get(ctx) }, day)
 	if err != nil {
 		return err
+	}
+	prev := network.PreviousCount
+	// The network was counted but never capped, so the per-country caps added
+	// up to no bound at all: every country in the trust store brought its own.
+	if cap := params.NetworkDailyCap(prev); network.Count >= cap {
+		return types.ErrRegistrationRateLimited.Wrapf(
+			"the network has reached its %d registrations for today; retry tomorrow", cap)
 	}
 
 	if len(dscKey) > 0 {
@@ -105,15 +121,16 @@ func (k Keeper) checkRegistrationRate(ctx context.Context, dscKey []byte, countr
 				"document signer has reached its %d registrations for today; retry tomorrow", cap)
 		}
 	}
-	if country != "" {
-		c, err := k.getRateCounter(ctx, func() (types.RateCounter, error) { return k.CountryRate.Get(ctx, country) }, day)
-		if err != nil {
-			return err
-		}
-		if cap := params.CountryDailyCap(prev); c.Count >= cap {
-			return types.ErrRegistrationRateLimited.Wrapf(
-				"country %s has reached its %d registrations for today; retry tomorrow", country, cap)
-		}
+	// Always, including for no country. That case used to skip the check, so a
+	// signer whose name carried no country was under no country cap.
+	bucket := countryBucket(country)
+	c, err := k.getRateCounter(ctx, func() (types.RateCounter, error) { return k.CountryRate.Get(ctx, bucket) }, day)
+	if err != nil {
+		return err
+	}
+	if cap := params.CountryDailyCap(prev); c.Count >= cap {
+		return types.ErrRegistrationRateLimited.Wrapf(
+			"country %s has reached its %d registrations for today; retry tomorrow", bucket, cap)
 	}
 	return nil
 }
@@ -154,17 +171,17 @@ func (k Keeper) recordRegistrationRate(ctx context.Context, dscKey []byte, count
 		}
 		emitRateWarning(sdkCtx, "dsc", hexOf(dscKey), c.Count, params.DscDailyCap(prev))
 	}
-	if country != "" {
-		c, err := k.getRateCounter(ctx, func() (types.RateCounter, error) { return k.CountryRate.Get(ctx, country) }, day)
-		if err != nil {
-			return err
-		}
-		c.Count++
-		if err := k.CountryRate.Set(ctx, country, c); err != nil {
-			return err
-		}
-		emitRateWarning(sdkCtx, "country", country, c.Count, params.CountryDailyCap(prev))
+	bucket := countryBucket(country)
+	c, err := k.getRateCounter(ctx, func() (types.RateCounter, error) { return k.CountryRate.Get(ctx, bucket) }, day)
+	if err != nil {
+		return err
 	}
+	c.Count++
+	if err := k.CountryRate.Set(ctx, bucket, c); err != nil {
+		return err
+	}
+	emitRateWarning(sdkCtx, "country", bucket, c.Count, params.CountryDailyCap(prev))
+	emitRateWarning(sdkCtx, "network", "", network.Count, params.NetworkDailyCap(prev))
 	return nil
 }
 

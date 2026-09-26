@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -21,8 +22,8 @@ import (
 // revocablePki is a PkiKeeper whose revocation set the test drives.
 type revocablePki struct{ revoked map[string]bool }
 
-func (p *revocablePki) VerifyDsc(context.Context, []byte) (*certs.PublicKey, error) {
-	return nil, nil
+func (p *revocablePki) VerifyDscIssuer(context.Context, []byte) (*certs.PublicKey, string, error) {
+	return nil, "", nil
 }
 func (p *revocablePki) IsCommitmentRevoked(_ context.Context, c []byte) (bool, error) {
 	return p.revoked[string(c)], nil
@@ -399,5 +400,78 @@ func TestRetirementIsAnnounced(t *testing.T) {
 	}
 	if len(got) != 2 || !got[string([]byte{1, 'n'})] || !got[string([]byte{2, 'n'})] {
 		t.Fatalf("announced %q, want the revoked and the expired registration only", listener.retired)
+	}
+}
+
+// TestEmptyCountryIsCapped: a signer whose issuer names no country used to skip
+// the country cap entirely. It now shares the UnknownCountry bucket.
+func TestEmptyCountryIsCapped(t *testing.T) {
+	k, _, ctx := capKeeper(t)
+	p, _ := k.Params.Get(ctx)
+	p.CountryDailyRegistrationFloor = 3
+	p.DscDailyRegistrationFloor = 100
+	if err := k.Params.Set(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		dsc := []byte{byte(i)} // a fresh signer each time: only the country cap can bind
+		if err := register(t, k, ctx, dsc, ""); err != nil {
+			t.Fatalf("registration %d: %v", i, err)
+		}
+	}
+	if err := register(t, k, ctx, []byte{9}, ""); !errors.Is(err, types.ErrRegistrationRateLimited) {
+		t.Fatalf("4th no-country registration = %v, want rate limited", err)
+	}
+}
+
+// TestNetworkCapBoundsManyCountries: each country has its own allowance, so
+// the sum across countries was unbounded until the network cap.
+func TestNetworkCapBoundsManyCountries(t *testing.T) {
+	k, _, ctx := capKeeper(t)
+	p, _ := k.Params.Get(ctx)
+	p.NetworkDailyRegistrationFloor = 5
+	if err := k.Params.Set(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	countries := []string{"AA", "BB", "CC", "DD", "EE"}
+	for i, c := range countries {
+		if err := register(t, k, ctx, []byte{byte(i)}, c); err != nil {
+			t.Fatalf("%s: %v", c, err)
+		}
+	}
+	if err := register(t, k, ctx, []byte{42}, "FF"); !errors.Is(err, types.ErrRegistrationRateLimited) {
+		t.Fatalf("6th registration network-wide = %v, want rate limited", err)
+	}
+
+	// Tomorrow the cap is max(floor, 3x today's 5) = 15.
+	tomorrow := ctx.WithBlockTime(ctx.BlockTime().Add(24 * time.Hour))
+	for i := 0; i < 15; i++ {
+		if err := register(t, k, tomorrow, []byte{byte(100 + i)}, "C"+string(rune('A'+i))); err != nil {
+			t.Fatalf("day two, registration %d: %v", i, err)
+		}
+	}
+	if err := register(t, k, tomorrow, []byte{200}, "ZZ"); !errors.Is(err, types.ErrRegistrationRateLimited) {
+		t.Fatalf("day two, 16th = %v, want rate limited", err)
+	}
+}
+
+// TestLiveRegistrationIsASwitch: a nullifier with an unexpired registration is
+// a wallet switch, which Register exempts from the daily caps.
+func TestLiveRegistrationIsASwitch(t *testing.T) {
+	k, _, ctx := capKeeper(t)
+	null := []byte("nullifier-of-someone-registered-")
+	if live, err := k.isLiveRegistration(ctx, null); err != nil || live {
+		t.Fatalf("unknown nullifier: live=%v err=%v", live, err)
+	}
+	if err := k.Registrations.Set(ctx, null, types.Registration{Nullifier: null, RegisteredAt: ctx.BlockTime().Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if live, err := k.isLiveRegistration(ctx, null); err != nil || !live {
+		t.Fatalf("fresh registration: live=%v err=%v", live, err)
+	}
+	p, _ := k.Params.Get(ctx)
+	later := ctx.WithBlockTime(ctx.BlockTime().Add(time.Duration(p.RegistrationValiditySeconds+1) * time.Second))
+	if live, err := k.isLiveRegistration(later, null); err != nil || live {
+		t.Fatalf("lapsed registration: live=%v err=%v", live, err)
 	}
 }

@@ -59,9 +59,25 @@ func dnKey(dn []byte) []byte {
 // MaxIssuerCandidates signature verifications over a key of at most
 // MaxPublicKeyBytes; move either constant and revisit the gas with it.
 func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, error) {
+	pub, _, err := k.VerifyDscIssuer(ctx, der)
+	return pub, err
+}
+
+// VerifyDscIssuer is VerifyDsc, also returning the issuing country as the
+// trust store records it: the country of the CSCA whose key verified the
+// signature, or "" if that CSCA names none.
+//
+// The issuer's country and not the DSC's own. A Document Signer's subject is
+// whatever its CSCA wrote into it, and the per-country registration cap was
+// keyed by that — so a signer could be issued under one country's root while
+// naming another, and draw on the second country's allowance, or name none
+// and be under no country cap at all. The CSCA is in the trust store because
+// governance put it there as that country's root; its country is the one that
+// answers for the signer.
+func (k Keeper) VerifyDscIssuer(ctx context.Context, der []byte) (*certs.PublicKey, string, error) {
 	dsc, err := certs.ParseCert(der)
 	if err != nil {
-		return nil, types.ErrInvalidCert.Wrap(err.Error())
+		return nil, "", types.ErrInvalidCert.Wrap(err.Error())
 	}
 	// The DSC's own validity is enforced; its issuer's deliberately is not. See
 	// Csca.not_after in pki.proto — an expired CSCA still signed genuine
@@ -69,7 +85,7 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, er
 	// would break verification for a whole country as its trust store aged.
 	now := sdk.UnwrapSDKContext(ctx).BlockTime()
 	if now.Before(dsc.NotBefore) || now.After(dsc.NotAfter) {
-		return nil, types.ErrCertExpired
+		return nil, "", types.ErrCertExpired
 	}
 	// It has to be a Document Signer, not an issuer. The chain check below
 	// only asks whether some trusted key signed this certificate, and a CSCA
@@ -78,20 +94,20 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, er
 	// "signer" that registrations could be made under. A DSC is not a CA,
 	// may not sign certificates, and is issued by someone other than itself.
 	if dsc.IsCA || dsc.CertSign || dsc.IsSelfIssued() {
-		return nil, types.ErrNotDsc
+		return nil, "", types.ErrNotDsc
 	}
 
 	pub := dsc.PublicKey.CanonicalBytes()
 	hash := sha256.Sum256(pub)
 	if revoked, err := k.RevokedDscs.Has(ctx, hash[:]); err != nil {
-		return nil, err
+		return nil, "", err
 	} else if revoked {
-		return nil, types.ErrDscRevoked
+		return nil, "", types.ErrDscRevoked
 	}
 
 	cands, sawRevoked, truncated, err := k.issuerCandidates(ctx, dsc)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	// First candidate whose key verifies the signature wins. Candidates sharing
 	// an SKI share a public key, so in practice the first is decisive and the
@@ -109,7 +125,7 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, er
 			// the curve as well as the coordinates, and the bytes alone cannot
 			// say which curve produced them — which is the whole point of the
 			// tag. See certs.DscCommitment.
-			return dsc.PublicKey, nil
+			return dsc.PublicKey, csca.Country(), nil
 		}
 	}
 	// A revoked issuer is the more specific answer than "nothing here verified
@@ -118,21 +134,21 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, er
 	// after the loop so a DSC that a *different*, still-trusted issuer verifies
 	// is unaffected by a revocation elsewhere in the candidate set.
 	if sawRevoked {
-		return nil, types.ErrCscaRevoked
+		return nil, "", types.ErrCscaRevoked
 	}
 	// Nothing verified it AND the candidate list was cut short, so the real
 	// issuer may be one of the certificates never examined. Said plainly,
 	// because the fix is to prune the trust store and "no issuer found" would
 	// send an operator looking for a missing CSCA that is in fact present.
 	if truncated {
-		return nil, types.ErrTooManyIssuers.Wrapf(
+		return nil, "", types.ErrTooManyIssuers.Wrapf(
 			"stopped after examining %d candidate issuers and none verified this DSC",
 			types.MaxIssuerCandidates)
 	}
 	if len(cands) == 0 {
-		return nil, types.ErrNoIssuerCsca
+		return nil, "", types.ErrNoIssuerCsca
 	}
-	return nil, types.ErrCertVerify
+	return nil, "", types.ErrCertVerify
 }
 
 // RevokeDsc marks a Document Signer's public key as untrusted.
