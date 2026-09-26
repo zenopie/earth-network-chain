@@ -148,6 +148,12 @@ const (
 	// of proof CPU against a ~5s block — leaving the rest of the block for
 	// everything else.
 	//
+	// Tripled in v0.9.2. The 10ms allowance was for a whole core; earth-1's
+	// validator runs on a fraction of one on Akash, where the same proof is
+	// several times slower, and a block of deliberately invalid proofs costs
+	// the full verification each. At 3,000,000 a block holds at most 33, about
+	// 0.8s even at 24ms apiece.
+	//
 	// Deriving it the other way produces a far smaller number and the wrong
 	// answer: secp256k1 verification measures ~136us on the same machine and the
 	// SDK prices it at 1000 gas, which would put this proof at ~43,000 gas and
@@ -155,14 +161,19 @@ const (
 	// is nominally under its gas limit. The SDK's signature costs are calibrated
 	// for transactions carrying one or two signatures, not for an operation a
 	// transaction can be made entirely of.
-	DefaultProofVerificationGas = 1_000_000
+	DefaultProofVerificationGas = 3_000_000
 
 	// DefaultDscVerificationGas is the gas charged for one Document Signer
 	// certificate chain verification: DER parsing plus one or two public-key
-	// operations. Priced by the same block-limit method at a tenth of the proof
-	// charge, which is comfortably above its measured cost and still caps the
-	// work at ~1,000 chain verifications per block.
-	DefaultDscVerificationGas = 100_000
+	// operations, and the Poseidon2 commitment over the key. Priced by the same
+	// block-limit method at a tenth of the proof charge.
+	//
+	// Tripled in v0.9.2 with the proof charge. The worst case is not one
+	// signature check but MaxIssuerCandidates of them, against trust-store keys
+	// as large as governance has admitted — brainpool512 and 4096-bit RSA
+	// among them — plus a commitment that absorbs one field element per key
+	// byte. At 300,000 a block holds ~330.
+	DefaultDscVerificationGas = 300_000
 
 	// DefaultBuybackTwapWindowSeconds is the minimum age of the price
 	// observation the ANML buyback prices against, and so also its cadence:
