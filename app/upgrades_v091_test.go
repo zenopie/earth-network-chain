@@ -24,15 +24,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// v0.9.1 replaces every key v0.7.0 installed, with exactly the keys of the
-// recompiled circuits.
+// v0.9.1 replaces every key v0.7.0 installed.
 //
-// The zk/ultrahonk fixtures are regenerated from the circuits by
-// scripts/regen-poa-fixtures.sh, and their proofs verify against their own vk in
-// that package's tests. Requiring the embedded key to equal the fixture's is
-// what ties the key the handler installs to a circuit a proof was actually made
-// with — an embedded key from any other build would fail here rather than at
-// the upgrade height, where it would break every registration.
+// It used to also require each key to equal the zk/ultrahonk fixture's. The
+// fixtures follow the current circuits, which v0.9.2 changed, so that check
+// now lives in TestV092EmbedsTheRecompiledVerifyingKeys; v0.9.1's keys are
+// history and only have to be well-formed and new.
 func TestV091EmbedsTheRecompiledVerifyingKeys(t *testing.T) {
 	entries, err := v091Assets.ReadDir(v091VerifyingKeyDir)
 	if err != nil {
@@ -54,13 +51,6 @@ func TestV091EmbedsTheRecompiledVerifyingKeys(t *testing.T) {
 			t.Fatalf("%s: the v0.9.1 key is v0.7.0's; the circuit was not recompiled", algo)
 		}
 
-		fixture, err := os.ReadFile(path.Join("..", "zk", "ultrahonk", "testdata", algo, "vk"))
-		if err != nil {
-			t.Fatalf("%s: read fixture vk: %v", algo, err)
-		}
-		if !bytes.Equal(vk, fixture) {
-			t.Fatalf("%s: embedded key differs from the regenerated fixture's", algo)
-		}
 	}
 }
 

@@ -518,3 +518,41 @@ func (k Keeper) checkNotExpiredOrRevoked(ctx context.Context, reg types.Registra
 	}
 	return nil
 }
+
+// RetireAllRegistrations retires every registration on the chain, the way the
+// expiry sweep retires one: vote weight cleared, tallies dropped, the assembly
+// told. It returns how many there were.
+//
+// For an upgrade that changes the nullifier. A registration made under the old
+// formula cannot be recognised by a proof under the new one, so the same
+// passport could register a second time beside it; retiring them all at the
+// switchover means each person registers once, under the new nullifier. ANML
+// already paid out stays with its holder.
+//
+// Unbounded, so for upgrade handlers only: earth-1 had one registration when
+// v0.9.2 was written.
+func (k Keeper) RetireAllRegistrations(ctx context.Context) (int, error) {
+	var regs []types.Registration
+	if err := k.Registrations.Walk(ctx, nil, func(_ []byte, reg types.Registration) (bool, error) {
+		regs = append(regs, reg)
+		return false, nil
+	}); err != nil {
+		return 0, err
+	}
+	if len(regs) == 0 {
+		return 0, nil
+	}
+	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
+		return 0, err
+	}
+	for _, reg := range regs {
+		if err := k.retireRegistration(ctx, reg); err != nil {
+			return 0, err
+		}
+	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		"registrations_retired_for_upgrade",
+		sdk.NewAttribute("count", strconv.Itoa(len(regs))),
+	))
+	return len(regs), nil
+}

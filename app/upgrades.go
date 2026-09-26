@@ -220,6 +220,20 @@ var Upgrades = []Upgrade{
 		Name:          "v0.9.1",
 		CreateHandler: upgradeV091,
 	},
+
+	// v0.9.2: the rest of the 2026-09-23 review. See upgradeV092 for what the
+	// handler does at the height, and CHANGELOG.md for each fix.
+	//
+	// The register circuits change their nullifier, so like v0.9.1 this needs
+	// the recompiled circuits in users' hands, and every existing registration
+	// is retired at the height: each person registers again, once.
+	//
+	// No StoreUpgrades: the new dex index is a prefix inside x/dex's existing
+	// store, filled by the handler.
+	{
+		Name:          "v0.9.2",
+		CreateHandler: upgradeV092,
+	},
 }
 
 // assertTrustStoreParses checks that no CSCA already in the store is one the

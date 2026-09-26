@@ -29,7 +29,7 @@ func TestUpgradeSetIsTheMergedRelease(t *testing.T) {
 			t.Fatalf("upgrade %q has no handler", u.Name)
 		}
 	}
-	want := []string{"v0.6.0", "v0.7.0", "v0.8.0", "v0.9.0", "v0.9.1"}
+	want := []string{"v0.6.0", "v0.7.0", "v0.8.0", "v0.9.0", "v0.9.1", "v0.9.2"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("Upgrades = %v, want %v", names, want)
 	}

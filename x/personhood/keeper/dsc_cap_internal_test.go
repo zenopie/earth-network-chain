@@ -1,8 +1,10 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
@@ -474,4 +476,34 @@ func TestLiveRegistrationIsASwitch(t *testing.T) {
 	if live, err := k.isLiveRegistration(later, null); err != nil || live {
 		t.Fatalf("lapsed registration: live=%v err=%v", live, err)
 	}
+}
+
+func TestRetireAllRegistrations(t *testing.T) {
+	k, _, ctx := capKeeper(t)
+	for i := byte(1); i <= 3; i++ {
+		addr := sdk.AccAddress(bytes.Repeat([]byte{i}, 20))
+		reg := types.Registration{
+			Nullifier:    []byte{i},
+			Address:      addr.String(),
+			RegisteredAt: ctx.BlockTime().Unix(),
+			Country:      "UT",
+		}
+		require.NoError(t, k.Registrations.Set(ctx, reg.Nullifier, reg))
+		require.NoError(t, k.RegByAddr.Set(ctx, addr, reg.Nullifier))
+		require.NoError(t, bumpCount(ctx, k.RegCountByCountry, reg.Country))
+	}
+	require.NoError(t, k.RegCount.Set(ctx, 3))
+
+	n, err := k.RetireAllRegistrations(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	count, err := k.getRegCount(ctx)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	empty := true
+	require.NoError(t, k.Registrations.Walk(ctx, nil, func([]byte, types.Registration) (bool, error) {
+		empty = false
+		return true, nil
+	}))
+	require.True(t, empty)
 }
