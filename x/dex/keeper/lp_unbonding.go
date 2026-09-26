@@ -103,7 +103,7 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 		} else {
 			write()
 		}
-		if err := k.LpUnbondings.Remove(ctx, m.key); err != nil {
+		if err := k.removeLpUnbonding(ctx, m.key); err != nil {
 			return err
 		}
 	}
@@ -208,4 +208,33 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 		),
 	)
 	return nil
+}
+
+// setLpUnbonding writes a withdrawal and its address index entry.
+func (k Keeper) setLpUnbonding(ctx context.Context, key collections.Triple[int64, uint64, []byte], u types.LpUnbonding) error {
+	if err := k.LpUnbondings.Set(ctx, key, u); err != nil {
+		return err
+	}
+	return k.LpUnbondingsByAddr.Set(ctx, byAddrKey(key))
+}
+
+// removeLpUnbonding deletes a withdrawal and its address index entry.
+func (k Keeper) removeLpUnbonding(ctx context.Context, key collections.Triple[int64, uint64, []byte]) error {
+	if err := k.LpUnbondings.Remove(ctx, key); err != nil {
+		return err
+	}
+	return k.LpUnbondingsByAddr.Remove(ctx, byAddrKey(key))
+}
+
+func byAddrKey(key collections.Triple[int64, uint64, []byte]) collections.Triple[[]byte, int64, uint64] {
+	return collections.Join3(key.K3(), key.K1(), key.K2())
+}
+
+// IndexLpUnbondingsByAddr builds LpUnbondingsByAddr from LpUnbondings. For
+// the v0.9.2 upgrade, which adds the index to a store that already holds
+// withdrawals; idempotent.
+func (k Keeper) IndexLpUnbondingsByAddr(ctx context.Context) error {
+	return k.LpUnbondings.Walk(ctx, nil, func(key collections.Triple[int64, uint64, []byte], _ types.LpUnbonding) (bool, error) {
+		return false, k.LpUnbondingsByAddr.Set(ctx, byAddrKey(key))
+	})
 }

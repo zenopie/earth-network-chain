@@ -123,6 +123,11 @@ var PolBurnKey = collections.NewPrefix("pol_burn")
 // is not ready, instead of scanning every unbonding on the chain.
 var LpUnbondingKey = collections.NewPrefix("lp_unbonding")
 
+// LpUnbondingByAddrKey indexes the same withdrawals by (address,
+// completion_time, pool_id), so a provider's own can be listed without walking
+// everyone's. Added in v0.9.2; the upgrade builds it from LpUnbondingKey.
+var LpUnbondingByAddrKey = collections.NewPrefix("lpu_by_addr")
+
 // Volume scaling and the staleness sweep. See lp_rewards.go for the scheme.
 var (
 	// VolumeIndexKey is the global scaling index applied to recorded volume, and

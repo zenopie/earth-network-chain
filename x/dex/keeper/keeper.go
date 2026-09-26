@@ -53,6 +53,10 @@ type Keeper struct {
 	// In-flight liquidity withdrawals, keyed (completion_time, pool_id, address)
 	// so the maturity sweep can walk them in due order — see lp_unbonding.go.
 	LpUnbondings collections.Map[collections.Triple[int64, uint64, []byte], types.LpUnbonding]
+	// LpUnbondingsByAddr is LpUnbondings re-keyed (address, completion_time,
+	// pool_id), for the per-provider query. Written only through
+	// setLpUnbonding and removeLpUnbonding, which keep the two in step.
+	LpUnbondingsByAddr collections.KeySet[collections.Triple[[]byte, int64, uint64]]
 
 	// Genesis liquidity auction — see auction.go. The auction is a singleton;
 	// bids are keyed by bidder address bytes.
@@ -118,6 +122,10 @@ func NewKeeper(
 			sb, types.LpUnbondingKey, "lp_unbondings",
 			collections.TripleKeyCodec(collections.Int64Key, collections.Uint64Key, collections.BytesKey),
 			codec.CollValue[types.LpUnbonding](cdc),
+		),
+		LpUnbondingsByAddr: collections.NewKeySet(
+			sb, types.LpUnbondingByAddrKey, "lp_unbondings_by_addr",
+			collections.TripleKeyCodec(collections.BytesKey, collections.Int64Key, collections.Uint64Key),
 		),
 
 		LiquidityAuction: collections.NewItem(

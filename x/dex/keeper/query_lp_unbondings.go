@@ -18,13 +18,10 @@ import (
 // shares have gone and the assets have not arrived. This is how they see that
 // it is coming, and when.
 //
-// The store is keyed by (completion_time, pool_id, address) — ordered for the
-// end-blocker's sweep, which asks "what has matured" and never "whose is this".
-// So this walks the map and filters rather than seeking a prefix. That is
-// linear in outstanding withdrawals chain-wide, which is fine while the set is
-// small and worth revisiting with a secondary index if it is not: the entries
-// live only for the unbonding period, so the set is bounded by withdrawal rate
-// times a week rather than growing forever.
+// The store is keyed by (completion_time, pool_id, address), ordered for the
+// end-blocker's sweep. This used to walk all of it and filter, so one query
+// cost every withdrawal on the chain; it now reads the provider's own entries
+// from the address index and looks each one up.
 func (q queryServer) LpUnbondings(
 	ctx context.Context,
 	req *types.QueryLpUnbondingsRequest,
@@ -43,13 +40,13 @@ func (q queryServer) LpUnbondings(
 	want := sdk.AccAddress(wantBz)
 
 	out := make([]types.LpUnbonding, 0)
-	err = q.k.LpUnbondings.Walk(ctx, nil, func(
-		key collections.Triple[int64, uint64, []byte],
-		value types.LpUnbonding,
-	) (bool, error) {
-		if want.Equals(sdk.AccAddress(key.K3())) {
-			out = append(out, value)
+	rng := collections.NewPrefixedTripleRange[[]byte, int64, uint64](want.Bytes())
+	err = q.k.LpUnbondingsByAddr.Walk(ctx, rng, func(key collections.Triple[[]byte, int64, uint64]) (bool, error) {
+		value, err := q.k.LpUnbondings.Get(ctx, collections.Join3(key.K2(), key.K3(), key.K1()))
+		if err != nil {
+			return true, err
 		}
+		out = append(out, value)
 		return false, nil
 	})
 	if err != nil {

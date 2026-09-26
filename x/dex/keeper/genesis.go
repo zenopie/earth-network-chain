@@ -100,7 +100,7 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 		key := collections.Join3(u.CompletionTime, u.PoolId, addrBz)
-		if err := k.LpUnbondings.Set(ctx, key, u); err != nil {
+		if err := k.setLpUnbonding(ctx, key, u); err != nil {
 			return err
 		}
 	}

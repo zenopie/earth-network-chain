@@ -49,6 +49,9 @@ func TestLpUnbondingsFiltersByAddress(t *testing.T) {
 	put(100, 1, mine, mineStr, 10)
 	put(200, 1, theirs, theirsStr, 999)
 	put(300, 2, mine, mineStr, 20)
+	// Written straight to the map, as a store from before the index would
+	// hold them; the v0.9.2 upgrade builds the index the same way.
+	require.NoError(t, f.keeper.IndexLpUnbondingsByAddr(f.ctx))
 
 	res, err := qs.LpUnbondings(f.ctx, &types.QueryLpUnbondingsRequest{Address: mineStr})
 	require.NoError(t, err)

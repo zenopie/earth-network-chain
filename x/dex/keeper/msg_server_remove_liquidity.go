@@ -68,7 +68,7 @@ func (k msgServer) RemoveLiquidity(ctx context.Context, msg *types.MsgRemoveLiqu
 	default:
 		return nil, err
 	}
-	if err := k.LpUnbondings.Set(ctx, key, entry); err != nil {
+	if err := k.setLpUnbonding(ctx, key, entry); err != nil {
 		return nil, err
 	}
 
