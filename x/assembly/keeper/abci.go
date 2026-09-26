@@ -194,7 +194,7 @@ func (k Keeper) demoteExpedited(ctx context.Context, proposal v1.Proposal, tally
 func (k Keeper) failProposal(ctx context.Context, proposal v1.Proposal, tally types.Tally, bar string) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	_, _, stakeResult, err := k.gov.Tally(ctx, proposal)
+	_, burnDeposits, stakeResult, err := k.gov.Tally(ctx, proposal)
 	if err != nil {
 		return err
 	}
@@ -215,12 +215,20 @@ func (k Keeper) failProposal(ctx context.Context, proposal v1.Proposal, tally ty
 		return err
 	}
 
-	// Refunded, not burned. x/gov burns a deposit to punish a proposal that
-	// wasted the chain's time — one that never reached quorum, or that stake
-	// itself vetoed. A proposal stake passed and humans declined is not that: the
-	// proposer used the process correctly and lost, which is what losing is
-	// supposed to look like.
-	if err := k.gov.RefundAndDeleteDeposits(ctx, proposal.Id); err != nil {
+	// Whatever stake's own tally says. x/gov burns a deposit to punish a
+	// proposal that wasted the chain's time — one that missed quorum, or that
+	// stake vetoed — and that judgement is stake's to make whichever house
+	// ended the proposal. This used to refund unconditionally, so a proposal
+	// stake had vetoed as spam got its deposit back whenever the humans also
+	// said no, which took away the only cost of submitting spam. A proposal
+	// stake would have passed or merely rejected is still refunded: the
+	// proposer used the process correctly and lost.
+	if burnDeposits {
+		err = k.gov.DeleteAndBurnDeposits(ctx, proposal.Id)
+	} else {
+		err = k.gov.RefundAndDeleteDeposits(ctx, proposal.Id)
+	}
+	if err != nil {
 		return err
 	}
 

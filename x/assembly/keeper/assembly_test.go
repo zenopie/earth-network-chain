@@ -1,6 +1,8 @@
 package keeper
 
 import (
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"testing"
 	"time"
 
@@ -392,4 +394,36 @@ func TestDemotionThatCannotExtendTheVoteRefusesInstead(t *testing.T) {
 	has, err := e.gov.ActiveProposalsQueue.Has(e.ctx, collKeyTime(end, 1))
 	require.NoError(t, err)
 	require.False(t, has)
+}
+
+// TestRefusedProposalKeepsStakesDepositJudgement: the chamber refunded every
+// deposit it failed, so a proposal stake would have burned (spam, a veto) got
+// its deposit back whenever humans also said no.
+func TestRefusedProposalKeepsStakesDepositJudgement(t *testing.T) {
+	for _, burnOnQuorum := range []bool{true, false} {
+		e := newTestEnv(t)
+		params, err := e.gov.Params.Get(e.ctx)
+		require.NoError(t, err)
+		params.BurnVoteQuorum = burnOnQuorum
+		require.NoError(t, e.gov.Params.Set(e.ctx, params))
+
+		end := e.ctx.BlockTime().Add(time.Hour)
+		e.openProposal(t, 1, end)
+		depositor, _ := e.addr(t, "depositor", "")
+		deposit := sdk.NewCoins(sdk.NewInt64Coin("uerth", 500))
+		require.NoError(t, e.gov.SetDeposit(e.ctx, v1.NewDeposit(1, depositor, deposit)))
+
+		// Nobody votes in either house: stake misses quorum, humans refuse.
+		e.ctx = e.ctx.WithBlockTime(end.Add(time.Second))
+		require.NoError(t, e.k.EndBlocker(e.ctx))
+
+		if burnOnQuorum {
+			require.Equal(t, deposit, *e.govBank.burned, "stake would have burned this deposit")
+		} else {
+			require.True(t, e.govBank.burned.IsZero(), "stake would have refunded this deposit")
+		}
+		has, err := e.gov.Deposits.Has(e.ctx, collections.Join(uint64(1), depositor))
+		require.NoError(t, err)
+		require.False(t, has, "the deposit is settled one way or the other")
+	}
 }

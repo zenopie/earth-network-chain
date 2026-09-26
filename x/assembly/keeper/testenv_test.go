@@ -47,7 +47,9 @@ func (stubAccount) GetModuleAccount(_ context.Context, name string) sdk.ModuleAc
 }
 func (stubAccount) SetModuleAccount(context.Context, sdk.ModuleAccountI) {}
 
-type stubGovBank struct{}
+// stubGovBank records what x/gov burns, so a test can tell a burned deposit
+// from a refunded one.
+type stubGovBank struct{ burned *sdk.Coins }
 
 func (stubGovBank) GetAllBalances(context.Context, sdk.AccAddress) sdk.Coins { return sdk.NewCoins() }
 func (stubGovBank) GetBalance(_ context.Context, _ sdk.AccAddress, denom string) sdk.Coin {
@@ -61,7 +63,10 @@ func (stubGovBank) SendCoinsFromModuleToAccount(context.Context, string, sdk.Acc
 func (stubGovBank) SendCoinsFromAccountToModule(context.Context, sdk.AccAddress, string, sdk.Coins) error {
 	return nil
 }
-func (stubGovBank) BurnCoins(context.Context, string, sdk.Coins) error { return nil }
+func (b stubGovBank) BurnCoins(_ context.Context, _ string, c sdk.Coins) error {
+	*b.burned = b.burned.Add(c...)
+	return nil
+}
 
 // stubGovStaking reports a bonded set that exists but votes nothing. The tally
 // then reaches its quorum check and fails there, which is the ordinary fate of
@@ -135,6 +140,7 @@ type testEnv struct {
 	gov        *govkeeper.Keeper
 	humans     *stubPersonhood
 	allocation *stubAllocation
+	govBank    stubGovBank
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -156,11 +162,12 @@ func newTestEnv(t *testing.T) *testEnv {
 	govAuthority, err := ac.BytesToString(authtypes.NewModuleAddress(govtypes.ModuleName))
 	require.NoError(t, err)
 
+	govBank := stubGovBank{burned: &sdk.Coins{}}
 	gov := govkeeper.NewKeeper(
 		encCfg.Codec,
 		runtime.NewKVStoreService(govStoreKey),
 		stubAccount{ac: ac},
-		stubGovBank{},
+		govBank,
 		stubGovStaking{bonded: math.NewInt(1_000_000)},
 		stubDistr{},
 		stubRouter{},
@@ -189,6 +196,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		gov:        gov,
 		humans:     humans,
 		allocation: allocation,
+		govBank:    govBank,
 	}
 }
 
