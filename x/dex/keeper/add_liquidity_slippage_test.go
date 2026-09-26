@@ -84,3 +84,26 @@ func TestAddLiquidityRejectsMalformedMinShares(t *testing.T) {
 		require.ErrorIs(t, err, types.ErrInvalidAmount, "min_shares %q", bad)
 	}
 }
+
+// A pool whose shares are all gone can still hold reserves. Re-seeding used to
+// mint the depositor shares over that residue as well as their own deposit.
+func TestReseedBurnsTheResidue(t *testing.T) {
+	k, ctx, bank := initRewardFixture(t)
+	ms := keeper.NewMsgServerImpl(k)
+	seedFundedPool(t, k, ctx, bank, 1, 5_000, 7_000, 0)
+	bank.setSupply(types.LPShareDenom(1), math.ZeroInt())
+
+	_, err := ms.AddLiquidity(ctx, &types.MsgAddLiquidity{
+		Creator: bech32(t, sdk.AccAddress("provider____________")),
+		PoolId:  1,
+		AmountA: sdk.NewInt64Coin("uerth", 10_000),
+		AmountB: sdk.NewInt64Coin("utok", 10_000),
+	})
+	require.NoError(t, err)
+
+	pool, err := k.Pool.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, math.NewInt(10_000), pool.ReserveErth.Amount, "only the deposit backs the new shares")
+	require.Equal(t, math.NewInt(10_000), pool.ReserveToken.Amount)
+	require.NoError(t, k.AssertInvariants(ctx))
+}

@@ -108,4 +108,10 @@ const (
 	// It is a demand signal like gas and swap fees, not a schedule: it says
 	// contracts on this chain chose to destroy this much.
 	SourceWasm = "wasm"
+
+	// SourceDexResidue is what a liquidity pool still held when its last share
+	// was gone: rewards settled into the reserve after every provider left,
+	// and rounding. Burned when the pool is re-seeded, because nobody owns it
+	// and the alternative was handing it to whoever deposited next.
+	SourceDexResidue = "dex_residue"
 )

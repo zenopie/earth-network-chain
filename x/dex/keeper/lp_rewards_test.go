@@ -279,6 +279,9 @@ func TestDistributeLPRewards_NoVolumeCarriesForward(t *testing.T) {
 func TestSettleBeforeAddLiquidity(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	seedPool(t, k, ctx, 1, 1_000_000, 1_000_000, 1_000)
+	// Existing providers hold the pool; without them this would be a re-seed,
+	// which burns the reserve first.
+	bank.setSupply(types.LPShareDenom(1), math.NewInt(1_000_000))
 
 	distributeLP(t, k, ctx, bank, math.NewInt(100_000))
 
@@ -304,7 +307,11 @@ func TestSettleBeforeAddLiquidity(t *testing.T) {
 	require.True(t, pending.IsZero(), "the reward should have moved out of pending and into the reserve")
 	pool, err := k.Pool.Get(ctx, 1)
 	require.NoError(t, err)
-	require.Equal(t, math.NewInt(1_000_000+100_000+1_000_000), pool.ReserveErth.Amount,
+	// Priced after settling: the reserve was 1.1M ERTH against 1M shares, so
+	// the deposit mints min(1M*1M/1.1M, 1M) = 909,090 shares and takes
+	// 909,090*1.1M/1M = 999,999 ERTH. Priced before settling, it would have
+	// taken the full 1M for 1M shares and a cut of the reward.
+	require.Equal(t, math.NewInt(1_000_000+100_000+999_999), pool.ReserveErth.Amount,
 		"reserve should hold the settled reward plus the new deposit")
 }
 

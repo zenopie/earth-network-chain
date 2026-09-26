@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 	"strconv"
 
 	errorsmod "cosmossdk.io/errors"
@@ -53,6 +54,15 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 
 	if total.IsZero() {
 		// Pool has no outstanding shares (e.g. fully drained): re-seed it.
+		//
+		// Whatever the reserves still hold goes first. With no shares it
+		// belongs to no one — rewards settled in after the last provider left,
+		// rounding from withdrawals — and seeding on top of it minted the
+		// depositor shares over all of it, so the next person to deposit into
+		// an empty pool could withdraw straight away with the residue.
+		if err := k.burnResidue(ctx, &pool); err != nil {
+			return nil, err
+		}
 		shareAmt = initialShares(erthIn.Amount, tokenIn.Amount)
 	} else {
 		sharesFromErth := erthIn.Amount.Mul(total).Quo(pool.ReserveErth.Amount)
@@ -128,4 +138,21 @@ func matchPair(a, b sdk.Coin, erthDenom, tokenDenom string) (erth, token sdk.Coi
 	default:
 		return sdk.Coin{}, sdk.Coin{}, errorsmod.Wrapf(types.ErrInvalidDenom, "expected %s and %s", erthDenom, tokenDenom)
 	}
+}
+
+// burnResidue destroys an empty pool's leftover reserves and zeroes them.
+func (k msgServer) burnResidue(ctx context.Context, pool *types.Pool) error {
+	residue := sdk.NewCoins(pool.ReserveErth, pool.ReserveToken)
+	if residue.IsZero() {
+		return nil
+	}
+	if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, residue); err != nil {
+		return err
+	}
+	if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceDexResidue, residue); err != nil {
+		return err
+	}
+	pool.ReserveErth.Amount = math.ZeroInt()
+	pool.ReserveToken.Amount = math.ZeroInt()
+	return nil
 }
