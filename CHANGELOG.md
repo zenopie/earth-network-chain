@@ -11,9 +11,33 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
+## [v0.9.3]
+
+**earth-1 relaunches from a new genesis at 2026-09-29T12:00:00Z.** The same
+binary as v0.9.2; only the baked-in genesis changes. Genesis sha256
+`acbf85491374558cac98044547ef6f24fa365631ebb254905b3e80489ac46127`.
+
+The previous earth-1 halted at the v0.9.2 plan height (505000): cosmovisor's
+pre-upgrade copy of `data/` filled the 20Gi volume, and the crash-looping pod
+could not be replaced in place. Its state is gone. Every account, registration
+and ballot starts over; the chain id stays `earth-1`.
+
+The new genesis starts where the v0.9.2 handler would have left a chain:
+
+- the v0.9.2 register-circuit verifying keys, so apps built with the widened
+  nullifier register from block 1;
+- the interchain-account host allowlist the v0.9.2 handler set, instead of `*`;
+- the v0.9.2 personhood gas and registration-cap defaults, which `earthd init`
+  now produces on its own;
+- an x/assembly section, since the module exists at genesis.
+
+The upgrade handlers through v0.9.2 stay registered but never run on this
+chain. Launch from the **v0.9.3** image; it is the cosmovisor genesis slot.
+
 ## [v0.9.2]
 
-Consensus-breaking. **Not yet proposed.** It goes through governance as a
+Consensus-breaking. Proposed as gov proposal 7 and reached its plan height
+(505000) on the previous earth-1, which halted there — see v0.9.3. It goes through governance as a
 `MsgSoftwareUpgrade` named `v0.9.2`. No store changes. The proposal needs two
 thirds of the human votes cast as well as stake.
 

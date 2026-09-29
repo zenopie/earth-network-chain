@@ -167,5 +167,32 @@
       },
       "instantiate_default_permission": "Everybody"
     }
+  },
+  "interchainaccounts": {
+    "host_genesis_state": {
+      "params": {
+        "host_enabled": true,
+        "allow_messages": [
+          "/cosmos.bank.v1beta1.MsgSend",
+          "/cosmos.bank.v1beta1.MsgMultiSend",
+          "/cosmos.staking.v1beta1.MsgDelegate",
+          "/cosmos.staking.v1beta1.MsgUndelegate",
+          "/cosmos.staking.v1beta1.MsgBeginRedelegate",
+          "/cosmos.staking.v1beta1.MsgCancelUnbondingDelegation",
+          "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward",
+          "/cosmos.distribution.v1beta1.MsgSetWithdrawAddress",
+          "/cosmos.gov.v1.MsgVote",
+          "/cosmos.gov.v1.MsgVoteWeighted",
+          "/cosmos.gov.v1.MsgDeposit",
+          "/ibc.applications.transfer.v1.MsgTransfer",
+          "/earth.dex.v1.MsgSwap",
+          "/earth.dex.v1.MsgAddLiquidity",
+          "/earth.dex.v1.MsgRemoveLiquidity",
+          "/earth.allocation.v1.MsgSetAllocations",
+          "/earth.allocation.v1.MsgClaimAllocation",
+          "/cosmwasm.wasm.v1.MsgExecuteContract"
+        ]
+      }
+    }
   }
 }
