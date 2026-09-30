@@ -80,6 +80,7 @@ import (
 	personhoodmoduletypes "github.com/earth-network/earth/x/personhood/types"
 	_ "github.com/earth-network/earth/x/pki/module"
 	pkimoduletypes "github.com/earth-network/earth/x/pki/types"
+	shieldedspiketypes "github.com/earth-network/earth/x/shieldedspike/types"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -94,6 +95,8 @@ var (
 		{Account: nft.ModuleName},
 		{Account: ibctransfertypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: icatypes.ModuleName},
+		// SPIKE: the pretend shielded pool that pays unsigned private txs' fees.
+		{Account: shieldedspiketypes.ModuleName},
 		{Account: dexmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		// x/allocation mints an option's accrued ERTH when it is claimed and burns
 		// the fee for adding one. x/personhood mints ANML and the registration
