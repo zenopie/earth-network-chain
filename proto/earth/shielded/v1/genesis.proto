@@ -1,0 +1,29 @@
+syntax = "proto3";
+package earth.shielded.v1;
+
+import "amino/amino.proto";
+import "earth/shielded/v1/params.proto";
+import "earth/shielded/v1/shielded.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/shielded/types";
+
+// GenesisState defines the shielded module's genesis state.
+message GenesisState {
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // assets admitted to the pool. Must include uerth, the fee asset.
+  repeated Asset assets = 2 [(gogoproto.nullable) = false];
+  // commitments is every note-tree leaf in position order. The tree's inner
+  // nodes are rebuilt from them at InitGenesis.
+  repeated bytes commitments = 3;
+  // nullifiers is the spent set. Losing it would make every spent note
+  // spendable again.
+  repeated bytes nullifiers = 4;
+  // roots is the recorded root history still inside the window, oldest first.
+  repeated RootRecord roots = 5 [(gogoproto.nullable) = false];
+  // turnstiles per denom. Each must match the module's bank balance.
+  repeated Turnstile turnstiles = 6 [(gogoproto.nullable) = false];
+}

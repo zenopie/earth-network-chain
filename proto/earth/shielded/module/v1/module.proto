@@ -1,0 +1,26 @@
+syntax = "proto3";
+package earth.shielded.module.v1;
+
+import "cosmos/app/v1alpha1/module.proto";
+
+option go_package = "github.com/earth-network/earth/x/shielded/types";
+
+// Module is the config object for the shielded pool module.
+message Module {
+  option (cosmos.app.v1alpha1.module) = {go_import: "github.com/earth-network/earth/x/shielded"};
+
+  // authority defines the custom module authority.
+  // If not set, defaults to the governance module.
+  string authority = 1;
+
+  // shielded_only_denoms are denoms that exist only inside the pool and in a
+  // few module accounts (uanml). The bank send restriction refuses any transfer
+  // of one to a recipient outside shielded_only_recipients, which closes
+  // MsgSend, MultiSend, authz, group, vesting, ICA, IBC escrow and contracts at
+  // once.
+  repeated string shielded_only_denoms = 2;
+
+  // shielded_only_recipients are the module names allowed to receive a
+  // shielded-only denom. This module is always allowed.
+  repeated string shielded_only_recipients = 3;
+}

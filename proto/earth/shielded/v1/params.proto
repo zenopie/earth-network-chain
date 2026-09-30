@@ -1,0 +1,52 @@
+syntax = "proto3";
+package earth.shielded.v1;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/shielded/types";
+
+// Params defines the parameters of the shielded pool.
+message Params {
+  option (amino.name) = "earth/x/shielded/Params";
+  option (gogoproto.equal) = true;
+  // REQUIRED because of the verifying_keys map: without it gogoproto marshals
+  // map entries in Go's randomised order and validators disagree on the bytes
+  // of Params (see x/personhood Params).
+  option (gogoproto.stable_marshaler) = true;
+
+  // verifying_keys maps a circuit name ("transfer", "membership") to its
+  // Barretenberg UltraHonk (bb v5.0.0) verifying key. A private msg whose
+  // circuit has no key is refused.
+  map<string, bytes> verifying_keys = 1;
+
+  // min_fee is the consensus floor on a private tx's fee, in uerth. Never
+  // below 1: there is no configuration that admits a zero-fee private tx.
+  // Nodes additionally require fee >= min-gas-price * gas in CheckTx.
+  string min_fee = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+
+  // proof_verification_gas is charged per private msg before its proof is
+  // verified, whatever the outcome, and also in simulate mode.
+  uint64 proof_verification_gas = 3;
+
+  // note_gas is charged per output commitment a private msg appends (and per
+  // nullifier it spends). Private msgs execute their pool writes on an
+  // infinite gas meter after paying this fixed price up front, so a private
+  // tx's gas is a function of its size and shape alone and cannot run out
+  // halfway through.
+  uint64 note_gas = 4;
+
+  // root_window_seconds is how long a note-tree root stays a valid anchor
+  // after the block that produced it. The latest root is always valid.
+  uint64 root_window_seconds = 5;
+
+  // max_private_txs_per_block caps how many private txs one block executes.
+  // Each carries a proof whose verification is the dominant block cost.
+  uint32 max_private_txs_per_block = 6;
+}

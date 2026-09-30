@@ -1,0 +1,136 @@
+syntax = "proto3";
+package earth.shielded.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "earth/shielded/v1/params.proto";
+import "earth/shielded/v1/shielded.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+
+option go_package = "github.com/earth-network/earth/x/shielded/types";
+
+// Query defines the shielded pool's gRPC query service. Nothing here takes a
+// note or an owner: a wallet that asked the chain about its own notes would
+// tell the RPC operator which ones they are. Wallets sync the whole tree.
+service Query {
+  // Params queries the module parameters.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/earth/shielded/v1/params";
+  }
+
+  // Tree returns the tree size, current root and latest recorded anchor.
+  rpc Tree(QueryTreeRequest) returns (QueryTreeResponse) {
+    option (google.api.http).get = "/earth/shielded/v1/tree";
+  }
+
+  // Roots returns the recorded roots still in the window, newest first.
+  rpc Roots(QueryRootsRequest) returns (QueryRootsResponse) {
+    option (google.api.http).get = "/earth/shielded/v1/roots";
+  }
+
+  // Root reports whether a root is a valid anchor right now.
+  rpc Root(QueryRootRequest) returns (QueryRootResponse) {
+    option (google.api.http).get = "/earth/shielded/v1/roots/{root}";
+  }
+
+  // Nullifier reports whether a nullifier has been spent.
+  rpc Nullifier(QueryNullifierRequest) returns (QueryNullifierResponse) {
+    option (google.api.http).get = "/earth/shielded/v1/nullifiers/{nullifier}";
+  }
+
+  // Assets lists the denoms admitted to the pool.
+  rpc Assets(QueryAssetsRequest) returns (QueryAssetsResponse) {
+    option (google.api.http).get = "/earth/shielded/v1/assets";
+  }
+
+  // Turnstiles lists what has entered and left the pool, per denom.
+  rpc Turnstiles(QueryTurnstilesRequest) returns (QueryTurnstilesResponse) {
+    option (google.api.http).get = "/earth/shielded/v1/turnstiles";
+  }
+}
+
+// QueryParamsRequest is the request type for Query/Params.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is the response type for Query/Params.
+message QueryParamsResponse {
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryTreeRequest is the request type for Query/Tree.
+message QueryTreeRequest {}
+
+// QueryTreeResponse is the response type for Query/Tree.
+message QueryTreeResponse {
+  // tree_size is the number of notes ever appended.
+  uint64 tree_size = 1;
+  // root is the current root, including this block's appends (hex).
+  string root = 2;
+  // anchor is the latest recorded root, the newest one a proof may use.
+  RootRecord anchor = 3 [(gogoproto.nullable) = false];
+}
+
+// QueryRootsRequest is the request type for Query/Roots.
+message QueryRootsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryRootsResponse is the response type for Query/Roots.
+message QueryRootsResponse {
+  repeated RootRecord roots = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+// QueryRootRequest is the request type for Query/Root.
+message QueryRootRequest {
+  // root, hex.
+  string root = 1;
+}
+
+// QueryRootResponse is the response type for Query/Root.
+message QueryRootResponse {
+  // valid is whether a proof against this root is accepted now.
+  bool valid = 1;
+  // record is the root's record when it is still held.
+  RootRecord record = 2;
+  // expires_at is when it stops being valid (unix seconds), 0 for the latest
+  // root, which does not expire until a newer one exists.
+  int64 expires_at = 3;
+}
+
+// QueryNullifierRequest is the request type for Query/Nullifier.
+message QueryNullifierRequest {
+  // nullifier, hex.
+  string nullifier = 1;
+}
+
+// QueryNullifierResponse is the response type for Query/Nullifier.
+message QueryNullifierResponse {
+  bool spent = 1;
+}
+
+// QueryAssetsRequest is the request type for Query/Assets.
+message QueryAssetsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryAssetsResponse is the response type for Query/Assets.
+message QueryAssetsResponse {
+  repeated Asset assets = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+// QueryTurnstilesRequest is the request type for Query/Turnstiles.
+message QueryTurnstilesRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryTurnstilesResponse is the response type for Query/Turnstiles.
+message QueryTurnstilesResponse {
+  repeated Turnstile turnstiles = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
