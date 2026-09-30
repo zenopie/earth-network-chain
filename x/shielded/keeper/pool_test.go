@@ -134,6 +134,12 @@ func TestCheckPrivateMsgRefusals(t *testing.T) {
 	_, err = f.k.CheckPrivateMsg(f.ctx, m)
 	require.ErrorIs(t, err, types.ErrSendRestricted)
 
+	// The pool itself as receiver: it would count Out with no coins moving.
+	m = f.scenarioMsg(s, 0)
+	m.Transfer.ValueOut, m.Transfer.DenomOut, m.Receiver = 1, types.FeeDenom, f.bech(f.k.PoolAddress())
+	_, err = f.k.CheckPrivateMsg(f.ctx, m)
+	require.ErrorIs(t, err, types.ErrSendRestricted)
+
 	// Blocked receiver.
 	blocked := f.addr("blocked")
 	f.bank.blocked[string(blocked)] = true

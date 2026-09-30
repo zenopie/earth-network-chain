@@ -30,7 +30,10 @@ func (k Keeper) SendRestriction(ctx context.Context, from, to sdk.AccAddress, am
 }
 
 func (k Keeper) checkSend(ctx context.Context, from, to sdk.AccAddress, amt sdk.Coins) error {
-	if to.Equals(k.poolAddr) && !from.Equals(k.poolAddr) && !isPoolDeposit(ctx) {
+	// No exception for the pool paying itself: an unshield or SpendToModule
+	// addressed back to the pool would count Out while the balance stayed put,
+	// and halt the chain at the next invariant check.
+	if to.Equals(k.poolAddr) && !isPoolDeposit(ctx) {
 		return types.ErrSendRestricted.Wrap("the shielded pool accepts coins only through MsgShield or MintNote")
 	}
 	if k.shieldedOnlyTo[string(to)] {
