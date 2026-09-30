@@ -49,6 +49,11 @@ type Keeper struct {
 	DirtyDenoms collections.KeySet[string]
 
 	PrivateTxCount collections.Item[uint64]
+
+	// actions are the private actions other modules attach to their private
+	// msgs, by msg type URL. A map, so the copies of Keeper that module wiring
+	// hands around share one registry. See types.PrivateActionHandler.
+	actions map[string]types.PrivateActionHandler
 }
 
 // NewKeeper builds the keeper. shieldedOnlyDenoms may be held only by the
@@ -77,6 +82,7 @@ func NewKeeper(
 		poolAddr:       authtypes.NewModuleAddress(types.ModuleName),
 		shieldedOnly:   map[string]bool{},
 		shieldedOnlyTo: map[string]bool{},
+		actions:        map[string]types.PrivateActionHandler{},
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 
@@ -134,3 +140,18 @@ func (k Keeper) ShieldedOnlyDenoms() []string {
 
 // IsShieldedOnly reports whether denom exists only in the pool.
 func (k Keeper) IsShieldedOnly(denom string) bool { return k.shieldedOnly[denom] }
+
+// RegisterPrivateAction attaches h to the private msg type msgTypeURL. Called
+// once per type, from module wiring; a second registration panics.
+func (k Keeper) RegisterPrivateAction(msgTypeURL string, h types.PrivateActionHandler) {
+	if _, dup := k.actions[msgTypeURL]; dup {
+		panic(fmt.Sprintf("private action for %s registered twice", msgTypeURL))
+	}
+	k.actions[msgTypeURL] = h
+}
+
+// PrivateAction returns the action handler registered for msg's type, if any.
+func (k Keeper) PrivateAction(msg sdk.Msg) (types.PrivateActionHandler, bool) {
+	h, ok := k.actions[sdk.MsgTypeURL(msg)]
+	return h, ok
+}

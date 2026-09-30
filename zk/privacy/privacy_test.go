@@ -31,6 +31,7 @@ func TestTagsMatchNoir(t *testing.T) {
 		"asset":  {TagAsset.Text(16), "65617274682e6173736574"},
 		"signal": {TagSignal.Text(16), "65617274682e7369676e616c"},
 		"bytes":  {TagBytes.Text(16), "65617274682e6279746573"},
+		"scope":  {TagScope.Text(16), "65617274682e73636f7065"},
 	} {
 		if c.got != c.want {
 			t.Errorf("tag %s = %s, want %s", name, c.got, c.want)
@@ -53,7 +54,7 @@ func TestAssetIDDistinct(t *testing.T) {
 
 func TestTagsDistinct(t *testing.T) {
 	seen := map[string]bool{}
-	for _, tg := range []fr.Element{TagID, TagOwner, TagLeaf, TagSN, TagPC, TagCM, TagNF, TagVote, TagReg, TagAsset, TagSignal, TagBytes} {
+	for _, tg := range []fr.Element{TagID, TagOwner, TagLeaf, TagSN, TagPC, TagCM, TagNF, TagVote, TagReg, TagAsset, TagSignal, TagBytes, TagScope} {
 		k := tg.Text(16)
 		if seen[k] {
 			t.Fatalf("duplicate tag %s", k)
@@ -108,5 +109,20 @@ func TestFieldFromBytesCanonical(t *testing.T) {
 	}
 	if _, err := FieldFromBytes(make([]byte, 31)); err == nil {
 		t.Fatal("short input accepted")
+	}
+}
+
+func TestScopesDistinct(t *testing.T) {
+	seen := map[string]string{}
+	for name, s := range map[string]fr.Element{
+		"claim0": ClaimScope(0), "claim1": ClaimScope(1), "caretaker": CaretakerScope(),
+		"proposal1/0": ProposalScope(1, 0), "proposal1/1": ProposalScope(1, 1), "proposal0/1": ProposalScope(0, 1),
+		"removal1": RemovalScope(1), "propose1/0": ProposeRemovalScope(1, 0),
+	} {
+		k := s.String()
+		if o, ok := seen[k]; ok {
+			t.Fatalf("scope collision %s vs %s", name, o)
+		}
+		seen[k] = name
 	}
 }

@@ -37,6 +37,8 @@ var (
 	// `signal` input the circuits bind (see Signal).
 	TagSignal = tag("earth.signal")
 	TagBytes  = tag("earth.bytes")
+	// TagScope domain-separates membership scopes (see Scope).
+	TagScope = tag("earth.scope")
 )
 
 // MsgTransferType is earth.shielded.v1.MsgTransfer's type URL, the kind
@@ -155,6 +157,63 @@ func SpendSignal(msgType, chainID string, ciphertexts [3][]byte, extra ...fr.Ele
 //	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), Bytes(receiver))
 func TransferSignal(chainID string, receiver []byte, ciphertexts [3][]byte) fr.Element {
 	return SpendSignal(MsgTransferType, chainID, ciphertexts, Bytes(receiver))
+}
+
+// ActionSignal is Signal for a private msg that pays its fee with a transfer
+// and acts with a second proof (a membership proof, a passport proof). Both
+// proofs bind this one value. The transfer's three nullifiers are bound
+// before the msg's own fields, so the second proof cannot be lifted onto some
+// other fee payment: those nullifiers can be spent once, by this tx.
+//
+//	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id),
+//	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), nf_0, nf_1, nf_2, extra...)
+func ActionSignal(msgType, chainID string, ciphertexts [3][]byte, nullifiers [3]fr.Element, extra ...fr.Element) fr.Element {
+	return SpendSignal(msgType, chainID, ciphertexts, append(nullifiers[:], extra...)...)
+}
+
+// Scope is a membership proof's public scope: H(TAG_SCOPE, Bytes(kind),
+// args...). A person's nullifier H(TAG_SN, id_secret, scope) is the same for
+// every proof in one scope (so a second claim, vote or split in it is
+// recognised, and replaces or is refused) and unlinkable across scopes. The
+// circuit takes the scope as an opaque field; these definitions are the
+// chain's and the wallet's.
+func Scope(kind string, args ...fr.Element) fr.Element {
+	return H(append([]fr.Element{TagScope, Bytes([]byte(kind))}, args...)...)
+}
+
+// ClaimScope is the ANML claim scope for UTC day `day` (unix seconds / 86400).
+func ClaimScope(day uint64) fr.Element { return Scope("claim", U64(day)) }
+
+// CaretakerScope is the one scope of caretaker splits: a person's split is
+// always filed under the same nullifier, so a refresh replaces it.
+func CaretakerScope() fr.Element { return Scope("caretaker") }
+
+// ProposalScope is the assembly ballot on x/gov proposal id in voting round
+// round (0, or 1 after the chamber demoted an expedited proposal).
+func ProposalScope(proposalID, round uint64) fr.Element {
+	return Scope("proposal", U64(proposalID), U64(round))
+}
+
+// RemovalScope is the assembly ballot with id ballotID on removing a
+// groundworks option.
+func RemovalScope(ballotID uint64) fr.Element { return Scope("removal", U64(ballotID)) }
+
+// ProposeRemovalScope is the scope of opening a removal ballot on option
+// optionID on UTC day `day`. Nothing records its nullifier; the day only keeps
+// one person's proposals on different days unlinkable.
+func ProposeRemovalScope(optionID, day uint64) fr.Element {
+	return Scope("propose_removal", U64(optionID), U64(day))
+}
+
+// RegistrationBinding is what a passport proof's `address` public input
+// carries for MsgRegister: the identity commitment the chain will put in the
+// tree and the notes it will pay. affiliatePC is the referrer's pc, or 0 for
+// none; bound so that whoever relays a registration cannot redirect the
+// referral half to themselves.
+//
+//	address = H(TAG_REG, idc, pc_anml, pc_erth, affiliate_pc)
+func RegistrationBinding(idc, pcAnml, pcErth, affiliatePC fr.Element) fr.Element {
+	return H(TagReg, idc, pcAnml, pcErth, affiliatePC)
 }
 
 // ErrNonCanonical is returned for a 32-byte string that is not a reduced
