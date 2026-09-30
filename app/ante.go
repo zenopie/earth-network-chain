@@ -16,8 +16,8 @@ import (
 	ibcante "github.com/cosmos/ibc-go/v10/modules/core/ante"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 
-	shieldedspikeante "github.com/earth-network/earth/x/shieldedspike/ante"
-	shieldedspikekeeper "github.com/earth-network/earth/x/shieldedspike/keeper"
+	shieldedante "github.com/earth-network/earth/x/shielded/ante"
+	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
 )
 
 // HandlerOptions extends the SDK's ante options with what x/wasm, x/circuit and
@@ -30,7 +30,7 @@ type HandlerOptions struct {
 	WasmKeeper            *wasmkeeper.Keeper
 	WasmNodeConfig        *wasmtypes.NodeConfig
 	TXCounterStoreService corestoretypes.KVStoreService
-	ShieldedSpikeKeeper   *shieldedspikekeeper.Keeper
+	ShieldedKeeper        *shieldedkeeper.Keeper
 }
 
 // NewAnteHandler builds this chain's ante chain.
@@ -86,6 +86,10 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	if options.TXCounterStoreService == nil {
 		return nil, errors.New("wasm tx counter store service is required for ante builder")
 	}
+	if options.ShieldedKeeper == nil {
+		return nil, errors.New("shielded keeper is required for ante builder")
+	}
+	sk := *options.ShieldedKeeper
 
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost: must run first, it installs the gas meter
@@ -104,6 +108,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		ante.NewTxTimeoutHeightDecorator(),
 		ante.NewValidateMemoDecorator(options.AccountKeeper),
 		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
+		// ANML exists only in the shielded pool; it cannot pay a fee.
+		shieldedante.RejectFeeDenomsDecorator{Denoms: sk.ShieldedOnlyDenoms()},
 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, options.TxFeeChecker),
 		ante.NewSetPubKeyDecorator(options.AccountKeeper), // must precede every signature verification decorator
 		ante.NewValidateSigCountDecorator(options.AccountKeeper),
@@ -114,28 +120,25 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	}
 
 	normal := sdk.ChainAnteDecorators(anteDecorators...)
-	if options.ShieldedSpikeKeeper == nil {
-		return normal, nil
-	}
 
-	// SPIKE: unsigned private txs. No DeductFee (FeePayer() indexes signers[0]
-	// and panics with none), no SetPubKey/SigCount/SigGas/SigVerify/
-	// IncrementSequence (there is no account), no SDK ValidateBasic (it returns
-	// ErrNoSignatures). Replay protection is the nullifier.
-	k := *options.ShieldedSpikeKeeper
+	// Unsigned private txs: one PrivateMsg, no signatures, fee paid from the
+	// shielded pool by the msg's transfer proof. See x/shielded/ante for why
+	// each SDK decorator missing here cannot run on a tx with no account.
+	//
+	// NOTE: nodes must run the no-op app mempool (app.toml mempool.max-txs =
+	// -1, the default). The SDK's priority and sender-nonce mempools key txs by
+	// signer and sequence and reject a tx with no signers outright.
 	private := sdk.ChainAnteDecorators(
 		ante.NewSetUpContextDecorator(),
 		wasmkeeper.NewLimitSimulationGasDecorator(options.WasmNodeConfig.SimulationGasLimit),
 		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
-		shieldedspikeante.ValidateBasicDecorator{},
+		shieldedante.ValidateTxDecorator{},
 		ante.NewTxTimeoutHeightDecorator(),
 		ante.NewValidateMemoDecorator(options.AccountKeeper),
 		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
-		shieldedspikeante.ProofDecorator{},
-		shieldedspikeante.NullifierDecorator{K: k},
-		shieldedspikeante.FeeDecorator{K: k},
+		shieldedante.PrivateMsgDecorator{K: sk},
 	)
-	return shieldedspikeante.NewRouter(normal, private), nil
+	return shieldedante.NewRouter(normal, private), nil
 }
 
 // setAnteHandler replaces the ante handler that x/auth/tx/config installed as a
@@ -155,7 +158,7 @@ func (app *App) setAnteHandler() error {
 		WasmKeeper:            &app.WasmKeeper,
 		WasmNodeConfig:        &app.WasmNodeConfig,
 		TXCounterStoreService: runtime.NewKVStoreService(app.GetKey(wasmtypes.StoreKey)),
-		ShieldedSpikeKeeper:   &app.ShieldedSpikeKeeper,
+		ShieldedKeeper:        &app.ShieldedKeeper,
 	})
 	if err != nil {
 		return fmt.Errorf("building ante handler: %w", err)

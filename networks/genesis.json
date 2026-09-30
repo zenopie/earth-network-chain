@@ -2165,6 +2165,30 @@
       "revoked_dscs": []
     },
     "runtime": null,
+    "shielded": {
+      "assets": [
+        {
+          "asset_id": "CtRKFMcgXGHjnbLGS3kAX/sUoqknl36M2iIIvi4/5Uw=",
+          "denom": "uerth"
+        },
+        {
+          "asset_id": "Cak/YSGzAFWLTVwlhV3SRwNQkYoa5TbXLuWFHfXokU8=",
+          "denom": "uanml"
+        }
+      ],
+      "commitments": [],
+      "nullifiers": [],
+      "params": {
+        "max_private_txs_per_block": 32,
+        "min_fee": "1000",
+        "note_gas": "150000",
+        "proof_verification_gas": "2000000",
+        "root_window_seconds": "1209600",
+        "verifying_keys": {}
+      },
+      "roots": [],
+      "turnstiles": []
+    },
     "slashing": {
       "missed_blocks": [],
       "params": {

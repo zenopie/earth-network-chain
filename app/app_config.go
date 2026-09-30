@@ -80,7 +80,8 @@ import (
 	personhoodmoduletypes "github.com/earth-network/earth/x/personhood/types"
 	_ "github.com/earth-network/earth/x/pki/module"
 	pkimoduletypes "github.com/earth-network/earth/x/pki/types"
-	shieldedspiketypes "github.com/earth-network/earth/x/shieldedspike/types"
+	_ "github.com/earth-network/earth/x/shielded/module"
+	shieldedmoduletypes "github.com/earth-network/earth/x/shielded/types"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -95,8 +96,13 @@ var (
 		{Account: nft.ModuleName},
 		{Account: ibctransfertypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: icatypes.ModuleName},
-		// SPIKE: the pretend shielded pool that pays unsigned private txs' fees.
-		{Account: shieldedspiketypes.ModuleName},
+		// The shielded pool: every note's coins, per-denom turnstiles in its
+		// store. Deliberately NOT in blockAccAddrs below — distribution must be
+		// able to pay it once private staking lands. Its own bank send
+		// restriction (x/shielded/keeper/send_restriction.go) refuses every
+		// deposit that does not go through the keeper, which is what keeps its
+		// balance exactly the turnstiles' In - Out.
+		{Account: shieldedmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: dexmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		// x/allocation mints an option's accrued ERTH when it is claimed and burns
 		// the fee for adding one. x/personhood mints ANML and the registration
@@ -221,6 +227,9 @@ var (
 						earthmoduletypes.ModuleName,
 						dexmoduletypes.ModuleName,
 						personhoodmoduletypes.ModuleName,
+						// shielded after every module that can mint a note in its
+						// EndBlocker, so this block's notes are in the anchor it records.
+						shieldedmoduletypes.ModuleName,
 						// allocation last: its EndBlocker only verifies that each stream's
 						// declared weight still matches its options, so it should see every
 						// other module's writes for the block before it does.
@@ -267,6 +276,9 @@ var (
 						personhoodmoduletypes.ModuleName,
 						pkimoduletypes.ModuleName,
 						assemblymoduletypes.ModuleName,
+						// after bank: InitGenesis checks each turnstile against the
+						// pool's loaded balance.
+						shieldedmoduletypes.ModuleName,
 						// wasm last: a contract in genesis may call any other
 						// module, so every module it could reach has to have
 						// initialised first.
@@ -390,6 +402,16 @@ var (
 			{
 				Name:   pkimoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&pkimoduletypes.Module{}),
+			},
+			{
+				Name: shieldedmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&shieldedmoduletypes.Module{
+					// ANML exists only as notes. In the open it may sit only in
+					// the pool, in x/personhood (which mints it and burns what the
+					// buyback returns) and in x/dex (the ANML/ERTH pool's reserve).
+					ShieldedOnlyDenoms:     []string{shieldedmoduletypes.AnmlDenom},
+					ShieldedOnlyRecipients: []string{personhoodmoduletypes.ModuleName, dexmoduletypes.ModuleName},
+				}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},

@@ -57,9 +57,7 @@ import (
 	earthmodulekeeper "github.com/earth-network/earth/x/earth/keeper"
 	personhoodmodulekeeper "github.com/earth-network/earth/x/personhood/keeper"
 	pkimodulekeeper "github.com/earth-network/earth/x/pki/keeper"
-	shieldedspikekeeper "github.com/earth-network/earth/x/shieldedspike/keeper"
-	shieldedspikemodule "github.com/earth-network/earth/x/shieldedspike/module"
-	shieldedspiketypes "github.com/earth-network/earth/x/shieldedspike/types"
+	shieldedmodulekeeper "github.com/earth-network/earth/x/shielded/keeper"
 )
 
 const (
@@ -126,9 +124,7 @@ type App struct {
 	AssemblyKeeper   assemblymodulekeeper.Keeper
 	PersonhoodKeeper personhoodmodulekeeper.Keeper
 	PkiKeeper        pkimodulekeeper.Keeper
-
-	// SPIKE: unsigned private txs paid from a module-account pool.
-	ShieldedSpikeKeeper shieldedspikekeeper.Keeper
+	ShieldedKeeper   shieldedmodulekeeper.Keeper
 }
 
 func init() {
@@ -154,10 +150,6 @@ func AppConfig() depinject.Config {
 		// fixed 1 ERTH/sec emission — one of the chain's four pillars, and the
 		// only one that pays stakers. See app/mint.go.
 		depinject.Provide(ProvideEarthMintFn),
-		// SPIKE: MsgPrivateNoop has no cosmos.msg.v1.signer; its signers are
-		// defined as empty here. runtime.ProvideInterfaceRegistry consumes every
-		// signing.CustomGetSigner in the container.
-		depinject.Provide(shieldedspiketypes.ProvideCustomGetSigners),
 	)
 }
 
@@ -216,6 +208,7 @@ func New(
 		&app.AssemblyKeeper,
 		&app.PersonhoodKeeper,
 		&app.PkiKeeper,
+		&app.ShieldedKeeper,
 	); err != nil {
 		panic(err)
 	}
@@ -240,6 +233,13 @@ func New(
 	app.AllocationKeeper.RegisterResidueSink(
 		allocationmodulekeeper.ResidueSink(app.AllocationKeeper, app.DistrKeeper),
 	)
+
+	// The shielded pool's bank rules: nothing enters the pool account except
+	// through its keeper, and ANML never reaches an ordinary account. Every
+	// copy of the bank keeper shares one restriction chain, so appending here
+	// covers every module and every message. See
+	// x/shielded/keeper/send_restriction.go.
+	app.BankKeeper.AppendSendRestriction(app.ShieldedKeeper.SendRestriction)
 
 	// add to default baseapp options
 	// enable optimistic execution
@@ -280,11 +280,6 @@ func New(
 	// keepers and the IBC routers, because it needs the former and the latter
 	// need it. See app/wasm.go.
 	if err := app.registerIBCModules(appOpts); err != nil {
-		panic(err)
-	}
-
-	// SPIKE: register the private-tx module (store, msg service) manually.
-	if err := app.registerShieldedSpike(); err != nil {
 		panic(err)
 	}
 
@@ -422,17 +417,4 @@ func BlockedAddresses() map[string]bool {
 	}
 
 	return result
-}
-
-// registerShieldedSpike wires the Phase 0 private-tx spike like IBC and wasm:
-// a manually registered store and module, no depinject module config.
-func (app *App) registerShieldedSpike() error {
-	if err := app.RegisterStores(storetypes.NewKVStoreKey(shieldedspiketypes.StoreKey)); err != nil {
-		return err
-	}
-	app.ShieldedSpikeKeeper = shieldedspikekeeper.NewKeeper(
-		runtime.NewKVStoreService(app.GetKey(shieldedspiketypes.StoreKey)),
-		app.BankKeeper,
-	)
-	return app.RegisterModules(shieldedspikemodule.NewAppModule(app.ShieldedSpikeKeeper))
 }
