@@ -13,6 +13,24 @@ func el(v uint64) fr.Element {
 }
 
 // naiveRoot hashes a full level-by-level tree over leaves padded with zeros.
+func root(t *testing.T, tr *Tree) fr.Element {
+	t.Helper()
+	r, err := tr.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func leaf(t *testing.T, tr *Tree, i uint64) fr.Element {
+	t.Helper()
+	l, err := tr.Leaf(i)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
 func naiveRoot(leaves []fr.Element) fr.Element {
 	level := append([]fr.Element(nil), leaves...)
 	for d := 0; d < Depth; d++ {
@@ -34,7 +52,7 @@ func TestZeroMatchesNoir(t *testing.T) {
 	if got := Zero[Depth].Text(16); got != want {
 		t.Fatalf("Zero[32] = %s, want %s", got, want)
 	}
-	if tr := NewMem(); tr.Root() != Zero[Depth] {
+	if tr := NewMem(); root(t, tr) != Zero[Depth] {
 		t.Fatal("empty tree root != Zero[32]")
 	}
 }
@@ -49,7 +67,7 @@ func TestAppendUpdatePath(t *testing.T) {
 			t.Fatalf("append %d: idx=%d err=%v", i, idx, err)
 		}
 		leaves = append(leaves, l)
-		if tr.Root() != naiveRoot(leaves) {
+		if root(t, tr) != naiveRoot(leaves) {
 			t.Fatalf("root mismatch after %d appends", i+1)
 		}
 	}
@@ -60,7 +78,7 @@ func TestAppendUpdatePath(t *testing.T) {
 		}
 		leaves[i] = fr.Element{}
 	}
-	if tr.Root() != naiveRoot(leaves) {
+	if root(t, tr) != naiveRoot(leaves) {
 		t.Fatal("root mismatch after zeroing")
 	}
 	for i := uint64(0); i < tr.Size(); i++ {
@@ -68,10 +86,10 @@ func TestAppendUpdatePath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if RootFromPath(tr.Leaf(i), i, sib) != tr.Root() {
+		if RootFromPath(leaf(t, tr, i), i, sib) != root(t, tr) {
 			t.Fatalf("path %d does not reach root", i)
 		}
-		if i%2 == 0 && RootFromPath(tr.Leaf(i), i+1, sib) == tr.Root() {
+		if i%2 == 0 && RootFromPath(leaf(t, tr, i), i+1, sib) == root(t, tr) {
 			t.Fatalf("path %d verifies at the wrong index", i)
 		}
 	}
@@ -93,7 +111,7 @@ func TestHighIndex(t *testing.T) {
 		t.Fatal("expected ErrFull")
 	}
 	sib, _ := tr.Path(Capacity - 1)
-	if RootFromPath(el(5), Capacity-1, sib) != tr.Root() {
+	if RootFromPath(el(5), Capacity-1, sib) != root(t, tr) {
 		t.Fatal("last-slot path does not reach root")
 	}
 }

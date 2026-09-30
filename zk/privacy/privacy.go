@@ -13,6 +13,7 @@
 package privacy
 
 import (
+	"errors"
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -31,7 +32,16 @@ var (
 	TagVote  = tag("earth.vote")
 	TagReg   = tag("earth.reg")
 	TagAsset = tag("earth.asset")
+
+	// Chain-side only: no circuit computes these. They define the public
+	// `signal` input the circuits bind (see Signal).
+	TagSignal = tag("earth.signal")
+	TagBytes  = tag("earth.bytes")
 )
+
+// MsgTransferType is earth.shielded.v1.MsgTransfer's type URL, the kind
+// TransferSignal binds.
+const MsgTransferType = "/earth.shielded.v1.MsgTransfer"
 
 func tag(s string) fr.Element {
 	var e fr.Element
@@ -83,12 +93,92 @@ func NF(nk, rho fr.Element, position uint32) fr.Element {
 // encoding. uerth's value is hard-coded in privacy_core as ASSET_ERTH.
 func AssetID(denom string) fr.Element {
 	b := []byte(denom)
-	in := []fr.Element{TagAsset, U64(uint64(len(b)))}
+	return H(append([]fr.Element{TagAsset, U64(uint64(len(b)))}, chunks31(b)...)...)
+}
+
+// chunks31 splits b into 31-byte big-endian field elements (each below the
+// modulus), the encoding AssetID uses.
+func chunks31(b []byte) []fr.Element {
+	out := make([]fr.Element, 0, (len(b)+30)/31)
 	for i := 0; i < len(b); i += 31 {
 		j := min(i+31, len(b))
 		var c fr.Element
 		c.SetBigInt(new(big.Int).SetBytes(b[i:j]))
-		in = append(in, c)
+		out = append(out, c)
 	}
-	return H(in...)
+	return out
+}
+
+// Bytes commits to an arbitrary byte string:
+// H(TAG_BYTES, len(b), c_0, ..., c_k), c_i the 31-byte big-endian chunks. The
+// length is absorbed twice (as an input and in the sponge IV), so strings
+// differing only in trailing zero bytes do not collide. Bytes(nil) =
+// H(TAG_BYTES, 0).
+func Bytes(b []byte) fr.Element {
+	return H(append([]fr.Element{TagBytes, U64(uint64(len(b)))}, chunks31(b)...)...)
+}
+
+// Signal is the value a proof's public `signal` input carries for a msg:
+//
+//	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id), fields...)
+//
+// msg_type is the enclosing msg's type URL ("/earth.shielded.v1.MsgTransfer"),
+// so one proof can never be replayed as a different kind of msg; chain_id
+// stops a proof crossing between networks that share a tree prefix. fields are
+// the msg's own values the proof must not be separable from (receiver,
+// ciphertexts, min_out, validator, ...), each defined by that msg. The circuit
+// treats signal as opaque: it only binds it, so the chain and the wallet
+// compute it outside the circuit and any change to a bound field changes the
+// public input and fails verification.
+func Signal(msgType, chainID string, fields ...fr.Element) fr.Element {
+	in := make([]fr.Element, 0, 3+len(fields))
+	in = append(in, TagSignal, Bytes([]byte(msgType)), Bytes([]byte(chainID)))
+	return H(append(in, fields...)...)
+}
+
+// SpendSignal is Signal for a msg carrying a transfer proof: the three output
+// ciphertexts are always bound first, so whoever relays an unsigned private tx
+// cannot swap a recipient's ciphertext for garbage (the note would still land,
+// but its owner could never find or open it). extra are the msg's own fields.
+//
+//	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id),
+//	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), extra...)
+func SpendSignal(msgType, chainID string, ciphertexts [3][]byte, extra ...fr.Element) fr.Element {
+	f := []fr.Element{Bytes(ciphertexts[0]), Bytes(ciphertexts[1]), Bytes(ciphertexts[2])}
+	return Signal(msgType, chainID, append(f, extra...)...)
+}
+
+// TransferSignal is MsgTransfer's signal. receiver is the unshield recipient's
+// raw address bytes, empty when nothing leaves the pool:
+//
+//	signal = H(TAG_SIGNAL, Bytes("/earth.shielded.v1.MsgTransfer"), Bytes(chain_id),
+//	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), Bytes(receiver))
+func TransferSignal(chainID string, receiver []byte, ciphertexts [3][]byte) fr.Element {
+	return SpendSignal(MsgTransferType, chainID, ciphertexts, Bytes(receiver))
+}
+
+// ErrNonCanonical is returned for a 32-byte string that is not a reduced
+// BN254 scalar.
+var ErrNonCanonical = errors.New("not a canonical 32-byte field element")
+
+// FieldBytes is e as 32 big-endian bytes (the circuits' public-input layout).
+func FieldBytes(e fr.Element) []byte {
+	b := e.Bytes()
+	return b[:]
+}
+
+// FieldFromBytes parses exactly 32 big-endian bytes holding a value below the
+// modulus. Anything else is refused rather than reduced, so every field value
+// has one byte encoding and byte-keyed sets (nullifiers, roots) cannot be
+// entered twice under two spellings.
+func FieldFromBytes(b []byte) (fr.Element, error) {
+	var e fr.Element
+	if len(b) != fr.Bytes {
+		return e, ErrNonCanonical
+	}
+	if new(big.Int).SetBytes(b).Cmp(fr.Modulus()) >= 0 {
+		return e, ErrNonCanonical
+	}
+	e.SetBytes(b)
+	return e, nil
 }

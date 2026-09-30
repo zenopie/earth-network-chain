@@ -1,6 +1,10 @@
 package privacy
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+)
 
 // Pinned in privacy_core as ASSET_ERTH.
 func TestAssetERTHMatchesNoir(t *testing.T) {
@@ -15,16 +19,18 @@ func TestTagsMatchNoir(t *testing.T) {
 		got  string
 		want string
 	}{
-		"id":    {TagID.Text(16), "65617274682e6964"},
-		"owner": {TagOwner.Text(16), "65617274682e6f776e6572"},
-		"leaf":  {TagLeaf.Text(16), "65617274682e6c656166"},
-		"sn":    {TagSN.Text(16), "65617274682e736e"},
-		"pc":    {TagPC.Text(16), "65617274682e7063"},
-		"cm":    {TagCM.Text(16), "65617274682e636d"},
-		"nf":    {TagNF.Text(16), "65617274682e6e66"},
-		"vote":  {TagVote.Text(16), "65617274682e766f7465"},
-		"reg":   {TagReg.Text(16), "65617274682e726567"},
-		"asset": {TagAsset.Text(16), "65617274682e6173736574"},
+		"id":     {TagID.Text(16), "65617274682e6964"},
+		"owner":  {TagOwner.Text(16), "65617274682e6f776e6572"},
+		"leaf":   {TagLeaf.Text(16), "65617274682e6c656166"},
+		"sn":     {TagSN.Text(16), "65617274682e736e"},
+		"pc":     {TagPC.Text(16), "65617274682e7063"},
+		"cm":     {TagCM.Text(16), "65617274682e636d"},
+		"nf":     {TagNF.Text(16), "65617274682e6e66"},
+		"vote":   {TagVote.Text(16), "65617274682e766f7465"},
+		"reg":    {TagReg.Text(16), "65617274682e726567"},
+		"asset":  {TagAsset.Text(16), "65617274682e6173736574"},
+		"signal": {TagSignal.Text(16), "65617274682e7369676e616c"},
+		"bytes":  {TagBytes.Text(16), "65617274682e6279746573"},
 	} {
 		if c.got != c.want {
 			t.Errorf("tag %s = %s, want %s", name, c.got, c.want)
@@ -42,5 +48,65 @@ func TestAssetIDDistinct(t *testing.T) {
 			t.Fatalf("AssetID collision %q vs %q", d, o)
 		}
 		seen[k] = d
+	}
+}
+
+func TestTagsDistinct(t *testing.T) {
+	seen := map[string]bool{}
+	for _, tg := range []fr.Element{TagID, TagOwner, TagLeaf, TagSN, TagPC, TagCM, TagNF, TagVote, TagReg, TagAsset, TagSignal, TagBytes} {
+		k := tg.Text(16)
+		if seen[k] {
+			t.Fatalf("duplicate tag %s", k)
+		}
+		seen[k] = true
+	}
+}
+
+func TestBytesDistinguishesLengthAndChunks(t *testing.T) {
+	cases := [][]byte{nil, {0}, {0, 0}, {1}, make([]byte, 31), make([]byte, 32), append(make([]byte, 31), 1)}
+	seen := map[string]int{}
+	for i, c := range cases {
+		b := Bytes(c)
+		k := b.Text(16)
+		if j, ok := seen[k]; ok {
+			t.Fatalf("Bytes collision between case %d and %d", i, j)
+		}
+		seen[k] = i
+	}
+}
+
+func TestTransferSignalBindsEveryField(t *testing.T) {
+	cts := [3][]byte{[]byte("a"), []byte("b"), []byte("c")}
+	recv := []byte("receiver-address-20b")
+	base := TransferSignal("earth-1", recv, cts)
+	if base != SpendSignal(MsgTransferType, "earth-1", cts, Bytes(recv)) {
+		t.Fatal("TransferSignal != SpendSignal(MsgTransfer, ..., Bytes(receiver))")
+	}
+	alt := []fr.Element{
+		TransferSignal("earth-2", recv, cts),
+		TransferSignal("earth-1", nil, cts),
+		TransferSignal("earth-1", recv, [3][]byte{[]byte("b"), []byte("a"), []byte("c")}),
+		TransferSignal("earth-1", recv, [3][]byte{[]byte("a"), []byte("b"), []byte("d")}),
+		SpendSignal("/earth.shielded.v1.MsgOther", "earth-1", cts, Bytes(recv)),
+	}
+	for i, a := range alt {
+		if a == base {
+			t.Fatalf("variant %d has the same signal", i)
+		}
+	}
+}
+
+func TestFieldFromBytesCanonical(t *testing.T) {
+	e := AssetID("uerth")
+	got, err := FieldFromBytes(FieldBytes(e))
+	if err != nil || got != e {
+		t.Fatalf("round trip: %v", err)
+	}
+	mod := fr.Modulus().FillBytes(make([]byte, 32))
+	if _, err := FieldFromBytes(mod); err == nil {
+		t.Fatal("modulus accepted")
+	}
+	if _, err := FieldFromBytes(make([]byte, 31)); err == nil {
+		t.Fatal("short input accepted")
 	}
 }

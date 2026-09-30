@@ -74,6 +74,11 @@ func main() {
 	must(os.WriteFile(filepath.Join(out, "public_inputs.expected"), raw, 0o644))
 }
 
+func mustEl(e fr.Element, err error) fr.Element {
+	must(err)
+	return e
+}
+
 func must(err error) {
 	if err != nil {
 		panic(err)
@@ -102,7 +107,7 @@ func membership(zeroed bool) (string, []fr.Element) {
 	// against the post-zeroing root must fail.
 	t2 := merkle.NewMem()
 	for i := uint64(0); i < t.Size(); i++ {
-		_, _ = t2.Append(t.Leaf(i))
+		_, _ = t2.Append(mustEl(t.Leaf(i)))
 	}
 	if zeroed {
 		must(t2.Update(ours, privacy.IdentityLeaf(privacy.IDC(idSecret), dscKey, activatedAt)))
@@ -110,7 +115,7 @@ func membership(zeroed bool) (string, []fr.Element) {
 	sib, err := t2.Path(ours)
 	must(err)
 
-	root := t.Root()
+	root := mustEl(t.Root())
 	scope := privacy.AssetID("claim:20360")
 	nullifier := privacy.ScopeNullifier(idSecret, scope)
 	signal := det("signal", 0)
@@ -152,7 +157,7 @@ func transfer() (string, []fr.Element) {
 		_, err := t.Append(cm)
 		must(err)
 	}
-	root := t.Root()
+	root := mustEl(t.Root())
 
 	var paths [3]string
 	var nf, cmOut, outPC [3]fr.Element
