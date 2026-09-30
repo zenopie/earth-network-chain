@@ -368,3 +368,26 @@ func TestGenesisRoundTrip(t *testing.T) {
 	g3 := initFixtureEmpty(t, f.bank)
 	require.ErrorIs(t, g3.k.InitGenesis(g3.ctx, bad), types.ErrInvariant)
 }
+
+func TestShieldedOnlyPrefix(t *testing.T) {
+	f := initFixture(t)
+	const staking = "shieldedstaking"
+	f.k.RegisterShieldedOnlyPrefix("derth/", staking)
+	require.Panics(t, func() { f.k.RegisterShieldedOnlyPrefix("derth/x", staking) }, "nested prefixes")
+	require.True(t, f.k.IsShieldedOnly("derth/earthvaloper1abc"))
+	require.False(t, f.k.IsShieldedOnly("uerth"))
+
+	user := f.addr("user")
+	d := sdk.NewInt64Coin("derth/earthvaloper1abc", 100)
+	f.bank.mint(mod(staking), d)
+	// Never to an ordinary account, nor to modules outside the family's list
+	// (personhood may hold ANML, not derth).
+	require.ErrorIs(t, f.bank.SendCoinsFromModuleToAccount(f.ctx, staking, user, sdk.NewCoins(d)), types.ErrSendRestricted)
+	require.ErrorIs(t, f.bank.SendCoinsFromModuleToModule(f.ctx, staking, personhood, sdk.NewCoins(d)), types.ErrSendRestricted)
+	// Into the pool (through the keeper) and back to the registering module.
+	_, err := f.k.RegisterAsset(f.ctx, d.Denom)
+	require.NoError(t, err)
+	_, _, err = f.k.MintNote(f.ctx, staking, d, privacy.FieldBytes(shieldedtest.Det("pc", 9)), nil)
+	require.NoError(t, err)
+	require.NoError(t, f.k.AssertInvariants(f.ctx))
+}
