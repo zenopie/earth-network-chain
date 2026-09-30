@@ -13,7 +13,8 @@ import (
 	"github.com/earth-network/earth/x/assembly/types"
 )
 
-// Keeper is the assembly: the chamber where one live registration is one vote.
+// Keeper is the assembly: the chamber where one live registration is one vote,
+// cast anonymously with a membership proof.
 //
 // It holds no funds, mints nothing, and has no authority address. Everything it
 // stores is a count of people.
@@ -41,17 +42,9 @@ type Keeper struct {
 	RemovalBallotID collections.Map[uint64, uint64]
 	RemovalQueue    collections.KeySet[collections.Pair[int64, uint64]]
 
-	// VotedBallots is every vote, by nullifier. It is what makes taking back a
-	// retired registration's votes cost what that person voted on, rather than a
-	// walk of every ballot.
-	VotedBallots  collections.KeySet[collections.Pair[[]byte, uint64]]
 	ClosedBallots collections.KeySet[uint64]
-
-	// The v0.9.0 layout, for the v0.9.1 upgrade to move out of. See
-	// MigrateToBallots.
-	LegacyProposalVotes collections.Map[collections.Pair[uint64, []byte], int32]
-	LegacyProposalTally collections.Map[uint64, types.Tally]
-	LegacyRemovalVotes  collections.Map[collections.Pair[uint64, []byte], int32]
+	// ProposalRound is a proposal's round past its first. See types.ProposalRound.
+	ProposalRound collections.Map[uint64, types.ProposalRound]
 }
 
 func NewKeeper(
@@ -88,17 +81,10 @@ func NewKeeper(
 		RemovalQueue: collections.NewKeySet(sb, types.RemovalQueueKey, "removal_queue",
 			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
 
-		VotedBallots: collections.NewKeySet(sb, types.VotedBallotsKey, "voted_ballots",
-			collections.PairKeyCodec(collections.BytesKey, collections.Uint64Key)),
 		ClosedBallots: collections.NewKeySet(sb, types.ClosedBallotsKey, "closed_ballots",
 			collections.Uint64Key),
-
-		LegacyProposalVotes: collections.NewMap(sb, types.LegacyProposalVotesKey, "proposal_votes",
-			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), collections.Int32Value),
-		LegacyProposalTally: collections.NewMap(sb, types.LegacyProposalTallyKey, "proposal_tally",
-			collections.Uint64Key, codec.CollValue[types.Tally](cdc)),
-		LegacyRemovalVotes: collections.NewMap(sb, types.LegacyRemovalVotesKey, "removal_votes",
-			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), collections.Int32Value),
+		ProposalRound: collections.NewMap(sb, types.ProposalRoundKey, "proposal_round",
+			collections.Uint64Key, codec.CollValue[types.ProposalRound](cdc)),
 	}
 
 	schema, err := sb.Build()
@@ -112,30 +98,6 @@ func NewKeeper(
 
 // ChamberAddress is the address x/allocation checks a removal against.
 func (k Keeper) ChamberAddress() []byte { return k.chamberAddr }
-
-// voterNullifier resolves a signing address to the registration behind it, and
-// refuses the account if there is not a live one.
-//
-// Every message in this module goes through here, and it is the whole of the
-// franchise: a passport nobody has registered does not vote, a registration that
-// has lapsed does not vote, and a wallet with neither does not vote. What comes
-// back is the nullifier rather than the address because that is what the vote is
-// recorded against — a registration may be moved to a new wallet, and keyed by
-// address one person could vote, move, and vote again.
-func (k Keeper) voterNullifier(ctx context.Context, addr string) ([]byte, error) {
-	bz, err := k.addressCodec.StringToBytes(addr)
-	if err != nil {
-		return nil, err
-	}
-	nullifier, live, err := k.personhood.LiveNullifier(ctx, bz)
-	if err != nil {
-		return nil, err
-	}
-	if !live {
-		return nil, types.ErrNotRegistered
-	}
-	return nullifier, nil
-}
 
 // castVote records one vote into a (ballot, nullifier) -> option map and moves
 // the tally to match, handling the case where this registration has already

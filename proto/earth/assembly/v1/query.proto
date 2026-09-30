@@ -19,6 +19,26 @@ service Query {
   rpc RemovalBallots(QueryRemovalBallotsRequest) returns (QueryRemovalBallotsResponse) {
     option (google.api.http).get = "/earth/assembly/v1/removal_ballots";
   }
+
+  // BallotInputs returns the membership public inputs a vote on a proposal's
+  // current round (proposal_id set) or on an option's open removal ballot
+  // (option_id set) must be proven against.
+  rpc BallotInputs(QueryBallotInputsRequest) returns (QueryBallotInputsResponse) {
+    option (google.api.http).get = "/earth/assembly/v1/ballot_inputs";
+  }
+}
+
+message QueryBallotInputsRequest {
+  uint64 proposal_id = 1;
+  uint64 option_id = 2;
+}
+
+message QueryBallotInputsResponse {
+  bytes scope = 1;
+  bytes excluded_dsc = 2;
+  uint64 max_activation = 3;
+  uint64 round = 4;
+  uint64 ballot_id = 5;
 }
 
 message QueryProposalTallyRequest {

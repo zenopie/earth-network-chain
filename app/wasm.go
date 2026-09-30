@@ -76,12 +76,11 @@ import (
 // removing one after contracts depend on it is not.
 func wasmAcceptedQueries() wasmkeeper.AcceptedQueries {
 	return wasmkeeper.AcceptedQueries{
-		// x/personhood — the reason contracts on this chain are interesting at
-		// all. Registration answers "is this address a live verified human",
-		// which is what a sybil-resistant airdrop, a one-human-one-vote poll or
-		// a human-gated game needs and cannot get anywhere else.
-		"/earth.personhood.v1.Query/Registration": func() proto.Message {
-			return &personhoodmoduletypes.QueryRegistrationResponse{}
+		// x/personhood — aggregate counts only. There is no "is this address a
+		// human" query: personhood is private, and nothing on chain links an
+		// address to a registration.
+		"/earth.personhood.v1.Query/CaretakerVoterCount": func() proto.Message {
+			return &personhoodmoduletypes.QueryCaretakerVoterCountResponse{}
 		},
 		"/earth.personhood.v1.Query/RegistrationCount": func() proto.Message {
 			return &personhoodmoduletypes.QueryRegistrationCountResponse{}

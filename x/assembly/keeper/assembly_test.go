@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/earth-network/earth/x/assembly/types"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // TestApproves pins the rule the whole chamber turns on.
@@ -72,9 +74,9 @@ func TestRatifiedProposalIsLeftForGov(t *testing.T) {
 
 	_, alice := e.addr(t, "alice", "null-alice")
 	_, bob := e.addr(t, "bob", "null-bob")
-	for _, voter := range []string{alice, bob} {
+	for _, v := range []string{alice, bob} {
 		_, err := e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-			Voter: voter, ProposalId: 1, Option: types.VOTE_OPTION_YES,
+			Membership: voter(v), ProposalId: 1, Option: types.VOTE_OPTION_YES,
 		})
 		require.NoError(t, err)
 	}
@@ -91,77 +93,12 @@ func TestRatifiedProposalIsLeftForGov(t *testing.T) {
 	require.True(t, has, "an approved proposal must still be in the queue x/gov reads")
 }
 
-// One registration is one vote, however many wallets hold it.
-//
-// x/personhood lets a registration move to a new wallet. Keyed by address, the
-// mover would get a second vote; keyed by nullifier, they get the one they
-// already had and may change it.
-func TestAWalletSwitchDoesNotBuyASecondVote(t *testing.T) {
-	e := newTestEnv(t)
-	end := e.ctx.BlockTime().Add(time.Hour)
-	e.openProposal(t, 1, end)
-
-	_, oldWallet := e.addr(t, "old-wallet", "one-human")
-	_, newWallet := e.addr(t, "new-wallet", "one-human")
-
-	_, err := e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-		Voter: oldWallet, ProposalId: 1, Option: types.VOTE_OPTION_YES,
-	})
-	require.NoError(t, err)
-	_, err = e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-		Voter: newWallet, ProposalId: 1, Option: types.VOTE_OPTION_YES,
-	})
-	require.NoError(t, err)
-
-	tally, err := e.k.proposalTally(e.ctx, 1)
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), tally.Yes, "the same person voting from two wallets is one vote")
-	require.Equal(t, uint64(0), tally.No)
-
-	// And the second wallet changing its mind changes the one vote, rather than
-	// adding an opposing one.
-	_, err = e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-		Voter: newWallet, ProposalId: 1, Option: types.VOTE_OPTION_NO,
-	})
-	require.NoError(t, err)
-	tally, err = e.k.proposalTally(e.ctx, 1)
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), tally.Yes)
-	require.Equal(t, uint64(1), tally.No)
-}
-
-// The franchise is live registrations, and nothing else.
-func TestOnlyLiveRegistrationsVote(t *testing.T) {
-	e := newTestEnv(t)
-	end := e.ctx.BlockTime().Add(time.Hour)
-	e.openProposal(t, 1, end)
-
-	_, stranger := e.addr(t, "stranger", "")
-	_, err := e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-		Voter: stranger, ProposalId: 1, Option: types.VOTE_OPTION_YES,
-	})
-	require.ErrorIs(t, err, types.ErrNotRegistered)
-
-	lapsing, lapsingStr := e.addr(t, "lapsing", "null-lapsing")
-	_, err = e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-		Voter: lapsingStr, ProposalId: 1, Option: types.VOTE_OPTION_YES,
-	})
-	require.NoError(t, err)
-
-	e.humans.lapse(lapsing)
-	_, err = e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-		Voter: lapsingStr, ProposalId: 1, Option: types.VOTE_OPTION_NO,
-	})
-	require.ErrorIs(t, err, types.ErrNotRegistered,
-		"a registration that has lapsed cannot change its vote either")
-}
-
 // Votes only go to a proposal that is open for them.
 func TestVotingNeedsAnOpenProposal(t *testing.T) {
 	e := newTestEnv(t)
 	_, alice := e.addr(t, "alice", "null-alice")
 	_, err := e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-		Voter: alice, ProposalId: 42, Option: types.VOTE_OPTION_YES,
+		Membership: voter(alice), ProposalId: 42, Option: types.VOTE_OPTION_YES,
 	})
 	require.ErrorIs(t, err, types.ErrProposalNotVoting)
 }
@@ -175,22 +112,22 @@ func TestRemovalBallot(t *testing.T) {
 	_, bob := e.addr(t, "bob", "null-bob")
 	_, carol := e.addr(t, "carol", "null-carol")
 
-	opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Proposer: alice, OptionId: 7})
+	opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
 	require.NoError(t, err)
 
 	// One ballot per option: a second would let anyone keep an option under a
 	// permanent rolling vote.
-	_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Proposer: bob, OptionId: 7})
+	_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(bob), OptionId: 7})
 	require.ErrorIs(t, err, types.ErrBallotExists)
 
-	for _, voter := range []string{alice, bob} {
+	for _, v := range []string{alice, bob} {
 		_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{
-			Voter: voter, OptionId: 7, Option: types.VOTE_OPTION_YES,
+			Membership: voter(v), OptionId: 7, Option: types.VOTE_OPTION_YES,
 		})
 		require.NoError(t, err)
 	}
 	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{
-		Voter: carol, OptionId: 7, Option: types.VOTE_OPTION_NO,
+		Membership: voter(carol), OptionId: 7, Option: types.VOTE_OPTION_NO,
 	})
 	require.NoError(t, err)
 
@@ -213,11 +150,11 @@ func TestRemovalBallotThatFallsShort(t *testing.T) {
 	_, alice := e.addr(t, "alice", "null-alice")
 	_, bob := e.addr(t, "bob", "null-bob")
 
-	opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Proposer: alice, OptionId: 7})
+	opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
 	require.NoError(t, err)
-	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Voter: alice, OptionId: 7, Option: types.VOTE_OPTION_YES})
+	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Membership: voter(alice), OptionId: 7, Option: types.VOTE_OPTION_YES})
 	require.NoError(t, err)
-	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Voter: bob, OptionId: 7, Option: types.VOTE_OPTION_NO})
+	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Membership: voter(bob), OptionId: 7, Option: types.VOTE_OPTION_NO})
 	require.NoError(t, err)
 
 	e.ctx = e.ctx.WithBlockTime(time.Unix(opened.ClosesAt+1, 0))
@@ -229,7 +166,7 @@ func TestRemovalBallotThatFallsShort(t *testing.T) {
 func TestRemovalNeedsARemovableOption(t *testing.T) {
 	e := newTestEnv(t)
 	_, alice := e.addr(t, "alice", "null-alice")
-	_, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Proposer: alice, OptionId: 7})
+	_, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
 	require.ErrorIs(t, err, types.ErrNotRemovable)
 }
 
@@ -242,13 +179,13 @@ func TestGenesisRoundTrip(t *testing.T) {
 
 	_, alice := e.addr(t, "alice", "null-alice")
 	_, bob := e.addr(t, "bob", "null-bob")
-	_, err := e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{Voter: alice, ProposalId: 1, Option: types.VOTE_OPTION_YES})
+	_, err := e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{Membership: voter(alice), ProposalId: 1, Option: types.VOTE_OPTION_YES})
 	require.NoError(t, err)
-	_, err = e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{Voter: bob, ProposalId: 1, Option: types.VOTE_OPTION_NO})
+	_, err = e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{Membership: voter(bob), ProposalId: 1, Option: types.VOTE_OPTION_NO})
 	require.NoError(t, err)
-	_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Proposer: alice, OptionId: 7})
+	_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
 	require.NoError(t, err)
-	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Voter: alice, OptionId: 7, Option: types.VOTE_OPTION_YES})
+	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Membership: voter(alice), OptionId: 7, Option: types.VOTE_OPTION_YES})
 	require.NoError(t, err)
 
 	exported, err := e.k.ExportGenesis(e.ctx)
@@ -330,6 +267,15 @@ func TestDeclinedExpeditedProposalIsDemotedNotKilled(t *testing.T) {
 	tally, err := e.k.proposalTally(e.ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, types.Tally{}, tally)
+
+	// The regular round is a new ballot scope, opened now: a voter proves an
+	// identity activated a root window before the demotion, and alice's
+	// nullifier in it is a new one.
+	in, err := NewQueryServerImpl(e.k).BallotInputs(e.ctx, &types.QueryBallotInputsRequest{ProposalId: 1})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), in.Round)
+	require.Equal(t, privacy.FieldBytes(privacy.ProposalScope(1, 1)), in.Scope)
+	require.Equal(t, uint64(e.ctx.BlockTime().Unix()-3600), in.MaxActivation)
 
 	// And the second round runs under ordinary rules: two thirds now suffices.
 	e.voteAll(t, 1, types.VOTE_OPTION_YES, "dave", "erin")
@@ -459,9 +405,9 @@ func TestFailedStrikeDoesNotHaltTheChain(t *testing.T) {
 	e.allocation.failWith = errors.New("allocation refused")
 
 	_, alice := e.addr(t, "alice", "null-alice")
-	opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Proposer: alice, OptionId: 7})
+	opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
 	require.NoError(t, err)
-	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Voter: alice, OptionId: 7, Option: types.VOTE_OPTION_YES})
+	_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Membership: voter(alice), OptionId: 7, Option: types.VOTE_OPTION_YES})
 	require.NoError(t, err)
 
 	e.ctx = e.ctx.WithBlockTime(time.Unix(opened.ClosesAt+1, 0))
@@ -471,4 +417,26 @@ func TestFailedStrikeDoesNotHaltTheChain(t *testing.T) {
 	has, err := e.k.RemovalBallots.Has(e.ctx, 7)
 	require.NoError(t, err)
 	require.False(t, has, "the ballot still closes")
+}
+
+// The same nullifier voting again replaces its vote rather than adding one.
+func TestSameNullifierReplacesItsVote(t *testing.T) {
+	e := newTestEnv(t)
+	e.openProposal(t, 1, e.ctx.BlockTime().Add(time.Hour))
+	_, a := e.addr(t, "alice", "n")
+	for _, opt := range []types.VoteOption{types.VOTE_OPTION_YES, types.VOTE_OPTION_NO, types.VOTE_OPTION_NO} {
+		_, err := e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{Membership: voter(a), ProposalId: 1, Option: opt})
+		require.NoError(t, err)
+	}
+	tally, err := e.k.proposalTally(e.ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, types.Tally{No: 1}, tally)
+}
+
+// A msg reaching the handler without the private ante is refused.
+func TestHandlerRefusesWithoutTheAnte(t *testing.T) {
+	e := newTestEnv(t)
+	e.openProposal(t, 1, e.ctx.BlockTime().Add(time.Hour))
+	_, err := NewMsgServerImpl(e.k).VoteProposal(e.ctx, &types.MsgVoteProposal{Membership: voter("x"), ProposalId: 1, Option: types.VOTE_OPTION_YES})
+	require.ErrorIs(t, err, shieldedtypes.ErrUnauthorized)
 }

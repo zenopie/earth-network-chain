@@ -16,32 +16,33 @@ message GenesisState {
     (amino.dont_omitempty) = true
   ];
 
-  // registrations is every registered human.
-  //
-  // This is the state the chain exists to hold, and losing it is not a matter
-  // of inconvenience: each record carries the nullifier that makes a passport
-  // unable to register twice. An export without these does not merely forget
-  // who is registered, it resets the anti-Sybil property to "nobody ever has",
-  // and the same passport can register again.
-  //
-  // Every other registration index — by address, by Document Signer, by issuing
-  // country, by registration time, and the total count — is derived from these
-  // records at InitGenesis rather than carried, the same way x/pki rebuilds its
-  // subject-DN index from the certificates.
+  // registrations is every live registered passport. Each carries the
+  // nullifier that stops a passport registering twice, and the identity leaf
+  // it holds. Every index over them (by Document Signer, by country, by
+  // registration time, the count) is rebuilt at InitGenesis, and so is the
+  // identity tree: its leaves are these registrations' leaves at their
+  // indexes, and zero everywhere else below identity_tree_size.
   repeated Registration registrations = 2 [(gogoproto.nullable) = false];
 
   // last_buyback is the ANML buyback-and-burn clock, in unix nanoseconds.
   //
-  // Always exported as ZERO, deliberately. The field exists so that this
-  // decision is visible in the schema rather than buried in a keeper.
-  //
-  // The buyback mints for elapsed wall-clock time (now - last). A chain restarted
-  // from an export was not running during the gap, so carrying the old timestamp
-  // across would mint the entire downtime in the first block — a week off is
-  // 604,800 ERTH minted and swapped into the ANML pool at once. Zero means "start
-  // the clock here", and the gap is simply not emitted, which is the honest
-  // answer: no chain ran, so no emission was earned.
-  //
-  // x/earth reaches the same conclusion by never carrying LastMintTime at all.
+  // Always exported as ZERO, deliberately: the buyback mints for elapsed
+  // wall-clock time, and a chain restarted from an export was not running
+  // during the gap. Zero means "start the clock here".
   int64 last_buyback = 3;
+
+  // identity_tree_size is the identity tree's append cursor: every leaf ever
+  // written, zeroed ones included.
+  uint64 identity_tree_size = 4;
+
+  // identity_roots is the anchor history, oldest first; the last is the
+  // latest. InitGenesis records the rebuilt root as the latest if it differs.
+  repeated IdentityRoot identity_roots = 5 [(gogoproto.nullable) = false];
+
+  // claim_nullifiers are the ANML claims of the days still refused a second
+  // claim (today and yesterday).
+  repeated ClaimNullifier claim_nullifiers = 6 [(gogoproto.nullable) = false];
+
+  // caretaker_votes are the live caretaker splits' leases.
+  repeated CaretakerVote caretaker_votes = 7 [(gogoproto.nullable) = false];
 }

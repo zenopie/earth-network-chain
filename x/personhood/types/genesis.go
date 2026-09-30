@@ -3,6 +3,8 @@ package types
 import (
 	"encoding/hex"
 	"fmt"
+
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // DefaultGenesis returns the default genesis state
@@ -19,14 +21,15 @@ func DefaultGenesis() *GenesisState {
 // unable to register twice, so a genesis carrying two registrations under one
 // nullifier — or a registration with none at all — has already lost the property
 // the module exists to provide, and it must be refused at import rather than
-// discovered later.
+// discovered later. So is a leaf index shared by two registrations, or one
+// outside the tree: InitGenesis writes each registration's leaf at its index.
 func (gs GenesisState) Validate() error {
 	seenNullifier := make(map[string]struct{}, len(gs.Registrations))
-	seenAddr := make(map[string]struct{}, len(gs.Registrations))
+	seenLeaf := make(map[uint64]struct{}, len(gs.Registrations))
 
 	for _, reg := range gs.Registrations {
 		if len(reg.Nullifier) == 0 {
-			return fmt.Errorf("registration for %s has no nullifier", reg.Address)
+			return fmt.Errorf("registration at leaf %d has no nullifier", reg.LeafIndex)
 		}
 		n := hex.EncodeToString(reg.Nullifier)
 		if _, dup := seenNullifier[n]; dup {
@@ -34,23 +37,58 @@ func (gs GenesisState) Validate() error {
 		}
 		seenNullifier[n] = struct{}{}
 
-		if reg.Address == "" {
-			return fmt.Errorf("registration %s has no address", n)
+		if reg.LeafIndex >= gs.IdentityTreeSize {
+			return fmt.Errorf("registration %s: leaf %d is outside the identity tree (size %d)", n, reg.LeafIndex, gs.IdentityTreeSize)
 		}
-		// RegByAddr maps one address to one nullifier, so a second registration
-		// at the same address would overwrite the first and strand it: counted
-		// in RegCount, reachable by nullifier, invisible by address.
-		if _, dup := seenAddr[reg.Address]; dup {
-			return fmt.Errorf("address %s holds two registrations", reg.Address)
+		if _, dup := seenLeaf[reg.LeafIndex]; dup {
+			return fmt.Errorf("leaf %d holds two registrations", reg.LeafIndex)
 		}
-		seenAddr[reg.Address] = struct{}{}
+		seenLeaf[reg.LeafIndex] = struct{}{}
 
+		if _, err := privacy.FieldFromBytes(reg.Idc); err != nil {
+			return fmt.Errorf("registration %s: idc: %w", n, err)
+		}
+		if len(reg.DscKey) > 0 {
+			if _, err := privacy.FieldFromBytes(reg.DscKey); err != nil {
+				return fmt.Errorf("registration %s: dsc_key: %w", n, err)
+			}
+		}
 		if reg.RegisteredAt <= 0 {
 			return fmt.Errorf("registration %s has no registration time; the expiry sweep "+
 				"orders by it and would retire this one immediately", n)
 		}
-		if reg.LastAnmlClaim < 0 {
-			return fmt.Errorf("registration %s has a negative last ANML claim", n)
+		if reg.ActivatedAt <= 0 {
+			return fmt.Errorf("registration %s has no activation time", n)
+		}
+	}
+
+	for i, r := range gs.IdentityRoots {
+		if _, err := privacy.FieldFromBytes(r.Root); err != nil {
+			return fmt.Errorf("identity root %d: %w", i, err)
+		}
+	}
+	seenClaim := map[string]struct{}{}
+	for _, c := range gs.ClaimNullifiers {
+		if _, err := privacy.FieldFromBytes(c.Nullifier); err != nil {
+			return fmt.Errorf("claim nullifier: %w", err)
+		}
+		k := fmt.Sprintf("%d/%x", c.Day, c.Nullifier)
+		if _, dup := seenClaim[k]; dup {
+			return fmt.Errorf("claim nullifier %s listed twice", k)
+		}
+		seenClaim[k] = struct{}{}
+	}
+	seenVote := map[string]struct{}{}
+	for _, v := range gs.CaretakerVotes {
+		if _, err := privacy.FieldFromBytes(v.Nullifier); err != nil {
+			return fmt.Errorf("caretaker vote: %w", err)
+		}
+		if _, dup := seenVote[string(v.Nullifier)]; dup {
+			return fmt.Errorf("caretaker vote %x listed twice", v.Nullifier)
+		}
+		seenVote[string(v.Nullifier)] = struct{}{}
+		if v.ExpiresAt <= 0 {
+			return fmt.Errorf("caretaker vote %x has no expiry", v.Nullifier)
 		}
 	}
 

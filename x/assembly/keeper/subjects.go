@@ -1,13 +1,15 @@
 package keeper
 
 import (
-	"context"
-
+	errorsmod "cosmossdk.io/errors"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 
+	"github.com/earth-network/earth/x/assembly/types"
 	"github.com/earth-network/earth/x/pki/certs"
 	pkitypes "github.com/earth-network/earth/x/pki/types"
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // revokedSigners returns the Document Signer commitments a proposal revokes,
@@ -16,14 +18,10 @@ import (
 // A registration is only as good as the signer behind it, and a signer is
 // revoked because its registrations are not believed to be distinct humans —
 // a stolen key, or a state minting identities. Those registrations are the
-// subject of the vote, so they do not get one. Otherwise a compromised signer
+// subject of the vote, so they do not get one (see excludedDsc). Otherwise a compromised signer
 // that registered enough people could vote down its own revocation, and the
 // chamber's two-thirds bar would protect exactly the registrations it should
 // be able to remove.
-//
-// A proposal's messages are fixed when it is submitted, so refusing the vote
-// when it is cast is the whole of it: no registration can come to be a subject
-// after voting.
 //
 // Read straight from the proposal's messages rather than from a decoded
 // []sdk.Msg: a proposal loaded from the store has not had its Any values
@@ -59,17 +57,20 @@ func revokedSigners(proposal v1.Proposal) map[string]struct{} {
 	return subjects
 }
 
-// isSubject reports whether the registration filed under nullifier was made
-// under one of the signers in subjects. Checked when a vote is cast, so such a
-// vote never reaches the tally.
-func (k Keeper) isSubject(ctx context.Context, subjects map[string]struct{}, nullifier []byte) (bool, error) {
-	if len(subjects) == 0 {
-		return false, nil
+// excludedDsc is the excluded_dsc a vote on proposal proves against: the one
+// Document Signer the proposal revokes, or 0. The membership proof shows the
+// voter's leaf was not made under it, which is what keeps a revoked signer's
+// registrations from voting down their own revocation. A proposal revoking
+// several signers cannot be voted on (one exclusion per proof).
+func excludedDsc(proposal v1.Proposal) (fr.Element, error) {
+	subjects := revokedSigners(proposal)
+	switch len(subjects) {
+	case 0:
+		return fr.Element{}, nil
+	case 1:
+		for s := range subjects {
+			return privacy.FieldFromBytes([]byte(s))
+		}
 	}
-	dsc, err := k.personhood.RegistrationDsc(ctx, nullifier)
-	if err != nil || len(dsc) == 0 {
-		return false, err
-	}
-	_, ok := subjects[string(dsc)]
-	return ok, nil
+	return fr.Element{}, errorsmod.Wrapf(types.ErrTooManySubjects, "proposal %d revokes %d", proposal.Id, len(subjects))
 }

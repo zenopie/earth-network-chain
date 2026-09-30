@@ -1,28 +1,36 @@
 syntax = "proto3";
 package earth.personhood.v1;
 
-import "cosmos_proto/cosmos.proto";
-
 option go_package = "github.com/earth-network/earth/x/personhood/types";
 
-// Registration is a proof-of-personhood record: one unique human, deduped by the
-// zk nullifier, bound to a wallet address.
+// Registration is one registered passport: its dedup key, and where its
+// holder's identity sits in the identity tree. It names no account and no
+// note; nothing here links the passport to what its holder later does.
 message Registration {
-  // nullifier is the unique per-person value output by the registration proof.
+  // nullifier is the passport nullifier the registration proof outputs, the
+  // public dedup key. Derived from passport data (issuer, document number,
+  // date of birth), so it identifies the passport to its issuer: that is why
+  // nothing the holder does after registering is keyed by it.
   bytes nullifier = 1;
-  // address is the registered wallet.
-  string address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  // registered_at is the unix time (seconds) of registration.
+  // leaf_index is the identity tree position of this registration's leaf
+  // H(TAG_LEAF, idc, dsc_key, activated_at). Zeroed when the registration
+  // expires, its signer is revoked, or its holder switches.
+  uint64 leaf_index = 2;
+  // registered_at is the unix time (seconds) of the registration; it expires
+  // registration_validity_seconds later.
   int64 registered_at = 3;
-  // last_anml_claim is the unix time (seconds, UTC midnight) of the last ANML claim.
-  int64 last_anml_claim = 4;
-  // dsc_key is the Poseidon2 commitment to the Document Signer that produced the
-  // registration proof — the same value the circuit exposed publicly. Recording
-  // it is what makes a compromised signer's registrations enumerable.
+  // activated_at is the unix time the leaf was written, which the leaf
+  // commits to. Membership proofs bound it from above (see Params) so a
+  // switch to a new identity secret cannot act again where the old one did.
+  int64 activated_at = 4;
+  // dsc_key is the Poseidon2 commitment to the Document Signer that produced
+  // the registration proof, which the leaf also commits to.
   bytes dsc_key = 5;
-  // country is the DSC's ISO 3166-1 alpha-2 issuing country, or "" when the
-  // certificate carries no country attribute.
+  // country is the DSC's ISO 3166-1 alpha-2 issuing country, or "".
   string country = 6;
+  // idc is the identity commitment H(TAG_ID, id_secret) the leaf was made
+  // from. Public in MsgRegister already; kept so genesis can rebuild the tree.
+  bytes idc = 7;
 }
 
 // RateCounter is a self-resetting daily counter, used to bound how many
@@ -44,4 +52,39 @@ message RateCounter {
   // the day starts at zero, so every cap would start the day at its floor and
   // widen as registrations arrived — tightest exactly when a burst begins.
   uint64 previous_count = 3;
+}
+
+// IdentityRoot is one recorded identity-tree root. A root becomes a valid
+// anchor for membership proofs at the end of the block that produced it and
+// stays one for identity_root_window_seconds (the latest root always).
+message IdentityRoot {
+  bytes root = 1;
+  int64 height = 2;
+  int64 time = 3;
+  uint64 tree_size = 4;
+}
+
+// Membership is an anonymous proof that its prover holds a live identity-tree
+// leaf (membership circuit, bb v5.0.0 UltraHonk). The chain supplies the other
+// public inputs itself: scope, signal, excluded_dsc and max_activation are
+// fixed by the msg carrying it.
+message Membership {
+  bytes proof = 1;
+  // root is the identity-tree anchor the proof was made against.
+  bytes root = 2;
+  // nullifier is H(TAG_SN, id_secret, scope): one per person per scope.
+  bytes nullifier = 3;
+}
+
+// ClaimNullifier records that the holder of nullifier claimed on day.
+message ClaimNullifier {
+  uint64 day = 1;
+  bytes nullifier = 2;
+}
+
+// CaretakerVote is a live caretaker split's lease: the split itself is the
+// x/allocation voter filed under the same nullifier.
+message CaretakerVote {
+  bytes nullifier = 1;
+  int64 expires_at = 2;
 }

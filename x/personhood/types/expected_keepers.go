@@ -9,27 +9,43 @@ import (
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"github.com/earth-network/earth/x/pki/certs"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
 
-// AllocationKeeper is the slice of x/allocation this module needs. The human
-// emission stream lives there; what lives here is the two things only
-// proof-of-personhood can answer — when a vote stops being backed by a live
-// human, and when the registration-reward pool should be paid out.
+// AllocationKeeper is the slice of x/allocation this module needs: the
+// caretaker stream's voters, which this module files under anonymous
+// caretaker nullifiers, and the registration-reward pool it draws down.
 type AllocationKeeper interface {
 	// AdvanceIndex settles a stream up to the current block. Required before
 	// clearing a voter, so the weight being removed is credited against a current
 	// index rather than silently forfeiting this block's emission.
 	AdvanceIndex(ctx context.Context, stream allocationtypes.StreamId) error
-	// ClearVoter retires an address's vote in a stream, returning its weight to
-	// the stream. Called when a registration lapses or is replaced.
-	ClearVoter(ctx context.Context, stream allocationtypes.StreamId, addr []byte) error
+	// ValidateSplit checks a split against the stream's options as they stand
+	// (sum 100, no duplicates, live options, at most MaxVoterOptions).
+	ValidateSplit(ctx context.Context, stream allocationtypes.StreamId, percentages []allocationtypes.AllocationWeight) error
+	// SetVoterSplit validates a split against the stream's options, settles
+	// the stream and files the split under voter at weight (clearing it when
+	// percentages is empty).
+	SetVoterSplit(ctx context.Context, stream allocationtypes.StreamId, voter []byte, percentages []allocationtypes.AllocationWeight, weight math.Int) error
+	// ClearVoter retires a voter's split in a stream, returning its weight to
+	// the stream. Called when a caretaker split lapses.
+	ClearVoter(ctx context.Context, stream allocationtypes.StreamId, voter []byte) error
 	// DrawFromOption settles an option and withdraws `ppm` parts-per-million of
 	// its accrued ERTH for the caller to pay out.
 	DrawFromOption(ctx context.Context, stream allocationtypes.StreamId, optionID uint64, ppm int64) (math.Int, error)
-	// PayOut sends drawn ERTH from the allocation module account. The coins
-	// already exist — x/allocation mints the emission as it accrues — so this
-	// module never issues allocation ERTH itself.
-	PayOut(ctx context.Context, recipient sdk.AccAddress, amount math.Int) error
+	// PayOutToModule sends drawn ERTH from the allocation module account to a
+	// module account; this module moves it on into the shielded pool.
+	PayOutToModule(ctx context.Context, recipientModule string, amount math.Int) error
+}
+
+// ShieldedKeeper is the slice of x/shielded this module needs: minting notes
+// to hidden owners, running its private msgs through the private ante, and
+// verifying membership proofs against the pool's verifying keys.
+type ShieldedKeeper interface {
+	MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error)
+	RegisterPrivateAction(msgTypeURL string, h shieldedtypes.PrivateActionHandler)
+	VerifyCircuit(ctx context.Context, circuit string, proof []byte, publicInputs [][]byte) error
+	PrivateGasPrices(ctx context.Context) (proof, note uint64, err error)
 }
 
 // AuthKeeper defines the expected interface for the Auth module.
@@ -99,16 +115,4 @@ type PkiKeeper interface {
 // happens. See x/earth/keeper/burns.go.
 type BurnRecorder interface {
 	RecordBurn(ctx context.Context, source string, coins sdk.Coins) error
-}
-
-// RetirementListener is told when a registration stops counting as a human —
-// expired and swept, purged under a revoked Document Signer, or replaced by the
-// same wallet re-registering — so a module holding records filed under its
-// nullifier can take them back.
-//
-// Not told about a wallet switch. A switch moves the same person to a new
-// address under the same nullifier, and nothing filed under that nullifier
-// stops being theirs.
-type RetirementListener interface {
-	OnRegistrationRetired(ctx context.Context, nullifier []byte) error
 }

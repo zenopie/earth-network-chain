@@ -1,239 +1,116 @@
 package keeper
 
 import (
-	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"strconv"
 
 	"cosmossdk.io/collections"
-	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
+	storetypes "cosmossdk.io/store/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
+	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
 
-// Register verifies a proof-of-personhood proof, dedups on its nullifier, records
-// the registration, mints 1 ANML, and pays the registration reward from the
-// human stream's option #1 (50% registree / 50% referrer).
-func (k msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
-	creatorBz, err := k.addressCodec.StringToBytes(msg.Creator)
+// authorized returns what the private ante prepared for msg, refusing a msg
+// that did not come through it (a contract's CosmosMsg::Any, an ICA host tx:
+// a zero-signer msg passes their signer checks vacuously). The returned
+// context runs on an infinite gas meter: the action's work was priced up front
+// with its fixed gas, and running out halfway would strand a fee already paid.
+func authorized[T any](ctx context.Context, msg shieldedtypes.PrivateMsg) (sdk.Context, T, error) {
+	var zero T
+	a, err := shieldedkeeper.AuthorizedAction(ctx, msg.PrivateTransfer())
 	if err != nil {
-		return nil, errorsmod.Wrap(err, "invalid creator address")
+		return sdk.Context{}, zero, err
 	}
-	creator := sdk.AccAddress(creatorBz)
+	p, ok := a.(T)
+	if !ok {
+		return sdk.Context{}, zero, shieldedtypes.ErrUnauthorized.Wrap("private action prepared for another msg")
+	}
+	return sdk.UnwrapSDKContext(ctx).WithGasMeter(storetypes.NewInfiniteGasMeter()), p, nil
+}
 
-	nullifier, dsc, err := k.verifyRegistrationProof(ctx, creator, msg.Proof, msg.PublicSignals, msg.SignatureAlgorithm, msg.DscDer)
+// Register applies a registration the private ante has checked, verified and
+// collected the fee for.
+//
+// New, or re-entering after the last registration under this passport lapsed:
+// the leaf is appended, and 1 ANML and the registration reward are minted as
+// notes to the pcs the proof is bound to (the referrer's half to
+// affiliate_pc). A live registration under this passport makes it a switch:
+// the old leaf is zeroed, the new one appended with a fresh activated_at, and
+// nothing is paid or rate-counted, since the person is already counted.
+func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
+	ctx, p, err := authorized[preparedRegistration](goCtx, msg)
 	if err != nil {
 		return nil, err
 	}
+	now := ctx.BlockTime().Unix()
 
-	// Bound how fast one Document Signer, or one country, can register people.
-	// Checked only once the proof has verified and been bound to the
-	// certificate: before that the signer named here is merely claimed, and
-	// counting a claim would let anyone exhaust a legitimate signer's daily
-	// allowance with junk that names it.
-	//
-	// A wallet switch is exempt, and is decided here, before anything below
-	// retires or moves the registration it would be judged by.
-	isSwitch, err := k.isLiveRegistration(ctx, nullifier)
-	if err != nil {
-		return nil, err
-	}
-	if !isSwitch {
-		if err := k.checkRegistrationRate(ctx, dsc.key, dsc.country); err != nil {
-			return nil, err
-		}
-	}
-
-	// Settle the human stream up front: clearing a lapsed registration below
-	// retires its vote weight, and that has to be credited against a current
-	// index. Doing it once here also covers payRegistrationReward at the end.
-	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
-		return nil, err
-	}
-
-	// Reject / clear an existing registration for this wallet.
-	if reg, ok, err := k.getRegistrationByAddr(ctx, creator); err != nil {
-		return nil, err
-	} else if ok {
-		expired, err := k.isExpired(ctx, reg)
-		if err != nil {
-			return nil, err
-		}
-		if !expired {
-			return nil, errorsmod.Wrap(types.ErrAlreadyReg, "wallet already registered")
-		}
-		if err := k.retireRegistration(ctx, reg); err != nil {
-			return nil, err
-		}
-	}
-
-	// Move an existing registration for this person to this wallet.
-	//
-	// A live nullifier used to be refused outright, so losing the wallet you
-	// registered from stranded your personhood until the registration lapsed --
-	// a year by default -- with your passport in your hand and no way to present
-	// it that the chain would accept.
-	//
-	// It is only safe to move it because the circuit binds the registrant's
-	// address as a public input: a proof verifies only against the address it
-	// was made for, so the proof that reached this line cannot have been lifted
-	// out of somebody else's transaction. Without that binding this branch is
-	// registration theft -- the proof bytes are public in every block.
-	//
-	// switched is what stops it also being a mint. A switch pays no registration
-	// reward and mints no ANML: the person is already counted, and paying again
-	// would let one human draw the reward pool down once per wallet.
 	switched := false
-	// A switch carries the person's ANML clock across with them. Starting the
-	// new registration at today's midnight, as a fresh one does, means someone
-	// who claimed yesterday and moved wallets today cannot claim until
-	// tomorrow -- the move quietly costs them a day. Carrying the old value
-	// cannot be used to claim twice: ClaimAnml compares day numbers, so a clock
-	// already set to today still refuses today.
-	carriedAnmlClaim := int64(0)
-	if reg, err := k.Registrations.Get(ctx, nullifier); err == nil {
-		expired, err := k.isExpired(ctx, reg)
+	if old, err := k.Registrations.Get(ctx, p.nullifier); err == nil {
+		expired, err := k.isExpired(ctx, old)
 		if err != nil {
 			return nil, err
 		}
-		// Only a live registration is a switch. An expired one is retired the
-		// same way, but that person is re-entering rather than moving, so it
-		// pays like any other registration.
 		switched = !expired
-		if switched {
-			carriedAnmlClaim = reg.LastAnmlClaim
-		}
-		// A switch is the same person keeping their place, so what is filed
-		// under their nullifier stays; a lapsed one re-entering is retired.
-		remove := k.retireRegistration
-		if switched {
-			remove = k.removeRegistration
-		}
-		if err := remove(ctx, reg); err != nil {
+		if err := k.removeRegistration(ctx, old); err != nil {
 			return nil, err
 		}
 	} else if !errors.Is(err, collections.ErrNotFound) {
 		return nil, err
 	}
-
-	// Resolve the (optional) referrer: must be a distinct, currently-registered human.
-	var referrer sdk.AccAddress
-	if msg.Affiliate != "" {
-		affBz, err := k.addressCodec.StringToBytes(msg.Affiliate)
-		if err != nil {
-			return nil, errorsmod.Wrap(types.ErrInvalidAffiliate, "invalid affiliate address")
-		}
-		if bytes.Equal(affBz, creatorBz) {
-			return nil, errorsmod.Wrap(types.ErrInvalidAffiliate, "self-referral")
-		}
-		if _, err := k.requireValidHuman(ctx, sdk.AccAddress(affBz)); err != nil {
-			return nil, errorsmod.Wrap(types.ErrInvalidAffiliate, "affiliate is not a registered human")
-		}
-		referrer = sdk.AccAddress(affBz)
+	if switched != p.switched {
+		// Nothing runs between the ante and here, so this cannot happen; if it
+		// did, paying on a stale decision would be worse than refusing.
+		return nil, types.ErrInvalidMsg.Wrap("registration state changed since the ante")
 	}
 
-	// Record the registration.
-	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
-	lastAnmlClaim := anmlClockFor(now, carriedAnmlClaim)
-	reg := types.Registration{
-		Nullifier:     nullifier,
-		Address:       msg.Creator,
-		RegisteredAt:  now,
-		LastAnmlClaim: lastAnmlClaim,
-		DscKey:        dsc.key,
-		Country:       dsc.country,
-	}
-	if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
-		return nil, err
-	}
-	if err := k.RegByAddr.Set(ctx, creatorBz, nullifier); err != nil {
-		return nil, err
-	}
-	if err := k.RegByRegisteredAt.Set(ctx, collections.Join(now, nullifier)); err != nil {
-		return nil, err
-	}
-	count, err := k.getRegCount(ctx)
+	leaf, err := IdentityLeaf(msg.Idc, p.dsc.key, now)
 	if err != nil {
 		return nil, err
 	}
-	if err := k.RegCount.Set(ctx, count+1); err != nil {
+	index, err := k.appendLeaf(ctx, leaf)
+	if err != nil {
 		return nil, err
 	}
-	// Tally by Document Signer and issuing country. Recorded at registration
-	// time because the certificate is only in hand here — nothing later can
-	// recover which signer produced a given nullifier.
-	if err := bumpCount(ctx, k.RegCountByDsc, dsc.key); err != nil {
+	if err := k.addRegistration(ctx, types.Registration{
+		Nullifier:    p.nullifier,
+		LeafIndex:    index,
+		RegisteredAt: now,
+		ActivatedAt:  now,
+		DscKey:       p.dsc.key,
+		Country:      p.dsc.country,
+		Idc:          msg.Idc,
+	}); err != nil {
 		return nil, err
-	}
-	if err := bumpCount(ctx, k.RegCountByCountry, dsc.country); err != nil {
-		return nil, err
-	}
-	// Index by signer so a revocation can find these again without scanning
-	// every registration on the chain.
-	if len(dsc.key) > 0 {
-		if err := k.RegByDsc.Set(ctx, collections.Join(dsc.key, nullifier)); err != nil {
-			return nil, err
-		}
-	}
-	if !switched {
-		if err := k.recordRegistrationRate(ctx, dsc.key, dsc.country); err != nil {
-			return nil, err
-		}
 	}
 
-	// Mint 1 ANML and pay the registration reward from the human stream's
-	// option #1 -- neither on a switch, which moves a person already counted.
 	reward := math.ZeroInt()
 	if !switched {
-		anml := sdk.NewCoins(sdk.NewInt64Coin(types.AnmlDenom, types.OneAnml))
-		if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, anml); err != nil {
+		if err := k.recordRegistrationRate(ctx, p.dsc.key, p.dsc.country); err != nil {
 			return nil, err
 		}
-		if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, creator, anml); err != nil {
+		if _, err := k.mintAnmlNote(ctx, msg.PcAnml, msg.CiphertextAnml); err != nil {
 			return nil, err
 		}
-
-		reward, err = k.payRegistrationReward(ctx, creator, referrer)
+		var referrer *rewardNote
+		if len(msg.AffiliatePc) > 0 {
+			referrer = &rewardNote{pc: msg.AffiliatePc, ciphertext: msg.AffiliateCiphertext}
+		}
+		reward, err = k.payRegistrationReward(ctx, rewardNote{pc: msg.PcErth, ciphertext: msg.CiphertextErth}, referrer)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
-		sdk.NewEvent(
-			"register",
-			sdk.NewAttribute("address", msg.Creator),
-			sdk.NewAttribute("nullifier", hex.EncodeToString(nullifier)),
-			sdk.NewAttribute("reward", reward.String()),
-			sdk.NewAttribute("switched", strconv.FormatBool(switched)),
-		),
-	)
-
-	return &types.MsgRegisterResponse{Reward: reward, Switched: switched}, nil
-}
-
-// anmlClockFor returns the LastAnmlClaim a registration should start life with.
-//
-// A new registration starts at today's midnight, which is what makes its first
-// claim open tomorrow rather than the moment it is made. A switch carries the
-// clock the person already had, because the registration moving between wallets
-// belongs to someone whose day has already been spent or has not -- and
-// starting them at today's midnight would spend it for them.
-//
-// It cannot be used to claim twice. ClaimAnml compares day numbers, so a
-// carried clock that already falls on today still reads as claimed today; the
-// only case it changes is a clock from an earlier day, which is a day genuinely
-// not yet claimed.
-//
-// carried is zero for a fresh registration and for one imported from a genesis
-// that predates the field, and both fall back to the new-registration rule.
-func anmlClockFor(now, carried int64) int64 {
-	if carried > 0 {
-		return carried
-	}
-	return (now / 86400) * 86400
+	ctx.EventManager().EmitEvent(sdk.NewEvent("register",
+		sdk.NewAttribute("nullifier", hexOf(p.nullifier)),
+		sdk.NewAttribute("leaf_index", strconv.FormatUint(index, 10)),
+		sdk.NewAttribute("reward", reward.String()),
+		sdk.NewAttribute("switched", strconv.FormatBool(switched)),
+	))
+	return &types.MsgRegisterResponse{Reward: reward, Switched: switched, LeafIndex: index}, nil
 }

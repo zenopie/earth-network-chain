@@ -133,11 +133,8 @@ func initFixture(t *testing.T) *fixture {
 		nil, // pkiKeeper
 		ak,
 		&burnLog{},
+		nil, // shielded: these tests never pay out
 	)
-
-	// The same wiring ProvideModule does: the human stream asks this keeper who
-	// may vote and with how much weight.
-	ak.RegisterWeightSource(types.AllocationStream, k)
 
 	// Initialize params
 	if err := k.Params.Set(ctx, types.DefaultParams()); err != nil {

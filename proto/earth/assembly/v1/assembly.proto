@@ -1,7 +1,6 @@
 syntax = "proto3";
 package earth.assembly.v1;
 
-import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
 
 option go_package = "github.com/earth-network/earth/x/assembly/types";
@@ -35,9 +34,25 @@ message Tally {
 // has no need of a second instrument pointed at it.
 message RemovalBallot {
   uint64 option_id = 1;
-  string proposer = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // proposer was the opening account. Ballots are opened anonymously now.
+  reserved 2;
+  reserved "proposer";
   // closes_at is when voting ends, in unix seconds. The EndBlocker resolves the
   // ballot at the first block at or after it.
   int64 closes_at = 3;
   Tally tally = 4 [(gogoproto.nullable) = false];
+  // opened_at is when the ballot opened, in unix seconds. Membership proofs
+  // for it must come from identities activated at least an identity root
+  // window before.
+  int64 opened_at = 5;
+  // ballot_id is the ballot's id, which its scope is derived from.
+  uint64 ballot_id = 6;
+}
+
+// ProposalRound is a proposal's current round of human voting when it is not
+// the first: after the chamber demotes an expedited proposal, the regular
+// round is a new ballot with its own scope and opening time.
+message ProposalRound {
+  uint64 round = 1;
+  int64 opened_at = 2;
 }

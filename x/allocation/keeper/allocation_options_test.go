@@ -476,12 +476,9 @@ func TestStreamsAreIndependent(t *testing.T) {
 	ms := NewMsgServerImpl(k)
 
 	acc, addr := e.addr("human-no-stake")
-	e.humans.add(acc)
 
 	vote := []types.AllocationWeight{{OptionId: 1, Percent: 100}}
-	if _, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator: addr, Stream: types.STREAM_ID_CARETAKER, Percentages: vote,
-	}); err != nil {
+	if err := k.SetVoterSplit(ctx, types.STREAM_ID_CARETAKER, acc, vote, math.NewInt(types.HumanVoterWeight)); err != nil {
 		t.Fatalf("registered human voting in the human stream: %v", err)
 	}
 	// No bonded stake, so the capital stream refuses the same address.

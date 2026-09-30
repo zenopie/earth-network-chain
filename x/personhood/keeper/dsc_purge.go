@@ -7,8 +7,6 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-
-	"github.com/earth-network/earth/x/personhood/types"
 )
 
 // Retiring the registrations a revoked Document Signer produced.
@@ -19,13 +17,12 @@ import (
 // because each is drawing ANML every day and carrying weight in the democratic
 // pillar. Left alone they keep doing so until they lapse, which is a year.
 //
-// Two different problems, and only one of them is solved lazily. The ANML claim
-// re-reads the registration every time, so a revocation check there stops the
-// minting immediately and costs nothing (see requireValidHuman). Vote weight is
-// not re-read: a stream stores its total weight and only moves it when a voter
-// is explicitly cleared, so the influence a revoked signer bought stays counted
-// until something walks its registrations and retires them. That walk is this
-// file.
+// Retiring one zeroes its identity leaf, so its holder stops proving
+// membership (claims, votes, caretaker splits) once the identity roots from
+// before the purge age out. What the holder already did under their anonymous
+// nullifiers cannot be found and stays, bounded: a caretaker split lapses
+// within caretaker_vote_seconds, and the proposal revoking a signer excludes
+// its registrations from the assembly vote on it (excluded_dsc).
 
 // StartDscPurge marks a Document Signer's registrations for retirement. Called
 // when governance revokes the signer, so the cleanup begins on its own rather
@@ -101,12 +98,6 @@ func (k Keeper) purgeRevokedDscs(ctx context.Context, budget int) (int, error) {
 		return 0, nil
 	}
 
-	// Advance once for the whole batch: every ClearVoter below credits against
-	// the same index, and the settle is to the same block time either way.
-	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
-		return 0, err
-	}
-
 	for _, v := range victims {
 		reg, err := k.Registrations.Get(ctx, v.nullifier)
 		if err != nil {
@@ -119,7 +110,7 @@ func (k Keeper) purgeRevokedDscs(ctx context.Context, budget int) (int, error) {
 			}
 			return 0, err
 		}
-		if err := k.retireRegistration(ctx, reg); err != nil {
+		if err := k.removeRegistration(ctx, reg); err != nil {
 			return 0, err
 		}
 	}

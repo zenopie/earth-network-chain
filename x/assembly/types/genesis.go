@@ -36,12 +36,21 @@ func (gs GenesisState) Validate() error {
 	}
 
 	seenBallot := map[uint64]bool{}
+	seenID := map[uint64]bool{}
 	for _, entry := range gs.RemovalBallots {
 		if seenBallot[entry.Ballot.OptionId] {
 			return fmt.Errorf("option %d: more than one open removal ballot", entry.Ballot.OptionId)
 		}
 		seenBallot[entry.Ballot.OptionId] = true
 
+		if entry.Ballot.BallotId == 0 || entry.Ballot.BallotId > gs.BallotSeq {
+			return fmt.Errorf("option %d: removal ballot id %d is not one ballot_seq %d handed out",
+				entry.Ballot.OptionId, entry.Ballot.BallotId, gs.BallotSeq)
+		}
+		if seenID[entry.Ballot.BallotId] {
+			return fmt.Errorf("ballot id %d used twice", entry.Ballot.BallotId)
+		}
+		seenID[entry.Ballot.BallotId] = true
 		if entry.Ballot.ClosesAt <= 0 {
 			return fmt.Errorf("option %d: removal ballot has no closing time", entry.Ballot.OptionId)
 		}
@@ -59,6 +68,13 @@ func (gs GenesisState) Validate() error {
 			}
 			seenVote[hex.EncodeToString(v.Nullifier)] = true
 		}
+	}
+	seenRound := map[uint64]bool{}
+	for _, r := range gs.ProposalRounds {
+		if seenRound[r.ProposalId] {
+			return fmt.Errorf("proposal %d: two rounds", r.ProposalId)
+		}
+		seenRound[r.ProposalId] = true
 	}
 	return nil
 }
