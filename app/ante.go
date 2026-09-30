@@ -15,6 +15,9 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
 	ibcante "github.com/cosmos/ibc-go/v10/modules/core/ante"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
+
+	shieldedspikeante "github.com/earth-network/earth/x/shieldedspike/ante"
+	shieldedspikekeeper "github.com/earth-network/earth/x/shieldedspike/keeper"
 )
 
 // HandlerOptions extends the SDK's ante options with what x/wasm, x/circuit and
@@ -27,6 +30,7 @@ type HandlerOptions struct {
 	WasmKeeper            *wasmkeeper.Keeper
 	WasmNodeConfig        *wasmtypes.NodeConfig
 	TXCounterStoreService corestoretypes.KVStoreService
+	ShieldedSpikeKeeper   *shieldedspikekeeper.Keeper
 }
 
 // NewAnteHandler builds this chain's ante chain.
@@ -109,7 +113,29 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 	}
 
-	return sdk.ChainAnteDecorators(anteDecorators...), nil
+	normal := sdk.ChainAnteDecorators(anteDecorators...)
+	if options.ShieldedSpikeKeeper == nil {
+		return normal, nil
+	}
+
+	// SPIKE: unsigned private txs. No DeductFee (FeePayer() indexes signers[0]
+	// and panics with none), no SetPubKey/SigCount/SigGas/SigVerify/
+	// IncrementSequence (there is no account), no SDK ValidateBasic (it returns
+	// ErrNoSignatures). Replay protection is the nullifier.
+	k := *options.ShieldedSpikeKeeper
+	private := sdk.ChainAnteDecorators(
+		ante.NewSetUpContextDecorator(),
+		wasmkeeper.NewLimitSimulationGasDecorator(options.WasmNodeConfig.SimulationGasLimit),
+		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
+		shieldedspikeante.ValidateBasicDecorator{},
+		ante.NewTxTimeoutHeightDecorator(),
+		ante.NewValidateMemoDecorator(options.AccountKeeper),
+		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
+		shieldedspikeante.ProofDecorator{},
+		shieldedspikeante.NullifierDecorator{K: k},
+		shieldedspikeante.FeeDecorator{K: k},
+	)
+	return shieldedspikeante.NewRouter(normal, private), nil
 }
 
 // setAnteHandler replaces the ante handler that x/auth/tx/config installed as a
@@ -129,6 +155,7 @@ func (app *App) setAnteHandler() error {
 		WasmKeeper:            &app.WasmKeeper,
 		WasmNodeConfig:        &app.WasmNodeConfig,
 		TXCounterStoreService: runtime.NewKVStoreService(app.GetKey(wasmtypes.StoreKey)),
+		ShieldedSpikeKeeper:   &app.ShieldedSpikeKeeper,
 	})
 	if err != nil {
 		return fmt.Errorf("building ante handler: %w", err)
