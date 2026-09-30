@@ -6,9 +6,12 @@
 // accepts if every hash, path and derivation agrees.
 //
 //	go run ./tools/privacyfixtures <membership|membership-zeroed|transfer> <outdir>
+//	go run ./tools/privacyfixtures shielded <outdir>
 //
 // membership-zeroed builds the same witness after the chain zeroed the leaf;
-// the circuit must reject it.
+// the circuit must reject it. shielded writes one <outdir>/<transfer>/ per
+// transfer in x/shielded/testutil's scenario, which the app tests replay on a
+// real chain (scripts/shielded-fixtures.sh proves them).
 package main
 
 import (
@@ -19,6 +22,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/privacy"
 )
@@ -45,12 +49,21 @@ func arr(es []fr.Element) string {
 
 func main() {
 	if len(os.Args) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: privacyfixtures <membership|membership-zeroed|transfer> <outdir>")
+		fmt.Fprintln(os.Stderr, "usage: privacyfixtures <membership|membership-zeroed|transfer|shielded> <outdir>")
 		os.Exit(2)
 	}
 	out := os.Args[2]
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		panic(err)
+	}
+	if os.Args[1] == "shielded" {
+		s := shieldedtest.Default()
+		for i, sp := range s.Transfers {
+			toml, pub, err := s.Witness(i)
+			must(err)
+			writeFixture(filepath.Join(out, sp.Name), toml, pub)
+		}
+		return
 	}
 	var toml string
 	var pub []fr.Element
@@ -65,13 +78,18 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown circuit %q\n", os.Args[1])
 		os.Exit(2)
 	}
-	must(os.WriteFile(filepath.Join(out, "Prover.toml"), []byte(toml), 0o644))
+	writeFixture(out, toml, pub)
+}
+
+func writeFixture(dir, toml string, pub []fr.Element) {
+	must(os.MkdirAll(dir, 0o755))
+	must(os.WriteFile(filepath.Join(dir, "Prover.toml"), []byte(toml), 0o644))
 	var raw []byte
 	for _, e := range pub {
 		b := e.Bytes()
 		raw = append(raw, b[:]...)
 	}
-	must(os.WriteFile(filepath.Join(out, "public_inputs.expected"), raw, 0o644))
+	must(os.WriteFile(filepath.Join(dir, "public_inputs.expected"), raw, 0o644))
 }
 
 func mustEl(e fr.Element, err error) fr.Element {
