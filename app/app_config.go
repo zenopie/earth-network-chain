@@ -82,6 +82,8 @@ import (
 	pkimoduletypes "github.com/earth-network/earth/x/pki/types"
 	_ "github.com/earth-network/earth/x/shielded/module"
 	shieldedmoduletypes "github.com/earth-network/earth/x/shielded/types"
+	_ "github.com/earth-network/earth/x/shieldedstaking/module"
+	shieldedstakingmoduletypes "github.com/earth-network/earth/x/shieldedstaking/types"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -103,6 +105,14 @@ var (
 		// deposit that does not go through the keeper, which is what keeps its
 		// balance exactly the turnstiles' In - Out.
 		{Account: shieldedmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		// Private staking: the only delegator besides validators' self-bonds.
+		// Mints and burns derth/<valoper> and unbond/<valoper>/<epoch>. No
+		// Staking permission (the SDK checks it only on the bonded pools) and,
+		// like the pool, NOT blocked: x/distribution pays its rewards with
+		// SendCoinsFromModuleToAccount, which refuses blocked recipients, on
+		// every delegation change. Its own send restriction takes the
+		// blocked list's place (x/shieldedstaking/keeper/send_restriction.go).
+		{Account: shieldedstakingmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: dexmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		// x/allocation mints an option's accrued ERTH when it is claimed and burns
 		// the fee for adding one. x/personhood mints ANML and the registration
@@ -220,6 +230,12 @@ var (
 						// silently stops working.
 						assemblymoduletypes.ModuleName,
 						govtypes.ModuleName,
+						// private staking after gov (x/gov tallies stake votes
+						// from its snapshots before it forgets them) and BEFORE
+						// staking: it reads each unbonding entry maturing in this
+						// block while it still exists, and x/staking's EndBlocker
+						// pays and deletes it.
+						shieldedstakingmoduletypes.ModuleName,
 						stakingtypes.ModuleName,
 						feegrant.ModuleName,
 						group.ModuleName,
@@ -279,6 +295,9 @@ var (
 						// after bank: InitGenesis checks each turnstile against the
 						// pool's loaded balance.
 						shieldedmoduletypes.ModuleName,
+						// after staking, distribution and shielded: it checks its
+						// books against all three.
+						shieldedstakingmoduletypes.ModuleName,
 						// wasm last: a contract in genesis may call any other
 						// module, so every module it could reach has to have
 						// initialised first.
@@ -412,6 +431,10 @@ var (
 					ShieldedOnlyDenoms:     []string{shieldedmoduletypes.AnmlDenom},
 					ShieldedOnlyRecipients: []string{personhoodmoduletypes.ModuleName, dexmoduletypes.ModuleName},
 				}),
+			},
+			{
+				Name:   shieldedstakingmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&shieldedstakingmoduletypes.Module{}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},
