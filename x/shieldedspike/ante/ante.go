@@ -183,4 +183,3 @@ func (d FeeDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next
 	}
 	return next(ctx, tx, simulate)
 }
-
