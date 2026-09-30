@@ -1,0 +1,138 @@
+syntax = "proto3";
+package earth.shieldedstaking.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/shieldedstaking/v1/params.proto";
+import "earth/shieldedstaking/v1/shieldedstaking.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+
+option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
+
+// Query is private staking's read side: rates, supplies, records, positions
+// and proposal snapshots. Nothing here is per-owner.
+service Query {
+  // Params queries the module parameters.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/params";
+  }
+  // Epoch is the epoch in progress.
+  rpc Epoch(QueryEpochRequest) returns (QueryEpochResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/epoch";
+  }
+  // Validator is one validator's book, live rate and derth supply.
+  rpc Validator(QueryValidatorRequest) returns (QueryValidatorResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/validators/{validator}";
+  }
+  // UnbondRecord is the record behind unbond/<validator>/<epoch>.
+  rpc UnbondRecord(QueryUnbondRecordRequest) returns (QueryUnbondRecordResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/unbond/{validator}/{epoch}";
+  }
+  // Position is one Groundworks position.
+  rpc Position(QueryPositionRequest) returns (QueryPositionResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/positions/{id}";
+  }
+  // Positions lists the positions.
+  rpc Positions(QueryPositionsRequest) returns (QueryPositionsResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/positions";
+  }
+  // Snapshot is a proposal's stake-vote snapshot.
+  rpc Snapshot(QuerySnapshotRequest) returns (QuerySnapshotResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/snapshots/{proposal_id}";
+  }
+}
+
+// QueryParamsRequest is the request type for Query/Params.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is the response type for Query/Params.
+message QueryParamsResponse {
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryEpochRequest is the request type for Query/Epoch.
+message QueryEpochRequest {}
+
+// QueryEpochResponse is the response type for Query/Epoch.
+message QueryEpochResponse {
+  Epoch epoch = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryValidatorRequest is the request type for Query/Validator.
+message QueryValidatorRequest {
+  string validator = 1;
+}
+
+// QueryValidatorResponse is the response type for Query/Validator.
+message QueryValidatorResponse {
+  ValidatorState state = 1 [(gogoproto.nullable) = false];
+  // rate is the live rate_v, ERTH per derth.
+  string rate = 2 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // supply of derth/<validator>.
+  string supply = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // backing is delegation value + unwithdrawn rewards + pending delegations
+  // - pending undelegations.
+  string backing = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryUnbondRecordRequest is the request type for Query/UnbondRecord.
+message QueryUnbondRecordRequest {
+  string validator = 1;
+  uint64 epoch = 2;
+}
+
+// QueryUnbondRecordResponse is the response type for Query/UnbondRecord.
+message QueryUnbondRecordResponse {
+  UnbondRecord record = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryPositionRequest is the request type for Query/Position.
+message QueryPositionRequest {
+  uint64 id = 1;
+}
+
+// QueryPositionResponse is the response type for Query/Position.
+message QueryPositionResponse {
+  Position position = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryPositionsRequest is the request type for Query/Positions.
+message QueryPositionsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryPositionsResponse is the response type for Query/Positions.
+message QueryPositionsResponse {
+  repeated Position positions = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+// QuerySnapshotRequest is the request type for Query/Snapshot.
+message QuerySnapshotRequest {
+  uint64 proposal_id = 1;
+}
+
+// QuerySnapshotResponse is the response type for Query/Snapshot.
+message QuerySnapshotResponse {
+  ProposalSnapshot snapshot = 1 [(gogoproto.nullable) = false];
+}

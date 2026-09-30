@@ -1,0 +1,30 @@
+syntax = "proto3";
+package earth.shieldedstaking.v1;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
+
+// Params defines the parameters of private staking.
+message Params {
+  option (amino.name) = "earth/x/shieldedstaking/Params";
+  option (gogoproto.equal) = true;
+
+  // epoch_seconds is the length of an epoch. Delegations and undelegations
+  // queued during an epoch are executed, and rewards compounded, at its end.
+  uint64 epoch_seconds = 1;
+
+  // min_position is the smallest derth a Groundworks position may lock. Every
+  // position is re-weighed at every epoch end, so this bounds that work.
+  string min_position = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+
+  // max_positions caps how many positions exist at once, for the same reason.
+  uint64 max_positions = 3;
+}

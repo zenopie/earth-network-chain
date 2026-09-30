@@ -1,0 +1,225 @@
+syntax = "proto3";
+package earth.shieldedstaking.v1;
+
+import "amino/amino.proto";
+import "cosmos/gov/v1/gov.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/allocation/v1/allocation.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
+
+// Epoch is the epoch in progress.
+message Epoch {
+  // number of the epoch in progress; unbond/<valoper>/<number> notes minted
+  // now are executed at its end.
+  uint64 number = 1;
+  // start_time and end_time, unix seconds. The epoch ends in the first block
+  // whose time is at or after end_time.
+  int64 start_time = 2;
+  int64 end_time = 3;
+}
+
+// ValidatorState is the module's book for one validator.
+message ValidatorState {
+  // validator operator address (bech32).
+  string validator = 1;
+  // pending_delegation is ERTH spent into the module for this validator and
+  // not yet delegated: this epoch's delegations, and anything a failed
+  // epoch-end left behind.
+  string pending_delegation = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // pending_undelegation is the ERTH value of unbond notes minted and not yet
+  // undelegated (sum of the PENDING records' target).
+  string pending_undelegation = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // epoch_rate is rate_v as of the last epoch end: ERTH per derth. It weighs
+  // Groundworks positions. Conversions use the live rate.
+  string epoch_rate = 4 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// UnbondStatus is where an epoch's undelegation for one validator stands.
+enum UnbondStatus {
+  option (gogoproto.goproto_enum_prefix) = false;
+  // UNBOND_STATUS_PENDING: notes minted, SDK undelegation not yet made.
+  UNBOND_STATUS_PENDING = 0;
+  // UNBOND_STATUS_UNBONDING: an SDK unbonding entry exists.
+  UNBOND_STATUS_UNBONDING = 1;
+  // UNBOND_STATUS_MATURED: the entry paid out; notes can be claimed.
+  UNBOND_STATUS_MATURED = 2;
+}
+
+// UnbondRecord backs the unbond/<validator>/<epoch> notes.
+message UnbondRecord {
+  string validator = 1;
+  uint64 epoch = 2;
+  UnbondStatus status = 3;
+  // requested is the total value of the notes minted (= the denom's minted
+  // supply).
+  string requested = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // target is what to undelegate: requested, less the share of any slash
+  // that hit the validator while the record was pending.
+  string target = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // undelegated is what the SDK's Undelegate returned (the entry's initial
+  // balance, or this record's share of a merged entry).
+  string undelegated = 6 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // creation_height is the SDK entry's creation height (its key).
+  int64 creation_height = 7;
+  // completion_time is the SDK entry's, unix nanoseconds.
+  int64 completion_time = 8;
+  // payout is the ERTH the entry paid for this record at maturity.
+  string payout = 9 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // outstanding is the note value not yet claimed.
+  string outstanding = 10 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // paid is the ERTH claimed so far.
+  string paid = 11 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// Position is a Groundworks position: derth locked in the module, its owner
+// a one-time secp256k1 key.
+message Position {
+  uint64 id = 1;
+  string validator = 2;
+  string derth = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  repeated earth.allocation.v1.AllocationWeight splits = 4 [(gogoproto.nullable) = false];
+  // pubkey is the compressed secp256k1 key (33 bytes) that signs updates,
+  // unlocks and votes.
+  bytes pubkey = 5;
+  // nonce is bumped by every signed action, so a signature is good once.
+  uint64 nonce = 6;
+  int64 created_height = 7;
+  // weight is what the position currently carries in the Groundworks stream
+  // (derth x epoch rate).
+  string weight = 8 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// ProposalSnapshot is taken when an x/gov proposal enters voting.
+message ProposalSnapshot {
+  uint64 proposal_id = 1;
+  // root is the note-tree anchor at that moment; stake votes are proven
+  // against it. tree_size is its leaf count.
+  bytes root = 2;
+  uint64 tree_size = 3;
+  int64 height = 4;
+  // voting_end, unix nanoseconds. Votes are accepted before it.
+  int64 voting_end = 5;
+  repeated ValidatorSnapshot validators = 6 [(gogoproto.nullable) = false];
+}
+
+// ValidatorSnapshot is one validator's derth supply and rate at a snapshot.
+message ValidatorSnapshot {
+  string validator = 1;
+  string supply = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string rate = 3 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// StakeVote is one private stake vote: a note's (by vote nullifier) or a
+// position's.
+message StakeVote {
+  uint64 proposal_id = 1;
+  // key is the vote nullifier (32 bytes) of a note vote, or the position id
+  // (8 bytes big-endian) of a position vote.
+  bytes key = 2;
+  bool position = 3;
+  string validator = 4;
+  string derth = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  repeated cosmos.gov.v1.WeightedVoteOption options = 6;
+}
+
+// VoteTally is the derth voted privately for one validator on one proposal,
+// per option (weighted), maintained as votes arrive so the gov tally never
+// walks individual votes. Derived: rebuilt from the votes at genesis.
+message VoteTally {
+  string yes = 1 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string abstain = 2 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string no = 3 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string no_with_veto = 4 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}

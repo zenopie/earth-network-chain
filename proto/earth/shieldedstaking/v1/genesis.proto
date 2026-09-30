@@ -1,0 +1,26 @@
+syntax = "proto3";
+package earth.shieldedstaking.v1;
+
+import "amino/amino.proto";
+import "earth/shieldedstaking/v1/params.proto";
+import "earth/shieldedstaking/v1/shieldedstaking.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
+
+// GenesisState defines private staking's genesis state. The SDK delegations
+// and unbonding entries it books against live in x/staking's genesis.
+message GenesisState {
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // epoch is absent at launch: the first epoch starts at InitGenesis.
+  Epoch epoch = 2;
+  repeated ValidatorState validators = 3 [(gogoproto.nullable) = false];
+  repeated UnbondRecord unbond_records = 4 [(gogoproto.nullable) = false];
+  repeated Position positions = 5 [(gogoproto.nullable) = false];
+  uint64 next_position_id = 6;
+  repeated ProposalSnapshot snapshots = 7 [(gogoproto.nullable) = false];
+  repeated StakeVote votes = 8 [(gogoproto.nullable) = false];
+}
