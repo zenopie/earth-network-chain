@@ -193,6 +193,11 @@ func (k Keeper) sweepSnapshots(ctx context.Context) {
 	for _, key := range due {
 		id := key.K2()
 		err := k.guarded(ctx, func(cc context.Context) error {
+			// An expedited proposal that failed its quick vote goes on as a
+			// regular one, with a later end: its stake votes go on with it.
+			if extended, err := k.extendSnapshot(cc, key); err != nil || extended {
+				return err
+			}
 			var votes []collections.Pair[uint64, []byte]
 			err := k.Votes.Walk(cc, collections.NewPrefixedPairRange[uint64, []byte](id),
 				func(vk collections.Pair[uint64, []byte], _ types.StakeVote) (bool, error) {
@@ -226,6 +231,36 @@ func (k Keeper) sweepSnapshots(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// extendSnapshot moves a snapshot's expiry to its proposal's new voting end
+// when x/gov has extended voting (an expedited proposal converted to a
+// regular one). Reports whether it did.
+func (k Keeper) extendSnapshot(ctx context.Context, key collections.Pair[int64, uint64]) (bool, error) {
+	if k.gov.k == nil {
+		return false, nil
+	}
+	prop, err := k.gov.k.Proposals.Get(ctx, key.K2())
+	if errors.Is(err, collections.ErrNotFound) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if prop.Status != v1.StatusVotingPeriod || prop.VotingEndTime == nil || prop.VotingEndTime.UnixNano() <= key.K1() {
+		return false, nil
+	}
+	snap, err := k.Snapshots.Get(ctx, key.K2())
+	if err != nil {
+		return false, err
+	}
+	snap.VotingEnd = prop.VotingEndTime.UnixNano()
+	if err := k.Snapshots.Set(ctx, key.K2(), snap); err != nil {
+		return false, err
+	}
+	if err := k.SnapshotExpiry.Remove(ctx, key); err != nil {
+		return false, err
+	}
+	return true, k.SnapshotExpiry.Set(ctx, collections.Join(snap.VotingEnd, key.K2()))
 }
 
 // StakeTally is x/gov's CalculateVoteResultsAndVotingPowerFn for this chain:
