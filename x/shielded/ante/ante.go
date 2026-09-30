@@ -14,6 +14,10 @@
 //	PrivateMsg        fixed gas; block cap; state checks; proof;
 //	                  spend + append; fee floor; fee to fee_collector
 //
+// A msg of another module may carry an action beyond its transfer (see
+// types.PrivateActionHandler); its checks and proofs run in the same pass,
+// before anything is written.
+//
 // Everything a private msg writes to the pool happens here, in the ante,
 // after every check has passed. The ante's writes persist even if the msg
 // then fails, so a handler failure can never leave inputs spent without their
@@ -126,16 +130,20 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 
 // PrivateMsgDecorator does the private msg's work, in order:
 //
-//  1. charge params.PrivateMsgGas (before anything, whatever follows);
+//  1. charge params.PrivateMsgGas, plus the action's fixed gas (before
+//     anything, whatever follows);
 //  2. in FinalizeBlock, admit the tx under max_private_txs_per_block;
 //  3. the fee floor: fee >= params.min_fee always, and >= the node's
 //     min-gas-price x gas in CheckTx;
-//  4. the stateful checks (anchor, nullifiers, asset, receiver, room);
-//  5. verify the proof (skipped on recheck, where neither the proof nor its
-//     public inputs can have changed; charged but not required in simulate,
-//     so a wallet can estimate a tx before proving over its final fee);
+//  4. the stateful checks (anchor, nullifiers, asset, receiver, room), then
+//     the action's;
+//  5. verify the proof, then the action's (skipped on recheck, where neither
+//     the proofs nor their public inputs can have changed; charged but not
+//     required in simulate, so a wallet can estimate a tx before proving over
+//     its final fee);
 //  6. spend the nullifiers, append the outputs, pay the fee to
-//     fee_collector (where x/earth burns half), and authorize the msg.
+//     fee_collector (where x/earth burns half), and authorize the msg and
+//     its action.
 type PrivateMsgDecorator struct {
 	K keeper.Keeper
 }
@@ -147,6 +155,14 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 		return ctx, err
 	}
 	ctx.GasMeter().ConsumeGas(params.PrivateMsgGas(), "shielded: private msg (proof, nullifiers, notes)")
+	action, hasAction := d.K.PrivateAction(msg)
+	if hasAction {
+		g, err := action.PrivateActionGas(ctx, msg)
+		if err != nil {
+			return ctx, err
+		}
+		ctx.GasMeter().ConsumeGas(g, "shielded: private action")
+	}
 
 	// Past this point every read and write is prepaid.
 	pool := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
@@ -184,16 +200,30 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	if err != nil {
 		return ctx, err
 	}
+	var actionPrepared any
+	if hasAction {
+		if actionPrepared, err = action.CheckPrivateAction(pool, msg); err != nil {
+			return ctx, err
+		}
+	}
 
 	if !ctx.IsReCheckTx() && !simulate {
 		if err := d.K.VerifyPrivateMsg(pool, prepared); err != nil {
 			return ctx, err
+		}
+		if hasAction {
+			if err := action.VerifyPrivateAction(pool, msg, actionPrepared); err != nil {
+				return ctx, err
+			}
 		}
 	}
 
 	pool, err = d.K.ExecutePrivateMsg(pool, msg)
 	if err != nil {
 		return ctx, err
+	}
+	if hasAction {
+		pool = keeper.WithAuthorizedAction(pool, actionPrepared)
 	}
 	// Carry the authorization, not the infinite meter, into the msg.
 	ctx = keeper.CarryAuthorization(ctx, pool)

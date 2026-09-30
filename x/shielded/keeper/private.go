@@ -145,3 +145,39 @@ func (k Keeper) MinFee(ctx context.Context) (sdk.Coin, error) {
 	}
 	return sdk.NewCoin(types.FeeDenom, minFee), nil
 }
+
+// VerifyCircuit verifies proof against the verifying key params hold for
+// circuit (types.CircuitMembership, ...), for the modules whose private
+// actions carry a proof of their own. ErrMissingVerifyingKey until governance
+// or genesis sets that key; ErrInvalidProof for a proof that does not verify.
+func (k Keeper) VerifyCircuit(ctx context.Context, circuit string, proof []byte, publicInputs [][]byte) error {
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return err
+	}
+	vk := params.VerifyingKeys[circuit]
+	if len(vk) == 0 {
+		return types.ErrMissingVerifyingKey.Wrap(circuit)
+	}
+	if len(proof) == 0 || len(proof) > types.MaxProofBytes {
+		return errorsmod.Wrapf(types.ErrInvalidProof, "proof must be 1..%d bytes", types.MaxProofBytes)
+	}
+	ok, err := ultrahonk.Verify(vk, proof, publicInputs)
+	if err != nil {
+		return errorsmod.Wrap(types.ErrInvalidProof, err.Error())
+	}
+	if !ok {
+		return types.ErrInvalidProof
+	}
+	return nil
+}
+
+// PrivateGasPrices is what the pool charges for one proof verification and
+// one note write, for a private action pricing its own work the same way.
+func (k Keeper) PrivateGasPrices(ctx context.Context) (proof, note uint64, err error) {
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	return params.ProofVerificationGas, params.NoteGas, nil
+}
