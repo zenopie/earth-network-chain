@@ -11,6 +11,22 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
+## [v0.9.4]
+
+**Not consensus-affecting. Validators need not upgrade.** Adds `earthd
+gas-check`, for the gas-grant backend:
+
+- `earthd gas-check registration` reads a MsgRegister (proto JSON) on stdin
+  and says whether the chain would accept it, with its nullifier.
+- `earthd gas-check human <address>` says whether an address currently counts
+  as a human.
+
+Both run the chain's own personhood and pki checks (the new read-only
+`Keeper.CheckRegistration` and `Keeper.CheckHuman`) over a node's state, read
+through plain `abci_query /store/...` reads pinned to one height. The proof is
+verified by the process running the command, never by the node, so a flood of
+junk proofs sent to the backend costs the chain nothing.
+
 ## [v0.9.3]
 
 **earth-1 relaunches from a new genesis at 2026-09-29T12:00:00Z.** The same

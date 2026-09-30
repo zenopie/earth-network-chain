@@ -53,6 +53,7 @@ func initRootCmd(
 		queryCommand(),
 		txCommand(),
 		keys.Commands(),
+		gasCheckCmd(),
 	)
 }
 
