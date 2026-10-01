@@ -34,7 +34,7 @@ type PreparedPrivateMsg struct {
 // refused here instead.
 func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (PreparedPrivateMsg, error) {
 	t := msg.PrivateTransfer()
-	if err := k.checkAnchor(ctx, t.Root); err != nil {
+	if err := k.checkPrivateAnchor(ctx, msg, t.Root); err != nil {
 		return PreparedPrivateMsg{}, err
 	}
 	for _, nf := range t.Nullifiers {
@@ -74,6 +74,32 @@ func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (Prep
 		return PreparedPrivateMsg{}, err
 	}
 	return PreparedPrivateMsg{Msg: msg, AssetPub: assetPub, Signal: signal}, nil
+}
+
+// checkPrivateAnchor is checkAnchor, except that a msg whose action handler
+// implements types.PrivateAnchorAcceptor may vouch for a root outside the
+// window (a stake vote's proposal snapshot root).
+func (k Keeper) checkPrivateAnchor(ctx context.Context, msg types.PrivateMsg, root []byte) error {
+	err := k.checkAnchor(ctx, root)
+	if err == nil || !errors.Is(err, types.ErrUnknownRoot) {
+		return err
+	}
+	h, ok := k.PrivateAction(msg)
+	if !ok {
+		return err
+	}
+	acc, ok := h.(types.PrivateAnchorAcceptor)
+	if !ok {
+		return err
+	}
+	accepted, aerr := acc.AcceptsPrivateAnchor(ctx, msg, root)
+	if aerr != nil {
+		return aerr
+	}
+	if !accepted {
+		return err
+	}
+	return nil
 }
 
 // VerifyPrivateMsg verifies the transfer proof against the public inputs the

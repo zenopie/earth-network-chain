@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"errors"
 
@@ -68,7 +69,7 @@ func RegisterPrivateActions(register func(string, shieldedtypes.PrivateActionHan
 }
 
 func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.PrivateMsg) (uint64, error) {
-	proof, note, err := h.k.shielded.PrivateGasPrices(ctx)
+	_, note, err := h.k.shielded.PrivateGasPrices(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -80,7 +81,7 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	case *types.MsgClaimUnbonding:
 		return gasClaim + note, nil
 	case *types.MsgStakeVote:
-		return gasVote + proof, nil
+		return gasVote + note, nil
 	case *types.MsgLockPosition:
 		return gasLock, nil
 	case *types.MsgUpdatePosition:
@@ -127,16 +128,25 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	return prepared{kind: sdk.MsgTypeURL(msg)}, nil
 }
 
-func (h ActionHandler) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, _ any) error {
+// VerifyPrivateAction: no msg of this module carries a proof beyond its
+// transfer.
+func (h ActionHandler) VerifyPrivateAction(context.Context, shieldedtypes.PrivateMsg, any) error {
+	return nil
+}
+
+// AcceptsPrivateAnchor lets a stake vote spend against its proposal's
+// snapshot root after that root has left the pool's anchor window (a voting
+// period can outlast it). Nothing else is accepted outside the window.
+func (h ActionHandler) AcceptsPrivateAnchor(ctx context.Context, msg shieldedtypes.PrivateMsg, root []byte) (bool, error) {
 	m, ok := msg.(*types.MsgStakeVote)
 	if !ok {
-		return nil // only stake votes carry a proof of their own
+		return false, nil
 	}
-	in, err := h.k.checkStakeVote(ctx, m)
+	snap, _, err := h.k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
-		return err
+		return false, nil
 	}
-	return h.k.shielded.VerifyCircuit(ctx, shieldedtypes.CircuitNoteVote, m.Proof, in)
+	return bytes.Equal(snap.Root, root), nil
 }
 
 // authorized is the handlers' gate: the ante checked this very msg's action
@@ -224,31 +234,27 @@ func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (typ
 	return r, pay, nil
 }
 
-// checkStakeVote returns the note_vote proof's public inputs.
-func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) ([][]byte, error) {
+// checkStakeVote: the proposal is open to stake votes, the transfer spends
+// against its snapshot root (so every note it spends existed then, and one
+// minted since, including a vote's own re-minted note, cannot vote), its
+// weight fits the validator's snapshot supply, and the note can be minted
+// back. The transfer's nullifiers are checked unspent by the ante.
+func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (math.Int, error) {
 	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
-		return nil, err
+		return math.Int{}, err
 	}
-	if math.NewIntFromUint64(m.Value).GT(vs.Supply) {
-		return nil, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
+	if !bytes.Equal(m.Transfer.Root, snap.Root) {
+		return math.Int{}, types.ErrNoVoting.Wrapf("a stake vote on proposal %d spends against its snapshot root", m.ProposalId)
 	}
-	spent, err := k.shielded.Nullifiers.Has(ctx, m.Nullifier)
-	if err != nil {
-		return nil, err
+	d := math.NewIntFromUint64(m.Transfer.ValueOut)
+	if d.GT(vs.Supply) {
+		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
 	}
-	if spent {
-		return nil, types.ErrNoteSpent
+	if err := k.shielded.CheckMint(ctx, m.Pc, m.Ciphertext); err != nil {
+		return math.Int{}, err
 	}
-	asset, err := k.shielded.AssetID(ctx, types.DerthDenom(m.Validator))
-	if err != nil {
-		return nil, err
-	}
-	signal, err := m.Signal(sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
-	if err != nil {
-		return nil, err
-	}
-	return m.NoteVotePublicInputs(snap.Root, asset, signal), nil
+	return d, nil
 }
 
 func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {

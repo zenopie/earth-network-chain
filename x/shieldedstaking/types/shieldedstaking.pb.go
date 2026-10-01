@@ -503,12 +503,12 @@ func (m *ValidatorSnapshot) GetValidator() string {
 	return ""
 }
 
-// StakeVote is one private stake vote: a note's (by vote nullifier) or a
-// position's.
+// StakeVote is one private stake vote: a spent note's (keyed by its
+// transfer's first nullifier) or a position's.
 type StakeVote struct {
 	ProposalId uint64 `protobuf:"varint,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
-	// key is the vote nullifier (32 bytes) of a note vote, or the position id
-	// (8 bytes big-endian) of a position vote.
+	// key is 0x00 || the transfer's first nullifier (32 bytes) of a note vote,
+	// or 0x01 || the position id (8 bytes big-endian) of a position vote.
 	Key       []byte                   `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
 	Position  bool                     `protobuf:"varint,3,opt,name=position,proto3" json:"position,omitempty"`
 	Validator string                   `protobuf:"bytes,4,opt,name=validator,proto3" json:"validator,omitempty"`

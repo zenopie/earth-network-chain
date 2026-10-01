@@ -26,9 +26,6 @@ const (
 	// CircuitTransfer and CircuitMembership name the verifying keys in Params.
 	CircuitTransfer   = "transfer"
 	CircuitMembership = "membership"
-	// CircuitNoteVote is the stake-vote circuit (a note at a given root,
-	// its vote and spend nullifiers); read by x/shieldedstaking.
-	CircuitNoteVote = "note_vote"
 
 	// TransferArity is the transfer circuit's input and output count.
 	TransferArity = 3

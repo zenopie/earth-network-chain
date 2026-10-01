@@ -41,3 +41,12 @@ type PrivateActionHandler interface {
 	// CheckPrivateAction prepared. It must not write.
 	VerifyPrivateAction(ctx context.Context, msg PrivateMsg, prepared any) error
 }
+
+// PrivateAnchorAcceptor is implemented by an action handler that may accept a
+// transfer root outside the pool's anchor window for its msg. A root it
+// accepts must be one the pool once had (the chain stored it), never a value
+// the msg supplies: the transfer proof's notes are only as real as the root.
+// x/shieldedstaking accepts a stake vote's proposal snapshot root.
+type PrivateAnchorAcceptor interface {
+	AcceptsPrivateAnchor(ctx context.Context, msg PrivateMsg, root []byte) (bool, error)
+}

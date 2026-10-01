@@ -115,29 +115,39 @@ message MsgClaimUnbondingResponse {
   uint64 position = 2;
 }
 
-// MsgStakeVote votes a derth/<validator> note of value `value` that was in
-// the note tree when proposal_id entered voting. proof is a note_vote proof
-// over (snapshot root, AssetID(derth/<validator>), value, proposal_id,
-// vote_nullifier, nullifier, signal). The same vote_nullifier votes again to
-// change the vote; the note's spend nullifier must be unspent.
+// MsgStakeVote votes derth/<validator> on proposal_id by spending it
+// (spend-to-vote). transfer is proven against the proposal's snapshot root
+// (ProposalSnapshot.root; the ante accepts it for this msg even once it has
+// left the pool's root window) and releases value_out of
+// derth/<validator> (asset public) to this module: that value is the vote's
+// weight, and slot 2 pays the ERTH fee. The handler records the vote and
+// mints the same value back to pc as a new note. The spent nullifier stops
+// the note voting again, and the new note is not in the snapshot root, so it
+// cannot vote on this proposal either. Final: a stake vote is not replaced.
+// Any change the transfer keeps (a wallet should release the whole note) is
+// likewise a new note outside the snapshot, and cannot vote. Every input,
+// the fee note included, must be in the snapshot tree.
 //
-// signal = ActionSignal("/earth.shieldedstaking.v1.MsgStakeVote", chain_id,
-// ciphertexts, transfer nullifiers, proposal_id, Bytes(validator), value,
-// vote_nullifier, nullifier, Bytes(options)); both proofs bind it. The fee
-// transfer moves no value (value_out 0).
+// signal = SpendSignal("/earth.shieldedstaking.v1.MsgStakeVote", chain_id,
+// ciphertexts, proposal_id, Bytes(validator), Bytes(options), pc,
+// Bytes(ciphertext)).
 message MsgStakeVote {
   earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
   uint64 proposal_id = 2;
   string validator = 3;
-  uint64 value = 4;
-  bytes vote_nullifier = 5;
-  bytes nullifier = 6;
   repeated cosmos.gov.v1.WeightedVoteOption options = 7;
-  bytes proof = 8;
+  // pc receives the re-minted derth note.
+  bytes pc = 9;
+  bytes ciphertext = 10;
+  // note_vote fields, replaced by spend-to-vote.
+  reserved 4, 5, 6, 8;
+  reserved "value", "vote_nullifier", "nullifier", "proof";
 }
 
-// MsgStakeVoteResponse is empty.
-message MsgStakeVoteResponse {}
+// MsgStakeVoteResponse returns the re-minted note's position.
+message MsgStakeVoteResponse {
+  uint64 position = 1;
+}
 
 // MsgLockPosition spends transfer.value_out of derth/<validator> into the
 // module as a new Groundworks position splitting its weight by splits,

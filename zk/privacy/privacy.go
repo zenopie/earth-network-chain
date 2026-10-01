@@ -29,7 +29,7 @@ var (
 	TagPC    = tag("earth.pc")
 	TagCM    = tag("earth.cm")
 	TagNF    = tag("earth.nf")
-	TagVote  = tag("earth.vote")
+	TagVote  = tag("earth.vote") // retired (note_vote); never reuse
 	TagReg   = tag("earth.reg")
 	TagAsset = tag("earth.asset")
 
@@ -100,12 +100,6 @@ func CM(asset fr.Element, value uint64, pc fr.Element) fr.Element {
 // NF is the note nullifier H(TAG_NF, nk, rho, position).
 func NF(nk, rho fr.Element, position uint32) fr.Element {
 	return H(TagNF, nk, rho, U64(uint64(position)))
-}
-
-// VoteNF is a note's per-proposal vote nullifier
-// H(TAG_VOTE, nk, rho, position, proposal_id) (circuits/note_vote).
-func VoteNF(nk, rho fr.Element, position uint32, proposalID uint64) fr.Element {
-	return H(TagVote, nk, rho, U64(uint64(position)), U64(proposalID))
 }
 
 // AssetID maps a bank denom to its in-circuit asset field:

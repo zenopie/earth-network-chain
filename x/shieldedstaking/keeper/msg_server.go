@@ -202,23 +202,34 @@ func (k msgServer) ClaimUnbonding(goCtx context.Context, m *types.MsgClaimUnbond
 	return &types.MsgClaimUnbondingResponse{Amount: pay.Uint64(), Position: pos}, nil
 }
 
-// StakeVote records (or replaces) a note's vote.
+// StakeVote records a spent note's vote and mints its derth straight back to
+// a new note. Final: the spent nullifier is the vote's key, and cannot be
+// spent again.
 func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*types.MsgStakeVoteResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := k.checkStakeVote(ctx, m); err != nil {
+	d, err := k.checkStakeVote(ctx, m)
+	if err != nil {
+		return nil, err
+	}
+	derth, err := k.shielded.SpendToModule(ctx, &m.Transfer, types.ModuleName)
+	if err != nil {
 		return nil, err
 	}
 	v := types.StakeVote{
-		ProposalId: m.ProposalId, Key: append([]byte{0}, m.VoteNullifier...), Validator: m.Validator,
-		Derth: math.NewIntFromUint64(m.Value), Options: m.Options,
+		ProposalId: m.ProposalId, Key: append([]byte{0}, m.Transfer.Nullifiers[0]...), Validator: m.Validator,
+		Derth: d, Options: m.Options,
 	}
 	if err := k.putVote(ctx, v); err != nil {
 		return nil, err
 	}
-	return &types.MsgStakeVoteResponse{}, nil
+	pos, _, err := k.shielded.MintNote(ctx, types.ModuleName, derth, m.Pc, m.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	return &types.MsgStakeVoteResponse{Position: pos}, nil
 }
 
 // LockPosition moves derth from a note into a new position.

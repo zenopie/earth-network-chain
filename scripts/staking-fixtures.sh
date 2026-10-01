@@ -22,7 +22,7 @@ export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 for bin in nargo bb; do
   command -v "$bin" >/dev/null || { echo "error: $bin not on PATH" >&2; exit 1; }
 done
-[ -d "$CIRCUITS/note_vote" ] || { echo "error: no note_vote circuit under $CIRCUITS" >&2; exit 1; }
+[ -d "$CIRCUITS/transfer" ] || { echo "error: no transfer circuit under $CIRCUITS" >&2; exit 1; }
 CIRCUITS="$(cd "$CIRCUITS" && pwd)"
 
 PROOFS="$CHAIN_DIR/x/shieldedstaking/testdata/proofs"

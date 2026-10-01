@@ -225,65 +225,27 @@ func (m *MsgClaimUnbonding) ValidateBasic() error {
 
 func (m *MsgStakeVote) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
 
-// Signal is an ActionSignal: the fee transfer's nullifiers are bound, so the
-// note_vote proof cannot ride on another fee payment.
+// Signal binds the proposal, the vote and where the derth is minted back.
 func (m *MsgStakeVote) Signal(chainID string, _ address.Codec) (fr.Element, error) {
-	var nfs [3]fr.Element
-	if len(m.Transfer.Nullifiers) != shieldedtypes.TransferArity {
-		return fr.Element{}, errorsmod.Wrap(ErrInvalidMsg, "transfer needs 3 nullifiers")
-	}
-	for i, b := range m.Transfer.Nullifiers {
-		e, err := field("transfer nullifier", b)
-		if err != nil {
-			return fr.Element{}, err
-		}
-		nfs[i] = e
-	}
-	vnf, err := field("vote_nullifier", m.VoteNullifier)
+	pc, err := field("pc", m.Pc)
 	if err != nil {
 		return fr.Element{}, err
 	}
-	nf, err := field("nullifier", m.Nullifier)
-	if err != nil {
-		return fr.Element{}, err
-	}
-	return privacy.ActionSignal(TypeMsgStakeVote, chainID, m.Transfer.Ciphertexts3(), nfs,
-		privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Value),
-		vnf, nf, privacy.Bytes(OptionsBytes(m.Options))), nil
+	return spend(TypeMsgStakeVote, chainID, &m.Transfer, privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
+		privacy.Bytes(OptionsBytes(m.Options)), pc, privacy.Bytes(m.Ciphertext)), nil
 }
 
 func (m *MsgStakeVote) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(&m.Transfer, ""); err != nil {
+	if err := checkMoves(&m.Transfer, DerthDenom(m.Validator)); err != nil {
 		return err
 	}
-	if m.Value == 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "value must be positive")
-	}
-	if _, err := field("vote_nullifier", m.VoteNullifier); err != nil {
+	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
 		return err
-	}
-	if _, err := field("nullifier", m.Nullifier); err != nil {
-		return err
-	}
-	if len(m.Proof) == 0 || len(m.Proof) > shieldedtypes.MaxProofBytes {
-		return errorsmod.Wrapf(ErrInvalidMsg, "proof must be 1..%d bytes", shieldedtypes.MaxProofBytes)
 	}
 	return ValidateOptions(m.Options)
-}
-
-// NoteVotePublicInputs is the note_vote circuit's public input layout:
-// root, asset, value, proposal_id, vote_nf, nf, signal.
-func (m *MsgStakeVote) NoteVotePublicInputs(root []byte, asset []byte, signal fr.Element) [][]byte {
-	return [][]byte{
-		root, asset,
-		privacy.FieldBytes(privacy.U64(m.Value)),
-		privacy.FieldBytes(privacy.U64(m.ProposalId)),
-		m.VoteNullifier, m.Nullifier,
-		privacy.FieldBytes(signal),
-	}
 }
 
 // ---- positions ------------------------------------------------------------

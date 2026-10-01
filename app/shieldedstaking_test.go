@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"cosmossdk.io/math"
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client/flags"
@@ -530,7 +528,7 @@ func TestTransparentStakingBlocked(t *testing.T) {
 		&sstypes.MsgDelegate{Transfer: tr("uerth", 1), Validator: valoper, Pc: pc},
 		&sstypes.MsgUndelegate{Transfer: tr(sstypes.DerthDenom(valoper), 1), Validator: valoper, Pc: pc},
 		&sstypes.MsgClaimUnbonding{Transfer: tr(sstypes.UnbondDenom(valoper, 1), 1), Validator: valoper, Epoch: 1, Pc: pc},
-		&sstypes.MsgStakeVote{Transfer: tr("", 0), ProposalId: 1, Validator: valoper, Value: 1, VoteNullifier: pc, Nullifier: pc, Options: opts, Proof: []byte{1}},
+		&sstypes.MsgStakeVote{Transfer: tr(sstypes.DerthDenom(valoper), 1), ProposalId: 1, Validator: valoper, Options: opts, Pc: pc},
 		&sstypes.MsgLockPosition{Transfer: tr(sstypes.DerthDenom(valoper), 1), Validator: valoper, Pubkey: pk},
 		&sstypes.MsgUpdatePosition{Transfer: tr("", 0), Signature: sig},
 		&sstypes.MsgUnlockPosition{Transfer: tr("", 0), Pc: pc, Signature: sig},
@@ -597,52 +595,47 @@ func (e *stakeEnv) submitProposal() uint64 {
 	return id
 }
 
-// stakeVoteMsg is a note's vote: a fee transfer and a note_vote proof
-// against the proposal's snapshot root.
-func (e *stakeEnv) stakeVoteMsg(n *wnote, proposalID uint64, opts []*v1.WeightedVoteOption, prove bool) (*sstypes.MsgStakeVote, *pendingTransfer) {
+// stakeVoteMsg is a note's vote: a transfer spending all of n against the
+// proposal's snapshot root (or, current, against the current root, which the
+// chain refuses), the fee from an ERTH note that was in the snapshot too, and
+// the derth minted back to a fresh note.
+func (e *stakeEnv) stakeVoteMsg(n *wnote, proposalID uint64, opts []*v1.WeightedVoteOption, prove, current bool) (*sstypes.MsgStakeVote, *pendingTransfer, *wnote) {
 	e.t.Helper()
 	snap, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), proposalID)
 	require.NoError(e.t, err)
 	v, ok := sstypes.ParseDerthDenom(n.denom)
 	require.True(e.t, ok)
-	p := e.feeOnly()
-	voteNF := privacy.VoteNF(e.w.nk, n.rho, uint32(n.pos), proposalID)
+	s := spend{denom: n.denom, inputs: []*wnote{n}, valueOut: n.value, atSize: snap.TreeSize}
+	if current {
+		s.atSize = 0
+	}
+	p := e.build(s)
+	if !current {
+		root, err := e.w.tree(e.t, snap.TreeSize).Root()
+		require.NoError(e.t, err)
+		require.Equal(e.t, snap.Root, privacy.FieldBytes(root))
+	}
+	back := e.w.fresh(n.denom, 0)
 	m := &sstypes.MsgStakeVote{
-		Transfer: p.tr, ProposalId: proposalID, Validator: v, Value: n.value,
-		VoteNullifier: privacy.FieldBytes(voteNF), Nullifier: privacy.FieldBytes(e.w.nf(n)), Options: opts,
+		Transfer: p.tr, ProposalId: proposalID, Validator: v, Options: opts,
+		Pc: privacy.FieldBytes(e.w.pc(back)), Ciphertext: []byte("voted derth"),
 	}
 	if !prove {
-		m.Transfer.Proof, m.Proof = make([]byte, 14656), make([]byte, 14656)
-		return m, p
+		m.Transfer.Proof = make([]byte, 14656)
+		return m, p, back
 	}
 	e.prove(p, m)
-	signal, err := m.Signal(ssChainID, e.app.AuthKeeper.AddressCodec())
-	require.NoError(e.t, err)
-	tr := e.w.tree(e.t, snap.TreeSize)
-	root, err := tr.Root()
-	require.NoError(e.t, err)
-	require.Equal(e.t, snap.Root, privacy.FieldBytes(root))
-	sib, err := tr.Path(n.pos)
-	require.NoError(e.t, err)
-	q := func(x fr.Element) string { b := x.Bytes(); return fmt.Sprintf("\"0x%x\"", b[:]) }
-	parts := make([]string, len(sib))
-	for i, s := range sib {
-		parts[i] = q(s)
-	}
-	asset := privacy.AssetID(n.denom)
-	toml := fmt.Sprintf("nk = %s\nrho = %s\nrcm = %s\nposition = \"%d\"\npath = [%s]\nroot = %s\nasset = %s\nvalue = \"%d\"\nproposal_id = \"%d\"\nvote_nf = %s\nnf = %s\nsignal = %s\n",
-		q(e.w.nk), q(n.rho), q(n.rcm), n.pos, strings.Join(parts, ", "), q(root), q(asset), n.value, proposalID,
-		q(voteNF), q(e.w.nf(n)), q(signal))
-	m.Proof = e.pr.prove(e.t, shieldedtypes.CircuitNoteVote, toml, m.NoteVotePublicInputs(snap.Root, privacy.FieldBytes(asset), signal))
-	return m, p
+	return m, p, back
 }
 
-func (e *stakeEnv) stakeVote(n *wnote, proposalID uint64, opt v1.VoteOption) {
+// stakeVote votes all of n and returns the re-minted note.
+func (e *stakeEnv) stakeVote(n *wnote, proposalID uint64, opt v1.VoteOption) *wnote {
 	e.t.Helper()
-	m, p := e.stakeVoteMsg(n, proposalID, v1.NewNonSplitVoteOption(opt), true)
+	m, p, back := e.stakeVoteMsg(n, proposalID, v1.NewNonSplitVoteOption(opt), true, false)
 	res := e.run(e.privateTx(m))
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.settle(p)
+	return e.minted(res, back)
 }
 
 func (e *stakeEnv) positionVoteMsg(id uint64, key *secp256k1.PrivKey, proposalID uint64, opt v1.VoteOption) (*sstypes.MsgPositionVote, *pendingTransfer) {
@@ -655,7 +648,7 @@ func (e *stakeEnv) positionVoteMsg(id uint64, key *secp256k1.PrivKey, proposalID
 type tallyNums struct{ yes, abstain, no, veto math.LegacyDec }
 
 // Stake votes on the real gov path: transparent validator and delegator
-// votes, private note votes (one replaced), a position vote, inheritance of
+// votes, private spend-to-vote note votes, a position vote, inheritance of
 // the un-voted derth, a residual third-party delegation — and the refusals
 // that keep one unit of stake from voting twice.
 func TestStakeVoteTally(t *testing.T) {
@@ -671,6 +664,10 @@ func TestStakeVoteTally(t *testing.T) {
 	n4 := e.delegate(vB, uint64(300*ssErth))
 	n5 := e.delegate(vB, uint64(200*ssErth))
 	n3 := e.delegate(vA, uint64(400*ssErth))
+	// ERTH notes a stake vote pays its fee from must be in the snapshot too.
+	for i := 0; i < 3; i++ {
+		e.shield(uint64(ssErth))
+	}
 	e.days(1)
 
 	// Position P from all of n4, before the proposal.
@@ -717,10 +714,16 @@ func TestStakeVoteTally(t *testing.T) {
 	res := e.checkTx(e.privateTx(m))
 	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)
 	for _, spent := range []*wnote{n5, n4} {
-		sv, _ := e.stakeVoteMsg(spent, prop, v1.NewNonSplitVoteOption(v1.OptionNo), false)
+		sv, _, _ := e.stakeVoteMsg(spent, prop, v1.NewNonSplitVoteOption(v1.OptionNo), false, false)
 		res = e.checkTx(e.privateTx(sv))
-		require.Equal(t, sstypes.ErrNoteSpent.ABCICode(), res.Code, res.Log)
+		require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), res.Code, res.Log)
 	}
+	// Nor a derth note made after the snapshot: it is not in the snapshot
+	// root, and a vote spending against any other root is refused.
+	n6 := e.delegate(vB, uint64(100*ssErth))
+	sv, _, _ := e.stakeVoteMsg(n6, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, true)
+	res = e.checkTx(e.privateTx(sv))
+	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)
 
 	// --- votes. Transparent: vA No, vB Yes, the third party Abstain.
 	voteTx := func(key *secp256k1.PrivKey, opt v1.VoteOption) {
@@ -730,10 +733,33 @@ func TestStakeVoteTally(t *testing.T) {
 	voteTx(e.val, v1.OptionNo)
 	voteTx(vBKey, v1.OptionYes)
 	require.NoError(t, e.app.GovKeeper.AddVote(e.ctx(), prop, third, v1.NewNonSplitVoteOption(v1.OptionAbstain), ""))
-	// Private: n1 votes No then changes to Abstain (same vote nullifier);
+	// Private: n1 Abstain, by spending it; its derth comes straight back as a
+	// new note, which cannot vote again (final), nor can n1 (spent).
+	supplyB := e.app.BankKeeper.GetSupply(e.ctx(), n1.denom).Amount
+	n1b := e.stakeVote(n1, prop, v1.OptionAbstain)
+	require.Equal(t, n1.value, n1b.value)
+	require.Equal(t, supplyB, e.app.BankKeeper.GetSupply(e.ctx(), n1.denom).Amount, "re-minted, not created")
+	again, _, _ := e.stakeVoteMsg(n1b, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, true)
+	res = e.checkTx(e.privateTx(again))
+	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)
+	replay, _, _ := e.stakeVoteMsg(n1, prop, v1.NewNonSplitVoteOption(v1.OptionNo), false, false)
+	res = e.checkTx(e.privateTx(replay))
+	require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), res.Code, res.Log)
+	// The snapshot root stays good for a stake vote after it leaves the
+	// pool's anchor window; for anything else it is gone.
+	{
+		ctx := e.ctx()
+		sp, err := e.app.ShieldedKeeper.Params.Get(ctx)
+		require.NoError(t, err)
+		sp.RootWindowSeconds = 1
+		require.NoError(t, e.app.ShieldedKeeper.Params.Set(ctx, sp))
+	}
+	e.next(5 * time.Second)
+	old := e.build(spend{denom: "uerth", atSize: snap.TreeSize})
+	old.tr.Proof = make([]byte, 14656)
+	res = e.checkTx(e.privateTx(&shieldedtypes.MsgTransfer{Transfer: old.tr}))
+	require.Equal(t, shieldedtypes.ErrUnknownRoot.ABCICode(), res.Code, res.Log)
 	// n3 Yes; position P Yes; n2 does not vote (vB inherits it).
-	e.stakeVote(n1, prop, v1.OptionNo)
-	e.stakeVote(n1, prop, v1.OptionAbstain)
 	e.stakeVote(n3, prop, v1.OptionYes)
 	pv, pp := e.positionVoteMsg(pid, pKey, prop, v1.OptionYes)
 	e.prove(pp, pv)
@@ -747,7 +773,7 @@ func TestStakeVoteTally(t *testing.T) {
 	_ = pp2
 	res = e.checkTx(e.privateTx(pv2))
 	require.Equal(t, sstypes.ErrSignature.ABCICode(), res.Code, res.Log)
-	require.Equal(t, 3, countVotes(t, e, prop), "n1 (replaced), n3, P")
+	require.Equal(t, 3, countVotes(t, e, prop), "n1, n3, P")
 
 	// --- the expected tally, from the stake as it stands.
 	cc, _ := e.ctx().CacheContext()

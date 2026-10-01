@@ -87,7 +87,7 @@ type stakeEnv struct {
 
 // initStakeEnv boots the launch genesis for ssChainID: one genesis validator
 // (100 ERTH self-bond), a transparent user with 1,000,000 ERTH, the transfer
-// and note_vote verifying keys, and genesis time fixed.
+// verifying key, and genesis time fixed.
 func initStakeEnv(t *testing.T) *stakeEnv {
 	t.Helper()
 	raw, err := os.ReadFile("../networks/genesis.json")
@@ -135,7 +135,6 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 	gs := shieldedtypes.DefaultGenesis()
 	gs.Params.VerifyingKeys = map[string][]byte{
 		shieldedtypes.CircuitTransfer: mustRead(t, "../x/shielded/testdata/transfer.vk"),
-		shieldedtypes.CircuitNoteVote: mustRead(t, "../x/shieldedstaking/testdata/note_vote.vk"),
 	}
 	gs.Params.MaxPrivateTxsPerBlock = 8
 	doc.AppState[shieldedtypes.ModuleName], err = app0.AppCodec().MarshalJSON(gs)
@@ -416,9 +415,14 @@ func (w *wallet) tree(t *testing.T, size uint64) *merkle.Tree {
 // unspent returns a known unspent note of denom with value >= min, not in
 // avoid.
 func (w *wallet) unspent(denom string, min uint64, avoid ...*wnote) *wnote {
+	return w.unspentBefore(denom, min, ^uint64(0), avoid...)
+}
+
+// unspentBefore is unspent among the notes at positions below size.
+func (w *wallet) unspentBefore(denom string, min, size uint64, avoid ...*wnote) *wnote {
 next:
 	for _, n := range w.notes {
-		if !n.known || n.spent || n.denom != denom || n.value < min || n.value == 0 {
+		if !n.known || n.spent || n.denom != denom || n.value < min || n.value == 0 || n.pos >= size {
 			continue
 		}
 		for _, a := range avoid {
@@ -462,6 +466,10 @@ type spend struct {
 	inputs   []*wnote
 	valueOut uint64
 	fee      uint64
+	// atSize proves against the root of the first atSize leaves (a stake
+	// vote's snapshot root) instead of the current one; every input, the fee
+	// note included, must be among them.
+	atSize uint64
 }
 
 // pendingTransfer is a transfer built but not yet proven.
@@ -483,6 +491,9 @@ func (e *stakeEnv) build(s spend) *pendingTransfer {
 		s.fee = ssFee
 	}
 	p := &pendingTransfer{denomA: s.denom, size: uint64(len(w.leaves))}
+	if s.atSize > 0 {
+		p.size = s.atSize
+	}
 	var inA uint64
 	for i := 0; i < 2; i++ {
 		if i < len(s.inputs) {
@@ -492,7 +503,7 @@ func (e *stakeEnv) build(s spend) *pendingTransfer {
 			p.in[i] = w.fresh(s.denom, 0) // dummy: position 0, fresh nullifier
 		}
 	}
-	feeNote := w.unspent("uerth", s.fee, s.inputs...)
+	feeNote := w.unspentBefore("uerth", s.fee, p.size, s.inputs...)
 	require.NotNil(e.t, feeNote, "no ERTH note to pay the fee")
 	p.in[2] = feeNote
 	require.GreaterOrEqual(e.t, inA, s.valueOut)
@@ -616,7 +627,6 @@ func proofFile(circuit string, pub [][]byte) string {
 
 var vkFiles = map[string]string{
 	shieldedtypes.CircuitTransfer: "../x/shielded/testdata/transfer.vk",
-	shieldedtypes.CircuitNoteVote: "../x/shieldedstaking/testdata/note_vote.vk",
 }
 
 // prove returns the cached proof for (circuit, pub), proving and caching it
@@ -647,7 +657,6 @@ func (p *prover) prove(t *testing.T, circuit, toml string, pub [][]byte) []byte 
 		p.dir = filepath.Join(dir, "circuits")
 		_ = os.RemoveAll(filepath.Join(p.dir, "target"))
 		run(p.dir, "nargo", "compile", "--package", shieldedtypes.CircuitTransfer)
-		run(p.dir, "nargo", "compile", "--package", shieldedtypes.CircuitNoteVote)
 	})
 	require.NotEmpty(t, p.dir, "circuit compile failed earlier")
 	require.NoError(t, os.WriteFile(filepath.Join(p.dir, circuit, "Prover.toml"), []byte(toml), 0o644))
