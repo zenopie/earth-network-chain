@@ -36,6 +36,7 @@ Two things this already caught:
 | `app_state.json` | every parameter this chain deliberately sets, merged *over* `earthd init`'s defaults |
 | `accounts.json` | every balance that exists at height 1, and nothing else may hold one |
 | `verifying-keys/*.vk.b64` | one base64 UltraHonk verifying key per register circuit; the filename is the circuit id |
+| `shielded-verifying-keys/{transfer,membership}.vk.b64` | x/shielded's keys for every private tx, written by `scripts/privacy-vks.sh` from the circuits (`make privacy-vks-check` verifies them) |
 | `gentx/*.json` | signed gentxs to collect. Empty means launching with no validator set |
 | `../../csca/` | the CSCA trust store, regenerated through `tools/pki-genesis` |
 

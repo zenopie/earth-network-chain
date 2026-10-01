@@ -110,7 +110,16 @@ genesis:
 genesis-check:
 	@scripts/build-genesis.sh --check
 
-.PHONY: genesis genesis-check
+# The privacy circuits' verifying keys (genesis sources, config.yml, test
+# copies), from the circuits in the mobile repo. CIRCUITS overrides the path.
+CIRCUITS ?= ../earth-network-mobile/circuits
+privacy-vks:
+	@scripts/privacy-vks.sh $(CIRCUITS)
+
+privacy-vks-check:
+	@scripts/privacy-vks.sh --check $(CIRCUITS)
+
+.PHONY: genesis genesis-check privacy-vks privacy-vks-check
 
 #################
 ###  Linting  ###

@@ -12,10 +12,12 @@
 package networks
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"math/big"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/earth-network/earth/app"
@@ -80,6 +82,11 @@ type genesisDoc struct {
 				VerifyingKeys map[string]string `json:"verifying_keys"`
 			} `json:"params"`
 		} `json:"personhood"`
+		Shielded struct {
+			Params struct {
+				VerifyingKeys map[string]string `json:"verifying_keys"`
+			} `json:"params"`
+		} `json:"shielded"`
 		PKI struct {
 			Cscas []json.RawMessage `json:"cscas"`
 		} `json:"pki"`
@@ -341,6 +348,40 @@ func TestVerifyingKeysAreSeeded(t *testing.T) {
 	}
 	if got := len(g.AppState.Personhood.Params.VerifyingKeys); got != want {
 		t.Errorf("genesis carries %d verifying keys, the sources have %d", got, want)
+	}
+}
+
+// Private txs are enabled at launch: x/shielded's transfer and membership keys
+// are in genesis, equal to their sources, and equal to the keys every
+// real-proof test in this repo verifies against (so a genesis key that drifted
+// from the circuits fails here, not on the first private tx). That the test
+// keys match the circuits themselves is make privacy-vks-check (needs nargo
+// and bb).
+func TestShieldedVerifyingKeysAreSeeded(t *testing.T) {
+	g := loadGenesis(t)
+	tests := map[string]string{
+		"transfer":   "../x/shielded/testdata/transfer.vk",
+		"membership": "../x/personhood/testdata/app/membership.vk",
+	}
+	if got := len(g.AppState.Shielded.Params.VerifyingKeys); got != len(tests) {
+		t.Errorf("genesis carries %d shielded verifying keys, want %d", got, len(tests))
+	}
+	for c, testFile := range tests {
+		src, err := os.ReadFile("genesis/shielded-verifying-keys/" + c + ".vk.b64")
+		if err != nil {
+			t.Fatalf("source for %s: %v", c, err)
+		}
+		gen := g.AppState.Shielded.Params.VerifyingKeys[c]
+		if gen == "" || gen != strings.TrimSpace(string(src)) {
+			t.Errorf("genesis %s key differs from its source", c)
+		}
+		raw, err := os.ReadFile(testFile)
+		if err != nil {
+			t.Fatalf("test key for %s: %v", c, err)
+		}
+		if gen != base64.StdEncoding.EncodeToString(raw) {
+			t.Errorf("genesis %s key differs from %s, which the real-proof tests verify against", c, testFile)
+		}
 	}
 }
 

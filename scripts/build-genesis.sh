@@ -15,6 +15,7 @@
 #   networks/genesis/app_state.json    the parameters this chain deliberately sets
 #   networks/genesis/accounts.json     every balance that exists at height 1
 #   networks/genesis/verifying-keys/   one base64 UltraHonk key per register circuit
+#   networks/genesis/shielded-verifying-keys/  transfer + membership (scripts/privacy-vks.sh)
 #   networks/genesis/gentx/            signed gentxs to collect, if any
 #   csca/                            the CSCA trust store, via tools/pki-genesis
 #
@@ -112,6 +113,19 @@ if not vks:
     sys.exit('no verifying keys in networks/genesis/verifying-keys — MsgRegister would '
              'always fail and the chain could never register a human')
 g['app_state']['personhood']['params']['verifying_keys'] = vks
+
+# The privacy circuits, which x/shielded verifies every private tx against.
+# Both are required: without them the chain launches with private txs (every
+# shielded transfer, claim, vote, swap and stake) refused.
+svks = od()
+for p in sorted(glob.glob(os.path.join(src, 'shielded-verifying-keys', '*.vk.b64'))):
+    svks[os.path.basename(p)[:-len('.vk.b64')]] = open(p).read().strip()
+missing = {'transfer', 'membership'} - set(svks)
+if missing:
+    sys.exit('networks/genesis/shielded-verifying-keys lacks %s: run scripts/privacy-vks.sh'
+             % ', '.join(sorted(missing)))
+g['app_state']['shielded']['params']['verifying_keys'] = svks
+print('  shielded verifying keys: %s' % ', '.join(svks), file=sys.stderr)
 
 json.dump(g, open(gen_path, 'w'), indent=2)
 print('  %d CSCAs, %d verifying keys: %s' % (
