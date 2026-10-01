@@ -18,6 +18,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/cosmos/cosmos-sdk/x/authz"
 	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
@@ -79,11 +80,21 @@ func (e *stakeEnv) undelegate(val sdk.ValAddress, in *wnote, amount uint64) *wno
 }
 
 func (e *stakeEnv) claimMsg(in *wnote) (*sstypes.MsgClaimUnbonding, *pendingTransfer, *wnote) {
+	return e.claimMsgFee(in, 0, true)
+}
+
+// claimMsgFee is a claim paying feeFromOutput out of what it claims (no fee
+// note), or a fee note when it is 0.
+func (e *stakeEnv) claimMsgFee(in *wnote, feeFromOutput uint64, prove bool) (*sstypes.MsgClaimUnbonding, *pendingTransfer, *wnote) {
 	v, epoch, ok := sstypes.ParseUnbondDenom(in.denom)
 	require.True(e.t, ok)
-	p := e.build(spend{denom: in.denom, inputs: []*wnote{in}, valueOut: in.value})
+	p := e.build(spend{denom: in.denom, inputs: []*wnote{in}, valueOut: in.value, feeless: feeFromOutput > 0})
 	out := e.w.fresh("uerth", 0)
-	m := &sstypes.MsgClaimUnbonding{Transfer: p.tr, Validator: v, Epoch: epoch, Pc: privacy.FieldBytes(e.w.pc(out))}
+	m := &sstypes.MsgClaimUnbonding{Transfer: p.tr, Validator: v, Epoch: epoch, Pc: privacy.FieldBytes(e.w.pc(out)), FeeFromOutput: feeFromOutput}
+	if !prove {
+		m.Transfer.Proof = make([]byte, 14656)
+		return m, p, out
+	}
 	e.prove(p, m)
 	return m, p, out
 }
@@ -223,13 +234,33 @@ func TestPrivateStakingLifecycle(t *testing.T) {
 	require.Equal(t, r.Undelegated, r.Payout, "no slash: the entry paid in full")
 	e.invariants()
 
-	// --- claim: value x payout / requested.
-	before := e.w.balance("uerth")
-	out := e.claim(un)
-	require.NotNil(t, out)
+	// --- claim: value x payout / requested, paying its fee from what it
+	// claims (fee_from_output): no fee note is spent, the note holds the
+	// rest, and fee_collector got the whole fee.
 	want := math.NewIntFromUint64(un.value).Mul(r.Payout).Quo(r.Requested)
-	require.Equal(t, want.Uint64(), out.value)
-	require.Equal(t, before-ssFee+out.value, e.w.balance("uerth"))
+	// A fee from output must leave something to mint, and must clear the
+	// fee floor like any other: both refused before anything is spent.
+	big, _, _ := e.claimMsgFee(un, want.Uint64(), false)
+	res = e.checkTx(e.privateTx(big))
+	require.Equal(t, sstypes.ErrAmount.ABCICode(), res.Code, res.Log)
+	tiny, _, _ := e.claimMsgFee(un, 1, false)
+	res = e.checkTx(e.privateTx(tiny))
+	require.Equal(t, sdkerrors.ErrInsufficientFee.ABCICode(), res.Code, res.Log)
+	before := e.w.balance("uerth")
+	fm, fp, out := e.claimMsgFee(un, ssFee, true)
+	cres := e.run(e.privateTx(fm))
+	require.Equal(t, uint32(0), cres.Code, cres.Log)
+	e.settle(fp)
+	out = e.minted(cres, out)
+	require.Equal(t, want.Uint64()-ssFee, out.value)
+	require.Equal(t, before+out.value, e.w.balance("uerth"), "no fee note spent")
+	var feeEvents int
+	for _, ev := range eventsOf(cres.Events, shieldedtypes.EventTypeFee) {
+		require.Equal(t, fmt.Sprintf("%duerth", ssFee), ev["amount"])
+		require.Equal(t, sstypes.ModuleName, ev["module"])
+		feeEvents++
+	}
+	require.Equal(t, 1, feeEvents)
 	_, err = e.app.ShieldedStakingKeeper.UnbondRecords.Get(e.ctx(), collections.Join(e.valoper(vB), ep))
 	require.ErrorIs(t, err, collections.ErrNotFound, "fully claimed records are removed")
 	e.invariants()
@@ -521,6 +552,11 @@ func TestTransparentStakingBlocked(t *testing.T) {
 		return x
 	}
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
+	voteTr, feeTr := tr(sstypes.DerthDenom(valoper), 1), tr("", 0)
+	voteTr.Fee = 0
+	for i := range feeTr.Nullifiers {
+		feeTr.Nullifiers[i] = privacy.FieldBytes(ssDet("bypass-fee-nf", uint64(i)))
+	}
 	opts := []*v1.WeightedVoteOption{{Option: v1.OptionYes, Weight: "1"}}
 	sig := make([]byte, 64)
 	pk := secp256k1.GenPrivKeyFromSecret([]byte("bypass")).PubKey().Bytes()
@@ -528,7 +564,7 @@ func TestTransparentStakingBlocked(t *testing.T) {
 		&sstypes.MsgDelegate{Transfer: tr("uerth", 1), Validator: valoper, Pc: pc},
 		&sstypes.MsgUndelegate{Transfer: tr(sstypes.DerthDenom(valoper), 1), Validator: valoper, Pc: pc},
 		&sstypes.MsgClaimUnbonding{Transfer: tr(sstypes.UnbondDenom(valoper, 1), 1), Validator: valoper, Epoch: 1, Pc: pc},
-		&sstypes.MsgStakeVote{Transfer: tr(sstypes.DerthDenom(valoper), 1), ProposalId: 1, Validator: valoper, Options: opts, Pc: pc},
+		&sstypes.MsgStakeVote{Transfer: voteTr, FeeTransfer: feeTr, ProposalId: 1, Validator: valoper, Options: opts, Pc: pc},
 		&sstypes.MsgLockPosition{Transfer: tr(sstypes.DerthDenom(valoper), 1), Validator: valoper, Pubkey: pk},
 		&sstypes.MsgUpdatePosition{Transfer: tr("", 0), Signature: sig},
 		&sstypes.MsgUnlockPosition{Transfer: tr("", 0), Pc: pc, Signature: sig},
@@ -595,17 +631,17 @@ func (e *stakeEnv) submitProposal() uint64 {
 	return id
 }
 
-// stakeVoteMsg is a note's vote: a transfer spending all of n against the
-// proposal's snapshot root (or, current, against the current root, which the
-// chain refuses), the fee from an ERTH note that was in the snapshot too, and
-// the derth minted back to a fresh note.
+// stakeVoteMsg is a note's vote: a feeless transfer spending all of n
+// against the proposal's snapshot root (or, current, against the current
+// root, which the chain refuses), a second transfer paying the fee from any
+// current ERTH note, and the derth minted back to a fresh note.
 func (e *stakeEnv) stakeVoteMsg(n *wnote, proposalID uint64, opts []*v1.WeightedVoteOption, prove, current bool) (*sstypes.MsgStakeVote, *pendingTransfer, *wnote) {
 	e.t.Helper()
 	snap, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), proposalID)
 	require.NoError(e.t, err)
 	v, ok := sstypes.ParseDerthDenom(n.denom)
 	require.True(e.t, ok)
-	s := spend{denom: n.denom, inputs: []*wnote{n}, valueOut: n.value, atSize: snap.TreeSize}
+	s := spend{denom: n.denom, inputs: []*wnote{n}, valueOut: n.value, atSize: snap.TreeSize, feeless: true}
 	if current {
 		s.atSize = 0
 	}
@@ -615,16 +651,20 @@ func (e *stakeEnv) stakeVoteMsg(n *wnote, proposalID uint64, opts []*v1.Weighted
 		require.NoError(e.t, err)
 		require.Equal(e.t, snap.Root, privacy.FieldBytes(root))
 	}
+	fee := e.feeOnly()
+	p.also = append(p.also, fee)
 	back := e.w.fresh(n.denom, 0)
 	m := &sstypes.MsgStakeVote{
-		Transfer: p.tr, ProposalId: proposalID, Validator: v, Options: opts,
+		Transfer: p.tr, FeeTransfer: fee.tr, ProposalId: proposalID, Validator: v, Options: opts,
 		Pc: privacy.FieldBytes(e.w.pc(back)), Ciphertext: []byte("voted derth"),
 	}
 	if !prove {
 		m.Transfer.Proof = make([]byte, 14656)
+		m.FeeTransfer.Proof = make([]byte, 14656)
 		return m, p, back
 	}
-	e.prove(p, m)
+	e.proveInto(p, m, &m.Transfer)
+	e.proveInto(fee, m, &m.FeeTransfer)
 	return m, p, back
 }
 
@@ -664,10 +704,9 @@ func TestStakeVoteTally(t *testing.T) {
 	n4 := e.delegate(vB, uint64(300*ssErth))
 	n5 := e.delegate(vB, uint64(200*ssErth))
 	n3 := e.delegate(vA, uint64(400*ssErth))
-	// ERTH notes a stake vote pays its fee from must be in the snapshot too.
-	for i := 0; i < 3; i++ {
-		e.shield(uint64(ssErth))
-	}
+	// An ERTH note in the snapshot, kept for the expired-root check below.
+	snapErth := e.shield(uint64(ssErth))
+	e.reserved = []*wnote{snapErth}
 	e.days(1)
 
 	// Position P from all of n4, before the proposal.
@@ -736,7 +775,19 @@ func TestStakeVoteTally(t *testing.T) {
 	// Private: n1 Abstain, by spending it; its derth comes straight back as a
 	// new note, which cannot vote again (final), nor can n1 (spent).
 	supplyB := e.app.BankKeeper.GetSupply(e.ctx(), n1.denom).Amount
+	// Its fee comes from an ERTH note made after the snapshot: the fee
+	// transfer spends against a current root, so it need not be in the
+	// snapshot tree.
+	late := e.shield(uint64(ssErth))
+	require.GreaterOrEqual(t, late.pos, snap.TreeSize)
+	for _, n := range e.w.notes {
+		if n.denom == "uerth" && n != late {
+			e.reserved = append(e.reserved, n)
+		}
+	}
 	n1b := e.stakeVote(n1, prop, v1.OptionAbstain)
+	e.reserved = []*wnote{snapErth}
+	require.True(t, late.spent, "the vote's fee was paid from the post-snapshot note")
 	require.Equal(t, n1.value, n1b.value)
 	require.Equal(t, supplyB, e.app.BankKeeper.GetSupply(e.ctx(), n1.denom).Amount, "re-minted, not created")
 	again, _, _ := e.stakeVoteMsg(n1b, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, true)
@@ -755,12 +806,30 @@ func TestStakeVoteTally(t *testing.T) {
 		require.NoError(t, e.app.ShieldedKeeper.Params.Set(ctx, sp))
 	}
 	e.next(5 * time.Second)
+	e.reserved = nil
 	old := e.build(spend{denom: "uerth", atSize: snap.TreeSize})
 	old.tr.Proof = make([]byte, 14656)
 	res = e.checkTx(e.privateTx(&shieldedtypes.MsgTransfer{Transfer: old.tr}))
 	require.Equal(t, shieldedtypes.ErrUnknownRoot.ABCICode(), res.Code, res.Log)
 	// n3 Yes; position P Yes; n2 does not vote (vB inherits it).
-	e.stakeVote(n3, prop, v1.OptionYes)
+	// Both proofs bind both transfers' nullifiers: n3's vote with another
+	// vote's (valid) fee transfer verifies neither.
+	sa, pa, ba := e.stakeVoteMsg(n3, prop, v1.NewNonSplitVoteOption(v1.OptionYes), true, false)
+	sb, _, _ := e.stakeVoteMsg(n2, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, false)
+	spliced := *sa
+	spliced.FeeTransfer = sb.FeeTransfer
+	res = e.checkTx(e.privateTx(&spliced))
+	require.Equal(t, shieldedtypes.ErrInvalidProof.ABCICode(), res.Code, res.Log)
+	// And the vote transfer must not pay a fee itself.
+	feeing := *sa
+	feeing.Transfer.Fee = ssFee
+	res = e.checkTx(e.privateTx(&feeing))
+	require.NotEqual(t, uint32(0), res.Code)
+	require.Contains(t, res.Log, "the vote transfer pays no fee")
+	fb0 := e.run(e.privateTx(sa))
+	require.Equal(t, uint32(0), fb0.Code, fb0.Log)
+	e.settle(pa)
+	e.minted(fb0, ba)
 	pv, pp := e.positionVoteMsg(pid, pKey, prop, v1.OptionYes)
 	e.prove(pp, pv)
 	fb := e.run(e.privateTx(pv))

@@ -134,6 +134,23 @@ func (h ActionHandler) VerifyPrivateAction(context.Context, shieldedtypes.Privat
 	return nil
 }
 
+// ExecutesInAnte: a claim runs in the ante, atomically with its spend, so it
+// can pay its fee from the ERTH it claims (see
+// x/shielded/types.PrivateActionExecutor). One path whether or not it does.
+func (h ActionHandler) ExecutesInAnte(msg shieldedtypes.PrivateMsg) bool {
+	_, ok := msg.(*types.MsgClaimUnbonding)
+	return ok
+}
+
+// ExecutePrivateAction runs a claim for the ante.
+func (h ActionHandler) ExecutePrivateAction(ctx sdk.Context, msg shieldedtypes.PrivateMsg, _ any) (any, error) {
+	m, ok := msg.(*types.MsgClaimUnbonding)
+	if !ok {
+		return nil, errorsmod.Wrapf(types.ErrInvalidMsg, "%T does not run in the ante", msg)
+	}
+	return h.k.executeClaim(ctx, m)
+}
+
 // AcceptsPrivateAnchor lets a stake vote spend against its proposal's
 // snapshot root after that root has left the pool's anchor window (a voting
 // period can outlast it). Nothing else is accepted outside the window.
@@ -228,6 +245,9 @@ func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (typ
 		return r, math.Int{}, errorsmod.Wrap(types.ErrAmount, "claim exceeds the record's outstanding notes")
 	}
 	pay := v.Mul(r.Payout).Quo(r.Requested)
+	if m.FeeFromOutput > 0 && !pay.GT(math.NewIntFromUint64(m.FeeFromOutput)) {
+		return r, math.Int{}, errorsmod.Wrapf(types.ErrAmount, "claim pays %s%s, not more than its fee %d", pay, types.BondDenom, m.FeeFromOutput)
+	}
 	if err := k.shielded.CheckMint(ctx, m.Pc, m.Ciphertext); err != nil {
 		return r, math.Int{}, err
 	}

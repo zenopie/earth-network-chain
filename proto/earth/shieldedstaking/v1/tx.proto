@@ -96,20 +96,28 @@ message MsgUndelegateResponse {
 
 // MsgClaimUnbonding spends transfer.value_out of unbond/<validator>/<epoch>
 // once that record has matured and mints ERTH = value x payout / requested to
-// pc.
+// pc (less fee_from_output).
+//
+// The claim runs in the private ante, atomically with the spend (see
+// x/shielded/types.PrivateActionExecutor).
 //
 // signal = SpendSignal("/earth.shieldedstaking.v1.MsgClaimUnbonding",
-// chain_id, ciphertexts, Bytes(validator), epoch, pc, Bytes(ciphertext)).
+// chain_id, ciphertexts, Bytes(validator), epoch, pc, Bytes(ciphertext),
+// fee_from_output).
 message MsgClaimUnbonding {
   earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
   string validator = 2;
   uint64 epoch = 3;
   bytes pc = 4;
   bytes ciphertext = 5;
+  // fee_from_output pays the tx fee out of the claimed ERTH instead of from a
+  // fee note: transfer.fee must be 0, and the claim must pay more than it.
+  // The note minted to pc holds the rest. 0: the fee is transfer.fee.
+  uint64 fee_from_output = 6;
 }
 
-// MsgClaimUnbondingResponse returns the ERTH paid (0 if slashed away) and the
-// note's position.
+// MsgClaimUnbondingResponse returns the ERTH minted to pc (the claim less
+// fee_from_output; 0 if slashed away) and the note's position.
 message MsgClaimUnbondingResponse {
   uint64 amount = 1;
   uint64 position = 2;
@@ -120,17 +128,21 @@ message MsgClaimUnbondingResponse {
 // (ProposalSnapshot.root; the ante accepts it for this msg even once it has
 // left the pool's root window) and releases value_out of
 // derth/<validator> (asset public) to this module: that value is the vote's
-// weight, and slot 2 pays the ERTH fee. The handler records the vote and
-// mints the same value back to pc as a new note. The spent nullifier stops
-// the note voting again, and the new note is not in the snapshot root, so it
-// cannot vote on this proposal either. Final: a stake vote is not replaced.
-// Any change the transfer keeps (a wallet should release the whole note) is
-// likewise a new note outside the snapshot, and cannot vote. Every input,
-// the fee note included, must be in the snapshot tree.
+// weight. Its fee is 0 and its slot 2 a dummy. The handler records the vote
+// and mints the same value back to pc as a new note. The spent nullifier
+// stops the note voting again, and the new note is not in the snapshot root,
+// so it cannot vote on this proposal either. Final: a stake vote is not
+// replaced. Any change the transfer keeps (a wallet should release the whole
+// note) is likewise a new note outside the snapshot, and cannot vote.
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgStakeVote", chain_id,
-// ciphertexts, proposal_id, Bytes(validator), Bytes(options), pc,
-// Bytes(ciphertext)).
+// fee_transfer pays the fee: a transfer of ERTH proven against a current root
+// (the pool's ordinary window), releasing nothing (value_out 0), so the fee
+// note need not predate the snapshot.
+//
+// Both proofs bind one signal = MultiSpendSignal(
+// "/earth.shieldedstaking.v1.MsgStakeVote", chain_id, [transfer.ciphertexts,
+// fee_transfer.ciphertexts], [transfer.nullifiers, fee_transfer.nullifiers],
+// proposal_id, Bytes(validator), Bytes(options), pc, Bytes(ciphertext)).
 message MsgStakeVote {
   earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
   uint64 proposal_id = 2;
@@ -139,6 +151,7 @@ message MsgStakeVote {
   // pc receives the re-minted derth note.
   bytes pc = 9;
   bytes ciphertext = 10;
+  earth.shielded.v1.Transfer fee_transfer = 11 [(gogoproto.nullable) = false];
   // note_vote fields, replaced by spend-to-vote.
   reserved 4, 5, 6, 8;
   reserved "value", "vote_nullifier", "nullifier", "proof";

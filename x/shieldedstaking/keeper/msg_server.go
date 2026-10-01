@@ -13,6 +13,8 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
+	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
@@ -152,14 +154,27 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	return &types.MsgUndelegateResponse{Denom: denom, Value: u.Uint64(), Position: pos}, nil
 }
 
-// ClaimUnbonding: the unbond notes are burned and ERTH = value x payout /
-// requested is minted as a note, so a slash of the unbonding entry reaches
-// every claimant pro rata.
+// ClaimUnbonding returns the claim the private ante already executed
+// (executeClaim): a claim is atomic with its spend, so it can pay its fee
+// from what it claims.
 func (k msgServer) ClaimUnbonding(goCtx context.Context, m *types.MsgClaimUnbonding) (*types.MsgClaimUnbondingResponse, error) {
-	ctx, err := k.authorized(goCtx, m)
+	res, executed, err := shieldedkeeper.AuthorizedResult(goCtx, &m.Transfer)
 	if err != nil {
 		return nil, err
 	}
+	r, ok := res.(*types.MsgClaimUnbondingResponse)
+	if !executed || !ok {
+		return nil, shieldedtypes.ErrUnauthorized.Wrap("the claim was not executed by the private ante")
+	}
+	return r, nil
+}
+
+// executeClaim: the unbond notes are burned and ERTH = value x payout /
+// requested is paid, so a slash of the unbonding entry reaches every
+// claimant pro rata: fee_from_output to fee_collector, the rest minted as a
+// note. Runs in the private ante, after the transfer was spent; any error
+// fails the whole tx, spend included.
+func (k Keeper) executeClaim(ctx sdk.Context, m *types.MsgClaimUnbonding) (*types.MsgClaimUnbondingResponse, error) {
 	r, pay, err := k.checkClaim(ctx, m)
 	if err != nil {
 		return nil, err
@@ -173,9 +188,17 @@ func (k msgServer) ClaimUnbonding(goCtx context.Context, m *types.MsgClaimUnbond
 	}
 	r.Outstanding = r.Outstanding.Sub(claim.Amount)
 	r.Paid = r.Paid.Add(pay)
+	note := pay
+	if m.FeeFromOutput > 0 {
+		fee := math.NewIntFromUint64(m.FeeFromOutput)
+		if err := k.shielded.PayFeeFromModule(ctx, types.ModuleName, fee); err != nil {
+			return nil, err
+		}
+		note = pay.Sub(fee)
+	}
 	var pos uint64
-	if pay.IsPositive() {
-		if pos, _, err = k.shielded.MintNote(ctx, types.ModuleName, sdk.NewCoin(types.BondDenom, pay), m.Pc, m.Ciphertext); err != nil {
+	if note.IsPositive() {
+		if pos, _, err = k.shielded.MintNote(ctx, types.ModuleName, sdk.NewCoin(types.BondDenom, note), m.Pc, m.Ciphertext); err != nil {
 			return nil, err
 		}
 	}
@@ -199,7 +222,7 @@ func (k msgServer) ClaimUnbonding(goCtx context.Context, m *types.MsgClaimUnbond
 		sdk.NewAttribute(types.AttributeKeyValue, claim.Amount.String()),
 		sdk.NewAttribute(types.AttributeKeyAmount, pay.String()),
 	))
-	return &types.MsgClaimUnbondingResponse{Amount: pay.Uint64(), Position: pos}, nil
+	return &types.MsgClaimUnbondingResponse{Amount: note.Uint64(), Position: pos}, nil
 }
 
 // StakeVote records a spent note's vote and mints its derth straight back to

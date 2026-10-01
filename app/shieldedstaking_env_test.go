@@ -83,6 +83,11 @@ type stakeEnv struct {
 	w      *wallet
 	pr     *prover
 	extra  int
+	// reserved are notes build must not pick as a fee note (one already
+	// committed to another transfer of the msg being built).
+	reserved []*wnote
+	// proofDir is where this suite's proofs are cached.
+	proofDir string
 }
 
 // initStakeEnv boots the launch genesis for ssChainID: one genesis validator
@@ -152,7 +157,7 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 	})
 	require.NoError(t, err)
 	e := &stakeEnv{t: t, app: app, now: ssGenesisTime, times: map[int64]time.Time{}, user: user, val: val,
-		w: &wallet{nk: ssDet("nk", 0)}, pr: sharedProver(t)}
+		w: &wallet{nk: ssDet("nk", 0)}, pr: sharedProver(t), proofDir: stakingProofs}
 	e.next(5 * time.Second)
 	return e
 }
@@ -314,7 +319,7 @@ func (e *stakeEnv) privateTx(msg shieldedtypes.PrivateMsg) []byte {
 	b := e.app.TxConfig().NewTxBuilder()
 	require.NoError(e.t, b.SetMsgs(msg))
 	b.SetGasLimit(ssGas)
-	b.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("uerth", msg.PrivateTransfer().FeeInt())))
+	b.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("uerth", shieldedtypes.TotalFee(msg))))
 	bz, err := e.app.TxConfig().TxEncoder()(b.GetTx())
 	require.NoError(e.t, err)
 	return bz
@@ -467,9 +472,12 @@ type spend struct {
 	valueOut uint64
 	fee      uint64
 	// atSize proves against the root of the first atSize leaves (a stake
-	// vote's snapshot root) instead of the current one; every input, the fee
-	// note included, must be among them.
+	// vote's snapshot root) instead of the current one; every input must be
+	// among them.
 	atSize uint64
+	// feeless pays no fee: slot 2 is a dummy (a stake vote's transfer, whose
+	// fee a second transfer pays; a msg paying its fee from its output).
+	feeless bool
 }
 
 // pendingTransfer is a transfer built but not yet proven.
@@ -480,6 +488,8 @@ type pendingTransfer struct {
 	root   fr.Element
 	size   uint64
 	denomA string
+	// also are transfers spent in the same msg, settled with this one.
+	also []*pendingTransfer
 }
 
 // build lays out a transfer against the current tree: the inputs, dummies,
@@ -487,7 +497,9 @@ type pendingTransfer struct {
 func (e *stakeEnv) build(s spend) *pendingTransfer {
 	e.t.Helper()
 	w := e.w
-	if s.fee == 0 {
+	if s.feeless {
+		s.fee = 0
+	} else if s.fee == 0 {
 		s.fee = ssFee
 	}
 	p := &pendingTransfer{denomA: s.denom, size: uint64(len(w.leaves))}
@@ -503,13 +515,17 @@ func (e *stakeEnv) build(s spend) *pendingTransfer {
 			p.in[i] = w.fresh(s.denom, 0) // dummy: position 0, fresh nullifier
 		}
 	}
-	feeNote := w.unspentBefore("uerth", s.fee, p.size, s.inputs...)
-	require.NotNil(e.t, feeNote, "no ERTH note to pay the fee")
-	p.in[2] = feeNote
+	if s.feeless {
+		p.in[2] = w.fresh("uerth", 0)
+	} else {
+		feeNote := w.unspentBefore("uerth", s.fee, p.size, append(append([]*wnote{}, s.inputs...), e.reserved...)...)
+		require.NotNil(e.t, feeNote, "no ERTH note to pay the fee")
+		p.in[2] = feeNote
+	}
 	require.GreaterOrEqual(e.t, inA, s.valueOut)
 	p.out[0] = w.fresh(s.denom, inA-s.valueOut)
 	p.out[1] = w.fresh(s.denom, 0)
-	p.out[2] = w.fresh("uerth", feeNote.value-s.fee)
+	p.out[2] = w.fresh("uerth", p.in[2].value-s.fee)
 	root, err := w.tree(e.t, p.size).Root()
 	require.NoError(e.t, err)
 	p.root = root
@@ -529,6 +545,13 @@ func (e *stakeEnv) build(s spend) *pendingTransfer {
 // prove fills in the transfer's proof for msg (whose Signal is computed
 // here, so every other field of msg must be final).
 func (e *stakeEnv) prove(p *pendingTransfer, msg shieldedtypes.PrivateMsg) {
+	e.t.Helper()
+	e.proveInto(p, msg, msg.PrivateTransfer())
+}
+
+// proveInto is prove for one of msg's transfers, target (a msg spending
+// several: every proof binds the one signal).
+func (e *stakeEnv) proveInto(p *pendingTransfer, msg shieldedtypes.PrivateMsg, target *shieldedtypes.Transfer) {
 	e.t.Helper()
 	signal, err := msg.Signal(ssChainID, e.app.AuthKeeper.AddressCodec())
 	require.NoError(e.t, err)
@@ -570,7 +593,7 @@ func (e *stakeEnv) prove(p *pendingTransfer, msg shieldedtypes.PrivateMsg) {
 	fmt.Fprintf(&b, "out_value = [%s]\nout_pc = %s\n", strings.Join(outVals[:], ", "), arr(outPC[:]))
 	fmt.Fprintf(&b, "root = %s\nnf = %s\ncm_out = %s\nfee = \"%d\"\nv_pub_out = \"%d\"\nasset_pub = %s\nsignal = %s\n",
 		q(p.root), arr(nf[:]), arr(cm[:]), p.tr.Fee, p.tr.ValueOut, q(assetPub), q(signal))
-	msg.PrivateTransfer().Proof = e.pr.prove(e.t, shieldedtypes.CircuitTransfer, b.String(), p.tr.PublicInputs(assetPub, signal))
+	target.Proof = e.pr.prove(e.t, e.proofDir, shieldedtypes.CircuitTransfer, b.String(), p.tr.PublicInputs(assetPub, signal))
 }
 
 // settle marks a transfer executed: inputs spent, outputs tracked.
@@ -579,6 +602,12 @@ func (e *stakeEnv) settle(p *pendingTransfer) {
 		n.spent = true
 	}
 	e.w.track(p.out[:]...)
+	for _, q := range p.also {
+		for _, n := range q.in {
+			n.spent = true
+		}
+		e.w.track(q.out[:]...)
+	}
 	e.w.scan(e)
 }
 
@@ -616,13 +645,19 @@ var (
 
 func sharedProver(*testing.T) *prover { return theProver }
 
-func proofFile(circuit string, pub [][]byte) string {
+// Proof caches, one per suite, each regenerated by its own script.
+var (
+	stakingProofs = filepath.Join("..", "x", "shieldedstaking", "testdata", "proofs") // scripts/staking-fixtures.sh
+	dexProofs     = filepath.Join("..", "x", "dex", "testdata", "proofs")             // scripts/dex-fixtures.sh
+)
+
+func proofFile(dir, circuit string, pub [][]byte) string {
 	h := sha256.New()
 	h.Write([]byte(circuit))
 	for _, x := range pub {
 		h.Write(x)
 	}
-	return filepath.Join("..", "x", "shieldedstaking", "testdata", "proofs", fmt.Sprintf("%s-%x.proof", circuit, h.Sum(nil)[:10]))
+	return filepath.Join(dir, fmt.Sprintf("%s-%x.proof", circuit, h.Sum(nil)[:10]))
 }
 
 var vkFiles = map[string]string{
@@ -631,16 +666,21 @@ var vkFiles = map[string]string{
 
 // prove returns the cached proof for (circuit, pub), proving and caching it
 // when EARTH_CIRCUITS points at the circuits.
-func (p *prover) prove(t *testing.T, circuit, toml string, pub [][]byte) []byte {
+func (p *prover) prove(t *testing.T, dir, circuit, toml string, pub [][]byte) []byte {
 	t.Helper()
-	file := proofFile(circuit, pub)
+	file := proofFile(dir, circuit, pub)
 	if bz, err := os.ReadFile(file); err == nil {
 		return bz
 	}
 	src := os.Getenv("EARTH_CIRCUITS")
 	if src == "" {
-		t.Fatalf("no proof fixture %s for this test's public inputs: run scripts/staking-fixtures.sh", file)
+		script := "scripts/staking-fixtures.sh"
+		if dir == dexProofs {
+			script = "scripts/dex-fixtures.sh"
+		}
+		t.Fatalf("no proof fixture %s for this test's public inputs: run %s", file, script)
 	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	run := func(dir string, name string, args ...string) {

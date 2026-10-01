@@ -36,6 +36,9 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgUpdatePosition)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgUnlockPosition)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgPositionVote)(nil)
+
+	_ shieldedtypes.MultiTransferMsg = (*MsgStakeVote)(nil)
+	_ shieldedtypes.FeeFromOutputMsg = (*MsgClaimUnbonding)(nil)
 )
 
 // ---- field encodings the signals and position signatures bind ------------
@@ -208,14 +211,20 @@ func (m *MsgClaimUnbonding) Signal(chainID string, _ address.Codec) (fr.Element,
 		return fr.Element{}, err
 	}
 	return spend(TypeMsgClaimUnbonding, chainID, &m.Transfer, privacy.Bytes([]byte(m.Validator)),
-		privacy.U64(m.Epoch), pc, privacy.Bytes(m.Ciphertext)), nil
+		privacy.U64(m.Epoch), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.FeeFromOutput)), nil
 }
+
+// OutputFee implements x/shielded's FeeFromOutputMsg.
+func (m *MsgClaimUnbonding) OutputFee() uint64 { return m.FeeFromOutput }
 
 func (m *MsgClaimUnbonding) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
 	if err := checkMoves(&m.Transfer, UnbondDenom(m.Validator, m.Epoch)); err != nil {
+		return err
+	}
+	if err := shieldedtypes.ValidateTransfers(m); err != nil {
 		return err
 	}
 	return checkNoteOut(m.Pc, m.Ciphertext)
@@ -225,14 +234,21 @@ func (m *MsgClaimUnbonding) ValidateBasic() error {
 
 func (m *MsgStakeVote) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
 
-// Signal binds the proposal, the vote and where the derth is minted back.
+// PrivateTransfers is the vote transfer, then the fee transfer.
+func (m *MsgStakeVote) PrivateTransfers() []*shieldedtypes.Transfer {
+	return []*shieldedtypes.Transfer{&m.Transfer, &m.FeeTransfer}
+}
+
+// Signal binds both transfers (each one's ciphertexts and nullifiers), the
+// proposal, the vote and where the derth is minted back. Both proofs carry
+// it, so neither transfer can be paired with another.
 func (m *MsgStakeVote) Signal(chainID string, _ address.Codec) (fr.Element, error) {
 	pc, err := field("pc", m.Pc)
 	if err != nil {
 		return fr.Element{}, err
 	}
-	return spend(TypeMsgStakeVote, chainID, &m.Transfer, privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
-		privacy.Bytes(OptionsBytes(m.Options)), pc, privacy.Bytes(m.Ciphertext)), nil
+	return shieldedtypes.MultiSignal(TypeMsgStakeVote, chainID, m.PrivateTransfers(), privacy.U64(m.ProposalId),
+		privacy.Bytes([]byte(m.Validator)), privacy.Bytes(OptionsBytes(m.Options)), pc, privacy.Bytes(m.Ciphertext))
 }
 
 func (m *MsgStakeVote) ValidateBasic() error {
@@ -240,6 +256,21 @@ func (m *MsgStakeVote) ValidateBasic() error {
 		return err
 	}
 	if err := checkMoves(&m.Transfer, DerthDenom(m.Validator)); err != nil {
+		return err
+	}
+	// The vote transfer is proven against the snapshot root and pays no fee
+	// (its slot 2 is a dummy); the fee transfer pays it, against a current
+	// root, and moves nothing else.
+	if m.Transfer.Fee != 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "the vote transfer pays no fee: fee_transfer does")
+	}
+	if err := checkMoves(&m.FeeTransfer, ""); err != nil {
+		return errorsmod.Wrap(err, "fee_transfer")
+	}
+	if m.FeeTransfer.Fee == 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "fee_transfer must pay a fee")
+	}
+	if err := shieldedtypes.ValidateTransfers(m); err != nil {
 		return err
 	}
 	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
