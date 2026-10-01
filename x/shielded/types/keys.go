@@ -30,6 +30,11 @@ const (
 	// TransferArity is the transfer circuit's input and output count.
 	TransferArity = 3
 
+	// MaxTransfersPerMsg bounds how many transfers one private msg spends
+	// (types.MultiTransferMsg): a stake vote and its fee, or a deposit's two
+	// assets.
+	MaxTransfersPerMsg = 2
+
 	// TransferPublicInputs is the transfer circuit's public input count:
 	// root, nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal.
 	TransferPublicInputs = 11

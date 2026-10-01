@@ -1,6 +1,10 @@
 package types
 
-import "context"
+import (
+	"context"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+)
 
 // PrivateActionHandler is how another module attaches an action of its own to
 // a private msg: an ANML claim, a caretaker split, an assembly vote. The msg
@@ -49,4 +53,39 @@ type PrivateActionHandler interface {
 // x/shieldedstaking accepts a stake vote's proposal snapshot root.
 type PrivateAnchorAcceptor interface {
 	AcceptsPrivateAnchor(ctx context.Context, msg PrivateMsg, root []byte) (bool, error)
+}
+
+// PrivateActionExecutor is implemented by an action handler whose action, for
+// some msgs, must be atomic with the spend of its transfers. The private ante
+// then runs the action itself, right after executing the transfers, in its
+// own state: either every effect lands (notes spent, action done, fee paid)
+// or the ante fails and nothing does.
+//
+// Two kinds of action need this:
+//
+//   - one whose outcome depends on market state the msg cannot pin (a swap's
+//     output against min_out, a deposit's shares against min_shares). Run in
+//     the handler, a front-run that moved the price would fail it after the
+//     ante had spent the input notes, and the released value would be stuck
+//     in the pool with no note for it;
+//   - one paying its fee from its output (FeeFromOutputMsg). The fee does not
+//     exist until the action has run, and must not depend on a handler that
+//     could fail after the notes are spent.
+//
+// ExecutePrivateAction must pay msg's fee from output, if any, in full with
+// keeper.PayFeeFromModule (the ante checks it was), and returns what the msg's
+// handler reports (keeper.AuthorizedResult). The handler must then do nothing
+// but return it.
+//
+// The price of atomicity: a tx whose action fails in DeliverTx (after
+// passing CheckTx, because the state moved in between) fails in the ante and
+// pays no fee, as any SDK tx failing its ante in DeliverTx does. It spends
+// nothing either. max_private_txs_per_block bounds how much of a block such
+// txs can take.
+type PrivateActionExecutor interface {
+	// ExecutesInAnte reports whether the ante runs msg's action.
+	ExecutesInAnte(msg PrivateMsg) bool
+	// ExecutePrivateAction runs msg's action after its transfers were spent,
+	// with what CheckPrivateAction prepared.
+	ExecutePrivateAction(ctx sdk.Context, msg PrivateMsg, prepared any) (any, error)
 }

@@ -184,20 +184,21 @@ func (k Keeper) payFee(ctx context.Context, fee math.Int) error {
 	return nil
 }
 
-// release claims t's public output (value_out of denom_out) for payment.
+// release claims t's public output (value_out of denom_out, less any fee
+// the ante withheld from it) for payment.
 func (k Keeper) release(ctx context.Context, t *types.Transfer) (sdk.Coin, error) {
-	a, err := authorizedFor(ctx, t)
+	_, at, err := authorizedFor(ctx, t)
 	if err != nil {
 		return sdk.Coin{}, err
 	}
 	if t.ValueOut == 0 {
 		return sdk.Coin{}, errorsmod.Wrap(types.ErrInvalidTransfer, "transfer releases nothing")
 	}
-	if a.released {
+	if at.released {
 		return sdk.Coin{}, types.ErrAlreadyReleased
 	}
-	a.released = true
-	return sdk.NewCoin(t.DenomOut, math.NewIntFromUint64(t.ValueOut)), nil
+	at.released = true
+	return sdk.NewCoin(t.DenomOut, math.NewIntFromUint64(t.ValueOut-at.withheld)), nil
 }
 
 // Unshield pays an authorized transfer's value_out to receiver.

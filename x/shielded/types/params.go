@@ -93,6 +93,12 @@ func (p Params) Validate() error {
 
 // PrivateMsgGas is the fixed gas a private msg carrying one transfer pays
 // before any of its work: the proof, three nullifiers and three commitments.
+// A msg spending n transfers pays it n times (PrivateMsgGasFor).
 func (p Params) PrivateMsgGas() uint64 {
 	return p.ProofVerificationGas + 2*TransferArity*p.NoteGas
+}
+
+// PrivateMsgGasFor is PrivateMsgGas for a msg spending n transfers.
+func (p Params) PrivateMsgGasFor(n int) uint64 {
+	return uint64(n) * p.PrivateMsgGas()
 }

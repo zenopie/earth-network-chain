@@ -9,6 +9,7 @@ import (
 	"cosmossdk.io/math"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 
 	"github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/privacy"
@@ -22,49 +23,65 @@ import (
 
 // PreparedPrivateMsg is what CheckPrivateMsg derived for verification.
 type PreparedPrivateMsg struct {
-	Msg      types.PrivateMsg
-	AssetPub fr.Element
-	Signal   fr.Element
+	Msg       types.PrivateMsg
+	Transfers []*types.Transfer
+	// AssetPubs[i] is Transfers[i]'s asset_pub.
+	AssetPubs []fr.Element
+	Signal    fr.Element
 }
 
 // CheckPrivateMsg runs every stateful check on a private msg that can be run
-// before its proof: the anchor, the nullifiers, the asset, the room left in
-// the tree and, for an unshield, whether the bank would pay the receiver.
-// Anything that could make the msg fail after the ante spends its inputs is
-// refused here instead.
+// before its proofs, for each of its transfers: the anchor, the nullifiers,
+// the asset, the room left in the tree and, for an unshield, whether the bank
+// would pay the receiver. Anything that could make the msg fail after the
+// ante spends its inputs is refused here instead.
 func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (PreparedPrivateMsg, error) {
-	t := msg.PrivateTransfer()
-	if err := k.checkPrivateAnchor(ctx, msg, t.Root); err != nil {
-		return PreparedPrivateMsg{}, err
-	}
-	for _, nf := range t.Nullifiers {
-		spent, err := k.Nullifiers.Has(ctx, nf)
+	ts := types.TransfersOf(msg)
+	p := PreparedPrivateMsg{Msg: msg, Transfers: ts}
+	for i, t := range ts {
+		// Only the primary transfer may be vouched for outside the window
+		// (a stake vote's snapshot root); any other (the fee transfer paying
+		// for it) spends against a current root.
+		var err error
+		if i == 0 {
+			err = k.checkPrivateAnchor(ctx, msg, t.Root)
+		} else {
+			err = k.checkAnchor(ctx, t.Root)
+		}
 		if err != nil {
 			return PreparedPrivateMsg{}, err
 		}
-		if spent {
-			return PreparedPrivateMsg{}, types.ErrNullifierSpent.Wrapf("%X", nf)
+		for _, nf := range t.Nullifiers {
+			spent, err := k.Nullifiers.Has(ctx, nf)
+			if err != nil {
+				return PreparedPrivateMsg{}, err
+			}
+			if spent {
+				return PreparedPrivateMsg{}, types.ErrNullifierSpent.Wrapf("%X", nf)
+			}
 		}
+		var assetPub fr.Element // 0 unless value leaves the pool
+		if t.ValueOut > 0 {
+			id, err := k.AssetID(ctx, t.DenomOut)
+			if err != nil {
+				return PreparedPrivateMsg{}, err
+			}
+			if assetPub, err = privacy.FieldFromBytes(id); err != nil {
+				return PreparedPrivateMsg{}, err
+			}
+		}
+		p.AssetPubs = append(p.AssetPubs, assetPub)
 	}
-	var assetPub fr.Element // 0 unless value leaves the pool
-	if t.ValueOut > 0 {
-		id, err := k.AssetID(ctx, t.DenomOut)
-		if err != nil {
-			return PreparedPrivateMsg{}, err
-		}
-		if assetPub, err = privacy.FieldFromBytes(id); err != nil {
-			return PreparedPrivateMsg{}, err
-		}
-	}
-	if err := k.checkCapacity(ctx, types.TransferArity); err != nil {
+	// Every transfer's outputs, plus a note the action may mint.
+	if err := k.checkCapacity(ctx, uint64(types.TransferArity*len(ts)+1)); err != nil {
 		return PreparedPrivateMsg{}, err
 	}
-	if m, ok := msg.(*types.MsgTransfer); ok && t.ValueOut > 0 {
+	if m, ok := msg.(*types.MsgTransfer); ok && m.Transfer.ValueOut > 0 {
 		recv, err := m.ReceiverBytes(k.addressCodec)
 		if err != nil {
 			return PreparedPrivateMsg{}, err
 		}
-		coin := sdk.NewCoin(t.DenomOut, math.NewIntFromUint64(t.ValueOut))
+		coin := sdk.NewCoin(m.Transfer.DenomOut, math.NewIntFromUint64(m.Transfer.ValueOut-m.FeeFromOutput))
 		if err := k.checkUnshield(ctx, coin, recv); err != nil {
 			return PreparedPrivateMsg{}, err
 		}
@@ -73,7 +90,8 @@ func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (Prep
 	if err != nil {
 		return PreparedPrivateMsg{}, err
 	}
-	return PreparedPrivateMsg{Msg: msg, AssetPub: assetPub, Signal: signal}, nil
+	p.Signal = signal
+	return p, nil
 }
 
 // checkPrivateAnchor is checkAnchor, except that a msg whose action handler
@@ -102,9 +120,9 @@ func (k Keeper) checkPrivateAnchor(ctx context.Context, msg types.PrivateMsg, ro
 	return nil
 }
 
-// VerifyPrivateMsg verifies the transfer proof against the public inputs the
-// chain computed: the msg's own fields, asset_pub from the registry and the
-// signal from the msg.
+// VerifyPrivateMsg verifies each transfer's proof against the public inputs
+// the chain computed: the transfer's own fields, its asset_pub from the
+// registry and the msg's one signal.
 func (k Keeper) VerifyPrivateMsg(ctx context.Context, p PreparedPrivateMsg) error {
 	params, err := k.Params.Get(ctx)
 	if err != nil {
@@ -114,30 +132,86 @@ func (k Keeper) VerifyPrivateMsg(ctx context.Context, p PreparedPrivateMsg) erro
 	if len(vk) == 0 {
 		return types.ErrMissingVerifyingKey.Wrap(types.CircuitTransfer)
 	}
-	t := p.Msg.PrivateTransfer()
-	ok, err := ultrahonk.Verify(vk, t.Proof, t.PublicInputs(p.AssetPub, p.Signal))
-	if err != nil {
-		return errorsmod.Wrap(types.ErrInvalidProof, err.Error())
-	}
-	if !ok {
-		return types.ErrInvalidProof
+	for i, t := range p.Transfers {
+		ok, err := ultrahonk.Verify(vk, t.Proof, t.PublicInputs(p.AssetPubs[i], p.Signal))
+		if err != nil {
+			return errorsmod.Wrapf(types.ErrInvalidProof, "transfer %d: %s", i, err.Error())
+		}
+		if !ok {
+			return types.ErrInvalidProof.Wrapf("transfer %d", i)
+		}
 	}
 	return nil
 }
 
-// ExecutePrivateMsg spends the transfer's nullifiers, appends its outputs and
-// pays its fee, and returns ctx carrying the authorization the msg's handler
-// requires.
+// ExecutePrivateMsg spends every transfer's nullifiers, appends its outputs
+// and pays its fee, and returns ctx carrying the authorization the msg's
+// handler requires. An unshield paying its fee from its output pays it here,
+// out of the uerth leaving the pool; the receiver is paid the rest.
 func (k Keeper) ExecutePrivateMsg(ctx sdk.Context, msg types.PrivateMsg) (sdk.Context, error) {
-	t := msg.PrivateTransfer()
-	positions, err := k.executeTransfer(ctx, t)
+	ts := types.TransfersOf(msg)
+	positions := make([][]uint64, len(ts))
+	for i, t := range ts {
+		pos, err := k.executeTransfer(ctx, t)
+		if err != nil {
+			return ctx, err
+		}
+		positions[i] = pos
+		if t.Fee > 0 {
+			if err := k.payFee(ctx, t.FeeInt()); err != nil {
+				return ctx, err
+			}
+		}
+	}
+	ctx = WithAuthorizedTransfers(ctx, ts, positions, types.FeeFromOutputOf(msg))
+	if m, ok := msg.(*types.MsgTransfer); ok && m.FeeFromOutput > 0 {
+		if err := k.withholdFee(ctx, &m.Transfer, m.FeeFromOutput); err != nil {
+			return ctx, err
+		}
+	}
+	return ctx, nil
+}
+
+// withholdFee pays fee out of t's released uerth, before the handler pays the
+// rest of it out.
+func (k Keeper) withholdFee(ctx sdk.Context, t *types.Transfer, fee uint64) error {
+	a, at, err := authorizedFor(ctx, t)
 	if err != nil {
-		return ctx, err
+		return err
 	}
-	if err := k.payFee(ctx, t.FeeInt()); err != nil {
-		return ctx, err
+	if t.DenomOut != types.FeeDenom || at.value <= fee {
+		return errorsmod.Wrap(types.ErrInvalidTransfer, "fee from output exceeds the unshield")
 	}
-	return WithAuthorizedTransfer(ctx, t, positions), nil
+	if err := k.payFee(ctx, math.NewIntFromUint64(fee)); err != nil {
+		return err
+	}
+	at.withheld += fee
+	a.feePaid += fee
+	return nil
+}
+
+// ExecutePrivateAction runs msg's action in the ante, if its handler asks to
+// (types.PrivateActionExecutor), and then requires the msg's fee from output,
+// if any, paid in full. ctx must carry the authorization ExecutePrivateMsg
+// made and the action's prepared value.
+func (k Keeper) ExecutePrivateAction(ctx sdk.Context, msg types.PrivateMsg, prepared any) error {
+	if h, ok := k.PrivateAction(msg); ok {
+		if ex, ok := h.(types.PrivateActionExecutor); ok && ex.ExecutesInAnte(msg) {
+			result, err := ex.ExecutePrivateAction(ctx, msg, prepared)
+			if err != nil {
+				return err
+			}
+			withExecutedAction(ctx, result)
+		}
+	}
+	a, ok := authorizationOf(ctx)
+	if !ok {
+		return types.ErrUnauthorized
+	}
+	if a.feePaid != a.feeFromOutput {
+		return errorsmod.Wrapf(sdkerrors.ErrInsufficientFee, "fee from output: %d%s owed, %d paid", a.feeFromOutput, types.FeeDenom, a.feePaid)
+	}
+	return nil
 }
 
 // CountPrivateTx admits one more private tx into the current block, or

@@ -33,8 +33,133 @@ type PrivateMsg interface {
 	Signal(chainID string, ac address.Codec) (fr.Element, error)
 }
 
+// MultiTransferMsg is a PrivateMsg that spends more than one transfer in one
+// tx: a stake vote proven against an old root plus a transfer paying its fee
+// from a current one, or a pool deposit of two assets. PrivateTransfers lists
+// every transfer, PrivateTransfer first. The private ante treats each as it
+// treats a single transfer (anchor, nullifiers, proof, spend, append, fee),
+// and every proof binds the msg's one Signal, which must bind every
+// transfer's nullifiers (MultiSignal) so no transfer can be lifted out of the
+// msg and paired with another.
+type MultiTransferMsg interface {
+	PrivateMsg
+	PrivateTransfers() []*Transfer
+}
+
+// FeeFromOutputMsg is a PrivateMsg that may pay its fee out of the uerth its
+// action produces (an unshield of uerth, an unbonding claim, a swap into
+// uerth) instead of from a fee note. OutputFee is that fee, the msg's
+// fee_from_output field, bound by the signal; when it is positive every
+// transfer's own fee is 0. 0 means the fee is paid by the transfers as usual.
+//
+// The private ante charges it exactly like a transfer fee (the same floor,
+// the same min gas price) and requires it paid, in full, before it writes
+// anything: by the pool for an unshield, or by the action, which the ante
+// then runs itself (PrivateActionExecutor) and which pays it with
+// keeper.PayFeeFromModule.
+type FeeFromOutputMsg interface {
+	PrivateMsg
+	OutputFee() uint64
+}
+
+// TransfersOf is every transfer msg spends, its PrivateTransfer first.
+func TransfersOf(msg PrivateMsg) []*Transfer {
+	if m, ok := msg.(MultiTransferMsg); ok {
+		return m.PrivateTransfers()
+	}
+	return []*Transfer{msg.PrivateTransfer()}
+}
+
+// FeeFromOutputOf is msg's fee paid from its output, 0 for a msg that cannot
+// pay that way.
+func FeeFromOutputOf(msg PrivateMsg) uint64 {
+	if m, ok := msg.(FeeFromOutputMsg); ok {
+		return m.OutputFee()
+	}
+	return 0
+}
+
+// TotalFee is the whole fee msg's tx pays: every transfer's fee plus the fee
+// from output. It is what AuthInfo.Fee must declare and what the ante holds
+// to the fee floor and the min gas price.
+func TotalFee(msg PrivateMsg) math.Int {
+	total := math.NewIntFromUint64(FeeFromOutputOf(msg))
+	for _, t := range TransfersOf(msg) {
+		total = total.Add(t.FeeInt())
+	}
+	return total
+}
+
+// ValidateTransfers checks a private msg's transfers together: each one's
+// ValidateBasic, nullifiers distinct across all of them, and, when the msg
+// pays its fee from its output, no transfer paying a fee too.
+func ValidateTransfers(msg PrivateMsg) error {
+	ts := TransfersOf(msg)
+	if len(ts) == 0 || len(ts) > MaxTransfersPerMsg {
+		return errorsmod.Wrapf(ErrInvalidTransfer, "a private msg spends 1..%d transfers", MaxTransfersPerMsg)
+	}
+	seen := map[string]bool{}
+	for i, t := range ts {
+		if t == nil {
+			return errorsmod.Wrapf(ErrInvalidTransfer, "transfer %d missing", i)
+		}
+		if err := t.ValidateBasic(); err != nil {
+			return errorsmod.Wrapf(err, "transfer %d", i)
+		}
+		for _, nf := range t.Nullifiers {
+			if seen[string(nf)] {
+				return errorsmod.Wrap(ErrInvalidTransfer, "duplicate nullifier across transfers")
+			}
+			seen[string(nf)] = true
+		}
+	}
+	if FeeFromOutputOf(msg) > 0 {
+		for i, t := range ts {
+			if t.Fee != 0 {
+				return errorsmod.Wrapf(ErrInvalidTransfer, "transfer %d pays a fee; a msg paying its fee from its output pays no other", i)
+			}
+		}
+	}
+	return nil
+}
+
+// NullifierFields is t's nullifiers as field elements. Call after
+// ValidateBasic.
+func (t *Transfer) NullifierFields() ([TransferArity]fr.Element, error) {
+	var nfs [TransferArity]fr.Element
+	for i := range TransferArity {
+		nf, err := privacy.FieldFromBytes(t.Nullifiers[i])
+		if err != nil {
+			return nfs, errorsmod.Wrapf(ErrInvalidTransfer, "nullifier %d: %v", i, err)
+		}
+		nfs[i] = nf
+	}
+	return nfs, nil
+}
+
+// MultiSignal is the signal every proof of a MultiTransferMsg binds:
+// zk/privacy.MultiSpendSignal over each transfer's ciphertexts and
+// nullifiers, in order, then the msg's own fields. Call after ValidateBasic.
+func MultiSignal(msgType, chainID string, ts []*Transfer, extra ...fr.Element) (fr.Element, error) {
+	cts := make([][TransferArity][]byte, len(ts))
+	nfs := make([][TransferArity]fr.Element, len(ts))
+	for i, t := range ts {
+		if len(t.Ciphertexts) != TransferArity || len(t.Nullifiers) != TransferArity {
+			return fr.Element{}, errorsmod.Wrapf(ErrInvalidTransfer, "transfer %d is malformed", i)
+		}
+		cts[i] = t.Ciphertexts3()
+		nf, err := t.NullifierFields()
+		if err != nil {
+			return fr.Element{}, err
+		}
+		nfs[i] = nf
+	}
+	return privacy.MultiSpendSignal(msgType, chainID, cts, nfs, extra...), nil
+}
+
 var (
-	_ PrivateMsg = (*MsgTransfer)(nil)
+	_ PrivateMsg       = (*MsgTransfer)(nil)
+	_ FeeFromOutputMsg = (*MsgTransfer)(nil)
 
 	_ sdk.HasValidateBasic = (*MsgTransfer)(nil)
 	_ sdk.HasValidateBasic = (*MsgShield)(nil)
@@ -131,25 +256,36 @@ func (m *MsgTransfer) ReceiverBytes(ac address.Codec) ([]byte, error) {
 }
 
 // Signal implements PrivateMsg: zk/privacy.TransferSignal over the receiver's
-// raw address bytes (empty when not unshielding) and the three ciphertexts.
+// raw address bytes (empty when not unshielding), the three ciphertexts and
+// fee_from_output.
 func (m *MsgTransfer) Signal(chainID string, ac address.Codec) (fr.Element, error) {
 	recv, err := m.ReceiverBytes(ac)
 	if err != nil {
 		return fr.Element{}, err
 	}
-	return privacy.TransferSignal(chainID, recv, m.Transfer.Ciphertexts3()), nil
+	return privacy.TransferSignal(chainID, recv, m.Transfer.Ciphertexts3(), m.FeeFromOutput), nil
 }
 
 // ValidateBasic runs in baseapp before the ante.
 func (m *MsgTransfer) ValidateBasic() error {
-	if err := m.Transfer.ValidateBasic(); err != nil {
+	if err := ValidateTransfers(m); err != nil {
 		return err
 	}
 	if (m.Transfer.ValueOut == 0) != (m.Receiver == "") {
 		return errorsmod.Wrap(ErrInvalidTransfer, "receiver must be set exactly when value_out > 0")
 	}
+	if m.FeeFromOutput > 0 {
+		// The fee comes out of the uerth leaving the pool, and something must
+		// be left for the receiver.
+		if m.Transfer.DenomOut != FeeDenom || m.Transfer.ValueOut <= m.FeeFromOutput {
+			return errorsmod.Wrapf(ErrInvalidTransfer, "fee_from_output needs an unshield of more than %d%s", m.FeeFromOutput, FeeDenom)
+		}
+	}
 	return nil
 }
+
+// OutputFee implements FeeFromOutputMsg.
+func (m *MsgTransfer) OutputFee() uint64 { return m.FeeFromOutput }
 
 // ValidateBasic checks a shield needs no state to refuse.
 func (m *MsgShield) ValidateBasic() error {

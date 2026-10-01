@@ -79,16 +79,40 @@ func TestBytesDistinguishesLengthAndChunks(t *testing.T) {
 func TestTransferSignalBindsEveryField(t *testing.T) {
 	cts := [3][]byte{[]byte("a"), []byte("b"), []byte("c")}
 	recv := []byte("receiver-address-20b")
-	base := TransferSignal("earth-1", recv, cts)
-	if base != SpendSignal(MsgTransferType, "earth-1", cts, Bytes(recv)) {
-		t.Fatal("TransferSignal != SpendSignal(MsgTransfer, ..., Bytes(receiver))")
+	base := TransferSignal("earth-1", recv, cts, 0)
+	if base != SpendSignal(MsgTransferType, "earth-1", cts, Bytes(recv), U64(0)) {
+		t.Fatal("TransferSignal != SpendSignal(MsgTransfer, ..., Bytes(receiver), fee_from_output)")
 	}
 	alt := []fr.Element{
-		TransferSignal("earth-2", recv, cts),
-		TransferSignal("earth-1", nil, cts),
-		TransferSignal("earth-1", recv, [3][]byte{[]byte("b"), []byte("a"), []byte("c")}),
-		TransferSignal("earth-1", recv, [3][]byte{[]byte("a"), []byte("b"), []byte("d")}),
-		SpendSignal("/earth.shielded.v1.MsgOther", "earth-1", cts, Bytes(recv)),
+		TransferSignal("earth-2", recv, cts, 0),
+		TransferSignal("earth-1", nil, cts, 0),
+		TransferSignal("earth-1", recv, [3][]byte{[]byte("b"), []byte("a"), []byte("c")}, 0),
+		TransferSignal("earth-1", recv, [3][]byte{[]byte("a"), []byte("b"), []byte("d")}, 0),
+		TransferSignal("earth-1", recv, cts, 1),
+		SpendSignal("/earth.shielded.v1.MsgOther", "earth-1", cts, Bytes(recv), U64(0)),
+	}
+	for i, a := range alt {
+		if a == base {
+			t.Fatalf("variant %d has the same signal", i)
+		}
+	}
+}
+
+func TestMultiSpendSignalBindsEveryTransfer(t *testing.T) {
+	cts := [][3][]byte{{[]byte("a"), []byte("b"), []byte("c")}, {[]byte("d"), []byte("e"), []byte("f")}}
+	nfs := [][3]fr.Element{{U64(1), U64(2), U64(3)}, {U64(4), U64(5), U64(6)}}
+	base := MultiSpendSignal("/m", "earth-1", cts, nfs, U64(7))
+	swappedNf := [][3]fr.Element{nfs[0], {U64(4), U64(5), U64(9)}}
+	swappedCt := [][3][]byte{cts[0], {[]byte("d"), []byte("e"), []byte("g")}}
+	reordered := [][3][]byte{cts[1], cts[0]}
+	reorderedNf := [][3]fr.Element{nfs[1], nfs[0]}
+	alt := []fr.Element{
+		MultiSpendSignal("/m", "earth-1", cts, swappedNf, U64(7)),
+		MultiSpendSignal("/m", "earth-1", swappedCt, nfs, U64(7)),
+		MultiSpendSignal("/m", "earth-1", reordered, reorderedNf, U64(7)),
+		MultiSpendSignal("/m", "earth-1", cts, nfs, U64(8)),
+		MultiSpendSignal("/n", "earth-1", cts, nfs, U64(7)),
+		MultiSpendSignal("/m", "earth-1", cts[:1], nfs[:1], U64(7)),
 	}
 	for i, a := range alt {
 		if a == base {

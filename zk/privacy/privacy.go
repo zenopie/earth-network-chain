@@ -165,12 +165,34 @@ func SpendSignal(msgType, chainID string, ciphertexts [3][]byte, extra ...fr.Ele
 }
 
 // TransferSignal is MsgTransfer's signal. receiver is the unshield recipient's
-// raw address bytes, empty when nothing leaves the pool:
+// raw address bytes, empty when nothing leaves the pool; feeFromOutput is the
+// msg's fee_from_output (0 unless the fee is paid out of the unshield):
 //
 //	signal = H(TAG_SIGNAL, Bytes("/earth.shielded.v1.MsgTransfer"), Bytes(chain_id),
-//	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), Bytes(receiver))
-func TransferSignal(chainID string, receiver []byte, ciphertexts [3][]byte) fr.Element {
-	return SpendSignal(MsgTransferType, chainID, ciphertexts, Bytes(receiver))
+//	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), Bytes(receiver), fee_from_output)
+func TransferSignal(chainID string, receiver []byte, ciphertexts [3][]byte, feeFromOutput uint64) fr.Element {
+	return SpendSignal(MsgTransferType, chainID, ciphertexts, Bytes(receiver), U64(feeFromOutput))
+}
+
+// MultiSpendSignal is Signal for a private msg spending several transfers
+// (x/shielded's MultiTransferMsg). Every transfer's proof binds this one
+// value, which binds every transfer's ciphertexts and then every transfer's
+// nullifiers, in the msg's order, before the msg's own fields: a transfer can
+// be spent once, so none of them can be paired with any other transfer or
+// lifted into another msg.
+//
+//	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id),
+//	           Bytes(ct_00), Bytes(ct_01), Bytes(ct_02), Bytes(ct_10), ...,
+//	           nf_00, nf_01, nf_02, nf_10, ..., extra...)
+func MultiSpendSignal(msgType, chainID string, ciphertexts [][3][]byte, nullifiers [][3]fr.Element, extra ...fr.Element) fr.Element {
+	f := make([]fr.Element, 0, 6*len(ciphertexts)+len(extra))
+	for _, cts := range ciphertexts {
+		f = append(f, Bytes(cts[0]), Bytes(cts[1]), Bytes(cts[2]))
+	}
+	for _, nfs := range nullifiers {
+		f = append(f, nfs[:]...)
+	}
+	return Signal(msgType, chainID, append(f, extra...)...)
 }
 
 // ActionSignal is Signal for a private msg that pays its fee with a transfer

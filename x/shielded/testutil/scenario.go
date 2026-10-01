@@ -179,7 +179,7 @@ func (sp Spend) Nullifiers() [3]fr.Element {
 
 // Signal is MsgTransfer's signal for this spend on ChainID.
 func (sp Spend) Signal() fr.Element {
-	return privacy.TransferSignal(ChainID, sp.Receiver, sp.Ciphertexts)
+	return privacy.TransferSignal(ChainID, sp.Receiver, sp.Ciphertexts, 0)
 }
 
 // DenomOut is the unshielded denom, "" when nothing leaves the pool.

@@ -476,7 +476,7 @@ func TestShieldedPrivateTxShape(t *testing.T) {
 	// Declared fee differs from the proof's.
 	lie := e.fee(25_000)
 	res := e.checkTx(e.privateTx(shPrivateGas, &lie, t0))
-	require.Contains(t, res.Log, "must equal the proof's fee")
+	require.Contains(t, res.Log, "must equal the msg's fee")
 
 	// Below the node's min gas price: refused in CheckTx (gas 5M x 0.005 =
 	// 25,000 > 20,000). The node price is local; only min_fee is consensus.

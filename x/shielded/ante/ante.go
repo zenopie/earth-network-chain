@@ -11,8 +11,17 @@
 //	SetUpContext, LimitSimulationGas, CircuitBreaker  (as the normal chain)
 //	ValidateTx        tx shape; fee == the transfer's fee, in uerth
 //	TxTimeoutHeight, ValidateMemo, ConsumeGasForTxSize  (as the normal chain)
-//	PrivateMsg        fixed gas; block cap; state checks; proof;
-//	                  spend + append; fee floor; fee to fee_collector
+//	PrivateMsg        fixed gas; block cap; state checks; proofs;
+//	                  spend + append; fee floor; fee to fee_collector;
+//	                  an action that must be atomic with the spend, and a
+//	                  fee paid from that action's output
+//
+// A msg may spend more than one transfer (types.MultiTransferMsg: a stake
+// vote and the transfer paying its fee); each is checked, proven and executed
+// as a single one is, and the fee is their sum. A msg may instead pay its fee
+// out of the uerth its action produces (types.FeeFromOutputMsg); that fee is
+// held to the same floor, and the ante refuses the tx unless it was paid in
+// full before the ante returns.
 //
 // A msg of another module may carry an action beyond its transfer (see
 // types.PrivateActionHandler); its checks and proofs run in the same pass,
@@ -120,10 +129,13 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 	if !declared.IsValid() && !declared.Empty() {
 		return ctx, errorsmod.Wrapf(sdkerrors.ErrInsufficientFee, "invalid fee %s", declared)
 	}
-	t := tx.GetMsgs()[0].(types.PrivateMsg).PrivateTransfer()
-	want := sdk.NewCoins(sdk.NewCoin(types.FeeDenom, t.FeeInt()))
+	msg := tx.GetMsgs()[0].(types.PrivateMsg)
+	if err := types.ValidateTransfers(msg); err != nil {
+		return ctx, err
+	}
+	want := sdk.NewCoins(sdk.NewCoin(types.FeeDenom, types.TotalFee(msg)))
 	if !declared.Equal(want) {
-		return ctx, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "tx fee %s must equal the proof's fee %s", declared, want)
+		return ctx, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "tx fee %s must equal the msg's fee %s", declared, want)
 	}
 	return next(ctx, tx, simulate)
 }
@@ -143,7 +155,9 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 //     its final fee);
 //  6. spend the nullifiers, append the outputs, pay the fee to
 //     fee_collector (where x/earth burns half), and authorize the msg and
-//     its action.
+//     its action;
+//  7. run the action here if its handler must be atomic with the spend
+//     (types.PrivateActionExecutor), and require any fee from output paid.
 type PrivateMsgDecorator struct {
 	K keeper.Keeper
 }
@@ -154,7 +168,7 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	if err != nil {
 		return ctx, err
 	}
-	ctx.GasMeter().ConsumeGas(params.PrivateMsgGas(), "shielded: private msg (proof, nullifiers, notes)")
+	ctx.GasMeter().ConsumeGas(params.PrivateMsgGasFor(len(types.TransfersOf(msg))), "shielded: private msg (proofs, nullifiers, notes)")
 	action, hasAction := d.K.PrivateAction(msg)
 	if hasAction {
 		g, err := action.PrivateActionGas(ctx, msg)
@@ -177,7 +191,9 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	if !ok {
 		return ctx, errorsmod.Wrap(sdkerrors.ErrTxDecode, "tx is not a FeeTx")
 	}
-	amt := msg.PrivateTransfer().FeeInt()
+	// The whole fee: every transfer's, plus what the msg pays from its
+	// output. Held to the same floor and price whichever pays it.
+	amt := types.TotalFee(msg)
 	minFee, err := d.K.MinFee(pool)
 	if err != nil {
 		return ctx, err
@@ -224,6 +240,12 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	}
 	if hasAction {
 		pool = keeper.WithAuthorizedAction(pool, actionPrepared)
+	}
+	// An action that must be atomic with the spend runs here, and a fee from
+	// output must now be paid in full; either failing fails the whole ante,
+	// so nothing above is written.
+	if err := d.K.ExecutePrivateAction(pool, msg, actionPrepared); err != nil {
+		return ctx, err
 	}
 	// Carry the authorization, not the infinite meter, into the msg.
 	ctx = keeper.CarryAuthorization(ctx, pool)
