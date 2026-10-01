@@ -13,22 +13,22 @@ import (
 // (x/personhood/testdata/passports/<Name>) is bound to Binding().
 type Registration struct {
 	Name     string
-	Human    string // owner of the wallet (nk) the notes and affiliate pc belong to
+	Human    string // owner of the wallet (nk) the notes belong to
 	Secret   uint64 // which of the human's identity secrets
 	Doc      string // MRZ document number: same doc, same passport nullifier
 	Date     string // the proof's current_date, YYMMDD
-	Referrer string // human whose affiliate pc is named, "" for none
+	Referrer string // human whose referral address is named, "" for none
 }
 
 // Registrations are the passport fixtures the app tests use, by name.
 var Registrations = map[string]Registration{
 	"A1": {Name: "A1", Human: "A", Secret: 1, Doc: "L898902C3", Date: "250101"},
-	"B":  {Name: "B", Human: "B", Secret: 1, Doc: "X12345678", Date: "250101", Referrer: "A"},
+	"B":  {Name: "B", Human: "B", Secret: 1, Doc: "X12345678", Date: "250101"},
 	"C1": {Name: "C1", Human: "C", Secret: 1, Doc: "Y87654321", Date: "250101"},
 	// A switches to a new identity secret, same passport, two days in.
 	"A2": {Name: "A2", Human: "A", Secret: 2, Doc: "L898902C3", Date: "250103"},
-	// C's registration lapses and C re-enters, four days in.
-	"C2": {Name: "C2", Human: "C", Secret: 2, Doc: "Y87654321", Date: "250105"},
+	// C's registration lapses and C re-enters, four days in, referred by A.
+	"C2": {Name: "C2", Human: "C", Secret: 2, Doc: "Y87654321", Date: "250105", Referrer: "A"},
 }
 
 // RegistrationNames lists Registrations in a stable order.
@@ -62,20 +62,24 @@ func (r Registration) AnmlNote() Note { return r.note("anml", "uanml", 1_000_000
 // paid).
 func (r Registration) ErthPC() fr.Element { return r.note("erth", "uerth", 0).PC() }
 
-// AffiliatePC is a human's published referral pc.
-func AffiliatePC(human string) fr.Element {
-	return privacy.PC(privacy.OwnerPK(WalletNK(human)), Det("aff/"+human+"/rho", 0), Det("aff/"+human+"/rcm", 0))
+// ReferralAddress is the account a human binds as their referral address
+// (raw bytes; bech32 it with the chain's codec).
+func ReferralAddress(human string) []byte {
+	d := Det("referral/"+human, 0)
+	b := d.Bytes()
+	return b[:20]
 }
 
-// ReferrerPC is the affiliate pc r names, 0 for none.
-func (r Registration) ReferrerPC() fr.Element {
+// ReferrerField is the affiliate r names, as the binding carries it:
+// Bytes(address bytes), 0 for none (types.AffiliateField).
+func (r Registration) ReferrerField() fr.Element {
 	if r.Referrer == "" {
 		return fr.Element{}
 	}
-	return AffiliatePC(r.Referrer)
+	return privacy.Bytes(ReferralAddress(r.Referrer))
 }
 
 // Binding is the passport proof's address input.
 func (r Registration) Binding() fr.Element {
-	return privacy.RegistrationBinding(r.IDC(), r.AnmlNote().PC(), r.ErthPC(), r.ReferrerPC())
+	return privacy.RegistrationBinding(r.IDC(), r.AnmlNote().PC(), r.ErthPC(), r.ReferrerField())
 }

@@ -273,6 +273,8 @@ func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f personhoodtes
 		x.Membership = mem
 	case *personhoodtypes.MsgSetCaretaker:
 		x.Membership = mem
+	case *personhoodtypes.MsgBindReferrer:
+		x.Membership = mem
 	case *assemblytypes.MsgVoteProposal:
 		x.Membership = mem
 	case *assemblytypes.MsgProposeRemoval:
@@ -305,8 +307,7 @@ func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {
 		PcErth: privacy.FieldBytes(r.ErthPC()), CiphertextErth: ct(name, 11),
 	}
 	if r.Referrer != "" {
-		msg.AffiliatePc = privacy.FieldBytes(r.ReferrerPC())
-		msg.AffiliateCiphertext = ct(name, 12)
+		msg.Affiliate = e.bech(personhoodtest.ReferralAddress(r.Referrer))
 	}
 	e.prove("register/"+name, msg, f, nil)
 	return msg
@@ -337,6 +338,27 @@ func (e *phEnv) caretaker(name, reg string, maxAct int64, split []allocationtype
 	msg := &personhoodtypes.MsgSetCaretaker{Fee: e.transfer(f), Percentages: split, MaxActivation: uint64(maxAct)}
 	e.prove("caretaker/"+name, msg, f, &member{reg: reg, scope: privacy.CaretakerScope(), maxAct: maxAct})
 	return msg
+}
+
+// bindReferrer binds human's referral address (or clears, human "") as
+// registration reg.
+func (e *phEnv) bindReferrer(name, reg, human string, maxAct int64) *personhoodtypes.MsgBindReferrer {
+	e.t.Helper()
+	f := e.feeFor("referrer/" + name)
+	msg := &personhoodtypes.MsgBindReferrer{Fee: e.transfer(f), MaxActivation: uint64(maxAct)}
+	if human != "" {
+		msg.Address = e.bech(personhoodtest.ReferralAddress(human))
+	}
+	e.prove("referrer/"+name, msg, f, &member{reg: reg, scope: privacy.ReferrerScope(), maxAct: maxAct})
+	return msg
+}
+
+func (e *phEnv) referrerLive(human string) bool {
+	e.t.Helper()
+	res, err := personhoodkeeper.NewQueryServerImpl(e.app.PersonhoodKeeper).Referrer(e.ctx(),
+		&personhoodtypes.QueryReferrerRequest{Address: e.bech(personhoodtest.ReferralAddress(human))})
+	require.NoError(e.t, err)
+	return res.Live
 }
 
 func (e *phEnv) ballotInputs(req *assemblytypes.QueryBallotInputsRequest) *assemblytypes.QueryBallotInputsResponse {
@@ -495,12 +517,8 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, spent)
 
-	// B, referred by A: the referrer's half goes to A's affiliate pc. C1.
-	fb = e.mustDeliver(e.register("B"))
-	regEv = eventsOf(fb.TxResults[0].Events, "register")[0]
-	rewardB, _ := math.NewIntFromString(regEv["reward"])
-	require.True(t, hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), rewardB.Uint64(), personhoodtest.AffiliatePC("A"))),
-		"referrer's half to A's affiliate pc")
+	// B and C1.
+	e.mustDeliver(e.register("B"))
 	e.mustDeliver(e.register("C1"))
 	cnt, err := k.RegCount.Get(ctxNow())
 	require.NoError(t, err)
@@ -604,6 +622,14 @@ func TestPrivatePersonhood(t *testing.T) {
 	caretakerExpiry := e.now.Unix() + phDay
 	_ = d1
 
+	// A binds a referral address under the same activation rule. C1 cannot
+	// take an address A holds.
+	maxAct := e.now.Unix()/3600*3600 - phDay - 3600
+	e.mustDeliver(e.bindReferrer("A1", "A1", "A", maxAct))
+	require.True(t, e.referrerLive("A"))
+	res = e.checkTx(e.tx(e.bindReferrer("C1-taken", "C1", "A", maxAct)))
+	require.Equal(t, personhoodtypes.ErrReferrerBound.ABCICode(), res.Code, res.Log)
+
 	// A removal ballot on groundworks option 1, opened and voted anonymously
 	// (opening needs an identity activated before today began).
 	e.mustDeliver(e.proposeRemoval("A", "A1", 1))
@@ -673,16 +699,39 @@ func TestPrivatePersonhood(t *testing.T) {
 
 	// ---------------------------------------------------------------- expiry
 	// C1 (and the purged B) were registered four days ago: C1 lapses and its
-	// leaf is zeroed. C re-enters with a new identity and is paid as new.
+	// leaf is zeroed. C re-enters with a new identity and is paid as new,
+	// referred by A.
 	e.at(dayStart(d4).Add(2 * time.Hour))
 	c1Index := uint64(2)
 	_, ok = e.registration("C1")
 	require.False(t, ok)
 	require.True(t, e.leaf(c1Index).IsZero())
+	// A1's binding lapsed a day after it was made and was swept: naming A is
+	// refused, before the passport proof is verified.
+	require.False(t, e.referrerLive("A"))
+	res = e.checkTx(e.tx(e.register("C2")))
+	require.Equal(t, personhoodtypes.ErrNoReferrer.ABCICode(), res.Code, res.Log)
+	// A2 (switched in on day 2) binds A's address again; C2 then pays A's
+	// half to it in transparent ERTH, and the registrant's half as a note.
+	e.mustDeliver(e.bindReferrer("A2", "A2", "A", e.now.Unix()/3600*3600-phDay-3600))
+	require.True(t, e.referrerLive("A"))
+	aAddr := sdk.AccAddress(personhoodtest.ReferralAddress("A"))
+	before := e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount
 	fb = e.mustDeliver(e.register("C2"))
 	regEv = eventsOf(fb.TxResults[0].Events, "register")[0]
 	require.Equal(t, "false", regEv["switched"])
-	require.NotEqual(t, "0", regEv["reward"])
+	rewardC2, ok := math.NewIntFromString(regEv["reward"])
+	require.True(t, ok)
+	require.True(t, rewardC2.IsPositive())
+	paid := e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount.Sub(before)
+	require.True(t, paid.IsPositive())
+	require.True(t, rewardC2.Sub(paid).Abs().LTE(math.OneInt()), "the referrer's half: %s vs %s", paid, rewardC2)
+	require.True(t, hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), rewardC2.Uint64(), personhoodtest.Registrations["C2"].ErthPC())))
+	// Rebinding the same nullifier moves the binding.
+	e.at(e.now.Add(time.Minute))
+	e.mustDeliver(e.bindReferrer("A2-move", "A2", "A-alt", e.now.Unix()/3600*3600-phDay-3600))
+	require.False(t, e.referrerLive("A"))
+	require.True(t, e.referrerLive("A-alt"))
 	cnt, _ = k.RegCount.Get(ctxNow())
 	require.Equal(t, uint64(2), cnt)
 
@@ -728,6 +777,7 @@ func TestPrivatePersonhoodBypassRefused(t *testing.T) {
 	for _, msg := range []sdk.Msg{
 		&personhoodtypes.MsgClaimAnml{Fee: tr, Membership: mem, Pc: make([]byte, 32)},
 		&personhoodtypes.MsgSetCaretaker{Fee: tr, Membership: mem},
+		&personhoodtypes.MsgBindReferrer{Fee: tr, Membership: mem},
 		&personhoodtypes.MsgRegister{Fee: tr, Proof: []byte{1}, PublicSignals: []string{"1"}, SignatureAlgorithm: "lean_poa",
 			Idc: make([]byte, 32), PcAnml: make([]byte, 32), PcErth: make([]byte, 32)},
 		&assemblytypes.MsgVoteProposal{Fee: tr, Membership: mem, ProposalId: 1, Option: assemblytypes.VOTE_OPTION_YES},

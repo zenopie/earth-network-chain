@@ -17,10 +17,12 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgRegister)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgClaimAnml)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgSetCaretaker)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgBindReferrer)(nil)
 
 	_ sdk.HasValidateBasic = (*MsgRegister)(nil)
 	_ sdk.HasValidateBasic = (*MsgClaimAnml)(nil)
 	_ sdk.HasValidateBasic = (*MsgSetCaretaker)(nil)
+	_ sdk.HasValidateBasic = (*MsgBindReferrer)(nil)
 )
 
 // MaxPublicSignals bounds a passport proof's public input count. The lean_poa
@@ -105,9 +107,25 @@ func ParseSignal(s string) (fr.Element, error) {
 // PrivateTransfer implements PrivateMsg.
 func (m *MsgRegister) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
 
+// MaxAddressBytes bounds a bech32 address string in a msg.
+const MaxAddressBytes = 128
+
+// AffiliateField is the affiliate's place in the registration binding and
+// signal: Bytes(its address bytes), or 0 for none.
+func AffiliateField(ac address.Codec, affiliate string) (fr.Element, error) {
+	if affiliate == "" {
+		return fr.Element{}, nil
+	}
+	bz, err := ac.StringToBytes(affiliate)
+	if err != nil {
+		return fr.Element{}, errorsmod.Wrapf(ErrInvalidMsg, "affiliate: %v", err)
+	}
+	return privacy.Bytes(bz), nil
+}
+
 // Binding is the value the passport proof's address input must carry:
-// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate_pc).
-func (m *MsgRegister) Binding() (fr.Element, error) {
+// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, AffiliateField).
+func (m *MsgRegister) Binding(ac address.Codec) (fr.Element, error) {
 	idc, err := Field("idc", m.Idc)
 	if err != nil {
 		return fr.Element{}, err
@@ -120,7 +138,7 @@ func (m *MsgRegister) Binding() (fr.Element, error) {
 	if err != nil {
 		return fr.Element{}, err
 	}
-	aff, err := OptionalField("affiliate_pc", m.AffiliatePc)
+	aff, err := AffiliateField(ac, m.Affiliate)
 	if err != nil {
 		return fr.Element{}, err
 	}
@@ -128,10 +146,9 @@ func (m *MsgRegister) Binding() (fr.Element, error) {
 }
 
 // Signal implements PrivateMsg. Fields: idc, pc_anml, Bytes(ciphertext_anml),
-// pc_erth, Bytes(ciphertext_erth), affiliate_pc (0 for none),
-// Bytes(affiliate_ciphertext), Bytes(signature_algorithm), then every public
-// signal in order.
-func (m *MsgRegister) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+// pc_erth, Bytes(ciphertext_erth), AffiliateField, Bytes(signature_algorithm),
+// then every public signal in order.
+func (m *MsgRegister) Signal(chainID string, ac address.Codec) (fr.Element, error) {
 	idc, err := Field("idc", m.Idc)
 	if err != nil {
 		return fr.Element{}, err
@@ -144,13 +161,13 @@ func (m *MsgRegister) Signal(chainID string, _ address.Codec) (fr.Element, error
 	if err != nil {
 		return fr.Element{}, err
 	}
-	aff, err := OptionalField("affiliate_pc", m.AffiliatePc)
+	aff, err := AffiliateField(ac, m.Affiliate)
 	if err != nil {
 		return fr.Element{}, err
 	}
 	extra := []fr.Element{
 		idc, pcAnml, privacy.Bytes(m.CiphertextAnml), pcErth, privacy.Bytes(m.CiphertextErth),
-		aff, privacy.Bytes(m.AffiliateCiphertext), privacy.Bytes([]byte(m.SignatureAlgorithm)),
+		aff, privacy.Bytes([]byte(m.SignatureAlgorithm)),
 	}
 	for _, s := range m.PublicSignals {
 		e, err := ParseSignal(s)
@@ -184,14 +201,16 @@ func (m *MsgRegister) ValidateBasic() error {
 	if len(m.DscDer) > MaxDscDerBytes {
 		return errorsmod.Wrapf(ErrInvalidMsg, "dsc_der exceeds %d bytes", MaxDscDerBytes)
 	}
-	if _, err := m.Binding(); err != nil {
-		return err
+	for what, b := range map[string][]byte{"idc": m.Idc, "pc_anml": m.PcAnml, "pc_erth": m.PcErth} {
+		if _, err := Field(what, b); err != nil {
+			return err
+		}
 	}
-	if len(m.AffiliatePc) == 0 && len(m.AffiliateCiphertext) != 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "affiliate_ciphertext without affiliate_pc")
+	if len(m.Affiliate) > MaxAddressBytes {
+		return errorsmod.Wrapf(ErrInvalidMsg, "affiliate exceeds %d bytes", MaxAddressBytes)
 	}
 	for what, ct := range map[string][]byte{
-		"ciphertext_anml": m.CiphertextAnml, "ciphertext_erth": m.CiphertextErth, "affiliate_ciphertext": m.AffiliateCiphertext,
+		"ciphertext_anml": m.CiphertextAnml, "ciphertext_erth": m.CiphertextErth,
 	} {
 		if err := checkCiphertext(what, ct); err != nil {
 			return err
@@ -256,6 +275,38 @@ func (m *MsgSetCaretaker) ValidateBasic() error {
 	}
 	if len(m.Percentages) > allocationtypes.MaxVoterOptions {
 		return errorsmod.Wrapf(ErrInvalidMsg, "split across %d options exceeds %d", len(m.Percentages), allocationtypes.MaxVoterOptions)
+	}
+	return m.Membership.ValidateBasic()
+}
+
+// --- MsgBindReferrer -----------------------------------------------------
+
+// PrivateTransfer implements PrivateMsg.
+func (m *MsgBindReferrer) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
+
+// Signal implements PrivateMsg. Fields: Bytes(address bytes) (Bytes of
+// nothing to clear).
+func (m *MsgBindReferrer) Signal(chainID string, ac address.Codec) (fr.Element, error) {
+	var bz []byte
+	if m.Address != "" {
+		var err error
+		if bz, err = ac.StringToBytes(m.Address); err != nil {
+			return fr.Element{}, errorsmod.Wrapf(ErrInvalidMsg, "address: %v", err)
+		}
+	}
+	return m.Fee.ActionSignal(sdk.MsgTypeURL(m), chainID, privacy.Bytes(bz))
+}
+
+// ValidateBasic checks everything that needs no state.
+func (m *MsgBindReferrer) ValidateBasic() error {
+	if err := m.Fee.ValidateBasic(); err != nil {
+		return err
+	}
+	if m.Fee.ValueOut != 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "a referrer binding's fee transfer releases nothing")
+	}
+	if len(m.Address) > MaxAddressBytes {
+		return errorsmod.Wrapf(ErrInvalidMsg, "address exceeds %d bytes", MaxAddressBytes)
 	}
 	return m.Membership.ValidateBasic()
 }

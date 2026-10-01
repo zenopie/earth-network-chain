@@ -78,6 +78,12 @@ type Keeper struct {
 	CaretakerExpiry collections.KeySet[collections.Pair[int64, []byte]]
 	CaretakerCount  collections.Item[uint64]
 
+	// Referrer bindings: nullifier -> binding, address -> nullifier, and the
+	// expiry order. See referrer.go.
+	ReferrerBindings collections.Map[[]byte, types.ReferrerBinding]
+	ReferrerByAddr   collections.Map[[]byte, []byte]
+	ReferrerExpiry   collections.KeySet[collections.Pair[int64, []byte]]
+
 	// buyback-and-burn clock
 	LastBuyback     collections.Item[int64]
 	TwapObservation collections.Item[math.LegacyDec]
@@ -149,6 +155,11 @@ func NewKeeper(
 		CaretakerVotes:  collections.NewMap(sb, types.CaretakerVotesKey, "caretaker_votes", collections.BytesKey, collections.Int64Value),
 		CaretakerExpiry: collections.NewKeySet(sb, types.CaretakerExpiryKey, "caretaker_expiry", timeBytes),
 		CaretakerCount:  collections.NewItem(sb, types.CaretakerCountKey, "caretaker_count", collections.Uint64Value),
+
+		ReferrerBindings: collections.NewMap(sb, types.ReferrerBindingsKey, "referrer_bindings", collections.BytesKey,
+			codec.CollValue[types.ReferrerBinding](cdc)),
+		ReferrerByAddr: collections.NewMap(sb, types.ReferrerByAddrKey, "referrer_by_addr", collections.BytesKey, collections.BytesValue),
+		ReferrerExpiry: collections.NewKeySet(sb, types.ReferrerExpiryKey, "referrer_expiry", timeBytes),
 
 		LastBuyback:     collections.NewItem(sb, types.LastBuybackKey, "last_buyback", collections.Int64Value),
 		TwapObservation: collections.NewItem(sb, types.TwapObservationKey, "twap_observation", sdk.LegacyDecValue),

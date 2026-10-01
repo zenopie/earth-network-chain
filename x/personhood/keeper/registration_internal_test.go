@@ -46,6 +46,7 @@ func (stubAllocation) DrawFromOption(context.Context, allocationtypes.StreamId, 
 	return math.ZeroInt(), nil
 }
 func (stubAllocation) PayOutToModule(context.Context, string, math.Int) error { return nil }
+func (stubAllocation) PayOut(context.Context, sdk.AccAddress, math.Int) error { return nil }
 
 // stubShielded records the notes minted.
 type stubShielded struct{ minted *[]sdk.Coin }
@@ -124,7 +125,7 @@ func passportMsg(t *testing.T, name string) *types.MsgRegister {
 		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), PcErth: privacy.FieldBytes(r.ErthPC()),
 	}
 	if r.Referrer != "" {
-		m.AffiliatePc = privacy.FieldBytes(r.ReferrerPC())
+		m.Affiliate = sdk.AccAddress(personhoodtest.ReferralAddress(r.Referrer)).String()
 	}
 	return m
 }
@@ -183,20 +184,28 @@ func TestRegistrationBinding(t *testing.T) {
 		"idc":       func(m *types.MsgRegister) { m.Idc = other },
 		"pc_anml":   func(m *types.MsgRegister) { m.PcAnml = other },
 		"pc_erth":   func(m *types.MsgRegister) { m.PcErth = other },
-		"affiliate": func(m *types.MsgRegister) { m.AffiliatePc = other },
+		"affiliate": func(m *types.MsgRegister) { m.Affiliate = sdk.AccAddress(make([]byte, 20)).String() },
 	} {
 		m := passportMsg(t, "A1")
 		mutate(m)
 		_, err := checkAndVerify(k, ctx, m)
 		require.ErrorIs(t, err, types.ErrBadPublicInputs, name)
 	}
-	// B names A's affiliate pc; dropping it breaks the binding too.
-	kB, ctxB := regKeeper(t, stubPki{pubkey: dscKeyOf(t, "B")})
-	mB := passportMsg(t, "B")
-	_, err = checkAndVerify(kB, ctxB, mB)
+	// C2 names A's referral address: refused while A holds no live binding,
+	// accepted once it does; dropping the affiliate breaks the binding.
+	kC, ctxC := regKeeper(t, stubPki{pubkey: dscKeyOf(t, "C2")})
+	ctxC = ctxC.WithBlockTime(time.Date(2025, 1, 5, 12, 0, 0, 0, time.UTC))
+	mC := passportMsg(t, "C2")
+	_, err = checkAndVerify(kC, ctxC, mC)
+	require.ErrorIs(t, err, types.ErrNoReferrer)
+	aAddr := personhoodtest.ReferralAddress("A")
+	nf := privacy.FieldBytes(personhoodtest.Det("referrer-nf", 0))
+	require.NoError(t, kC.putReferrerBinding(ctxC, types.ReferrerBinding{Nullifier: nf, Address: mC.Affiliate,
+		ExpiresAt: ctxC.BlockTime().Unix() + 60}, aAddr))
+	_, err = checkAndVerify(kC, ctxC, mC)
 	require.NoError(t, err)
-	mB.AffiliatePc = nil
-	_, err = checkAndVerify(kB, ctxB, mB)
+	mC.Affiliate = ""
+	_, err = checkAndVerify(kC, ctxC, mC)
 	require.ErrorIs(t, err, types.ErrBadPublicInputs)
 }
 

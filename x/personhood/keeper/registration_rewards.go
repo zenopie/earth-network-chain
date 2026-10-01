@@ -19,17 +19,19 @@ type rewardNote struct {
 }
 
 // payRegistrationReward draws on the caretaker stream's registration-rewards
-// option and mints it into the shielded pool: half to the registrant's note,
-// half to the referrer's. Returns the registrant's amount.
+// option: half minted into the shielded pool as the registrant's note, half
+// paid in transparent ERTH to the referrer's address (referrals are public).
+// Returns the registrant's amount.
 //
 // With no referrer only the registrant's half is DRAWN, and the other half
 // stays in the option's pool rather than being minted: naming a referrer never
 // costs the person naming them.
 //
 // The ERTH already exists in x/allocation's account (a stream mints as its
-// index advances); it moves allocation -> this module -> the pool, where
-// MintNote counts it into the uerth turnstile.
-func (k Keeper) payRegistrationReward(ctx context.Context, registrant rewardNote, referrer *rewardNote) (math.Int, error) {
+// index advances); the registrant's half moves allocation -> this module ->
+// the pool, where MintNote counts it into the uerth turnstile, and the
+// referrer's goes allocation -> referrer.
+func (k Keeper) payRegistrationReward(ctx context.Context, registrant rewardNote, referrer sdk.AccAddress) (math.Int, error) {
 	drawPpm := int64(types.RegistrationRewardPpm)
 	if referrer == nil {
 		drawPpm = types.RegistrationRewardPpm / 2
@@ -50,7 +52,10 @@ func (k Keeper) payRegistrationReward(ctx context.Context, registrant rewardNote
 	}
 	registrantAmt := payout.Sub(referrerAmt)
 
-	if err := k.allocationKeeper.PayOutToModule(ctx, types.ModuleName, payout); err != nil {
+	if err := k.allocationKeeper.PayOut(ctx, referrer, referrerAmt); err != nil {
+		return math.ZeroInt(), err
+	}
+	if err := k.allocationKeeper.PayOutToModule(ctx, types.ModuleName, registrantAmt); err != nil {
 		return math.ZeroInt(), err
 	}
 	denom, err := k.erthDenom(ctx)
@@ -59,11 +64,6 @@ func (k Keeper) payRegistrationReward(ctx context.Context, registrant rewardNote
 	}
 	if registrantAmt.IsPositive() {
 		if _, _, err := k.shieldedKeeper.MintNote(ctx, types.ModuleName, sdk.NewCoin(denom, registrantAmt), registrant.pc, registrant.ciphertext); err != nil {
-			return math.ZeroInt(), err
-		}
-	}
-	if referrerAmt.IsPositive() {
-		if _, _, err := k.shieldedKeeper.MintNote(ctx, types.ModuleName, sdk.NewCoin(denom, referrerAmt), referrer.pc, referrer.ciphertext); err != nil {
 			return math.ZeroInt(), err
 		}
 	}

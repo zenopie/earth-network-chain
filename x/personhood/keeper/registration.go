@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
@@ -36,6 +37,9 @@ type preparedRegistration struct {
 	// registration under the same passport makes this a switch, which is
 	// neither rate-limited nor paid.
 	switched bool
+	// affiliate is the referrer's address, checked live; nil for none or on
+	// a switch.
+	affiliate sdk.AccAddress
 }
 
 // checkRegistration runs every check on a MsgRegister short of verifying its
@@ -77,7 +81,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	// identity and notes of their own is that the proof only verifies against
 	// the address input it was made with, and the chain computes that input
 	// from this msg's idc and pcs.
-	binding, err := msg.Binding()
+	binding, err := msg.Binding(k.addressCodec)
 	if err != nil {
 		return preparedRegistration{}, err
 	}
@@ -139,6 +143,21 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	if err != nil {
 		return preparedRegistration{}, err
 	}
+	// A paid registration's affiliate must be a live referrer. A switch pays
+	// nothing, so its affiliate is not looked at.
+	var affiliate []byte
+	if !switched && msg.Affiliate != "" {
+		if affiliate, err = k.addressCodec.StringToBytes(msg.Affiliate); err != nil {
+			return preparedRegistration{}, errorsmod.Wrapf(types.ErrInvalidMsg, "affiliate: %v", err)
+		}
+		live, _, err := k.liveReferrer(ctx, affiliate)
+		if err != nil {
+			return preparedRegistration{}, err
+		}
+		if !live {
+			return preparedRegistration{}, errorsmod.Wrapf(types.ErrNoReferrer, "affiliate %s", msg.Affiliate)
+		}
+	}
 	// Rate caps, before the proof: a country at its cap should not cost a
 	// verification per refused attempt. Only once the certificate has chained
 	// to a trusted CSCA above, so a claimed signer cannot be pushed to its
@@ -148,7 +167,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 			return preparedRegistration{}, err
 		}
 	}
-	return preparedRegistration{vk: vk, pubInputs: pubInputs, nullifier: nullifier, dsc: facts, switched: switched}, nil
+	return preparedRegistration{vk: vk, pubInputs: pubInputs, nullifier: nullifier, dsc: facts, switched: switched, affiliate: affiliate}, nil
 }
 
 // verifyRegistrationProof verifies the passport proof checkRegistration

@@ -30,7 +30,7 @@ func init() {
 	appconfig.Register(
 		&types.Module{},
 		appconfig.Provide(ProvideModule,
-			types.ProvideRegisterGetSigners, types.ProvideClaimAnmlGetSigners, types.ProvideSetCaretakerGetSigners),
+			types.ProvideRegisterGetSigners, types.ProvideClaimAnmlGetSigners, types.ProvideSetCaretakerGetSigners, types.ProvideBindReferrerGetSigners),
 	)
 }
 

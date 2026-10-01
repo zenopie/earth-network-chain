@@ -49,6 +49,11 @@ service Query {
     option (google.api.http).get = "/earth/personhood/v1/registrations_by_dsc/{dsc_key}";
   }
 
+  // Referrer reports whether an address holds a live referrer binding.
+  rpc Referrer(QueryReferrerRequest) returns (QueryReferrerResponse) {
+    option (google.api.http).get = "/earth/personhood/v1/referrer/{address}";
+  }
+
   // RegistrationCountries returns the registration count per issuing country.
   rpc RegistrationCountries(QueryRegistrationCountriesRequest) returns (QueryRegistrationCountriesResponse) {
     option (google.api.http).get = "/earth/personhood/v1/registration_countries";
@@ -132,4 +137,16 @@ message CountryCount {
 message QueryRegistrationCountriesRequest {}
 message QueryRegistrationCountriesResponse {
   repeated CountryCount countries = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryReferrerRequest asks whether address may be named as a registration's
+// affiliate.
+message QueryReferrerRequest {
+  string address = 1;
+}
+
+// QueryReferrerResponse: live, and until when (unix seconds).
+message QueryReferrerResponse {
+  bool live = 1;
+  int64 expires_at = 2;
 }

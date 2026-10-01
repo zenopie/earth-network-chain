@@ -89,6 +89,8 @@ func (b *countingBank) MintCoins(_ context.Context, _ string, amt sdk.Coins) err
 	b.minted = b.minted.Add(amt...)
 	return nil
 }
+func (b *countingBank) BlockedAddr(sdk.AccAddress) bool { return false }
+
 func (b *countingBank) BurnCoins(_ context.Context, _ string, amt sdk.Coins) error {
 	b.burned = b.burned.Add(amt...)
 	return nil

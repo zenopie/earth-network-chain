@@ -27,4 +27,6 @@ var (
 	ErrInvalidMembership   = errors.Register(ModuleName, 1118, "invalid membership proof")
 	ErrWrongDay            = errors.Register(ModuleName, 1119, "claim is not for today")
 	ErrIdentityTreeFull    = errors.Register(ModuleName, 1120, "identity tree full")
+	ErrNoReferrer          = errors.Register(ModuleName, 1121, "affiliate holds no live referrer binding")
+	ErrReferrerBound       = errors.Register(ModuleName, 1122, "address is bound as another live referrer")
 )

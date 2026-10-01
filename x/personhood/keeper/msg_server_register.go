@@ -37,9 +37,9 @@ func authorized[T any](ctx context.Context, msg shieldedtypes.PrivateMsg) (sdk.C
 // collected the fee for.
 //
 // New, or re-entering after the last registration under this passport lapsed:
-// the leaf is appended, and 1 ANML and the registration reward are minted as
-// notes to the pcs the proof is bound to (the referrer's half to
-// affiliate_pc). A live registration under this passport makes it a switch:
+// the leaf is appended, and 1 ANML and the registrant's reward are minted as
+// notes to the pcs the proof is bound to; the referrer's half is paid in
+// transparent ERTH to the affiliate address. A live registration under this passport makes it a switch:
 // the old leaf is zeroed, the new one appended with a fresh activated_at, and
 // nothing is paid or rate-counted, since the person is already counted.
 func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
@@ -96,11 +96,7 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		if _, err := k.mintAnmlNote(ctx, msg.PcAnml, msg.CiphertextAnml); err != nil {
 			return nil, err
 		}
-		var referrer *rewardNote
-		if len(msg.AffiliatePc) > 0 {
-			referrer = &rewardNote{pc: msg.AffiliatePc, ciphertext: msg.AffiliateCiphertext}
-		}
-		reward, err = k.payRegistrationReward(ctx, rewardNote{pc: msg.PcErth, ciphertext: msg.CiphertextErth}, referrer)
+		reward, err = k.payRegistrationReward(ctx, rewardNote{pc: msg.PcErth, ciphertext: msg.CiphertextErth}, p.affiliate)
 		if err != nil {
 			return nil, err
 		}

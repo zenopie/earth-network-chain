@@ -208,6 +208,10 @@ func ClaimScope(day uint64) fr.Element { return Scope("claim", U64(day)) }
 // always filed under the same nullifier, so a refresh replaces it.
 func CaretakerScope() fr.Element { return Scope("caretaker") }
 
+// ReferrerScope is the one scope of referrer bindings: a person's binding is
+// always filed under the same nullifier, so a rebind moves it.
+func ReferrerScope() fr.Element { return Scope("referrer") }
+
 // ProposalScope is the assembly ballot on x/gov proposal id in voting round
 // round (0, or 1 after the chamber demoted an expedited proposal).
 func ProposalScope(proposalID, round uint64) fr.Element {
@@ -227,13 +231,13 @@ func ProposeRemovalScope(optionID, day uint64) fr.Element {
 
 // RegistrationBinding is what a passport proof's `address` public input
 // carries for MsgRegister: the identity commitment the chain will put in the
-// tree and the notes it will pay. affiliatePC is the referrer's pc, or 0 for
-// none; bound so that whoever relays a registration cannot redirect the
-// referral half to themselves.
+// tree, the notes it will pay, and the referrer. affiliate is
+// Bytes(referrer's address bytes), or 0 for none; bound so that whoever
+// relays a registration cannot redirect the referral half to themselves.
 //
-//	address = H(TAG_REG, idc, pc_anml, pc_erth, affiliate_pc)
-func RegistrationBinding(idc, pcAnml, pcErth, affiliatePC fr.Element) fr.Element {
-	return H(TagReg, idc, pcAnml, pcErth, affiliatePC)
+//	address = H(TAG_REG, idc, pc_anml, pc_erth, affiliate)
+func RegistrationBinding(idc, pcAnml, pcErth, affiliate fr.Element) fr.Element {
+	return H(TagReg, idc, pcAnml, pcErth, affiliate)
 }
 
 // ErrNonCanonical is returned for a 32-byte string that is not a reduced

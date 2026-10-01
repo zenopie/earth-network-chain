@@ -53,8 +53,8 @@ type Params struct {
 	CurrentDateIndex uint32 `protobuf:"varint,6,opt,name=current_date_index,json=currentDateIndex,proto3" json:"current_date_index,omitempty"`
 	// address_index is the public-input position of the circuit's `address`
 	// input, which carries zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth,
-	// affiliate_pc): the identity commitment and the notes the registration
-	// pays. The chain recomputes it from MsgRegister's fields, so a proof read
+	// affiliate): the identity commitment, the notes the registration pays and
+	// the referrer it pays. The chain recomputes it from MsgRegister's fields, so a proof read
 	// out of a block cannot register anyone else's identity or pay anyone
 	// else's notes.
 	AddressIndex uint32 `protobuf:"varint,20,opt,name=address_index,json=addressIndex,proto3" json:"address_index,omitempty"`

@@ -54,6 +54,7 @@ func (stubBankKeeper) SendCoinsFromAccountToModule(
 }
 func (stubBankKeeper) MintCoins(context.Context, string, sdk.Coins) error { return nil }
 func (stubBankKeeper) BurnCoins(context.Context, string, sdk.Coins) error { return nil }
+func (stubBankKeeper) BlockedAddr(sdk.AccAddress) bool                    { return false }
 
 // stubDexKeeper is a minimal DexKeeper for unit tests.
 type stubDexKeeper struct{}

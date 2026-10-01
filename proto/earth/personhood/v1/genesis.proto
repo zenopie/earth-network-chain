@@ -45,4 +45,7 @@ message GenesisState {
 
   // caretaker_votes are the live caretaker splits' leases.
   repeated CaretakerVote caretaker_votes = 7 [(gogoproto.nullable) = false];
+
+  // referrer_bindings are the live referral addresses.
+  repeated ReferrerBinding referrer_bindings = 8 [(gogoproto.nullable) = false];
 }

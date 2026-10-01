@@ -15,7 +15,8 @@ option go_package = "github.com/earth-network/earth/x/personhood/types";
 
 // Msg defines the Msg service.
 //
-// Register, ClaimAnml and SetCaretaker are private msgs: unsigned, carried
+// Register, ClaimAnml, SetCaretaker and BindReferrer are private msgs:
+// unsigned, carried
 // alone in a tx, their fee paid from the shielded pool by the earth.shielded
 // Transfer each embeds (see x/shielded PrivateMsg). Their signal is
 // zk/privacy.ActionSignal(type URL, chain id, fee ciphertexts, fee
@@ -36,6 +37,10 @@ service Msg {
 
   // SetCaretaker casts or refreshes a registered human's caretaker split.
   rpc SetCaretaker(MsgSetCaretaker) returns (MsgSetCaretakerResponse);
+
+  // BindReferrer names (or clears) the address a registered human is paid
+  // referral rewards at.
+  rpc BindReferrer(MsgBindReferrer) returns (MsgBindReferrerResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -66,17 +71,19 @@ message MsgUpdateParamsResponse {}
 // verifies dsc_der against the CSCA trust store and binds it to the proof's
 // dsc_key, pins current_date to block time, dedups on the passport nullifier,
 // and requires the proof's `address` input to equal
-// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate_pc).
+// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate) with
+// affiliate = Bytes(the affiliate's address bytes), 0 when none.
 //
 // A new registration (or one re-entering after its last lapsed) appends the
-// leaf, mints 1 ANML to pc_anml and the registration reward to pc_erth, and
-// the referrer's half to affiliate_pc when set. A live one is a switch: the
-// old leaf is zeroed and the new one appended, and nothing is paid.
+// leaf, mints 1 ANML to pc_anml and the registrant's half of the reward to
+// pc_erth, and pays the referrer's half in transparent ERTH to affiliate,
+// which must hold a live referrer binding (MsgBindReferrer). A live
+// registration is a switch: the old leaf is zeroed and the new one appended,
+// and nothing is paid (affiliate is then not checked).
 //
 // signal fields: idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
-// Bytes(ciphertext_erth), affiliate_pc (0 when none),
-// Bytes(affiliate_ciphertext), Bytes(signature_algorithm), then every public
-// signal in order. The passport proof binds the identity and pcs through its
+// Bytes(ciphertext_erth), affiliate (as in the binding),
+// Bytes(signature_algorithm), then every public signal in order. The passport proof binds the identity and pcs through its
 // address input; this binds the rest to the fee proof.
 message MsgRegister {
   earth.shielded.v1.Transfer fee = 1 [(gogoproto.nullable) = false];
@@ -96,10 +103,14 @@ message MsgRegister {
   // pc_erth receives the registrant's half of the registration reward.
   bytes pc_erth = 9;
   bytes ciphertext_erth = 10;
-  // affiliate_pc is the referrer's published pc, empty for none. It receives
-  // the referrer's half.
-  bytes affiliate_pc = 11;
-  bytes affiliate_ciphertext = 12;
+  // affiliate is the referrer's address (bech32), empty for none. It must
+  // hold a live referrer binding, and receives the referrer's half of the
+  // reward in transparent ERTH.
+  string affiliate = 13 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // affiliate_pc / affiliate_ciphertext: a private referral note, replaced by
+  // the public affiliate address.
+  reserved 11, 12;
+  reserved "affiliate_pc", "affiliate_ciphertext";
 }
 
 // MsgRegisterResponse returns what the registration did.
@@ -160,5 +171,33 @@ message MsgSetCaretaker {
 // MsgSetCaretakerResponse reports when the split lapses (unix seconds), 0 when
 // it was cleared.
 message MsgSetCaretakerResponse {
+  int64 expires_at = 1;
+}
+
+// MsgBindReferrer binds address as the prover's referral address, or clears
+// the binding (empty address). Referrals are public: a registration naming
+// address pays the referrer's half of its reward there, in transparent ERTH.
+// Who bound it is not public; that a live registration did, is.
+//
+// membership is proven with scope zk/privacy.ReferrerScope(), excluded_dsc
+// and excluded_country 0 and max_activation this msg's max_activation, which
+// must be at most now - caretaker_vote_seconds - identity_root_window_seconds
+// (the caretaker rule: a switched-to identity cannot hold a binding beside
+// its predecessor's). The binding lasts caretaker_vote_seconds; the wallet
+// refreshes it. Rebinding under the same nullifier moves it to the new
+// address. An address bound under another live nullifier is refused.
+//
+// signal fields: Bytes(address bytes).
+message MsgBindReferrer {
+  earth.shielded.v1.Transfer fee = 1 [(gogoproto.nullable) = false];
+  Membership membership = 2 [(gogoproto.nullable) = false];
+  string address = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // max_activation is the membership proof's max_activation (unix seconds).
+  uint64 max_activation = 4;
+}
+
+// MsgBindReferrerResponse reports when the binding lapses (unix seconds), 0
+// when it was cleared.
+message MsgBindReferrerResponse {
   int64 expires_at = 1;
 }

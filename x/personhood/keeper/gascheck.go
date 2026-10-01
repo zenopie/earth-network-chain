@@ -16,7 +16,7 @@ import (
 //
 // Not a consensus path. Nothing in the state machine calls this.
 func (k Keeper) CheckRegistration(ctx context.Context, msg *types.MsgRegister) (nullifier []byte, switched bool, err error) {
-	if _, err := msg.Binding(); err != nil {
+	if _, err := msg.Binding(k.addressCodec); err != nil {
 		return nil, false, err
 	}
 	p, err := k.checkRegistration(ctx, msg)

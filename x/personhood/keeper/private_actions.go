@@ -23,6 +23,7 @@ func (k Keeper) RegisterPrivateActions(sk types.ShieldedKeeper) {
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgRegister{}), registerAction{k})
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgClaimAnml{}), claimAction{k})
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgSetCaretaker{}), caretakerAction{k})
+	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgBindReferrer{}), referrerAction{k})
 }
 
 // --- MsgRegister ---------------------------------------------------------

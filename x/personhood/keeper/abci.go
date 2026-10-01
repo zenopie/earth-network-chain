@@ -15,7 +15,7 @@ import (
 )
 
 // BeginBlocker retires lapsed and revoked registrations (zeroing their
-// leaves), clears lapsed caretaker splits, prunes stale claim nullifiers and
+// leaves), clears lapsed caretaker splits and referrer bindings, prunes stale claim nullifiers and
 // runs the ANML buyback-and-burn (1 ERTH/sec).
 //
 // It must run before x/allocation's BeginBlocker: clearing a lapsed split
@@ -41,7 +41,11 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 		return err
 	}
 	budget -= used
-	if _, err := k.sweepCaretakerVotes(ctx, budget); err != nil {
+	if used, err = k.sweepCaretakerVotes(ctx, budget); err != nil {
+		return err
+	}
+	budget -= used
+	if _, err := k.sweepReferrerBindings(ctx, budget); err != nil {
 		return err
 	}
 	if err := k.pruneClaimNullifiers(ctx, types.ClaimNullifierPruneLimit); err != nil {

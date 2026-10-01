@@ -92,6 +92,24 @@ func (gs GenesisState) Validate() error {
 		}
 	}
 
+	seenBinding, seenAddr := map[string]struct{}{}, map[string]struct{}{}
+	for _, b := range gs.ReferrerBindings {
+		if _, err := privacy.FieldFromBytes(b.Nullifier); err != nil {
+			return fmt.Errorf("referrer binding: %w", err)
+		}
+		if _, dup := seenBinding[string(b.Nullifier)]; dup {
+			return fmt.Errorf("referrer binding %x listed twice", b.Nullifier)
+		}
+		seenBinding[string(b.Nullifier)] = struct{}{}
+		if b.Address == "" || b.ExpiresAt <= 0 {
+			return fmt.Errorf("referrer binding %x has no address or expiry", b.Nullifier)
+		}
+		if _, dup := seenAddr[b.Address]; dup {
+			return fmt.Errorf("referrer address %s bound twice", b.Address)
+		}
+		seenAddr[b.Address] = struct{}{}
+	}
+
 	if gs.LastBuyback < 0 {
 		return fmt.Errorf("last_buyback must not be negative")
 	}

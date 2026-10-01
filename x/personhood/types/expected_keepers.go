@@ -36,6 +36,9 @@ type AllocationKeeper interface {
 	// PayOutToModule sends drawn ERTH from the allocation module account to a
 	// module account; this module moves it on into the shielded pool.
 	PayOutToModule(ctx context.Context, recipientModule string, amount math.Int) error
+	// PayOut sends drawn ERTH from the allocation module account to an
+	// account: a referrer's half of a registration reward.
+	PayOut(ctx context.Context, recipient sdk.AccAddress, amount math.Int) error
 }
 
 // ShieldedKeeper is the slice of x/shielded this module needs: minting notes
@@ -61,6 +64,9 @@ type BankKeeper interface {
 	SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
 	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
+	// BlockedAddr reports an address bank refuses to pay (module accounts):
+	// one cannot be bound as a referrer.
+	BlockedAddr(addr sdk.AccAddress) bool
 }
 
 // DexKeeper defines the expected interface for the Dex module. Used to resolve

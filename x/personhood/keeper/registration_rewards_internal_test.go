@@ -26,6 +26,15 @@ type recordingAllocation struct {
 	drawnAtPpm int64
 	payout     math.Int
 	toModule   math.Int
+	toAccount  map[string]math.Int
+}
+
+func (r *recordingAllocation) PayOut(_ context.Context, to sdk.AccAddress, amt math.Int) error {
+	if r.toAccount == nil {
+		r.toAccount = map[string]math.Int{}
+	}
+	r.toAccount[string(to)] = amt
+	return nil
 }
 
 func (r *recordingAllocation) DrawFromOption(_ context.Context, _ allocationtypes.StreamId, _ uint64, ppm int64) (math.Int, error) {
@@ -52,17 +61,20 @@ func rewardKeeper(t *testing.T, alloc *recordingAllocation, minted *[]sdk.Coin) 
 	return k, ctx
 }
 
-// A referred registration draws the full rate and mints it as two notes.
+// A referred registration draws the full rate: the registrant's half is
+// minted as a note, the referrer's paid in transparent ERTH to its address.
 func TestRegistrationRewardSplitsWithReferrer(t *testing.T) {
-	alloc := &recordingAllocation{payout: math.NewInt(1000)}
+	alloc := &recordingAllocation{payout: math.NewInt(1001)}
 	var minted []sdk.Coin
 	k, ctx := rewardKeeper(t, alloc, &minted)
-	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, &rewardNote{pc: []byte{2}})
+	referrer := sdk.AccAddress{2}
+	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, referrer)
 	require.NoError(t, err)
 	require.Equal(t, int64(types.RegistrationRewardPpm), alloc.drawnAtPpm)
-	require.Equal(t, math.NewInt(500), got)
-	require.Equal(t, math.NewInt(1000), alloc.toModule)
-	require.Equal(t, []sdk.Coin{sdk.NewInt64Coin("uerth", 500), sdk.NewInt64Coin("uerth", 500)}, minted)
+	require.Equal(t, math.NewInt(501), got)
+	require.Equal(t, math.NewInt(501), alloc.toModule)
+	require.Equal(t, math.NewInt(500), alloc.toAccount[string(referrer)])
+	require.Equal(t, []sdk.Coin{sdk.NewInt64Coin("uerth", 501)}, minted)
 }
 
 // An unreferred registration draws half the rate: the registrant is paid what
@@ -83,7 +95,7 @@ func TestRegistrationRewardEmptyPool(t *testing.T) {
 	alloc := &recordingAllocation{payout: math.ZeroInt()}
 	var minted []sdk.Coin
 	k, ctx := rewardKeeper(t, alloc, &minted)
-	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, &rewardNote{pc: []byte{2}})
+	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, sdk.AccAddress{2})
 	require.NoError(t, err)
 	require.True(t, got.IsZero())
 	require.Empty(t, minted)
