@@ -88,6 +88,12 @@ func NF(nk, rho fr.Element, position uint32) fr.Element {
 	return H(TagNF, nk, rho, U64(uint64(position)))
 }
 
+// VoteNF is a note's per-proposal vote nullifier
+// H(TAG_VOTE, nk, rho, position, proposal_id) (circuits/note_vote).
+func VoteNF(nk, rho fr.Element, position uint32, proposalID uint64) fr.Element {
+	return H(TagVote, nk, rho, U64(uint64(position)), U64(proposalID))
+}
+
 // AssetID maps a bank denom to its in-circuit asset field:
 // H(TAG_ASSET, len(denom), c_0, ..., c_k) where c_i are the denom's bytes in
 // 31-byte big-endian chunks (so each chunk is below the modulus). The length

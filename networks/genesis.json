@@ -13,6 +13,8 @@
       "streams": []
     },
     "assembly": {
+      "ballot_seq": "0",
+      "proposal_rounds": [],
       "proposal_votes": [],
       "removal_ballots": []
     },
@@ -474,10 +476,6 @@
           "allow_messages": [
             "/cosmos.bank.v1beta1.MsgSend",
             "/cosmos.bank.v1beta1.MsgMultiSend",
-            "/cosmos.staking.v1beta1.MsgDelegate",
-            "/cosmos.staking.v1beta1.MsgUndelegate",
-            "/cosmos.staking.v1beta1.MsgBeginRedelegate",
-            "/cosmos.staking.v1beta1.MsgCancelUnbondingDelegation",
             "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward",
             "/cosmos.distribution.v1beta1.MsgSetWithdrawAddress",
             "/cosmos.gov.v1.MsgVote",
@@ -516,12 +514,17 @@
     },
     "params": null,
     "personhood": {
+      "caretaker_votes": [],
+      "claim_nullifiers": [],
+      "identity_roots": [],
+      "identity_tree_size": "0",
       "last_buyback": "0",
       "params": {
         "address_index": 1,
         "buyback_max_accrual_seconds": "86400",
         "buyback_max_deviation_bps": "200",
         "buyback_twap_window_seconds": "600",
+        "caretaker_vote_seconds": "2592000",
         "country_daily_registration_floor": "1000",
         "country_daily_registration_share_bps": "6000",
         "current_date_index": 0,
@@ -530,6 +533,7 @@
         "dsc_daily_registration_share_bps": "2500",
         "dsc_key_index": 3,
         "dsc_verification_gas": "300000",
+        "identity_root_window_seconds": "3600",
         "network_daily_registration_floor": "5000",
         "network_daily_registration_growth_bps": "30000",
         "nullifier_index": 2,
@@ -2189,6 +2193,20 @@
       "roots": [],
       "turnstiles": []
     },
+    "shieldedstaking": {
+      "epoch": null,
+      "next_position_id": "0",
+      "params": {
+        "epoch_seconds": "86400",
+        "max_positions": "10000",
+        "min_position": "1000000"
+      },
+      "positions": [],
+      "snapshots": [],
+      "unbond_records": [],
+      "validators": [],
+      "votes": []
+    },
     "slashing": {
       "missed_blocks": [],
       "params": {
@@ -2208,7 +2226,7 @@
       "params": {
         "bond_denom": "uerth",
         "historical_entries": 10000,
-        "max_entries": 7,
+        "max_entries": 32,
         "max_validators": 100,
         "min_commission_rate": "0.000000000000000000",
         "unbonding_time": "1814400s"

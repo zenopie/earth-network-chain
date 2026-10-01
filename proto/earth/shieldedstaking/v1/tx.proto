@@ -1,0 +1,197 @@
+syntax = "proto3";
+package earth.shieldedstaking.v1;
+
+import "amino/amino.proto";
+import "cosmos/gov/v1/gov.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "earth/allocation/v1/allocation.proto";
+import "earth/shielded/v1/shielded.proto";
+import "earth/shieldedstaking/v1/params.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
+
+// Msg is private staking. Every msg but UpdateParams is a private msg: no
+// signer, a shielded transfer that pays its fee (and carries any value it
+// moves), and a signal binding every other field. See x/shielded/ante.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // UpdateParams updates the module parameters (governance).
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+  // Delegate stakes ERTH privately.
+  rpc Delegate(MsgDelegate) returns (MsgDelegateResponse);
+  // Undelegate turns derth into an unbonding claim.
+  rpc Undelegate(MsgUndelegate) returns (MsgUndelegateResponse);
+  // ClaimUnbonding turns a matured unbonding claim into ERTH.
+  rpc ClaimUnbonding(MsgClaimUnbonding) returns (MsgClaimUnbondingResponse);
+  // StakeVote votes a derth note on an x/gov proposal.
+  rpc StakeVote(MsgStakeVote) returns (MsgStakeVoteResponse);
+  // LockPosition locks derth into a Groundworks position.
+  rpc LockPosition(MsgLockPosition) returns (MsgLockPositionResponse);
+  // UpdatePosition changes a position's split (signed by its key).
+  rpc UpdatePosition(MsgUpdatePosition) returns (MsgUpdatePositionResponse);
+  // UnlockPosition returns a position's derth as a note (signed by its key).
+  rpc UnlockPosition(MsgUnlockPosition) returns (MsgUnlockPositionResponse);
+  // PositionVote votes a position's derth on an x/gov proposal (signed by its
+  // key).
+  rpc PositionVote(MsgPositionVote) returns (MsgPositionVoteResponse);
+}
+
+// MsgUpdateParams is the Msg/UpdateParams request type.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "earth/x/shieldedstaking/MsgUpdateParams";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Params params = 2 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateParamsResponse is empty.
+message MsgUpdateParamsResponse {}
+
+// MsgDelegate spends transfer.value_out uerth into the module for validator
+// and mints a derth/<validator> note to pc at the live rate. The ERTH is
+// delegated at the epoch's end.
+//
+// signal = SpendSignal("/earth.shieldedstaking.v1.MsgDelegate", chain_id,
+// ciphertexts, Bytes(validator), pc, Bytes(ciphertext)).
+message MsgDelegate {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  string validator = 2;
+  // pc owns the derth note.
+  bytes pc = 3;
+  // ciphertext is the derth note encrypted to its owner (optional).
+  bytes ciphertext = 4;
+}
+
+// MsgDelegateResponse returns the derth minted and the note's position.
+message MsgDelegateResponse {
+  uint64 derth = 1;
+  uint64 position = 2;
+}
+
+// MsgUndelegate spends transfer.value_out of derth/<validator> and mints an
+// unbond/<validator>/<epoch> note of its ERTH value to pc.
+//
+// signal = SpendSignal("/earth.shieldedstaking.v1.MsgUndelegate", chain_id,
+// ciphertexts, Bytes(validator), pc, Bytes(ciphertext)).
+message MsgUndelegate {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  string validator = 2;
+  bytes pc = 3;
+  bytes ciphertext = 4;
+}
+
+// MsgUndelegateResponse returns the unbond note's denom, value and position.
+message MsgUndelegateResponse {
+  string denom = 1;
+  uint64 value = 2;
+  uint64 position = 3;
+}
+
+// MsgClaimUnbonding spends transfer.value_out of unbond/<validator>/<epoch>
+// once that record has matured and mints ERTH = value x payout / requested to
+// pc.
+//
+// signal = SpendSignal("/earth.shieldedstaking.v1.MsgClaimUnbonding",
+// chain_id, ciphertexts, Bytes(validator), epoch, pc, Bytes(ciphertext)).
+message MsgClaimUnbonding {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  string validator = 2;
+  uint64 epoch = 3;
+  bytes pc = 4;
+  bytes ciphertext = 5;
+}
+
+// MsgClaimUnbondingResponse returns the ERTH paid (0 if slashed away) and the
+// note's position.
+message MsgClaimUnbondingResponse {
+  uint64 amount = 1;
+  uint64 position = 2;
+}
+
+// MsgStakeVote votes a derth/<validator> note of value `value` that was in
+// the note tree when proposal_id entered voting. proof is a note_vote proof
+// over (snapshot root, AssetID(derth/<validator>), value, proposal_id,
+// vote_nullifier, nullifier, signal). The same vote_nullifier votes again to
+// change the vote; the note's spend nullifier must be unspent.
+//
+// signal = ActionSignal("/earth.shieldedstaking.v1.MsgStakeVote", chain_id,
+// ciphertexts, transfer nullifiers, proposal_id, Bytes(validator), value,
+// vote_nullifier, nullifier, Bytes(options)); both proofs bind it. The fee
+// transfer moves no value (value_out 0).
+message MsgStakeVote {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  uint64 proposal_id = 2;
+  string validator = 3;
+  uint64 value = 4;
+  bytes vote_nullifier = 5;
+  bytes nullifier = 6;
+  repeated cosmos.gov.v1.WeightedVoteOption options = 7;
+  bytes proof = 8;
+}
+
+// MsgStakeVoteResponse is empty.
+message MsgStakeVoteResponse {}
+
+// MsgLockPosition spends transfer.value_out of derth/<validator> into the
+// module as a new Groundworks position splitting its weight by splits,
+// controlled by pubkey.
+//
+// signal = SpendSignal("/earth.shieldedstaking.v1.MsgLockPosition", chain_id,
+// ciphertexts, Bytes(validator), Bytes(pubkey), Bytes(splits)).
+message MsgLockPosition {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  string validator = 2;
+  repeated earth.allocation.v1.AllocationWeight splits = 3 [(gogoproto.nullable) = false];
+  bytes pubkey = 4;
+}
+
+// MsgLockPositionResponse returns the position id.
+message MsgLockPositionResponse {
+  uint64 position_id = 1;
+}
+
+// MsgUpdatePosition replaces a position's split. signature is the position
+// key's over PositionSignBytes (see types).
+message MsgUpdatePosition {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  uint64 position_id = 2;
+  repeated earth.allocation.v1.AllocationWeight splits = 3 [(gogoproto.nullable) = false];
+  bytes signature = 4;
+}
+
+// MsgUpdatePositionResponse is empty.
+message MsgUpdatePositionResponse {}
+
+// MsgUnlockPosition closes a position and mints its derth as a note to pc.
+message MsgUnlockPosition {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  uint64 position_id = 2;
+  bytes pc = 3;
+  bytes ciphertext = 4;
+  bytes signature = 5;
+}
+
+// MsgUnlockPositionResponse returns the note's position.
+message MsgUnlockPositionResponse {
+  uint64 position = 1;
+}
+
+// MsgPositionVote votes a position (created before the proposal entered
+// voting) on an x/gov proposal; a later vote replaces it.
+message MsgPositionVote {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  uint64 position_id = 2;
+  uint64 proposal_id = 3;
+  repeated cosmos.gov.v1.WeightedVoteOption options = 4;
+  bytes signature = 5;
+}
+
+// MsgPositionVoteResponse is empty.
+message MsgPositionVoteResponse {}

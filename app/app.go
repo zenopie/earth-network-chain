@@ -58,6 +58,7 @@ import (
 	personhoodmodulekeeper "github.com/earth-network/earth/x/personhood/keeper"
 	pkimodulekeeper "github.com/earth-network/earth/x/pki/keeper"
 	shieldedmodulekeeper "github.com/earth-network/earth/x/shielded/keeper"
+	shieldedstakingmodulekeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
 )
 
 const (
@@ -125,6 +126,8 @@ type App struct {
 	PersonhoodKeeper personhoodmodulekeeper.Keeper
 	PkiKeeper        pkimodulekeeper.Keeper
 	ShieldedKeeper   shieldedmodulekeeper.Keeper
+
+	ShieldedStakingKeeper shieldedstakingmodulekeeper.Keeper
 }
 
 func init() {
@@ -209,6 +212,7 @@ func New(
 		&app.PersonhoodKeeper,
 		&app.PkiKeeper,
 		&app.ShieldedKeeper,
+		&app.ShieldedStakingKeeper,
 	); err != nil {
 		panic(err)
 	}
@@ -240,6 +244,11 @@ func New(
 	// covers every module and every message. See
 	// x/shielded/keeper/send_restriction.go.
 	app.BankKeeper.AppendSendRestriction(app.ShieldedKeeper.SendRestriction)
+	// Private staking's account takes coins only from the pool and from
+	// distribution; and it snapshots proposals through x/gov, which takes its
+	// tally function and so cannot be one of its depinject inputs.
+	app.BankKeeper.AppendSendRestriction(app.ShieldedStakingKeeper.SendRestriction)
+	app.ShieldedStakingKeeper.SetGovKeeper(app.GovKeeper)
 
 	// add to default baseapp options
 	// enable optimistic execution

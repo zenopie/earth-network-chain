@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"fmt"
+	"strings"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/address"
@@ -31,6 +32,11 @@ type Keeper struct {
 	// shieldedOnly are the denoms that may only move to shieldedOnlyTo.
 	shieldedOnly   map[string]bool
 	shieldedOnlyTo map[string]bool // module account address (string bytes)
+	// shieldedOnlyPrefixes are families of shielded-only denoms registered by
+	// other modules (x/shieldedstaking's derth/ and unbond/), each with its own
+	// allowed recipients (module account address, string bytes). A map so every
+	// copy of the keeper sees a registration made during module wiring.
+	shieldedOnlyPrefixes map[string]map[string]bool
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -73,16 +79,17 @@ func NewKeeper(
 	}
 	sb := collections.NewSchemaBuilder(storeService)
 	k := Keeper{
-		storeService:   storeService,
-		cdc:            cdc,
-		addressCodec:   addressCodec,
-		authority:      authority,
-		authKeeper:     authKeeper,
-		bankKeeper:     bankKeeper,
-		poolAddr:       authtypes.NewModuleAddress(types.ModuleName),
-		shieldedOnly:   map[string]bool{},
-		shieldedOnlyTo: map[string]bool{},
-		actions:        map[string]types.PrivateActionHandler{},
+		storeService:         storeService,
+		cdc:                  cdc,
+		addressCodec:         addressCodec,
+		authority:            authority,
+		authKeeper:           authKeeper,
+		bankKeeper:           bankKeeper,
+		poolAddr:             authtypes.NewModuleAddress(types.ModuleName),
+		shieldedOnly:         map[string]bool{},
+		shieldedOnlyTo:       map[string]bool{},
+		shieldedOnlyPrefixes: map[string]map[string]bool{},
+		actions:              map[string]types.PrivateActionHandler{},
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 
@@ -139,7 +146,47 @@ func (k Keeper) ShieldedOnlyDenoms() []string {
 }
 
 // IsShieldedOnly reports whether denom exists only in the pool.
-func (k Keeper) IsShieldedOnly(denom string) bool { return k.shieldedOnly[denom] }
+func (k Keeper) IsShieldedOnly(denom string) bool {
+	if k.shieldedOnly[denom] {
+		return true
+	}
+	_, ok := k.shieldedOnlyPrefix(denom)
+	return ok
+}
+
+// RegisterShieldedOnlyPrefix makes every denom starting with prefix
+// shielded-only: it may move only into the pool and into the named module
+// accounts, never to an ordinary account. Called once per prefix from module
+// wiring, by the module that mints those denoms, so the pool refuses an
+// unshield of one before it spends anything.
+func (k Keeper) RegisterShieldedOnlyPrefix(prefix string, recipientModules ...string) {
+	if prefix == "" {
+		panic("empty shielded-only prefix")
+	}
+	// Prefixes must not nest: a denom has to belong to one family, or which
+	// recipient list applies would depend on map order.
+	for p := range k.shieldedOnlyPrefixes {
+		if strings.HasPrefix(p, prefix) || strings.HasPrefix(prefix, p) {
+			panic(fmt.Sprintf("shielded-only prefix %q overlaps %q", prefix, p))
+		}
+	}
+	to := map[string]bool{string(k.poolAddr): true}
+	for _, m := range recipientModules {
+		to[string(authtypes.NewModuleAddress(m))] = true
+	}
+	k.shieldedOnlyPrefixes[prefix] = to
+}
+
+// shieldedOnlyPrefix returns the allowed recipients of denom's registered
+// prefix family, if it has one.
+func (k Keeper) shieldedOnlyPrefix(denom string) (map[string]bool, bool) {
+	for p, to := range k.shieldedOnlyPrefixes {
+		if strings.HasPrefix(denom, p) {
+			return to, true
+		}
+	}
+	return nil, false
+}
 
 // RegisterPrivateAction attaches h to the private msg type msgTypeURL. Called
 // once per type, from module wiring; a second registration panics.

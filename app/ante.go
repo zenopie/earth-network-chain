@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"cosmossdk.io/core/address"
 	corestoretypes "cosmossdk.io/core/store"
 	circuitante "cosmossdk.io/x/circuit/ante"
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
@@ -18,6 +19,7 @@ import (
 
 	shieldedante "github.com/earth-network/earth/x/shielded/ante"
 	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
+	shieldedstakingante "github.com/earth-network/earth/x/shieldedstaking/ante"
 )
 
 // HandlerOptions extends the SDK's ante options with what x/wasm, x/circuit and
@@ -31,6 +33,7 @@ type HandlerOptions struct {
 	WasmNodeConfig        *wasmtypes.NodeConfig
 	TXCounterStoreService corestoretypes.KVStoreService
 	ShieldedKeeper        *shieldedkeeper.Keeper
+	StakingValidatorCodec address.Codec
 }
 
 // NewAnteHandler builds this chain's ante chain.
@@ -86,6 +89,9 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	if options.TXCounterStoreService == nil {
 		return nil, errors.New("wasm tx counter store service is required for ante builder")
 	}
+	if options.StakingValidatorCodec == nil {
+		return nil, errors.New("staking validator address codec is required for ante builder")
+	}
 	if options.ShieldedKeeper == nil {
 		return nil, errors.New("shielded keeper is required for ante builder")
 	}
@@ -105,6 +111,12 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
 		ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
 		ante.NewValidateBasicDecorator(),
+		// Staking is private: transparent delegation is refused except a
+		// validator's self-bond. The staking hook enforces it everywhere; this
+		// refuses a plain tx before it pays a fee for nothing.
+		shieldedstakingante.StakingMsgFilterDecorator{
+			AddressCodec: options.AccountKeeper.AddressCodec(), ValidatorCodec: options.StakingValidatorCodec,
+		},
 		ante.NewTxTimeoutHeightDecorator(),
 		ante.NewValidateMemoDecorator(options.AccountKeeper),
 		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
@@ -159,6 +171,7 @@ func (app *App) setAnteHandler() error {
 		WasmNodeConfig:        &app.WasmNodeConfig,
 		TXCounterStoreService: runtime.NewKVStoreService(app.GetKey(wasmtypes.StoreKey)),
 		ShieldedKeeper:        &app.ShieldedKeeper,
+		StakingValidatorCodec: app.StakingKeeper.ValidatorAddressCodec(),
 	})
 	if err != nil {
 		return fmt.Errorf("building ante handler: %w", err)

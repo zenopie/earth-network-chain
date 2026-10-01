@@ -2,7 +2,7 @@
 #
 # Go <-> Noir parity for the privacy circuits, plus prover measurements.
 #
-# For membership and transfer: tools/privacyfixtures builds the trees and
+# For membership, transfer and note_vote: tools/privacyfixtures builds the trees and
 # derivations in Go and writes Prover.toml; nargo execute must accept it, bb
 # proves and verifies it, and the proof's public inputs must equal the ones Go
 # computed. membership-zeroed (the leaf zeroed after the path was taken) must be
@@ -23,11 +23,11 @@ for bin in nargo bb; do
 done
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"; rm -f "$CIRCUITS"/membership/Prover.toml "$CIRCUITS"/transfer/Prover.toml' EXIT
+trap 'rm -rf "$WORK"; rm -f "$CIRCUITS"/membership/Prover.toml "$CIRCUITS"/transfer/Prover.toml "$CIRCUITS"/note_vote/Prover.toml' EXIT
 
 now() { perl -MTime::HiRes=time -e 'printf "%.3f", time'; }
 
-for c in membership transfer; do
+for c in membership transfer note_vote; do
   echo "==> $c"
   out="$WORK/$c"
   mkdir -p "$out/proof" "$out/vk"

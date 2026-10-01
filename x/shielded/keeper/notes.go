@@ -52,6 +52,21 @@ func (k Keeper) noteFor(ctx context.Context, coin sdk.Coin, pc, ciphertext []byt
 	return privacy.FieldBytes(privacy.CM(asset, coin.Amount.Uint64(), pcEl)), nil
 }
 
+// CheckMint refuses, without writing, the pc and ciphertext a later MintNote
+// would refuse, and a tree without room for a private msg's three outputs
+// plus the note. For a private action's check, which must refuse before the
+// ante spends anything. The asset and the source's balance are the caller's
+// to ensure.
+func (k Keeper) CheckMint(ctx context.Context, pc, ciphertext []byte) error {
+	if _, err := privacy.FieldFromBytes(pc); err != nil {
+		return errorsmod.Wrapf(types.ErrInvalidNote, "pc: %v", err)
+	}
+	if len(ciphertext) > types.MaxCiphertextBytes {
+		return errorsmod.Wrapf(types.ErrInvalidNote, "ciphertext exceeds %d bytes", types.MaxCiphertextBytes)
+	}
+	return k.checkCapacity(ctx, types.TransferArity+1)
+}
+
 // MintNote moves coin out of fromModule's account into the pool and appends a
 // note of it to the owner behind pc. It is how other modules pay into the
 // pool: personhood's ANML and registration reward, a dex swap's output, an

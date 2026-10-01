@@ -36,6 +36,11 @@ func (k Keeper) checkSend(ctx context.Context, from, to sdk.AccAddress, amt sdk.
 	if to.Equals(k.poolAddr) && !isPoolDeposit(ctx) {
 		return types.ErrSendRestricted.Wrap("the shielded pool accepts coins only through MsgShield or MintNote")
 	}
+	for _, c := range amt {
+		if allowed, ok := k.shieldedOnlyPrefix(c.Denom); ok && !allowed[string(to)] {
+			return types.ErrSendRestricted.Wrapf("%s exists only in the shielded pool", c.Denom)
+		}
+	}
 	if k.shieldedOnlyTo[string(to)] {
 		return nil
 	}
