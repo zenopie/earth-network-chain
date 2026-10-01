@@ -67,6 +67,9 @@ type Keeper struct {
 	// the reverse lookup that lets one cancel itself when it comes back to life.
 	PruneQueue collections.KeySet[collections.Triple[int64, uint32, uint64]]
 	PruneDue   collections.Map[collections.Pair[uint32, uint64], int64]
+	// SlashedValidators are this block's slashed validators, for EndBlock's
+	// resync of their operators' weight. See hooks.go.
+	SlashedValidators collections.KeySet[[]byte]
 
 	// weightSources and integratedHandlers are maps rather than fields because
 	// they are populated after construction, by the modules that own the
@@ -136,7 +139,8 @@ func NewKeeper(
 		Residue:           collections.NewItem(sb, types.ResidueKey, "residue", sdk.IntValue),
 		PruneQueue: collections.NewKeySet(sb, types.PruneQueueKey, "prune_queue",
 			collections.TripleKeyCodec(collections.Int64Key, collections.Uint32Key, collections.Uint64Key)),
-		PruneDue: collections.NewMap(sb, types.PruneDueKey, "prune_due", streamOption, collections.Int64Value),
+		PruneDue:          collections.NewMap(sb, types.PruneDueKey, "prune_due", streamOption, collections.Int64Value),
+		SlashedValidators: collections.NewKeySet(sb, types.SlashedValidatorsKey, "slashed_validators", collections.BytesKey),
 
 		weightSources:      map[types.StreamId]types.WeightSource{},
 		integratedHandlers: map[string]integratedHandler{},

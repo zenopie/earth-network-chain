@@ -38,6 +38,9 @@ type StakingKeeper interface {
 	Undelegate(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress, sharesAmount math.LegacyDec) (time.Time, math.Int, error)
 	ValidateUnbondAmount(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress, amt math.Int) (math.LegacyDec, error)
 	IterateDelegations(ctx context.Context, delegator sdk.AccAddress, fn func(index int64, delegation stakingtypes.DelegationI) (stop bool)) error
+	// GetDelegatorBonded is a validator operator's transparent self-bond (no
+	// other account can delegate): its Groundworks weight.
+	GetDelegatorBonded(ctx context.Context, delegator sdk.AccAddress) (math.Int, error)
 }
 
 // DistrKeeper is x/distribution: rewards and the community pool.

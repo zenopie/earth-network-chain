@@ -22,6 +22,8 @@ import (
 // retried later. A halt here would stop the chain over one validator's
 // bookkeeping.
 //
+//  0. slashed: validators slashed this block take their live (post-slash)
+//     rate as their epoch rate, and their positions re-weigh at it;
 //  1. mature: records whose SDK unbonding entry completes in this block read
 //     the entry's balance now — x/staking's EndBlocker, next, pays and deletes
 //     it.
@@ -30,6 +32,7 @@ import (
 //     notes; re-weigh positions; sweep non-ERTH rewards to the community pool.
 //  3. forget proposals whose voting has ended (x/gov has tallied them).
 func (k Keeper) EndBlocker(ctx context.Context) error {
+	k.reweighSlashed(ctx)
 	k.matureRecords(ctx)
 	epoch, err := k.Epoch.Get(ctx)
 	if err != nil {

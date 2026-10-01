@@ -147,6 +147,9 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 // option, so until it leaves it reads as surplus on the module account — and the
 // solvency check below is the thing that would have to tolerate it.
 func (am AppModule) EndBlock(ctx context.Context) error {
+	// Operators of validators slashed this block weigh their reduced
+	// self-bond from here on.
+	am.keeper.ResyncSlashed(ctx)
 	if err := am.keeper.SweepResidue(ctx); err != nil {
 		return err
 	}

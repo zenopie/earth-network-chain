@@ -98,6 +98,12 @@ func (h StakingHooks) BeforeValidatorSlashed(ctx context.Context, val sdk.ValAdd
 	if err != nil {
 		k.failure(ctx, "slash_haircut", valoper, err)
 	}
+	// The slash has not moved the tokens yet: re-weigh v's positions at the
+	// end of the block (reweighSlashed), with x/allocation's resync of the
+	// operator's self-bond.
+	if err := k.SlashedValidators.Set(ctx, valoper); err != nil {
+		k.failure(ctx, "slash_record", valoper, err)
+	}
 	return nil
 }
 

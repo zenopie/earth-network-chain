@@ -65,6 +65,12 @@ var (
 	// votes recorded under an older epoch carry no live weight. Per stream rather
 	// than global, so resetting one slate leaves the other one standing.
 	EpochKey = collections.NewPrefix("epoch") // stream -> uint64
+
+	// SlashedValidatorsKey holds the validators slashed in the current block,
+	// whose operators' Groundworks weight EndBlock resyncs once the slash has
+	// moved their tokens (BeforeValidatorSlashed fires before it does).
+	// Emptied every EndBlock.
+	SlashedValidatorsKey = collections.NewPrefix("slashed_validators") // valoper bytes
 )
 
 const (

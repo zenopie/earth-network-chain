@@ -27,6 +27,15 @@ func (k Keeper) Hooks() Hooks { return Hooks{k: k} }
 // removed. It is a no-op for addresses that have not voted.
 func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, removeVal *sdk.ValAddress) error {
 	addrBz := delAddr.Bytes()
+	// The stream's weight source decides whose bonded stake is weight (on
+	// this chain: a validator operator's self-bond, never the private staking
+	// module's own delegations, which change every epoch and are counted
+	// through positions instead).
+	if src, err := k.weightSource(types.STREAM_ID_GROUNDWORKS); err == nil {
+		if bt, ok := src.(types.BondedTracker); ok && !bt.TracksBonded(addrBz) {
+			return nil
+		}
+	}
 	voter, err := k.Voters.Get(ctx, voterKey(types.STREAM_ID_GROUNDWORKS, addrBz))
 	if err != nil {
 		return nil // not a voter (or not found) — nothing to do
@@ -78,6 +87,39 @@ func (h Hooks) BeforeDelegationRemoved(ctx context.Context, delAddr sdk.AccAddre
 	return h.k.resyncFromBonded(ctx, delAddr, &valAddr)
 }
 
+// BeforeValidatorSlashed fires before the slash moves the validator's tokens,
+// so the operator's self-bond weight cannot be read yet: the validator is
+// recorded and EndBlock (ResyncSlashed) resyncs its operator once the slash
+// has landed. Never errors: a slash must not fail over a weight record.
+func (h Hooks) BeforeValidatorSlashed(ctx context.Context, valAddr sdk.ValAddress, _ math.LegacyDec) error {
+	if err := h.k.SlashedValidators.Set(ctx, valAddr.Bytes()); err != nil {
+		sdk.UnwrapSDKContext(ctx).Logger().Error("allocation: could not record a slashed validator", "validator", valAddr.String(), "err", err)
+	}
+	return nil
+}
+
+// ResyncSlashed re-weighs, at their post-slash bonded stake, the operators of
+// the validators slashed this block (a self-bond is an operator's Groundworks
+// weight), then forgets them. Each in its own cache; a failure is logged and
+// skipped, never returned: this runs in EndBlock.
+func (k Keeper) ResyncSlashed(ctx context.Context) {
+	var vals [][]byte
+	_ = k.SlashedValidators.Walk(ctx, nil, func(v []byte) (bool, error) {
+		vals = append(vals, v)
+		return false, nil
+	})
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	for _, v := range vals {
+		cache, write := sdkCtx.CacheContext()
+		if err := k.resyncFromBonded(cache, sdk.AccAddress(v), nil); err != nil {
+			sdkCtx.Logger().Error("allocation: post-slash resync failed", "operator", sdk.AccAddress(v).String(), "err", err)
+		} else {
+			write()
+		}
+		_ = k.SlashedValidators.Remove(ctx, v)
+	}
+}
+
 // --- remaining hooks are no-ops ---
 
 func (h Hooks) AfterValidatorCreated(context.Context, sdk.ValAddress) error   { return nil }
@@ -95,9 +137,6 @@ func (h Hooks) BeforeDelegationCreated(context.Context, sdk.AccAddress, sdk.ValA
 	return nil
 }
 func (h Hooks) BeforeDelegationSharesModified(context.Context, sdk.AccAddress, sdk.ValAddress) error {
-	return nil
-}
-func (h Hooks) BeforeValidatorSlashed(context.Context, sdk.ValAddress, math.LegacyDec) error {
 	return nil
 }
 func (h Hooks) AfterUnbondingInitiated(context.Context, uint64) error { return nil }

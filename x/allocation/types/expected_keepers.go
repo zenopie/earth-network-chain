@@ -20,6 +20,14 @@ type WeightSource interface {
 	Weight(ctx context.Context, addr []byte) (math.Int, error)
 }
 
+// BondedTracker is implemented by a weight source whose account voters weigh
+// their bonded stake only for some keys. The staking hooks resync a voter
+// from its bonded stake only when TracksBonded(key) holds; a source without
+// it (the default bonded-stake source) tracks every account.
+type BondedTracker interface {
+	TracksBonded(key []byte) bool
+}
+
 // AuthKeeper defines the expected interface for the Auth module.
 type AuthKeeper interface {
 	AddressCodec() address.Codec

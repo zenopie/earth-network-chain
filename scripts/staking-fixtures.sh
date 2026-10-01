@@ -30,5 +30,5 @@ rm -rf "$PROOFS"
 mkdir -p "$PROOFS"
 cd "$CHAIN_DIR"
 EARTH_CIRCUITS="$CIRCUITS" go test ./app/ -count=1 \
-  -run 'TestPrivateStaking|TestTransparentStakingBlocked|TestStakeVote|TestGroundworksPositions'
+  -run 'TestPrivateStaking|TestTransparentStakingBlocked|TestStakeVote|TestGroundworks'
 echo "done: $(ls "$PROOFS" | wc -l | tr -d ' ') proofs in $PROOFS"

@@ -970,11 +970,8 @@ func TestGroundworksPositions(t *testing.T) {
 	_, err = ak.Options.Get(e.ctx(), collections.Join(uint32(gw), uint64(1)))
 	require.NoError(t, err)
 
-	// The validator's bonded self-stake is no Groundworks weight any more.
-	fb := e.run(e.signedTx(e.val, 300_000, 5_000, &allocationtypes.MsgSetAllocations{
-		Creator: e.bech(sdk.AccAddress(e.val.PubKey().Address())), Stream: gw, Percentages: opt,
-	}))
-	require.Equal(t, allocationtypes.ErrNoWeight.ABCICode(), fb.Code, fb.Log)
+	// (A validator's self-bond is Groundworks weight too: see
+	// TestGroundworksSelfBondWeight. This test is about positions.)
 
 	dn := e.delegate(vB, uint64(1_000*ssErth))
 	e.days(2) // delegated, then one epoch of rewards compounded
@@ -1018,7 +1015,7 @@ func TestGroundworksPositions(t *testing.T) {
 	}
 	m, pt := up(nil, key, p.Nonce)
 	e.prove(pt, m)
-	fb = e.run(e.privateTx(m))
+	fb := e.run(e.privateTx(m))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
 	e.settle(pt)
 	_, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), sstypes.PositionVoterKey(id)))
@@ -1078,4 +1075,125 @@ func TestStakeVoteSnapshotFollowsExpeditedConversion(t *testing.T) {
 	e.days(7)
 	_, err = e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), id)
 	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+// A validator operator's transparent self-bond is Groundworks weight, kept in
+// step with the bond (staking hooks) and with a slash (resynced at EndBlock);
+// the private staking module's own delegations never are; positions carry
+// their own weight beside it.
+func TestGroundworksSelfBondWeight(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(3_000 * ssErth))
+	e.shield(uint64(100 * ssErth))
+	gw := allocationtypes.STREAM_ID_GROUNDWORKS
+	ak := e.app.AllocationKeeper
+	gov := authtypes.NewModuleAddress("gov")
+	fund := sdk.NewCoins(sdk.NewInt64Coin("uerth", 10*ssErth))
+	require.NoError(t, e.app.BankKeeper.SendCoins(e.ctx(), e.userAddr(), gov, fund))
+	_, err := allocationkeeper.NewMsgServerImpl(ak).AddAddressOption(e.ctx(), &allocationtypes.MsgAddAddressOption{
+		Submitter: e.bech(gov), Stream: gw, Description: "a public good", Recipient: e.bech(e.userAddr()),
+	})
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	opt := []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 100}}
+	op := sdk.AccAddress(e.val.PubKey().Address())
+	vA := e.genesisValidator()
+	voterW := func(key []byte) math.Int {
+		v, err := ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), key))
+		require.NoError(t, err)
+		return v.Weight
+	}
+	bonded := func() math.Int {
+		b, err := e.app.StakingKeeper.GetDelegatorBonded(e.ctx(), op)
+		require.NoError(t, err)
+		return b
+	}
+
+	// Positions on vB and on vA (which is slashed below), so the stream has
+	// private weight too.
+	dn := e.delegate(vB, uint64(1_000*ssErth))
+	dnA := e.delegate(vA, uint64(400*ssErth))
+	e.days(1)
+	id := e.lock(dn, uint64(500*ssErth), positionKey(1), opt)
+	idA := e.lock(dnA, dnA.value, positionKey(2), opt)
+	posW := e.position(id).Weight
+	require.True(t, posW.IsPositive())
+	sumVoters := func() math.Int {
+		return voterW(op).Add(voterW(sstypes.PositionVoterKey(id))).Add(voterW(sstypes.PositionVoterKey(idA)))
+	}
+
+	// The operator votes with its self-bond (100 ERTH).
+	fb := e.run(e.signedTx(e.val, 300_000, 5_000, &allocationtypes.MsgSetAllocations{
+		Creator: e.bech(op), Stream: gw, Percentages: opt,
+	}))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
+	require.Equal(t, math.NewInt(100*ssErth), voterW(op))
+	require.Equal(t, bonded(), voterW(op))
+
+	// Bond more: the weight follows (AfterDelegationModified).
+	fb = e.run(e.signedTx(e.val, 300_000, 5_000, stakingtypes.NewMsgDelegate(e.bech(op), e.valoper(vA), sdk.NewInt64Coin("uerth", 50*ssErth))))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
+	require.Equal(t, math.NewInt(150*ssErth), voterW(op))
+
+	// The module account has delegations and no weight, ever; the position's
+	// weight is untouched by the operator's moves.
+	src := sskeeper.NewPositionWeightSource(e.app.ShieldedStakingKeeper)
+	mod := e.app.ShieldedStakingKeeper.ModuleAddress()
+	require.True(t, e.modDelegation(vB).IsPositive())
+	w, err := src.Weight(e.ctx(), mod)
+	require.NoError(t, err)
+	require.True(t, w.IsZero())
+	require.False(t, src.TracksBonded(mod))
+	_, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), []byte(mod)))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	require.Equal(t, posW, voterW(sstypes.PositionVoterKey(id)))
+	e.days(1) // an epoch: positions reweigh, the operator stays at its bond
+	require.Equal(t, math.NewInt(150*ssErth), voterW(op))
+	require.Equal(t, e.position(id).Weight, voterW(sstypes.PositionVoterKey(id)))
+	o, err := ak.Options.Get(e.ctx(), collections.Join(uint32(gw), uint64(1)))
+	require.NoError(t, err)
+	require.Equal(t, sumVoters(), o.AmountAllocated)
+
+	// A slash of vA: the operator's weight drops to its slashed bond at that
+	// block's end, though no delegation of its own changed.
+	e.next(5 * time.Second)
+	e.next(5 * time.Second)
+	infraction := e.height
+	ctx := e.ctx()
+	val, err := e.app.StakingKeeper.GetValidator(ctx, vA)
+	require.NoError(t, err)
+	power := val.ConsensusPower(e.app.StakingKeeper.PowerReduction(ctx))
+	consAddr, err := val.GetConsAddr()
+	require.NoError(t, err)
+	before := bonded()
+	posABefore, posBBefore := e.position(idA).Weight, e.position(id).Weight
+	e.block(5*time.Second, []abci.Misbehavior{{
+		Type: abci.MisbehaviorType_DUPLICATE_VOTE, Validator: abci.Validator{Address: consAddr, Power: power},
+		Height: infraction, Time: e.times[infraction], TotalVotingPower: power + 1000,
+	}})
+	after := bonded()
+	require.True(t, after.LT(before), "slashed: %s -> %s", before, after)
+	require.Equal(t, after, voterW(op), "weight follows the slash")
+	slashed, err := ak.SlashedValidators.Has(e.ctx(), vA.Bytes())
+	require.NoError(t, err)
+	require.False(t, slashed, "the record is cleared at EndBlock")
+	// The positions on vA re-weighed in the same block at vA's live,
+	// post-slash rate, which is now its epoch rate; vB's did not move.
+	stA := e.state(vA)
+	pA := e.position(idA)
+	require.True(t, pA.Weight.LT(posABefore), "position on the slashed validator: %s -> %s", posABefore, pA.Weight)
+	require.Equal(t, stA.EpochRate.MulInt(pA.Derth).TruncateInt(), pA.Weight)
+	require.Equal(t, pA.Weight, voterW(sstypes.PositionVoterKey(idA)))
+	live, err := e.app.ShieldedStakingKeeper.Rate(e.ctx(), e.valoper(vA))
+	require.NoError(t, err)
+	require.True(t, live.Sub(stA.EpochRate).Abs().LT(math.LegacyNewDecWithPrec(1, 6)), "epoch rate %s live %s", stA.EpochRate, live)
+	require.Equal(t, posBBefore, e.position(id).Weight)
+	require.Equal(t, posBBefore, voterW(sstypes.PositionVoterKey(id)))
+	o, err = ak.Options.Get(e.ctx(), collections.Join(uint32(gw), uint64(1)))
+	require.NoError(t, err)
+	require.Equal(t, sumVoters(), o.AmountAllocated)
+	require.NoError(t, ak.AssertHotInvariants(e.ctx()))
+	e.invariants()
 }

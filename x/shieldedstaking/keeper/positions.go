@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"errors"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
@@ -44,21 +45,33 @@ func (k Keeper) positionWeight(ctx context.Context, valoper string, derth math.I
 	return k.epochRate(ctx, valoper).MulInt(derth).TruncateInt()
 }
 
-// PositionWeightSource is the Groundworks stream's weight source: a position's
-// weight for its voter key, zero for anything else. It replaces the stream's
-// bonded-stake source: with the module the only delegator, an account's
-// bonded stake says nothing about who staked.
+// PositionWeightSource is the Groundworks stream's weight source:
+//
+//   - a position's voter key: the position's weight (derth x the validator's
+//     epoch rate), the private stake;
+//   - this module's own account: zero. Its delegations are the private stake,
+//     already counted through the positions; counting them again as an
+//     account's bond would weigh that stake twice;
+//   - any other account: its bonded stake. Transparent delegation is refused
+//     except a validator operator's self-bond, so that is all it can be: a
+//     validator's self-bond votes like any stake.
 type PositionWeightSource struct{ k Keeper }
 
 // NewPositionWeightSource returns the source to register with x/allocation.
 func NewPositionWeightSource(k Keeper) PositionWeightSource { return PositionWeightSource{k: k} }
 
-var _ allocationtypes.WeightSource = PositionWeightSource{}
+var (
+	_ allocationtypes.WeightSource  = PositionWeightSource{}
+	_ allocationtypes.BondedTracker = PositionWeightSource{}
+)
 
 func (s PositionWeightSource) Weight(ctx context.Context, key []byte) (math.Int, error) {
 	id, ok := types.ParsePositionVoterKey(key)
 	if !ok {
-		return math.ZeroInt(), nil
+		if !s.TracksBonded(key) {
+			return math.ZeroInt(), nil
+		}
+		return s.k.staking.GetDelegatorBonded(ctx, sdk.AccAddress(key))
 	}
 	p, err := s.k.Positions.Get(ctx, id)
 	if errors.Is(err, collections.ErrNotFound) {
@@ -67,6 +80,18 @@ func (s PositionWeightSource) Weight(ctx context.Context, key []byte) (math.Int,
 		return math.Int{}, err
 	}
 	return s.k.positionWeight(ctx, p.Validator, p.Derth), nil
+}
+
+// TracksBonded: x/allocation's staking hooks resync an account voter's weight
+// from its bonded stake when a delegation changes. Not for a position (no
+// delegation of its own; reweighPositions moves it each epoch) and never for
+// this module's account, whose delegations change every epoch and carry no
+// weight.
+func (s PositionWeightSource) TracksBonded(key []byte) bool {
+	if _, ok := types.ParsePositionVoterKey(key); ok {
+		return false
+	}
+	return !sdk.AccAddress(key).Equals(s.k.modAddr)
 }
 
 // reweighPositions re-applies every position's split at its validator's new
@@ -79,22 +104,72 @@ func (k Keeper) reweighPositions(ctx context.Context) {
 		return false, nil
 	})
 	for _, id := range ids {
+		k.reweighPosition(ctx, id)
+	}
+}
+
+// reweighPosition re-applies one position's split at its validator's epoch
+// rate, in its own cache: on failure it keeps its old weight until the next
+// try.
+func (k Keeper) reweighPosition(ctx context.Context, id uint64) {
+	err := k.guarded(ctx, func(cc context.Context) error {
+		if err := k.allocation.ResyncVoter(cc, allocationtypes.STREAM_ID_GROUNDWORKS, types.PositionVoterKey(id)); err != nil {
+			return err
+		}
+		p, err := k.Positions.Get(cc, id)
+		if err != nil {
+			return err
+		}
+		p.Weight = k.positionWeight(cc, p.Validator, p.Derth)
+		if len(p.Splits) == 0 {
+			p.Weight = math.ZeroInt()
+		}
+		return k.setPosition(cc, p)
+	})
+	if err != nil {
+		k.failure(ctx, "reweigh_position", "", err)
+	}
+}
+
+// reweighSlashed: a slash lowers a validator's rate at once (its delegation
+// lost tokens), so its positions must not keep voting at the pre-slash epoch
+// rate until the next epoch. For each validator slashed this block (recorded
+// by the slash hook, which runs before the tokens move): the live rate, after
+// the slash, becomes its epoch rate, and only its positions re-weigh at it,
+// each in its own cache. Rewards still reach positions at the daily epoch.
+// Never fails: it runs in EndBlock.
+func (k Keeper) reweighSlashed(ctx context.Context) {
+	var vals []string
+	_ = k.SlashedValidators.Walk(ctx, nil, func(v string) (bool, error) {
+		vals = append(vals, v)
+		return false, nil
+	})
+	for _, v := range vals {
 		err := k.guarded(ctx, func(cc context.Context) error {
-			if err := k.allocation.ResyncVoter(cc, allocationtypes.STREAM_ID_GROUNDWORKS, types.PositionVoterKey(id)); err != nil {
-				return err
-			}
-			p, err := k.Positions.Get(cc, id)
+			rate, err := k.Rate(cc, v)
 			if err != nil {
 				return err
 			}
-			p.Weight = k.positionWeight(cc, p.Validator, p.Derth)
-			if len(p.Splits) == 0 {
-				p.Weight = math.ZeroInt()
+			vs, err := k.ValidatorState(cc, v)
+			if err != nil {
+				return err
 			}
-			return k.setPosition(cc, p)
+			vs.EpochRate = rate
+			return k.Validators.Set(cc, v, vs)
 		})
 		if err != nil {
-			k.failure(ctx, "reweigh_position", "", err)
+			k.failure(ctx, "slash_rate", v, err)
+		} else {
+			var ids []uint64
+			_ = k.PositionsByVal.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](v),
+				func(key collections.Pair[string, uint64]) (bool, error) {
+					ids = append(ids, key.K2())
+					return false, nil
+				})
+			for _, id := range ids {
+				k.reweighPosition(ctx, id)
+			}
 		}
+		_ = k.SlashedValidators.Remove(ctx, v)
 	}
 }

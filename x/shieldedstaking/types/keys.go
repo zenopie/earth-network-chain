@@ -64,6 +64,10 @@ var (
 	SnapshotExpiryKey = collections.NewPrefix(10)
 	PositionsByValKey = collections.NewPrefix(11)
 	PendingRecordsKey = collections.NewPrefix(12)
+	// SlashedValidatorsKey holds the validators slashed in the current block,
+	// whose epoch rate and positions EndBlock re-weighs. Emptied every
+	// EndBlock; never exported.
+	SlashedValidatorsKey = collections.NewPrefix(13)
 )
 
 // DerthDenom is validator's delegation token.
