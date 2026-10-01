@@ -3,7 +3,6 @@ package earth.personhood.v1;
 
 import "amino/amino.proto";
 import "cosmos/base/query/v1beta1/pagination.proto";
-import "cosmos_proto/cosmos.proto";
 import "earth/personhood/v1/params.proto";
 import "earth/personhood/v1/registration.proto";
 import "gogoproto/gogo.proto";
@@ -18,9 +17,26 @@ service Query {
     option (google.api.http).get = "/earth/personhood/v1/params";
   }
 
-  // Registration queries a wallet's registration status.
+  // Registration looks a registration up by its passport nullifier (hex).
   rpc Registration(QueryRegistrationRequest) returns (QueryRegistrationResponse) {
-    option (google.api.http).get = "/earth/personhood/v1/registration/{address}";
+    option (google.api.http).get = "/earth/personhood/v1/registration/{nullifier}";
+  }
+
+  // IdentityTree returns the identity tree's size and latest anchor.
+  rpc IdentityTree(QueryIdentityTreeRequest) returns (QueryIdentityTreeResponse) {
+    option (google.api.http).get = "/earth/personhood/v1/identity_tree";
+  }
+
+  // IdentityLeaves returns a range of identity leaves (zero for zeroed ones),
+  // for wallets and indexers rebuilding the tree. Ranges only: nothing here
+  // asks for "my" leaf.
+  rpc IdentityLeaves(QueryIdentityLeavesRequest) returns (QueryIdentityLeavesResponse) {
+    option (google.api.http).get = "/earth/personhood/v1/identity_leaves";
+  }
+
+  // CaretakerVoterCount is how many caretaker splits currently count.
+  rpc CaretakerVoterCount(QueryCaretakerVoterCountRequest) returns (QueryCaretakerVoterCountResponse) {
+    option (google.api.http).get = "/earth/personhood/v1/caretaker_voter_count";
   }
 
   // RegistrationCount returns how many humans are currently registered.
@@ -51,16 +67,42 @@ message QueryParamsResponse {
   ];
 }
 
-// QueryRegistrationRequest requests a wallet's registration.
+// QueryRegistrationRequest names a passport nullifier, hex-encoded.
 message QueryRegistrationRequest {
-  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string nullifier = 1;
 }
 
-// QueryRegistrationResponse returns a wallet's registration status.
+// QueryRegistrationResponse returns the registration, if any.
 message QueryRegistrationResponse {
   bool registered = 1;
   bool expired = 2;
   Registration registration = 3 [(gogoproto.nullable) = false];
+}
+
+message QueryIdentityTreeRequest {}
+
+// QueryIdentityTreeResponse is the tree's size and its latest recorded root.
+message QueryIdentityTreeResponse {
+  uint64 size = 1;
+  bytes latest_root = 2;
+  // window_seconds is how long a superseded root stays an anchor.
+  uint64 window_seconds = 3;
+}
+
+message QueryIdentityLeavesRequest {
+  uint64 start = 1;
+  // limit is capped at 1000.
+  uint64 limit = 2;
+}
+
+message QueryIdentityLeavesResponse {
+  repeated bytes leaves = 1;
+}
+
+message QueryCaretakerVoterCountRequest {}
+
+message QueryCaretakerVoterCountResponse {
+  uint64 count = 1;
 }
 
 // QueryRegistrationCountRequest requests the live registration headcount.

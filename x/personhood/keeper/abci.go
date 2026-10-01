@@ -14,22 +14,17 @@ import (
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
-// BeginBlocker retires lapsed registrations and runs the ANML
-// buyback-and-burn (1 ERTH/sec).
+// BeginBlocker retires lapsed and revoked registrations (zeroing their
+// leaves), clears lapsed caretaker splits, prunes stale claim nullifiers and
+// runs the ANML buyback-and-burn (1 ERTH/sec).
 //
-// It must run before x/allocation's BeginBlocker: the sweep returns a lapsed
-// human's vote weight to the human stream, and doing that first is what makes
-// this block's emission split across live humans only.
+// It must run before x/allocation's BeginBlocker: clearing a lapsed split
+// returns its weight to the caretaker stream, and doing that first is what
+// makes this block's emission split across live splits only.
 func (k Keeper) BeginBlocker(ctx context.Context) error {
-	// One retirement budget for the whole block, shared by both reasons a
-	// registration gets retired.
-	//
-	// Nothing meters this. Block gas bounds transactions; BeginBlock runs on an
-	// infinite gas meter and consumes no block gas, so a sweep that ran long
-	// would not fail with an error — it would simply make the block take longer,
-	// and enough of that is a liveness problem. Giving each sweep its own cap
-	// would leave the number that decides how long a block takes, their sum,
-	// chosen by nobody.
+	// One budget for the whole block, shared by every kind of retirement.
+	// BeginBlock runs on an infinite gas meter and consumes no block gas, so
+	// this is the only ceiling on its work.
 	params, err := k.Params.Get(ctx)
 	if err != nil {
 		return err
@@ -41,11 +36,32 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := k.sweepExpiredRegistrations(ctx, budget-used); err != nil {
+	budget -= used
+	if used, err = k.sweepExpiredRegistrations(ctx, budget); err != nil {
+		return err
+	}
+	budget -= used
+	if _, err := k.sweepCaretakerVotes(ctx, budget); err != nil {
+		return err
+	}
+	if err := k.pruneClaimNullifiers(ctx, types.ClaimNullifierPruneLimit); err != nil {
 		return err
 	}
 
 	return k.buybackAndBurn(ctx)
+}
+
+// EndBlocker records the block's identity root as an anchor, if the tree
+// moved, and prunes anchors past the window.
+func (k Keeper) EndBlocker(ctx context.Context) error {
+	if err := k.recordIdentityRoot(ctx); err != nil {
+		return err
+	}
+	window, err := k.IdentityRootWindow(ctx)
+	if err != nil {
+		return err
+	}
+	return k.pruneIdentityRoots(ctx, window, types.IdentityRootPruneLimit)
 }
 
 func (k Keeper) getLastBuyback(ctx context.Context) (int64, error) {

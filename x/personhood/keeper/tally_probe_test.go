@@ -7,7 +7,7 @@ import (
 // TestRegistrationTallies checks the per-DSC and per-country counters the
 // explorer reads: they must increment independently and survive repeats.
 func TestRegistrationTallies(t *testing.T) {
-	k, ctx := newKeeperForTest(t)
+	k, ctx := regKeeper(t, nil)
 
 	dscA := []byte("dsc-a")
 	dscB := []byte("dsc-b")

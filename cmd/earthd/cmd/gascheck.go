@@ -35,8 +35,9 @@ import (
 // gasCheckCmd runs the chain's own personhood checks against a live node's
 // state, without a transaction, for the gas-grant backend.
 //
-// The backend pays gas to two kinds of people: a registered human, and a new
-// human whose registration the chain would accept. Both questions are the
+// The backend funds one fee note per passport per month, to a new human whose
+// registration the chain would accept. (There is no "is this address a human"
+// check any more: nothing on chain links an address to a registration.) Both questions are the
 // chain's to answer, and answering them with a copy of its logic means the copy
 // drifts at the next circuit or parameter change. So this builds the real
 // personhood and pki keepers over a read-only store whose every read is an
@@ -57,7 +58,7 @@ func gasCheckCmd() *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "registration",
-		Short: "Would the MsgRegister on stdin (proto JSON) succeed? Prints the nullifier and whether it is a wallet switch",
+		Short: "Would the registration in the MsgRegister on stdin (proto JSON) be accepted? Its fee transfer is not checked. Prints the passport nullifier and whether it is a switch",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := newGasCheckEnv(cmd)
@@ -80,26 +81,6 @@ func gasCheckCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
-		Use:   "human [address]",
-		Short: "Does address currently count as a human? Prints its nullifier",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			env, err := newGasCheckEnv(cmd)
-			if err != nil {
-				return err
-			}
-			addr, err := env.addrCodec.StringToBytes(args[0])
-			if err != nil {
-				return emit(map[string]any{"ok": false, "error": "invalid address: " + err.Error()})
-			}
-			reg, err := env.personhood.CheckHuman(env.ctx, sdk.AccAddress(addr))
-			if err != nil {
-				return env.refusal(err)
-			}
-			return emit(map[string]any{"ok": true, "nullifier": hex.EncodeToString(reg.Nullifier), "height": env.height})
-		},
-	})
 	return cmd
 }
 
@@ -146,7 +127,7 @@ func newGasCheckEnv(cmd *cobra.Command) (*gasCheckEnv, error) {
 	}
 	pki := pkikeeper.NewKeeper(remote(pkitypes.StoreKey), cdc, addrCodec, authority)
 	personhood := personhoodkeeper.NewKeeper(remote(personhoodtypes.StoreKey), cdc, addrCodec, authority,
-		nil, nil, pki, nil, nil)
+		nil, nil, pki, nil, nil, nil)
 
 	ctx := sdk.Context{}.
 		WithContext(bg).

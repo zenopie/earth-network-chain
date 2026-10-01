@@ -1,14 +1,12 @@
 package keeper
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
-	"cosmossdk.io/collections"
 	storetypes "cosmossdk.io/store/types"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -19,6 +17,7 @@ import (
 
 	"github.com/earth-network/earth/x/personhood/types"
 	"github.com/earth-network/earth/x/pki/certs"
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // revocablePki is a PkiKeeper whose revocation set the test drives.
@@ -42,7 +41,7 @@ func capKeeper(t *testing.T) (Keeper, *revocablePki, sdk.Context) {
 		encCfg.Codec,
 		addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix()),
 		authtypes.NewModuleAddress(types.GovModuleName),
-		nil, stubDex{}, pki, stubAllocation{}, &burnLog{},
+		nil, stubDex{}, pki, stubAllocation{}, &burnLog{}, stubShielded{},
 	)
 	ctx := base.WithBlockTime(time.Unix(1_700_000_000, 0).UTC())
 	if err := k.Params.Set(ctx, types.DefaultParams()); err != nil {
@@ -153,256 +152,83 @@ done:
 	}
 }
 
-// TestRevocationStopsTheAnmlImmediately covers the lazy half of the response.
-// The daily claim re-reads the registration, so revocation has to bite there at
-// once — the purge sweep is bounded per block, and every block a large signer
-// takes to work through would otherwise be another day's ANML.
-func TestRevocationStopsTheAnmlImmediately(t *testing.T) {
-	k, pki, ctx := capKeeper(t)
-	addr := sdk.AccAddress("human_______________")
-	nullifier := []byte("nullifier-1")
-
+// seedReg writes a registration with its identity leaf, as Register does.
+func seedReg(t *testing.T, k Keeper, ctx sdk.Context, i int, dsc []byte, at int64) types.Registration {
+	t.Helper()
+	idc := privacy.FieldBytes(privacy.U64(uint64(i + 1)))
+	dscField := privacy.FieldBytes(privacy.H(privacy.Bytes(dsc)))
+	leaf, err := IdentityLeaf(idc, dscField, at)
+	require.NoError(t, err)
+	idx, err := k.appendLeaf(ctx, leaf)
+	require.NoError(t, err)
 	reg := types.Registration{
-		Nullifier:    nullifier,
-		Address:      addr.String(),
-		RegisteredAt: ctx.BlockTime().Unix(),
-		DscKey:       testDsc,
+		Nullifier: []byte{byte(i / 256), byte(i % 256), 'n'}, LeafIndex: idx,
+		RegisteredAt: at, ActivatedAt: at, DscKey: dsc, Idc: idc,
 	}
-	if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
-		t.Fatal(err)
-	}
-	if err := k.RegByAddr.Set(ctx, addr.Bytes(), nullifier); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := k.requireValidHuman(ctx, addr); err != nil {
-		t.Fatalf("a live registration should be valid: %v", err)
-	}
-
-	pki.revoked[string(testDsc)] = true
-
-	if _, err := k.requireValidHuman(ctx, addr); err == nil {
-		t.Fatal("registration under a revoked signer is still being paid")
-	}
+	require.NoError(t, k.addRegistration(ctx, reg))
+	return reg
 }
 
-// TestPurgeRetiresWeightInBoundedBatches covers the half that cannot be lazy.
-// A stream stores its total weight and only moves it when a voter is explicitly
-// cleared, so revoked registrations have to actually be walked and retired — and
-// that walk has to fit in a block.
-func TestPurgeRetiresWeightInBoundedBatches(t *testing.T) {
+// TestPurgeZeroesLeavesInBoundedBatches: a revoked signer's registrations are
+// retired a bounded batch per block, each leaf zeroed, until none remain.
+func TestPurgeZeroesLeavesInBoundedBatches(t *testing.T) {
 	k, _, ctx := capKeeper(t)
-
 	const total = 250
 	for i := 0; i < total; i++ {
-		nullifier := []byte{byte(i / 256), byte(i % 256), 'n'}
-		addr := sdk.AccAddress([]byte{byte(i / 256), byte(i % 256), 'a', 'd', 'd', 'r'})
-		reg := types.Registration{
-			Nullifier:    nullifier,
-			Address:      addr.String(),
-			RegisteredAt: ctx.BlockTime().Unix(),
-			DscKey:       testDsc,
-		}
-		if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
-			t.Fatal(err)
-		}
-		if err := k.RegByAddr.Set(ctx, addr.Bytes(), nullifier); err != nil {
-			t.Fatal(err)
-		}
-		if err := k.RegByDsc.Set(ctx, collections.Join(testDsc, nullifier)); err != nil {
-			t.Fatal(err)
-		}
+		seedReg(t, k, ctx, i, testDsc, ctx.BlockTime().Unix())
 	}
-	if err := k.StartDscPurge(ctx, testDsc); err != nil {
-		t.Fatal(err)
-	}
+	other := seedReg(t, k, ctx, total, []byte("other-signer"), ctx.BlockTime().Unix())
+	require.NoError(t, k.StartDscPurge(ctx, testDsc))
 
-	// One block must retire at most the budget, not all 250.
 	used, err := k.purgeRevokedDscs(ctx, types.DefaultRegistrationSweepLimit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if used != types.DefaultRegistrationSweepLimit {
-		t.Fatalf("first block retired %d, want the full budget %d", used, types.DefaultRegistrationSweepLimit)
-	}
-
-	// And the backlog must drain over following blocks rather than stall.
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultRegistrationSweepLimit, used)
 	for i := 0; i < 10; i++ {
-		if _, err := k.purgeRevokedDscs(ctx, types.DefaultRegistrationSweepLimit); err != nil {
-			t.Fatal(err)
-		}
+		_, err := k.purgeRevokedDscs(ctx, types.DefaultRegistrationSweepLimit)
+		require.NoError(t, err)
 	}
-	remaining := 0
-	if err := k.RegByDsc.Walk(ctx, nil, func(collections.Pair[[]byte, []byte]) (bool, error) {
-		remaining++
-		return false, nil
-	}); err != nil {
-		t.Fatal(err)
+	require.Equal(t, 1, countRegistrations(t, k, ctx))
+	for i := uint64(0); i < total; i++ {
+		l, err := k.IdentityLeafAt(ctx, i)
+		require.NoError(t, err)
+		require.True(t, l.IsZero(), "leaf %d", i)
 	}
-	if remaining != 0 {
-		t.Fatalf("%d registrations still held by the revoked signer", remaining)
-	}
-
-	// The signer drops out of the pending set once it is clean, so the sweep
-	// stops costing anything.
-	if has, err := k.PendingDscPurge.Has(ctx, testDsc); err != nil {
-		t.Fatal(err)
-	} else if has {
-		t.Fatal("drained signer left in the pending purge set")
-	}
+	l, err := k.IdentityLeafAt(ctx, other.LeafIndex)
+	require.NoError(t, err)
+	require.False(t, l.IsZero(), "another signer's leaf stays")
+	has, err := k.PendingDscPurge.Has(ctx, testDsc)
+	require.NoError(t, err)
+	require.False(t, has, "drained signer left in the pending purge set")
+	n, err := k.getRegCount(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), n)
 }
 
-// TestSweepBudgetIsSharedAcrossBothReasons is the BeginBlocker bound. Nothing
-// meters this work — BeginBlock runs on an infinite gas meter and consumes no
-// block gas — so the two sweeps must come out of one budget rather than two that
-// happen to sum to something nobody chose.
+// TestSweepBudgetIsSharedAcrossBothReasons is the BeginBlocker bound: the
+// purge, the expiry sweep and the caretaker sweep share one budget.
 func TestSweepBudgetIsSharedAcrossBothReasons(t *testing.T) {
 	k, _, ctx := capKeeper(t)
-
 	const total = 400
 	for i := 0; i < total; i++ {
-		nullifier := []byte{byte(i / 256), byte(i % 256), 'n'}
-		addr := sdk.AccAddress([]byte{byte(i / 256), byte(i % 256), 'a', 'd', 'd', 'r'})
-		reg := types.Registration{
-			Nullifier: nullifier, Address: addr.String(),
-			RegisteredAt: ctx.BlockTime().Unix(), DscKey: testDsc,
-		}
-		if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
-			t.Fatal(err)
-		}
-		if err := k.RegByAddr.Set(ctx, addr.Bytes(), nullifier); err != nil {
-			t.Fatal(err)
-		}
-		if err := k.RegByDsc.Set(ctx, collections.Join(testDsc, nullifier)); err != nil {
-			t.Fatal(err)
-		}
-		if err := k.RegByRegisteredAt.Set(ctx, collections.Join(reg.RegisteredAt, nullifier)); err != nil {
-			t.Fatal(err)
-		}
+		seedReg(t, k, ctx, i, testDsc, ctx.BlockTime().Unix())
 	}
-	if err := k.StartDscPurge(ctx, testDsc); err != nil {
-		t.Fatal(err)
-	}
-
-	// Far enough forward that every registration is also long expired, so both
-	// sweeps have unlimited work available and only the budget holds them back.
+	require.NoError(t, k.StartDscPurge(ctx, testDsc))
 	later := ctx.WithBlockTime(ctx.BlockTime().Add(400 * 24 * time.Hour))
-
 	before := countRegistrations(t, k, later)
-	if err := k.BeginBlocker(later); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, k.BeginBlocker(later))
 	retired := before - countRegistrations(t, k, later)
-
-	if retired > types.DefaultRegistrationSweepLimit {
-		t.Fatalf("one block retired %d registrations against a shared budget of %d — "+
-			"the sweeps are not sharing a bound", retired, types.DefaultRegistrationSweepLimit)
-	}
+	require.LessOrEqual(t, retired, types.DefaultRegistrationSweepLimit)
+	require.Positive(t, retired)
 }
 
 func countRegistrations(t *testing.T, k Keeper, ctx sdk.Context) int {
 	t.Helper()
 	n := 0
-	if err := k.Registrations.Walk(ctx, nil, func([]byte, types.Registration) (bool, error) {
+	require.NoError(t, k.Registrations.Walk(ctx, nil, func([]byte, types.Registration) (bool, error) {
 		n++
 		return false, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 	return n
-}
-
-// TestRevocationStopsTheVoteImmediately is the franchise's version of the
-// test above. The chamber asks LiveNullifier when a vote is cast and the
-// allocation stream asks Weight; both have to see the revocation before the
-// purge reaches the registration, which may be many blocks later.
-func TestRevocationStopsTheVoteImmediately(t *testing.T) {
-	k, pki, ctx := capKeeper(t)
-	addr := sdk.AccAddress("voter_______________")
-	nullifier := []byte("nullifier-v")
-	reg := types.Registration{
-		Nullifier:    nullifier,
-		Address:      addr.String(),
-		RegisteredAt: ctx.BlockTime().Unix(),
-		DscKey:       testDsc,
-	}
-	if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
-		t.Fatal(err)
-	}
-	if err := k.RegByAddr.Set(ctx, addr.Bytes(), nullifier); err != nil {
-		t.Fatal(err)
-	}
-
-	check := func(wantLive bool) {
-		t.Helper()
-		_, live, err := k.LiveNullifier(ctx, addr)
-		if err != nil || live != wantLive {
-			t.Fatalf("LiveNullifier = %v, %v; want %v", live, err, wantLive)
-		}
-		w, err := k.Weight(ctx, addr)
-		if err != nil || w.IsPositive() != wantLive {
-			t.Fatalf("Weight = %s, %v; want positive=%v", w, err, wantLive)
-		}
-	}
-	check(true)
-	pki.revoked[string(testDsc)] = true
-	check(false)
-}
-
-type recordingListener struct{ retired [][]byte }
-
-func (l *recordingListener) OnRegistrationRetired(_ context.Context, nullifier []byte) error {
-	l.retired = append(l.retired, nullifier)
-	return nil
-}
-
-// TestRetirementIsAnnounced: every registration the revocation purge and the
-// expiry sweep retire is announced to the listeners, which is how x/assembly
-// takes back the votes filed under it.
-func TestRetirementIsAnnounced(t *testing.T) {
-	k, _, ctx := capKeeper(t)
-	listener := &recordingListener{}
-	k.RegisterRetirementListener(listener)
-
-	add := func(i int, dsc []byte, at int64) {
-		nullifier := []byte{byte(i), 'n'}
-		addr := sdk.AccAddress([]byte{byte(i), 'a', 'd', 'd', 'r'})
-		reg := types.Registration{Nullifier: nullifier, Address: addr.String(), RegisteredAt: at, DscKey: dsc}
-		if err := k.Registrations.Set(ctx, nullifier, reg); err != nil {
-			t.Fatal(err)
-		}
-		if err := k.RegByAddr.Set(ctx, addr.Bytes(), nullifier); err != nil {
-			t.Fatal(err)
-		}
-		if err := k.RegByDsc.Set(ctx, collections.Join(dsc, nullifier)); err != nil {
-			t.Fatal(err)
-		}
-		if err := k.RegByRegisteredAt.Set(ctx, collections.Join(at, nullifier)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	now := ctx.BlockTime().Unix()
-	add(1, testDsc, now)              // revoked
-	add(2, []byte("other-signer"), 0) // long expired
-	add(3, []byte("other-signer"), now)
-
-	if err := k.StartDscPurge(ctx, testDsc); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := k.purgeRevokedDscs(ctx, types.DefaultRegistrationSweepLimit); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := k.sweepExpiredRegistrations(ctx, types.DefaultRegistrationSweepLimit); err != nil {
-		t.Fatal(err)
-	}
-
-	got := map[string]bool{}
-	for _, n := range listener.retired {
-		got[string(n)] = true
-	}
-	if len(got) != 2 || !got[string([]byte{1, 'n'})] || !got[string([]byte{2, 'n'})] {
-		t.Fatalf("announced %q, want the revoked and the expired registration only", listener.retired)
-	}
 }
 
 // TestEmptyCountryIsCapped: a signer whose issuer names no country used to skip
@@ -476,34 +302,4 @@ func TestLiveRegistrationIsASwitch(t *testing.T) {
 	if live, err := k.isLiveRegistration(later, null); err != nil || live {
 		t.Fatalf("lapsed registration: live=%v err=%v", live, err)
 	}
-}
-
-func TestRetireAllRegistrations(t *testing.T) {
-	k, _, ctx := capKeeper(t)
-	for i := byte(1); i <= 3; i++ {
-		addr := sdk.AccAddress(bytes.Repeat([]byte{i}, 20))
-		reg := types.Registration{
-			Nullifier:    []byte{i},
-			Address:      addr.String(),
-			RegisteredAt: ctx.BlockTime().Unix(),
-			Country:      "UT",
-		}
-		require.NoError(t, k.Registrations.Set(ctx, reg.Nullifier, reg))
-		require.NoError(t, k.RegByAddr.Set(ctx, addr, reg.Nullifier))
-		require.NoError(t, bumpCount(ctx, k.RegCountByCountry, reg.Country))
-	}
-	require.NoError(t, k.RegCount.Set(ctx, 3))
-
-	n, err := k.RetireAllRegistrations(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 3, n)
-	count, err := k.getRegCount(ctx)
-	require.NoError(t, err)
-	require.Zero(t, count)
-	empty := true
-	require.NoError(t, k.Registrations.Walk(ctx, nil, func([]byte, types.Registration) (bool, error) {
-		empty = false
-		return true, nil
-	}))
-	require.True(t, empty)
 }

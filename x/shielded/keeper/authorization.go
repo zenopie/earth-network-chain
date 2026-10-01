@@ -30,6 +30,9 @@ type authorizedTransfer struct {
 	// released is set once value has left the pool, so a handler (or a
 	// module it calls) cannot pay it out twice.
 	released bool
+	// action is what the msg's PrivateActionHandler prepared, nil for a msg
+	// with no action.
+	action any
 }
 
 // WithAuthorizedTransfer marks t as paid for and executed by the private
@@ -77,6 +80,30 @@ func authorizedFor(ctx context.Context, t *types.Transfer) (*authorizedTransfer,
 		return nil, types.ErrUnauthorized.Wrap("transfer differs from the one the ante executed")
 	}
 	return a, nil
+}
+
+// WithAuthorizedAction records what the msg's action handler prepared on the
+// authorization ExecutePrivateMsg just made. Only the ante calls this.
+func WithAuthorizedAction(ctx sdk.Context, prepared any) sdk.Context {
+	if a, ok := authorization(ctx); ok {
+		a.action = prepared
+	}
+	return ctx
+}
+
+// AuthorizedAction returns what the msg's PrivateActionHandler prepared, once
+// the private ante has verified t and the action's proofs and executed t in
+// this tx; ErrUnauthorized otherwise. A private action's handler calls this
+// before anything else.
+func AuthorizedAction(ctx context.Context, t *types.Transfer) (any, error) {
+	a, err := authorizedFor(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	if a.action == nil {
+		return nil, types.ErrUnauthorized.Wrap("no private action was checked for this msg")
+	}
+	return a.action, nil
 }
 
 // AuthorizedPositions returns where the ante appended t's outputs.

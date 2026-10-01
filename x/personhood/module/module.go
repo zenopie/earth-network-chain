@@ -135,8 +135,7 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 	return am.keeper.BeginBlocker(ctx)
 }
 
-// EndBlock contains the logic that is automatically triggered at the end of each block.
-// The end block implementation is optional.
-func (am AppModule) EndBlock(_ context.Context) error {
-	return nil
+// EndBlock records the block's identity-tree anchor.
+func (am AppModule) EndBlock(ctx context.Context) error {
+	return am.keeper.EndBlocker(ctx)
 }

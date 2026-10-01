@@ -21,6 +21,19 @@ message GenesisState {
 
   // removal_ballots carries open removal ballots and the votes cast on them.
   repeated RemovalBallotEntry removal_ballots = 2 [(gogoproto.nullable) = false];
+
+  // proposal_rounds are the proposals in a round past their first.
+  repeated ProposalRoundEntry proposal_rounds = 3 [(gogoproto.nullable) = false];
+
+  // ballot_seq is the last ballot id handed out. Carried because a removal
+  // ballot's id is in its scope, so an imported ballot keeps its id and new
+  // ones must not reuse it.
+  uint64 ballot_seq = 4;
+}
+
+message ProposalRoundEntry {
+  uint64 proposal_id = 1;
+  ProposalRound round = 2 [(gogoproto.nullable) = false];
 }
 
 // ProposalVoteEntry is one human's vote on one proposal. The nullifier is the

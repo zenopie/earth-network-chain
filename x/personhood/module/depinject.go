@@ -18,6 +18,7 @@ import (
 	"github.com/earth-network/earth/x/personhood/keeper"
 	"github.com/earth-network/earth/x/personhood/types"
 	pkikeeper "github.com/earth-network/earth/x/pki/keeper"
+	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
 )
 
 var _ depinject.OnePerModuleType = AppModule{}
@@ -28,7 +29,8 @@ func (AppModule) IsOnePerModuleType() {}
 func init() {
 	appconfig.Register(
 		&types.Module{},
-		appconfig.Provide(ProvideModule),
+		appconfig.Provide(ProvideModule,
+			types.ProvideRegisterGetSigners, types.ProvideClaimAnmlGetSigners, types.ProvideSetCaretakerGetSigners),
 	)
 }
 
@@ -52,6 +54,9 @@ type ModuleInputs struct {
 	// burn counters: this module destroys supply and x/earth is where the chain
 	// records that it happened.
 	EarthKeeper earthkeeper.Keeper
+	// ShieldedKeeper mints this module's payouts as notes and runs its
+	// private msgs through the private ante.
+	ShieldedKeeper shieldedkeeper.Keeper
 }
 
 type ModuleOutputs struct {
@@ -77,12 +82,13 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.PkiKeeper,
 		in.AllocationKeeper,
 		in.EarthKeeper,
+		in.ShieldedKeeper,
 	)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 
-	// Teach the human stream who may vote and with how much weight. Only this
-	// module can answer that — it is the one holding the registrations.
-	in.AllocationKeeper.RegisterWeightSource(types.AllocationStream, k)
+	// Register, ClaimAnml and SetCaretaker are private msgs: their proofs are
+	// checked in the private ante, with the fee transfer they embed.
+	k.RegisterPrivateActions(in.ShieldedKeeper)
 	// Revoking a Document Signer starts retiring the registrations made under it.
 	in.PkiKeeper.RegisterRevocationListener(k)
 

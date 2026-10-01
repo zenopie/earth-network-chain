@@ -13,33 +13,30 @@ func (k Keeper) erthDenom(ctx context.Context) (string, error) {
 	return k.dexKeeper.HubDenom(ctx)
 }
 
-// payRegistrationReward draws on the stream's registration-rewards option and
-// pays it out on a new registration: half to the registree, half to the
-// referrer. Returns the amount paid to the registree.
+// rewardNote is where one share of the registration reward is minted.
+type rewardNote struct {
+	pc, ciphertext []byte
+}
+
+// payRegistrationReward draws on the caretaker stream's registration-rewards
+// option and mints it into the shielded pool: half to the registrant's note,
+// half to the referrer's. Returns the registrant's amount.
 //
-// With no referrer, only the registree's half is DRAWN — the other half stays
-// in the option's accrued pool rather than being minted. The registree is paid
-// the same amount either way, which is the whole point: naming a referrer must
-// never cost the person naming them. Paying the unmatched half to the registree
-// instead (the previous behaviour) made being referred halve your own reward,
-// so the rational move was to never name anyone.
+// With no referrer only the registrant's half is DRAWN, and the other half
+// stays in the option's pool rather than being minted: naming a referrer never
+// costs the person naming them.
 //
-// Only a fixed fraction (RegistrationRewardPpm) of the stacked pool is paid, so
-// each reward is normalized to the pool size and the pool decays gradually
-// rather than being fully drained by whoever happens to register next.
-func (k Keeper) payRegistrationReward(ctx context.Context, registree, referrer sdk.AccAddress) (math.Int, error) {
-	// Halving the draw, rather than drawing in full and returning the remainder,
-	// is what keeps the unmatched half in the pool: the option has no deposit
-	// path, so anything drawn cannot be put back.
-	//
-	// The rate is in parts per million precisely so this halving is exact. In
-	// basis points it was integer division on a single-digit number, one step
-	// away from truncating to zero and paying an unreferred registrant nothing.
+// The ERTH already exists in x/allocation's account (a stream mints as its
+// index advances); it moves allocation -> this module -> the pool, where
+// MintNote counts it into the uerth turnstile.
+func (k Keeper) payRegistrationReward(ctx context.Context, registrant rewardNote, referrer *rewardNote) (math.Int, error) {
 	drawPpm := int64(types.RegistrationRewardPpm)
 	if referrer == nil {
 		drawPpm = types.RegistrationRewardPpm / 2
 	}
-
+	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
+		return math.ZeroInt(), err
+	}
 	payout, err := k.allocationKeeper.DrawFromOption(ctx, types.AllocationStream, types.RegistrationRewardOptionID, drawPpm)
 	if err != nil {
 		return math.ZeroInt(), err
@@ -47,24 +44,38 @@ func (k Keeper) payRegistrationReward(ctx context.Context, registree, referrer s
 	if !payout.IsPositive() {
 		return math.ZeroInt(), nil
 	}
-
 	referrerAmt := math.ZeroInt()
 	if referrer != nil {
 		referrerAmt = payout.QuoRaw(2)
 	}
-	registreeAmt := payout.Sub(referrerAmt)
+	registrantAmt := payout.Sub(referrerAmt)
 
-	// Paid out of the allocation module account, not minted here. x/allocation
-	// issues a stream's emission when the index advances, so by the time a
-	// registration draws on the pool the ERTH already exists and this module has
-	// no business creating any.
-	if err := k.allocationKeeper.PayOut(ctx, registree, registreeAmt); err != nil {
+	if err := k.allocationKeeper.PayOutToModule(ctx, types.ModuleName, payout); err != nil {
 		return math.ZeroInt(), err
 	}
-	if referrerAmt.IsPositive() {
-		if err := k.allocationKeeper.PayOut(ctx, referrer, referrerAmt); err != nil {
+	denom, err := k.erthDenom(ctx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	if registrantAmt.IsPositive() {
+		if _, _, err := k.shieldedKeeper.MintNote(ctx, types.ModuleName, sdk.NewCoin(denom, registrantAmt), registrant.pc, registrant.ciphertext); err != nil {
 			return math.ZeroInt(), err
 		}
 	}
-	return registreeAmt, nil
+	if referrerAmt.IsPositive() {
+		if _, _, err := k.shieldedKeeper.MintNote(ctx, types.ModuleName, sdk.NewCoin(denom, referrerAmt), referrer.pc, referrer.ciphertext); err != nil {
+			return math.ZeroInt(), err
+		}
+	}
+	return registrantAmt, nil
+}
+
+// mintAnmlNote mints one ANML and deposits it as a note to pc.
+func (k Keeper) mintAnmlNote(ctx context.Context, pc, ciphertext []byte) (uint64, error) {
+	anml := sdk.NewInt64Coin(types.AnmlDenom, types.OneAnml)
+	if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, sdk.NewCoins(anml)); err != nil {
+		return 0, err
+	}
+	pos, _, err := k.shieldedKeeper.MintNote(ctx, types.ModuleName, anml, pc, ciphertext)
+	return pos, err
 }

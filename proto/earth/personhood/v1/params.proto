@@ -51,17 +51,12 @@ message Params {
   // cannot be registered by backdating current_date.
   uint32 current_date_index = 6;
 
-  // address_index is the public-input position of the account the proof was
-  // made for.
-  //
-  // A proof travels in the clear inside MsgRegister, so anyone who reads a
-  // block has the bytes. Binding the registrant's address into the circuit is
-  // what stops those bytes being replayed from another wallet: the verifier
-  // checks the proof against the public inputs it is handed, so a proof made
-  // for one account does not verify against another.
-  //
-  // Without it, re-registering could only ever be a refusal -- which is what it
-  // was, and which stranded anyone who lost the wallet they registered from.
+  // address_index is the public-input position of the circuit's `address`
+  // input, which carries zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth,
+  // affiliate_pc): the identity commitment and the notes the registration
+  // pays. The chain recomputes it from MsgRegister's fields, so a proof read
+  // out of a block cannot register anyone else's identity or pay anyone
+  // else's notes.
   uint32 address_index = 20;
 
   // current_date_max_skew_seconds bounds how far the proof's current_date may
@@ -222,4 +217,20 @@ message Params {
   // back to the default.
   uint64 network_daily_registration_floor = 21;
   uint64 network_daily_registration_growth_bps = 22;
+
+  // identity_root_window_seconds is how long an identity-tree root stays a
+  // valid membership anchor after a newer one is recorded (the latest root
+  // always is). It is also how long a zeroed leaf can still prove membership
+  // against a root from before it was zeroed, which every activation bound
+  // below adds to its own delay. Zero falls back to the default (one hour).
+  uint64 identity_root_window_seconds = 23;
+
+  // caretaker_vote_seconds (R) is how long a caretaker split counts after it
+  // is cast. The chain cannot find an anonymous voter's split when their
+  // registration lapses or switches, so every split lapses on its own and the
+  // wallet refreshes it; a new identity secret may cast its first split only
+  // once any split its predecessor cast has lapsed (activated at most
+  // now - R - identity_root_window_seconds). Zero falls back to the default
+  // (30 days).
+  uint64 caretaker_vote_seconds = 24;
 }

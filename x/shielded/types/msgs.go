@@ -172,3 +172,18 @@ func (m *MsgShield) ValidateBasic() error {
 func (m *MsgRegisterAsset) ValidateBasic() error {
 	return sdk.ValidateDenom(m.Denom)
 }
+
+// ActionSignal is zk/privacy.ActionSignal over this transfer: the signal of a
+// private msg of another module that pays its fee with t and acts with a
+// second proof. Call after ValidateBasic.
+func (t *Transfer) ActionSignal(msgType, chainID string, extra ...fr.Element) (fr.Element, error) {
+	var nfs [TransferArity]fr.Element
+	for i := range TransferArity {
+		nf, err := privacy.FieldFromBytes(t.Nullifiers[i])
+		if err != nil {
+			return fr.Element{}, errorsmod.Wrapf(ErrInvalidTransfer, "nullifier %d: %v", i, err)
+		}
+		nfs[i] = nf
+	}
+	return privacy.ActionSignal(msgType, chainID, t.Ciphertexts3(), nfs, extra...), nil
+}

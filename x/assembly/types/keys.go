@@ -89,9 +89,9 @@ var (
 
 	// BallotVotesKey holds human votes on every ballot of both kinds.
 	//
-	// Keyed by the registration's nullifier rather than by the voter's address:
-	// x/personhood lets a registration move to a new wallet, so an address key
-	// would let one person vote, move, and vote again.
+	// Keyed by the voter's membership nullifier for the ballot's scope: the
+	// same person always presents the same one, so a second vote replaces the
+	// first, and it links to nothing outside the ballot.
 	BallotVotesKey = collections.NewPrefix("ballot_votes") // (ballot id, nullifier) -> VoteOption
 	// BallotTallyKey is each OPEN ballot's running count, kept true as votes
 	// arrive and as voters retire, so a ballot is decided without walking its
@@ -108,19 +108,12 @@ var (
 	// can stop at the first one that is not due rather than walking them all.
 	RemovalQueueKey = collections.NewPrefix("removal_queue") // (closes_at unix, option id)
 
-	// VotedBallotsKey indexes every vote by the voter's nullifier, so a
-	// registration that stops counting can have its votes taken back without
-	// walking any ballot. See Keeper.OnRegistrationRetired.
-	VotedBallotsKey = collections.NewPrefix("voted_ballots") // (nullifier, ballot id)
-
 	// ClosedBallotsKey is the ballots whose votes are still to be cleared.
 	ClosedBallotsKey = collections.NewPrefix("closed_ballots") // ballot id
 
-	// The v0.9.0 layout, keyed by proposal and option id. Read once, by the
-	// v0.9.1 upgrade, which moves anything in them into ballots and empties them.
-	LegacyProposalVotesKey = collections.NewPrefix("proposal_votes") // (proposal id, nullifier) -> VoteOption
-	LegacyProposalTallyKey = collections.NewPrefix("proposal_tally") // proposal id -> Tally
-	LegacyRemovalVotesKey  = collections.NewPrefix("removal_votes")  // (option id, nullifier) -> VoteOption
+	// ProposalRoundKey is each proposal's current round of human voting when
+	// it is past the first (after an expedited demotion).
+	ProposalRoundKey = collections.NewPrefix("proposal_round") // proposal id -> ProposalRound
 )
 
 // ClosedVotePurgeLimit caps how many votes of closed ballots one block clears.

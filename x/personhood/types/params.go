@@ -34,6 +34,8 @@ func DefaultParams() Params {
 	p.CountryDailyRegistrationShareBps = DefaultCountryDailyRegistrationShareBps
 	p.NetworkDailyRegistrationFloor = DefaultNetworkDailyRegistrationFloor
 	p.NetworkDailyRegistrationGrowthBps = DefaultNetworkDailyRegistrationGrowthBps
+	p.IdentityRootWindowSeconds = DefaultIdentityRootWindowSeconds
+	p.CaretakerVoteSeconds = DefaultCaretakerVoteSeconds
 	return p
 }
 
@@ -134,6 +136,23 @@ func (p Params) DscVerificationGasOrDefault() uint64 {
 	return p.DscVerificationGas
 }
 
+// IdentityRootWindowSecondsOrDefault returns how long a superseded identity
+// root stays an anchor.
+func (p Params) IdentityRootWindowSecondsOrDefault() int64 {
+	if p.IdentityRootWindowSeconds == 0 {
+		return DefaultIdentityRootWindowSeconds
+	}
+	return int64(p.IdentityRootWindowSeconds)
+}
+
+// CaretakerVoteSecondsOrDefault returns R, how long a caretaker split counts.
+func (p Params) CaretakerVoteSecondsOrDefault() int64 {
+	if p.CaretakerVoteSeconds == 0 {
+		return DefaultCaretakerVoteSeconds
+	}
+	return int64(p.CaretakerVoteSeconds)
+}
+
 // BuybackTwapWindowSecondsOrDefault returns the buyback's minimum averaging window.
 func (p Params) BuybackTwapWindowSecondsOrDefault() int64 {
 	if p.BuybackTwapWindowSeconds == 0 {
@@ -214,6 +233,14 @@ func (p Params) Validate() error {
 	// and wrong. Only the upper bound needs policing: a deviation tolerance at
 	// or above 100% admits any price at all, which is the unguarded buyback this
 	// bound exists to prevent.
+	// Bounded so the activation arithmetic (now - R - window) stays far from
+	// overflow, and so no zeroed leaf keeps proving for longer than a day.
+	if p.IdentityRootWindowSeconds > SecondsPerDay {
+		return fmt.Errorf("identity_root_window_seconds must be at most %d", SecondsPerDay)
+	}
+	if p.CaretakerVoteSeconds > 365*SecondsPerDay {
+		return fmt.Errorf("caretaker_vote_seconds must be at most a year")
+	}
 	if p.BuybackMaxDeviationBps >= BpsDenominator {
 		return fmt.Errorf(
 			"buyback_max_deviation_bps must be below %d: %d admits any price the pool can be pushed to",

@@ -6,10 +6,12 @@ package types
 import (
 	context "context"
 	fmt "fmt"
-	_ "github.com/cosmos/cosmos-proto"
 	_ "github.com/cosmos/cosmos-sdk/types/msgservice"
+	_ "github.com/cosmos/gogoproto/gogoproto"
 	grpc1 "github.com/cosmos/gogoproto/grpc"
 	proto "github.com/cosmos/gogoproto/proto"
+	types1 "github.com/earth-network/earth/x/personhood/types"
+	types "github.com/earth-network/earth/x/shielded/types"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -32,16 +34,20 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 // MsgVoteProposal votes on an x/gov proposal as a human.
 //
 // This is not x/gov's MsgVote and cannot be. That message is weighted by bonded
-// stake, and the votes it records are deleted by the tally that counts them — a
-// human vote cast there would be both miscounted and destroyed.
+// stake, and the votes it records are deleted by the tally that counts them.
 //
-// The vote is recorded against the registration behind the signer rather than
-// against the address, because a registration can be moved to a new wallet. Keyed
-// by address, one person could vote, move, and vote again.
+// membership is proven with scope zk/privacy.ProposalScope(proposal_id, round),
+// excluded_dsc the Document Signer the proposal revokes (0 for none) and
+// max_activation the round's opening time minus the identity root window: a
+// person who switched identity after the round opened cannot vote in it
+// again. Query BallotInputs for the round's values.
+//
+// signal fields: proposal_id, option.
 type MsgVoteProposal struct {
-	Voter      string     `protobuf:"bytes,1,opt,name=voter,proto3" json:"voter,omitempty"`
-	ProposalId uint64     `protobuf:"varint,2,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
-	Option     VoteOption `protobuf:"varint,3,opt,name=option,proto3,enum=earth.assembly.v1.VoteOption" json:"option,omitempty"`
+	Fee        types.Transfer    `protobuf:"bytes,1,opt,name=fee,proto3" json:"fee"`
+	Membership types1.Membership `protobuf:"bytes,2,opt,name=membership,proto3" json:"membership"`
+	ProposalId uint64            `protobuf:"varint,3,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
+	Option     VoteOption        `protobuf:"varint,4,opt,name=option,proto3,enum=earth.assembly.v1.VoteOption" json:"option,omitempty"`
 }
 
 func (m *MsgVoteProposal) Reset()         { *m = MsgVoteProposal{} }
@@ -77,11 +83,18 @@ func (m *MsgVoteProposal) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgVoteProposal proto.InternalMessageInfo
 
-func (m *MsgVoteProposal) GetVoter() string {
+func (m *MsgVoteProposal) GetFee() types.Transfer {
 	if m != nil {
-		return m.Voter
+		return m.Fee
 	}
-	return ""
+	return types.Transfer{}
+}
+
+func (m *MsgVoteProposal) GetMembership() types1.Membership {
+	if m != nil {
+		return m.Membership
+	}
+	return types1.Membership{}
 }
 
 func (m *MsgVoteProposal) GetProposalId() uint64 {
@@ -141,9 +154,16 @@ var xxx_messageInfo_MsgVoteProposalResponse proto.InternalMessageInfo
 // premise is that holdings do not count cannot charge for entry in holdings. The
 // brake is instead structural: one open ballot per option, and a live
 // registration to open it.
+//
+// membership is proven with scope zk/privacy.ProposeRemovalScope(option_id,
+// today's UTC day), excluded_dsc 0 and max_activation the start of today
+// (UTC) minus the identity root window. Its nullifier is not recorded.
+//
+// signal fields: option_id.
 type MsgProposeRemoval struct {
-	Proposer string `protobuf:"bytes,1,opt,name=proposer,proto3" json:"proposer,omitempty"`
-	OptionId uint64 `protobuf:"varint,2,opt,name=option_id,json=optionId,proto3" json:"option_id,omitempty"`
+	Fee        types.Transfer    `protobuf:"bytes,1,opt,name=fee,proto3" json:"fee"`
+	Membership types1.Membership `protobuf:"bytes,2,opt,name=membership,proto3" json:"membership"`
+	OptionId   uint64            `protobuf:"varint,3,opt,name=option_id,json=optionId,proto3" json:"option_id,omitempty"`
 }
 
 func (m *MsgProposeRemoval) Reset()         { *m = MsgProposeRemoval{} }
@@ -179,11 +199,18 @@ func (m *MsgProposeRemoval) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgProposeRemoval proto.InternalMessageInfo
 
-func (m *MsgProposeRemoval) GetProposer() string {
+func (m *MsgProposeRemoval) GetFee() types.Transfer {
 	if m != nil {
-		return m.Proposer
+		return m.Fee
 	}
-	return ""
+	return types.Transfer{}
+}
+
+func (m *MsgProposeRemoval) GetMembership() types1.Membership {
+	if m != nil {
+		return m.Membership
+	}
+	return types1.Membership{}
 }
 
 func (m *MsgProposeRemoval) GetOptionId() uint64 {
@@ -193,9 +220,10 @@ func (m *MsgProposeRemoval) GetOptionId() uint64 {
 	return 0
 }
 
-// MsgProposeRemovalResponse reports when the ballot closes, in unix seconds.
+// MsgProposeRemovalResponse reports the new ballot and when it closes.
 type MsgProposeRemovalResponse struct {
-	ClosesAt int64 `protobuf:"varint,1,opt,name=closes_at,json=closesAt,proto3" json:"closes_at,omitempty"`
+	ClosesAt int64  `protobuf:"varint,1,opt,name=closes_at,json=closesAt,proto3" json:"closes_at,omitempty"`
+	BallotId uint64 `protobuf:"varint,2,opt,name=ballot_id,json=ballotId,proto3" json:"ballot_id,omitempty"`
 }
 
 func (m *MsgProposeRemovalResponse) Reset()         { *m = MsgProposeRemovalResponse{} }
@@ -238,11 +266,25 @@ func (m *MsgProposeRemovalResponse) GetClosesAt() int64 {
 	return 0
 }
 
+func (m *MsgProposeRemovalResponse) GetBallotId() uint64 {
+	if m != nil {
+		return m.BallotId
+	}
+	return 0
+}
+
 // MsgVoteRemoval votes on an open removal ballot.
+//
+// membership is proven with scope zk/privacy.RemovalScope(ballot_id),
+// excluded_dsc 0 and max_activation the ballot's opening time minus the
+// identity root window.
+//
+// signal fields: option_id, option.
 type MsgVoteRemoval struct {
-	Voter    string     `protobuf:"bytes,1,opt,name=voter,proto3" json:"voter,omitempty"`
-	OptionId uint64     `protobuf:"varint,2,opt,name=option_id,json=optionId,proto3" json:"option_id,omitempty"`
-	Option   VoteOption `protobuf:"varint,3,opt,name=option,proto3,enum=earth.assembly.v1.VoteOption" json:"option,omitempty"`
+	Fee        types.Transfer    `protobuf:"bytes,1,opt,name=fee,proto3" json:"fee"`
+	Membership types1.Membership `protobuf:"bytes,2,opt,name=membership,proto3" json:"membership"`
+	OptionId   uint64            `protobuf:"varint,3,opt,name=option_id,json=optionId,proto3" json:"option_id,omitempty"`
+	Option     VoteOption        `protobuf:"varint,4,opt,name=option,proto3,enum=earth.assembly.v1.VoteOption" json:"option,omitempty"`
 }
 
 func (m *MsgVoteRemoval) Reset()         { *m = MsgVoteRemoval{} }
@@ -278,11 +320,18 @@ func (m *MsgVoteRemoval) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgVoteRemoval proto.InternalMessageInfo
 
-func (m *MsgVoteRemoval) GetVoter() string {
+func (m *MsgVoteRemoval) GetFee() types.Transfer {
 	if m != nil {
-		return m.Voter
+		return m.Fee
 	}
-	return ""
+	return types.Transfer{}
+}
+
+func (m *MsgVoteRemoval) GetMembership() types1.Membership {
+	if m != nil {
+		return m.Membership
+	}
+	return types1.Membership{}
 }
 
 func (m *MsgVoteRemoval) GetOptionId() uint64 {
@@ -348,37 +397,40 @@ func init() {
 func init() { proto.RegisterFile("earth/assembly/v1/tx.proto", fileDescriptor_625f78286ebb56bc) }
 
 var fileDescriptor_625f78286ebb56bc = []byte{
-	// 470 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x93, 0xcf, 0x6e, 0xd3, 0x40,
-	0x10, 0xc6, 0xb3, 0x0d, 0xad, 0xd2, 0x29, 0x04, 0xd5, 0x42, 0xd4, 0x31, 0xc2, 0x18, 0x8b, 0x43,
-	0x88, 0xa8, 0x57, 0x2d, 0x20, 0xa1, 0xde, 0xda, 0x5b, 0x0e, 0x11, 0xc8, 0x48, 0x1c, 0x40, 0x22,
-	0x72, 0xe2, 0x95, 0x6b, 0x61, 0x7b, 0x2d, 0xcf, 0xd6, 0xb4, 0x37, 0xc4, 0x13, 0xf0, 0x08, 0x5c,
-	0x38, 0xd3, 0x03, 0x0f, 0xc1, 0xb1, 0xe2, 0xc4, 0x11, 0x25, 0x87, 0xbe, 0x06, 0xb2, 0xd7, 0x76,
-	0xc8, 0x1f, 0x48, 0x90, 0x7a, 0xdc, 0x99, 0x9f, 0xbf, 0xef, 0x9b, 0x1d, 0x2f, 0x68, 0xcc, 0x49,
-	0xc4, 0x31, 0x75, 0x10, 0x59, 0x38, 0x08, 0xce, 0x68, 0xba, 0x47, 0xc5, 0xa9, 0x15, 0x27, 0x5c,
-	0x70, 0x65, 0x3b, 0xef, 0x59, 0x65, 0xcf, 0x4a, 0xf7, 0xb4, 0x9d, 0x21, 0xc7, 0x90, 0x23, 0x0d,
-	0xd1, 0xcb, 0xd0, 0x10, 0x3d, 0xc9, 0x6a, 0x2d, 0xd9, 0xe8, 0xe7, 0x27, 0x2a, 0x0f, 0x45, 0xcb,
-	0x98, 0xb7, 0xa8, 0x24, 0x73, 0xc2, 0xfc, 0x42, 0xe0, 0x66, 0x0f, 0xbd, 0x57, 0x5c, 0xb0, 0x17,
-	0x09, 0x8f, 0x39, 0x3a, 0x81, 0x62, 0xc1, 0x7a, 0xca, 0x05, 0x4b, 0x54, 0x62, 0x90, 0xf6, 0xe6,
-	0x91, 0xfa, 0xe3, 0xdb, 0xee, 0xad, 0x42, 0xf6, 0xd0, 0x75, 0x13, 0x86, 0xf8, 0x52, 0x24, 0x7e,
-	0xe4, 0xd9, 0x12, 0x53, 0xee, 0xc1, 0x56, 0x5c, 0x7c, 0xdb, 0xf7, 0x5d, 0x75, 0xcd, 0x20, 0xed,
-	0x6b, 0x36, 0x94, 0xa5, 0xae, 0xab, 0x3c, 0x85, 0x0d, 0x1e, 0x0b, 0x9f, 0x47, 0x6a, 0xdd, 0x20,
-	0xed, 0xe6, 0xfe, 0x5d, 0x6b, 0x6e, 0x3c, 0x2b, 0x4b, 0xf0, 0x3c, 0x87, 0xec, 0x02, 0x3e, 0x80,
-	0x8f, 0x97, 0xe7, 0x1d, 0xe9, 0x61, 0xb6, 0x60, 0x67, 0x26, 0xa6, 0xcd, 0x30, 0xe6, 0x11, 0x32,
-	0xf3, 0x04, 0xb6, 0x7b, 0xe8, 0xc9, 0x32, 0xb3, 0x59, 0xc8, 0x53, 0x27, 0x50, 0x9e, 0x40, 0x43,
-	0x06, 0x58, 0x61, 0x8c, 0x8a, 0x54, 0xee, 0xc0, 0xa6, 0xf4, 0x9e, 0xcc, 0xd1, 0x90, 0x85, 0xae,
-	0x7b, 0x70, 0x23, 0x8b, 0x53, 0xb1, 0xe6, 0x33, 0x68, 0xcd, 0xd9, 0x96, 0x99, 0x32, 0xa1, 0x61,
-	0xc0, 0x91, 0x61, 0xdf, 0x11, 0xb9, 0x7f, 0xdd, 0x6e, 0xc8, 0xc2, 0xa1, 0x30, 0x3f, 0x13, 0x68,
-	0x16, 0xc3, 0x94, 0x71, 0xff, 0xf7, 0xca, 0xff, 0x15, 0xf4, 0x2a, 0xae, 0x5b, 0x85, 0xdb, 0xd3,
-	0x09, 0xcb, 0xc9, 0xf6, 0xbf, 0xae, 0x41, 0xbd, 0x87, 0x9e, 0xf2, 0x16, 0xae, 0x4f, 0xfd, 0x34,
-	0xe6, 0x02, 0x93, 0x99, 0x8d, 0x69, 0x9d, 0xe5, 0x4c, 0x75, 0x83, 0x2e, 0x34, 0x67, 0x56, 0xfa,
-	0x60, 0xf1, 0xd7, 0xd3, 0x94, 0xf6, 0x68, 0x15, 0xaa, 0x72, 0x79, 0x03, 0x5b, 0x7f, 0xae, 0xe1,
-	0xfe, 0xdf, 0x03, 0x96, 0xfa, 0x0f, 0x97, 0x22, 0xa5, 0xb8, 0xb6, 0xfe, 0xe1, 0xf2, 0xbc, 0x43,
-	0x8e, 0xba, 0xdf, 0x47, 0x3a, 0xb9, 0x18, 0xe9, 0xe4, 0xd7, 0x48, 0x27, 0x9f, 0xc6, 0x7a, 0xed,
-	0x62, 0xac, 0xd7, 0x7e, 0x8e, 0xf5, 0xda, 0x6b, 0xea, 0xf9, 0xe2, 0xf8, 0x64, 0x60, 0x0d, 0x79,
-	0x48, 0x73, 0xd5, 0xdd, 0x88, 0x89, 0xf7, 0x3c, 0x79, 0x27, 0x4f, 0xf4, 0x74, 0xf2, 0x72, 0xc5,
-	0x59, 0xcc, 0x70, 0xb0, 0x91, 0x3f, 0xda, 0xc7, 0xbf, 0x03, 0x00, 0x00, 0xff, 0xff, 0x36, 0x4f,
-	0x86, 0xfe, 0x3b, 0x04, 0x00, 0x00,
+	// 517 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x94, 0x41, 0x6e, 0xd3, 0x40,
+	0x14, 0x86, 0x33, 0x49, 0xa8, 0xca, 0x04, 0x05, 0xd5, 0x42, 0x34, 0x75, 0x85, 0x13, 0x2c, 0x84,
+	0x42, 0x05, 0xb6, 0x92, 0x8a, 0x03, 0x50, 0x89, 0x45, 0x16, 0x11, 0xc8, 0x02, 0x16, 0x20, 0x51,
+	0xd9, 0xf1, 0xd4, 0xb6, 0xb0, 0xfd, 0xac, 0x79, 0x43, 0x68, 0x77, 0x1c, 0x81, 0x83, 0x20, 0xc1,
+	0x31, 0xba, 0xec, 0x92, 0x15, 0xaa, 0x12, 0x21, 0xae, 0x81, 0xc6, 0x63, 0x3b, 0x4d, 0x52, 0x54,
+	0xc4, 0x06, 0x76, 0x93, 0x37, 0xdf, 0xff, 0xe7, 0xbd, 0x7f, 0xc6, 0x43, 0x75, 0xe6, 0x72, 0x11,
+	0xda, 0x2e, 0x22, 0x4b, 0xbc, 0xf8, 0xc4, 0x9e, 0x0e, 0x6c, 0x71, 0x6c, 0x65, 0x1c, 0x04, 0x68,
+	0x5b, 0xf9, 0x9e, 0x55, 0xee, 0x59, 0xd3, 0x81, 0xbe, 0x3d, 0x01, 0x4c, 0x00, 0xed, 0x04, 0x03,
+	0x89, 0x26, 0x18, 0x28, 0x56, 0xef, 0xad, 0xfb, 0x54, 0x3a, 0x45, 0xdc, 0x57, 0x44, 0xc6, 0x38,
+	0x42, 0x1a, 0x02, 0xf8, 0x92, 0xe1, 0x2c, 0x88, 0x50, 0x70, 0x57, 0x44, 0x90, 0x2e, 0x3b, 0x61,
+	0x18, 0xb1, 0xd8, 0x67, 0x39, 0x55, 0xae, 0x0b, 0xe2, 0x56, 0x00, 0x01, 0xe4, 0x4b, 0x5b, 0xae,
+	0x54, 0xd5, 0xfc, 0x41, 0xe8, 0xcd, 0x31, 0x06, 0xaf, 0x40, 0xb0, 0xe7, 0x1c, 0x32, 0x40, 0x37,
+	0xd6, 0xf6, 0x69, 0xe3, 0x88, 0xb1, 0x0e, 0xe9, 0x91, 0x7e, 0x6b, 0xb8, 0x6b, 0xa9, 0x79, 0x2a,
+	0xb7, 0xe9, 0xc0, 0x7a, 0xc1, 0xdd, 0x14, 0x8f, 0x18, 0x3f, 0x68, 0x9e, 0x7e, 0xef, 0xd6, 0x1c,
+	0x49, 0x6b, 0x4f, 0x29, 0x4d, 0x58, 0xe2, 0x31, 0x8e, 0x61, 0x94, 0x75, 0xea, 0xb9, 0xb6, 0x5b,
+	0x68, 0x17, 0xdd, 0x4b, 0xf5, 0xb8, 0xc2, 0x0a, 0xfd, 0x05, 0xa1, 0xd6, 0xa5, 0xad, 0xac, 0xe8,
+	0xe3, 0x30, 0xf2, 0x3b, 0x8d, 0x1e, 0xe9, 0x37, 0x1d, 0x5a, 0x96, 0x46, 0xbe, 0xf6, 0x98, 0x6e,
+	0x40, 0x26, 0x07, 0xef, 0x34, 0x7b, 0xa4, 0xdf, 0x1e, 0xde, 0xb1, 0xd6, 0xf2, 0xb6, 0xe4, 0x34,
+	0xcf, 0x72, 0xc8, 0x29, 0x60, 0x73, 0x87, 0x6e, 0xaf, 0x8c, 0xe9, 0x30, 0xcc, 0x20, 0x45, 0x66,
+	0x7e, 0x26, 0x74, 0x6b, 0x8c, 0x81, 0xaa, 0x33, 0x87, 0x25, 0x30, 0xfd, 0xc7, 0x21, 0xec, 0xd2,
+	0xeb, 0xaa, 0xed, 0x45, 0x04, 0x9b, 0xaa, 0x30, 0xf2, 0xcd, 0x97, 0x74, 0x67, 0xad, 0xdb, 0x72,
+	0x16, 0xa9, 0x9c, 0xc4, 0x80, 0x0c, 0x0f, 0x5d, 0x91, 0xf7, 0xde, 0x70, 0x36, 0x55, 0xe1, 0x89,
+	0x90, 0x9b, 0x9e, 0x1b, 0xc7, 0x20, 0xa4, 0x6d, 0x5d, 0xd9, 0xaa, 0xc2, 0xc8, 0x37, 0xcf, 0x09,
+	0x6d, 0x17, 0x09, 0xfd, 0xef, 0x11, 0xfc, 0xed, 0x1d, 0xe8, 0xd0, 0xdb, 0xcb, 0x13, 0x96, 0xb1,
+	0x0d, 0xbf, 0xd4, 0x69, 0x63, 0x8c, 0x81, 0xf6, 0x96, 0xde, 0x58, 0xfa, 0x12, 0xcc, 0x4b, 0x8c,
+	0x57, 0xae, 0x91, 0xbe, 0x77, 0x35, 0x53, 0x1d, 0x8f, 0x4f, 0xdb, 0x2b, 0xd7, 0xec, 0xde, 0xe5,
+	0xea, 0x65, 0x4a, 0x7f, 0xf8, 0x27, 0x54, 0xf5, 0x2f, 0x6f, 0x68, 0xeb, 0xe2, 0x31, 0xde, 0xfd,
+	0x7d, 0x83, 0xa5, 0xff, 0x83, 0x2b, 0x91, 0xd2, 0x5c, 0xbf, 0xf6, 0xf1, 0xe7, 0xd7, 0x3d, 0x72,
+	0x30, 0x3a, 0x9d, 0x19, 0xe4, 0x6c, 0x66, 0x90, 0xf3, 0x99, 0x41, 0x3e, 0xcd, 0x8d, 0xda, 0xd9,
+	0xdc, 0xa8, 0x7d, 0x9b, 0x1b, 0xb5, 0xd7, 0x76, 0x10, 0x89, 0xf0, 0xbd, 0x67, 0x4d, 0x20, 0xb1,
+	0x73, 0xd7, 0x47, 0x29, 0x13, 0x1f, 0x80, 0xbf, 0x53, 0xbf, 0xec, 0xe3, 0xc5, 0x73, 0x27, 0x4e,
+	0x32, 0x86, 0xde, 0x46, 0xfe, 0x12, 0xed, 0xff, 0x0a, 0x00, 0x00, 0xff, 0xff, 0xc6, 0x83, 0xc9,
+	0x79, 0x55, 0x05, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -393,14 +445,14 @@ const _ = grpc.SupportPackageIsVersion4
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type MsgClient interface {
-	// VoteProposal casts the sender's vote on an x/gov proposal that is in its
-	// voting period. Two thirds of the votes cast here are required before x/gov's
-	// own result is allowed to take effect.
+	// VoteProposal casts a vote on an x/gov proposal that is in its voting
+	// period. Two thirds of the votes cast here are required before x/gov's own
+	// result is allowed to take effect.
 	VoteProposal(ctx context.Context, in *MsgVoteProposal, opts ...grpc.CallOption) (*MsgVoteProposalResponse, error)
 	// ProposeRemoval opens a ballot to remove a live groundworks allocation
 	// option.
 	ProposeRemoval(ctx context.Context, in *MsgProposeRemoval, opts ...grpc.CallOption) (*MsgProposeRemovalResponse, error)
-	// VoteRemoval casts the sender's vote on an open removal ballot.
+	// VoteRemoval casts a vote on an open removal ballot.
 	VoteRemoval(ctx context.Context, in *MsgVoteRemoval, opts ...grpc.CallOption) (*MsgVoteRemovalResponse, error)
 }
 
@@ -441,14 +493,14 @@ func (c *msgClient) VoteRemoval(ctx context.Context, in *MsgVoteRemoval, opts ..
 
 // MsgServer is the server API for Msg service.
 type MsgServer interface {
-	// VoteProposal casts the sender's vote on an x/gov proposal that is in its
-	// voting period. Two thirds of the votes cast here are required before x/gov's
-	// own result is allowed to take effect.
+	// VoteProposal casts a vote on an x/gov proposal that is in its voting
+	// period. Two thirds of the votes cast here are required before x/gov's own
+	// result is allowed to take effect.
 	VoteProposal(context.Context, *MsgVoteProposal) (*MsgVoteProposalResponse, error)
 	// ProposeRemoval opens a ballot to remove a live groundworks allocation
 	// option.
 	ProposeRemoval(context.Context, *MsgProposeRemoval) (*MsgProposeRemovalResponse, error)
-	// VoteRemoval casts the sender's vote on an open removal ballot.
+	// VoteRemoval casts a vote on an open removal ballot.
 	VoteRemoval(context.Context, *MsgVoteRemoval) (*MsgVoteRemovalResponse, error)
 }
 
@@ -569,20 +621,33 @@ func (m *MsgVoteProposal) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if m.Option != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Option))
 		i--
-		dAtA[i] = 0x18
+		dAtA[i] = 0x20
 	}
 	if m.ProposalId != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.ProposalId))
 		i--
-		dAtA[i] = 0x10
+		dAtA[i] = 0x18
 	}
-	if len(m.Voter) > 0 {
-		i -= len(m.Voter)
-		copy(dAtA[i:], m.Voter)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Voter)))
-		i--
-		dAtA[i] = 0xa
+	{
+		size, err := m.Membership.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
 	}
+	i--
+	dAtA[i] = 0x12
+	{
+		size, err := m.Fee.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
 }
 
@@ -632,15 +697,28 @@ func (m *MsgProposeRemoval) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if m.OptionId != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.OptionId))
 		i--
-		dAtA[i] = 0x10
+		dAtA[i] = 0x18
 	}
-	if len(m.Proposer) > 0 {
-		i -= len(m.Proposer)
-		copy(dAtA[i:], m.Proposer)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Proposer)))
-		i--
-		dAtA[i] = 0xa
+	{
+		size, err := m.Membership.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
 	}
+	i--
+	dAtA[i] = 0x12
+	{
+		size, err := m.Fee.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
 }
 
@@ -664,6 +742,11 @@ func (m *MsgProposeRemovalResponse) MarshalToSizedBuffer(dAtA []byte) (int, erro
 	_ = i
 	var l int
 	_ = l
+	if m.BallotId != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.BallotId))
+		i--
+		dAtA[i] = 0x10
+	}
 	if m.ClosesAt != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.ClosesAt))
 		i--
@@ -695,20 +778,33 @@ func (m *MsgVoteRemoval) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if m.Option != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Option))
 		i--
-		dAtA[i] = 0x18
+		dAtA[i] = 0x20
 	}
 	if m.OptionId != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.OptionId))
 		i--
-		dAtA[i] = 0x10
+		dAtA[i] = 0x18
 	}
-	if len(m.Voter) > 0 {
-		i -= len(m.Voter)
-		copy(dAtA[i:], m.Voter)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Voter)))
-		i--
-		dAtA[i] = 0xa
+	{
+		size, err := m.Membership.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
 	}
+	i--
+	dAtA[i] = 0x12
+	{
+		size, err := m.Fee.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
 }
 
@@ -752,10 +848,10 @@ func (m *MsgVoteProposal) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.Voter)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
+	l = m.Fee.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = m.Membership.Size()
+	n += 1 + l + sovTx(uint64(l))
 	if m.ProposalId != 0 {
 		n += 1 + sovTx(uint64(m.ProposalId))
 	}
@@ -780,10 +876,10 @@ func (m *MsgProposeRemoval) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.Proposer)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
+	l = m.Fee.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = m.Membership.Size()
+	n += 1 + l + sovTx(uint64(l))
 	if m.OptionId != 0 {
 		n += 1 + sovTx(uint64(m.OptionId))
 	}
@@ -799,6 +895,9 @@ func (m *MsgProposeRemovalResponse) Size() (n int) {
 	if m.ClosesAt != 0 {
 		n += 1 + sovTx(uint64(m.ClosesAt))
 	}
+	if m.BallotId != 0 {
+		n += 1 + sovTx(uint64(m.BallotId))
+	}
 	return n
 }
 
@@ -808,10 +907,10 @@ func (m *MsgVoteRemoval) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.Voter)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
+	l = m.Fee.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = m.Membership.Size()
+	n += 1 + l + sovTx(uint64(l))
 	if m.OptionId != 0 {
 		n += 1 + sovTx(uint64(m.OptionId))
 	}
@@ -867,9 +966,9 @@ func (m *MsgVoteProposal) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Voter", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -879,25 +978,59 @@ func (m *MsgVoteProposal) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return ErrInvalidLengthTx
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return ErrInvalidLengthTx
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Voter = string(dAtA[iNdEx:postIndex])
+			if err := m.Fee.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Membership", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Membership.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ProposalId", wireType)
 			}
@@ -916,7 +1049,7 @@ func (m *MsgVoteProposal) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 3:
+		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Option", wireType)
 			}
@@ -1037,9 +1170,9 @@ func (m *MsgProposeRemoval) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Proposer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -1049,25 +1182,59 @@ func (m *MsgProposeRemoval) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return ErrInvalidLengthTx
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return ErrInvalidLengthTx
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Proposer = string(dAtA[iNdEx:postIndex])
+			if err := m.Fee.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Membership", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Membership.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field OptionId", wireType)
 			}
@@ -1155,6 +1322,25 @@ func (m *MsgProposeRemovalResponse) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BallotId", wireType)
+			}
+			m.BallotId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.BallotId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -1207,9 +1393,9 @@ func (m *MsgVoteRemoval) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Voter", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -1219,25 +1405,59 @@ func (m *MsgVoteRemoval) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return ErrInvalidLengthTx
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return ErrInvalidLengthTx
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Voter = string(dAtA[iNdEx:postIndex])
+			if err := m.Fee.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Membership", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Membership.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field OptionId", wireType)
 			}
@@ -1256,7 +1476,7 @@ func (m *MsgVoteRemoval) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 3:
+		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Option", wireType)
 			}

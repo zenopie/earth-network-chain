@@ -72,13 +72,15 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 				if err := k.endProposalRound(ctx, id); err != nil {
 					return err
 				}
+				if err := k.ProposalRound.Remove(ctx, id); err != nil {
+					return err
+				}
 				continue
 			}
 			return err
 		}
 
-		// The running tally is kept true as registrations retire — see
-		// OnRegistrationRetired — so it is decided on as it stands.
+		// Decided on the running tally as it stands.
 		tally, err := k.proposalTally(ctx, id)
 		if err != nil {
 			return err
@@ -102,6 +104,9 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 		}
 
 		if approved {
+			if err := k.ProposalRound.Remove(ctx, id); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -124,6 +129,9 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 			// pass unratified.
 		}
 
+		if err := k.ProposalRound.Remove(ctx, id); err != nil {
+			return err
+		}
 		if err := k.failProposal(ctx, proposal, tally, barFor(proposal)); err != nil {
 			return err
 		}
@@ -161,6 +169,10 @@ func (k Keeper) demoteExpedited(ctx context.Context, proposal v1.Proposal, tally
 		return false, nil
 	}
 	previousEnd := *proposal.VotingEndTime
+	round, _, err := k.proposalRound(ctx, proposal)
+	if err != nil {
+		return false, err
+	}
 
 	proposal.Expedited = false
 	proposal.VotingEndTime = &endTime
@@ -173,6 +185,13 @@ func (k Keeper) demoteExpedited(ctx context.Context, proposal v1.Proposal, tally
 		return false, err
 	}
 	if err := k.gov.ActiveProposalsQueue.Set(ctx, collections.Join(endTime, proposal.Id), proposal.Id); err != nil {
+		return false, err
+	}
+	// The regular round is a new ballot scope, opened now: a voter proves an
+	// identity activated before it opened, and votes in it afresh.
+	if err := k.ProposalRound.Set(ctx, proposal.Id, types.ProposalRound{
+		Round: round + 1, OpenedAt: sdkCtx.BlockTime().Unix(),
+	}); err != nil {
 		return false, err
 	}
 
@@ -272,6 +291,9 @@ func (k Keeper) closeOrphanedBallots(ctx context.Context, limit int) error {
 	}
 	for _, id := range orphans {
 		if err := k.endProposalRound(ctx, id); err != nil {
+			return err
+		}
+		if err := k.ProposalRound.Remove(ctx, id); err != nil {
 			return err
 		}
 		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(

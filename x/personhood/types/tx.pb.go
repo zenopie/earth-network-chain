@@ -13,6 +13,8 @@ import (
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	grpc1 "github.com/cosmos/gogoproto/grpc"
 	proto "github.com/cosmos/gogoproto/proto"
+	types1 "github.com/earth-network/earth/x/allocation/types"
+	types "github.com/earth-network/earth/x/shielded/types"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -125,29 +127,47 @@ func (m *MsgUpdateParamsResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
-// MsgRegister registers the signer as a unique human. proof is a Barretenberg
-// UltraHonk (bb v5.0.0) proof and public_signals are its public signals as decimal
-// strings; their positions (nullifier/dsc_key/current_date) are governance params.
-// For the lean_poa circuit the order is [dsc_key, current_date, nullifier].
-// signature_algorithm selects the verifying key. The chain verifies the proof,
+// MsgRegister registers a passport. Private: unsigned, its fee paid by fee.
+//
+// proof is a passport circuit's UltraHonk proof and public_signals its public
+// inputs as decimal strings (positions are params). The chain verifies it,
 // verifies dsc_der against the CSCA trust store and binds it to the proof's
-// dsc_key, pins current_date to block time, and dedups on the nullifier.
+// dsc_key, pins current_date to block time, dedups on the passport nullifier,
+// and requires the proof's `address` input to equal
+// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate_pc).
+//
+// A new registration (or one re-entering after its last lapsed) appends the
+// leaf, mints 1 ANML to pc_anml and the registration reward to pc_erth, and
+// the referrer's half to affiliate_pc when set. A live one is a switch: the
+// old leaf is zeroed and the new one appended, and nothing is paid.
+//
+// signal fields: idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
+// Bytes(ciphertext_erth), affiliate_pc (0 when none),
+// Bytes(affiliate_ciphertext), Bytes(signature_algorithm), then every public
+// signal in order. The passport proof binds the identity and pcs through its
+// address input; this binds the rest to the fee proof.
 type MsgRegister struct {
-	Creator string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	// proof is the Barretenberg UltraHonk proof bytes (bb v5.0.0, poseidon2 flavor).
+	Fee types.Transfer `protobuf:"bytes,1,opt,name=fee,proto3" json:"fee"`
+	// proof is the Barretenberg UltraHonk proof bytes (bb v5.0.0).
 	Proof []byte `protobuf:"bytes,2,opt,name=proof,proto3" json:"proof,omitempty"`
-	// public_signals are the circuit public signals as decimal strings; positions
-	// are governance-configured (nullifier_index / dsc_key_index / current_date_index).
+	// public_signals are the circuit public inputs as decimal strings.
 	PublicSignals []string `protobuf:"bytes,3,rep,name=public_signals,json=publicSignals,proto3" json:"public_signals,omitempty"`
-	// affiliate is the optional referrer address (must be a registered human).
-	Affiliate string `protobuf:"bytes,4,opt,name=affiliate,proto3" json:"affiliate,omitempty"`
-	// signature_algorithm selects the verifying key (e.g. "rsa_65537_sha256").
-	SignatureAlgorithm string `protobuf:"bytes,5,opt,name=signature_algorithm,json=signatureAlgorithm,proto3" json:"signature_algorithm,omitempty"`
-	// dsc_der is the DER-encoded Document Signer certificate that signed the
-	// passport's SOD. The chain verifies it chains to a trusted CSCA and is not
-	// revoked, then recomputes its commitment and requires the proof's public
-	// input to match — so the proof is bound to this specific signer.
-	DscDer []byte `protobuf:"bytes,6,opt,name=dsc_der,json=dscDer,proto3" json:"dsc_der,omitempty"`
+	// signature_algorithm selects the verifying key (e.g. "lean_poa").
+	SignatureAlgorithm string `protobuf:"bytes,4,opt,name=signature_algorithm,json=signatureAlgorithm,proto3" json:"signature_algorithm,omitempty"`
+	// dsc_der is the DER-encoded Document Signer certificate.
+	DscDer []byte `protobuf:"bytes,5,opt,name=dsc_der,json=dscDer,proto3" json:"dsc_der,omitempty"`
+	// idc is the identity commitment H(TAG_ID, id_secret), 32 bytes.
+	Idc []byte `protobuf:"bytes,6,opt,name=idc,proto3" json:"idc,omitempty"`
+	// pc_anml receives the registration's ANML note.
+	PcAnml         []byte `protobuf:"bytes,7,opt,name=pc_anml,json=pcAnml,proto3" json:"pc_anml,omitempty"`
+	CiphertextAnml []byte `protobuf:"bytes,8,opt,name=ciphertext_anml,json=ciphertextAnml,proto3" json:"ciphertext_anml,omitempty"`
+	// pc_erth receives the registrant's half of the registration reward.
+	PcErth         []byte `protobuf:"bytes,9,opt,name=pc_erth,json=pcErth,proto3" json:"pc_erth,omitempty"`
+	CiphertextErth []byte `protobuf:"bytes,10,opt,name=ciphertext_erth,json=ciphertextErth,proto3" json:"ciphertext_erth,omitempty"`
+	// affiliate_pc is the referrer's published pc, empty for none. It receives
+	// the referrer's half.
+	AffiliatePc         []byte `protobuf:"bytes,11,opt,name=affiliate_pc,json=affiliatePc,proto3" json:"affiliate_pc,omitempty"`
+	AffiliateCiphertext []byte `protobuf:"bytes,12,opt,name=affiliate_ciphertext,json=affiliateCiphertext,proto3" json:"affiliate_ciphertext,omitempty"`
 }
 
 func (m *MsgRegister) Reset()         { *m = MsgRegister{} }
@@ -183,11 +203,11 @@ func (m *MsgRegister) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgRegister proto.InternalMessageInfo
 
-func (m *MsgRegister) GetCreator() string {
+func (m *MsgRegister) GetFee() types.Transfer {
 	if m != nil {
-		return m.Creator
+		return m.Fee
 	}
-	return ""
+	return types.Transfer{}
 }
 
 func (m *MsgRegister) GetProof() []byte {
@@ -204,13 +224,6 @@ func (m *MsgRegister) GetPublicSignals() []string {
 	return nil
 }
 
-func (m *MsgRegister) GetAffiliate() string {
-	if m != nil {
-		return m.Affiliate
-	}
-	return ""
-}
-
 func (m *MsgRegister) GetSignatureAlgorithm() string {
 	if m != nil {
 		return m.SignatureAlgorithm
@@ -225,13 +238,63 @@ func (m *MsgRegister) GetDscDer() []byte {
 	return nil
 }
 
-// MsgRegisterResponse returns the registration reward paid to the registree.
+func (m *MsgRegister) GetIdc() []byte {
+	if m != nil {
+		return m.Idc
+	}
+	return nil
+}
+
+func (m *MsgRegister) GetPcAnml() []byte {
+	if m != nil {
+		return m.PcAnml
+	}
+	return nil
+}
+
+func (m *MsgRegister) GetCiphertextAnml() []byte {
+	if m != nil {
+		return m.CiphertextAnml
+	}
+	return nil
+}
+
+func (m *MsgRegister) GetPcErth() []byte {
+	if m != nil {
+		return m.PcErth
+	}
+	return nil
+}
+
+func (m *MsgRegister) GetCiphertextErth() []byte {
+	if m != nil {
+		return m.CiphertextErth
+	}
+	return nil
+}
+
+func (m *MsgRegister) GetAffiliatePc() []byte {
+	if m != nil {
+		return m.AffiliatePc
+	}
+	return nil
+}
+
+func (m *MsgRegister) GetAffiliateCiphertext() []byte {
+	if m != nil {
+		return m.AffiliateCiphertext
+	}
+	return nil
+}
+
+// MsgRegisterResponse returns what the registration did.
 type MsgRegisterResponse struct {
+	// reward is the ERTH minted to pc_erth; zero on a switch.
 	Reward cosmossdk_io_math.Int `protobuf:"bytes,1,opt,name=reward,proto3,customtype=cosmossdk.io/math.Int" json:"reward"`
-	// switched is true when this proof moved an existing registration to a new
-	// wallet rather than creating one. A switch pays no reward and mints no ANML,
-	// so reward is zero when this is set — the person was already counted.
+	// switched is true when this moved a live registration to a new identity.
 	Switched bool `protobuf:"varint,2,opt,name=switched,proto3" json:"switched,omitempty"`
+	// leaf_index is the new identity leaf's position.
+	LeafIndex uint64 `protobuf:"varint,3,opt,name=leaf_index,json=leafIndex,proto3" json:"leaf_index,omitempty"`
 }
 
 func (m *MsgRegisterResponse) Reset()         { *m = MsgRegisterResponse{} }
@@ -274,9 +337,25 @@ func (m *MsgRegisterResponse) GetSwitched() bool {
 	return false
 }
 
-// MsgClaimAnml defines the MsgClaimAnml message.
+func (m *MsgRegisterResponse) GetLeafIndex() uint64 {
+	if m != nil {
+		return m.LeafIndex
+	}
+	return 0
+}
+
+// MsgClaimAnml mints 1 ANML to pc, once per person per UTC day.
+//
+// membership is proven with scope zk/privacy.ClaimScope(day), excluded_dsc 0
+// and max_activation the start of the previous UTC day. day must be today.
+//
+// signal fields: day, pc, Bytes(ciphertext).
 type MsgClaimAnml struct {
-	Creator string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	Fee        types.Transfer `protobuf:"bytes,1,opt,name=fee,proto3" json:"fee"`
+	Membership Membership     `protobuf:"bytes,2,opt,name=membership,proto3" json:"membership"`
+	Day        uint64         `protobuf:"varint,3,opt,name=day,proto3" json:"day,omitempty"`
+	Pc         []byte         `protobuf:"bytes,4,opt,name=pc,proto3" json:"pc,omitempty"`
+	Ciphertext []byte         `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
 }
 
 func (m *MsgClaimAnml) Reset()         { *m = MsgClaimAnml{} }
@@ -312,15 +391,44 @@ func (m *MsgClaimAnml) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgClaimAnml proto.InternalMessageInfo
 
-func (m *MsgClaimAnml) GetCreator() string {
+func (m *MsgClaimAnml) GetFee() types.Transfer {
 	if m != nil {
-		return m.Creator
+		return m.Fee
 	}
-	return ""
+	return types.Transfer{}
 }
 
-// MsgClaimAnmlResponse defines the MsgClaimAnmlResponse message.
+func (m *MsgClaimAnml) GetMembership() Membership {
+	if m != nil {
+		return m.Membership
+	}
+	return Membership{}
+}
+
+func (m *MsgClaimAnml) GetDay() uint64 {
+	if m != nil {
+		return m.Day
+	}
+	return 0
+}
+
+func (m *MsgClaimAnml) GetPc() []byte {
+	if m != nil {
+		return m.Pc
+	}
+	return nil
+}
+
+func (m *MsgClaimAnml) GetCiphertext() []byte {
+	if m != nil {
+		return m.Ciphertext
+	}
+	return nil
+}
+
+// MsgClaimAnmlResponse returns the ANML note's position.
 type MsgClaimAnmlResponse struct {
+	Position uint64 `protobuf:"varint,1,opt,name=position,proto3" json:"position,omitempty"`
 }
 
 func (m *MsgClaimAnmlResponse) Reset()         { *m = MsgClaimAnmlResponse{} }
@@ -356,34 +464,45 @@ func (m *MsgClaimAnmlResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgClaimAnmlResponse proto.InternalMessageInfo
 
-// MsgUnregister retired the signer's own proof-of-personhood registration.
-//
-// REMOVED. Freeing the nullifier made the holder a stranger to Register, which
-// pays the registration reward and mints 1 ANML for anyone whose nullifier is
-// not already live — so unregister-then-register drew on the reward pool once
-// per block. Registering again from another wallet still moves a live
-// registration, and still pays nothing; leaving the registry outright now only
-// happens on expiry or a Document Signer revocation.
-//
-// Retained, with its response, purely so the MsgUnregister already in the chain's
-// history decodes. Nothing accepts one: the handler always returns
-// ErrUnregisterRemoved.
-type MsgUnregister struct {
-	Creator string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+func (m *MsgClaimAnmlResponse) GetPosition() uint64 {
+	if m != nil {
+		return m.Position
+	}
+	return 0
 }
 
-func (m *MsgUnregister) Reset()         { *m = MsgUnregister{} }
-func (m *MsgUnregister) String() string { return proto.CompactTextString(m) }
-func (*MsgUnregister) ProtoMessage()    {}
-func (*MsgUnregister) Descriptor() ([]byte, []int) {
+// MsgSetCaretaker casts, replaces or clears (empty percentages) the prover's
+// caretaker split. The split is public; who cast it is not.
+//
+// membership is proven with scope zk/privacy.CaretakerScope(), excluded_dsc 0
+// and max_activation this msg's max_activation, which must be at most now -
+// caretaker_vote_seconds - identity_root_window_seconds. The wallet names the
+// bound (rounded down, say to the hour, so it says nothing about when the tx
+// was made) because the chain's own changes every block and a proof must be
+// made before its block is known. The split counts until now +
+// caretaker_vote_seconds; the wallet refreshes it before then.
+//
+// signal fields: for each entry, option_id then percent.
+type MsgSetCaretaker struct {
+	Fee         types.Transfer            `protobuf:"bytes,1,opt,name=fee,proto3" json:"fee"`
+	Membership  Membership                `protobuf:"bytes,2,opt,name=membership,proto3" json:"membership"`
+	Percentages []types1.AllocationWeight `protobuf:"bytes,3,rep,name=percentages,proto3" json:"percentages"`
+	// max_activation is the membership proof's max_activation (unix seconds).
+	MaxActivation uint64 `protobuf:"varint,4,opt,name=max_activation,json=maxActivation,proto3" json:"max_activation,omitempty"`
+}
+
+func (m *MsgSetCaretaker) Reset()         { *m = MsgSetCaretaker{} }
+func (m *MsgSetCaretaker) String() string { return proto.CompactTextString(m) }
+func (*MsgSetCaretaker) ProtoMessage()    {}
+func (*MsgSetCaretaker) Descriptor() ([]byte, []int) {
 	return fileDescriptor_83fe5bb40ec19165, []int{6}
 }
-func (m *MsgUnregister) XXX_Unmarshal(b []byte) error {
+func (m *MsgSetCaretaker) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *MsgUnregister) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *MsgSetCaretaker) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_MsgUnregister.Marshal(b, m, deterministic)
+		return xxx_messageInfo_MsgSetCaretaker.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -393,68 +512,90 @@ func (m *MsgUnregister) XXX_Marshal(b []byte, deterministic bool) ([]byte, error
 		return b[:n], nil
 	}
 }
-func (m *MsgUnregister) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MsgUnregister.Merge(m, src)
+func (m *MsgSetCaretaker) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgSetCaretaker.Merge(m, src)
 }
-func (m *MsgUnregister) XXX_Size() int {
+func (m *MsgSetCaretaker) XXX_Size() int {
 	return m.Size()
 }
-func (m *MsgUnregister) XXX_DiscardUnknown() {
-	xxx_messageInfo_MsgUnregister.DiscardUnknown(m)
+func (m *MsgSetCaretaker) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgSetCaretaker.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_MsgUnregister proto.InternalMessageInfo
+var xxx_messageInfo_MsgSetCaretaker proto.InternalMessageInfo
 
-func (m *MsgUnregister) GetCreator() string {
+func (m *MsgSetCaretaker) GetFee() types.Transfer {
 	if m != nil {
-		return m.Creator
+		return m.Fee
 	}
-	return ""
+	return types.Transfer{}
 }
 
-// MsgUnregisterResponse returns the nullifier that was freed.
-type MsgUnregisterResponse struct {
-	Nullifier []byte `protobuf:"bytes,1,opt,name=nullifier,proto3" json:"nullifier,omitempty"`
-}
-
-func (m *MsgUnregisterResponse) Reset()         { *m = MsgUnregisterResponse{} }
-func (m *MsgUnregisterResponse) String() string { return proto.CompactTextString(m) }
-func (*MsgUnregisterResponse) ProtoMessage()    {}
-func (*MsgUnregisterResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_83fe5bb40ec19165, []int{7}
-}
-func (m *MsgUnregisterResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *MsgUnregisterResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_MsgUnregisterResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *MsgUnregisterResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MsgUnregisterResponse.Merge(m, src)
-}
-func (m *MsgUnregisterResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *MsgUnregisterResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_MsgUnregisterResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_MsgUnregisterResponse proto.InternalMessageInfo
-
-func (m *MsgUnregisterResponse) GetNullifier() []byte {
+func (m *MsgSetCaretaker) GetMembership() Membership {
 	if m != nil {
-		return m.Nullifier
+		return m.Membership
+	}
+	return Membership{}
+}
+
+func (m *MsgSetCaretaker) GetPercentages() []types1.AllocationWeight {
+	if m != nil {
+		return m.Percentages
 	}
 	return nil
+}
+
+func (m *MsgSetCaretaker) GetMaxActivation() uint64 {
+	if m != nil {
+		return m.MaxActivation
+	}
+	return 0
+}
+
+// MsgSetCaretakerResponse reports when the split lapses (unix seconds), 0 when
+// it was cleared.
+type MsgSetCaretakerResponse struct {
+	ExpiresAt int64 `protobuf:"varint,1,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+}
+
+func (m *MsgSetCaretakerResponse) Reset()         { *m = MsgSetCaretakerResponse{} }
+func (m *MsgSetCaretakerResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgSetCaretakerResponse) ProtoMessage()    {}
+func (*MsgSetCaretakerResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_83fe5bb40ec19165, []int{7}
+}
+func (m *MsgSetCaretakerResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgSetCaretakerResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgSetCaretakerResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgSetCaretakerResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgSetCaretakerResponse.Merge(m, src)
+}
+func (m *MsgSetCaretakerResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgSetCaretakerResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgSetCaretakerResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgSetCaretakerResponse proto.InternalMessageInfo
+
+func (m *MsgSetCaretakerResponse) GetExpiresAt() int64 {
+	if m != nil {
+		return m.ExpiresAt
+	}
+	return 0
 }
 
 func init() {
@@ -464,57 +605,74 @@ func init() {
 	proto.RegisterType((*MsgRegisterResponse)(nil), "earth.personhood.v1.MsgRegisterResponse")
 	proto.RegisterType((*MsgClaimAnml)(nil), "earth.personhood.v1.MsgClaimAnml")
 	proto.RegisterType((*MsgClaimAnmlResponse)(nil), "earth.personhood.v1.MsgClaimAnmlResponse")
-	proto.RegisterType((*MsgUnregister)(nil), "earth.personhood.v1.MsgUnregister")
-	proto.RegisterType((*MsgUnregisterResponse)(nil), "earth.personhood.v1.MsgUnregisterResponse")
+	proto.RegisterType((*MsgSetCaretaker)(nil), "earth.personhood.v1.MsgSetCaretaker")
+	proto.RegisterType((*MsgSetCaretakerResponse)(nil), "earth.personhood.v1.MsgSetCaretakerResponse")
 }
 
 func init() { proto.RegisterFile("earth/personhood/v1/tx.proto", fileDescriptor_83fe5bb40ec19165) }
 
 var fileDescriptor_83fe5bb40ec19165 = []byte{
-	// 680 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x54, 0x4d, 0x4f, 0x13, 0x5d,
-	0x14, 0xee, 0xd0, 0x97, 0x42, 0x0f, 0xe5, 0x35, 0x0e, 0x45, 0x86, 0x91, 0x94, 0x3a, 0xd1, 0xa4,
-	0x56, 0x99, 0x49, 0x31, 0xb8, 0x60, 0x61, 0x02, 0xb8, 0x21, 0xa6, 0x09, 0x19, 0xa2, 0x89, 0xc6,
-	0xa4, 0x99, 0xce, 0xdc, 0xce, 0xdc, 0x30, 0x33, 0x77, 0x72, 0xef, 0x6d, 0x81, 0x9d, 0xba, 0x74,
-	0x61, 0xfc, 0x19, 0x2e, 0x59, 0xf0, 0x03, 0x5c, 0xb2, 0x24, 0xac, 0x8c, 0x0b, 0x62, 0x60, 0xc1,
-	0xdf, 0x30, 0xf3, 0xd9, 0xd2, 0xb4, 0xa9, 0xd1, 0x4d, 0xd3, 0x73, 0xce, 0x73, 0x3e, 0x9e, 0xe7,
-	0x9c, 0x3b, 0xb0, 0x82, 0x0c, 0xca, 0x1d, 0x2d, 0x40, 0x94, 0x11, 0xdf, 0x21, 0xc4, 0xd2, 0x7a,
-	0x0d, 0x8d, 0x1f, 0xa9, 0x01, 0x25, 0x9c, 0x88, 0x0b, 0x51, 0x54, 0xed, 0x47, 0xd5, 0x5e, 0x43,
-	0xbe, 0x6b, 0x78, 0xd8, 0x27, 0x5a, 0xf4, 0x1b, 0xe3, 0xe4, 0x25, 0x93, 0x30, 0x8f, 0x30, 0xcd,
-	0x63, 0x76, 0x98, 0xef, 0x31, 0x3b, 0x09, 0x2c, 0xc7, 0x81, 0x56, 0x64, 0x69, 0xb1, 0x91, 0x84,
-	0xaa, 0xa3, 0x3a, 0x07, 0x06, 0x35, 0xbc, 0x14, 0x51, 0xb6, 0x89, 0x4d, 0xe2, 0xcc, 0xf0, 0x5f,
-	0xec, 0x55, 0xbe, 0x0b, 0x70, 0xa7, 0xc9, 0xec, 0xd7, 0x81, 0x65, 0x70, 0xb4, 0x17, 0xe1, 0xc5,
-	0xe7, 0x50, 0x34, 0xba, 0xdc, 0x21, 0x14, 0xf3, 0x63, 0x49, 0xa8, 0x0a, 0xb5, 0xe2, 0xb6, 0x74,
-	0x71, 0xba, 0x56, 0x4e, 0x1a, 0x6e, 0x59, 0x16, 0x45, 0x8c, 0xed, 0x73, 0x8a, 0x7d, 0x5b, 0xef,
-	0x43, 0xc5, 0x17, 0x50, 0x88, 0x3b, 0x4a, 0x53, 0x55, 0xa1, 0x36, 0xb7, 0x7e, 0x5f, 0x1d, 0x41,
-	0x58, 0x8d, 0x9b, 0x6c, 0x17, 0xcf, 0x2e, 0x57, 0x73, 0xdf, 0x6e, 0x4e, 0xea, 0x82, 0x9e, 0x64,
-	0x6d, 0x6e, 0x7c, 0xba, 0x39, 0xa9, 0xf7, 0xeb, 0x7d, 0xbe, 0x39, 0xa9, 0x2b, 0x31, 0xad, 0xa3,
-	0x41, 0x62, 0x43, 0xe3, 0x2a, 0xcb, 0xb0, 0x34, 0xe4, 0xd2, 0x11, 0x0b, 0x88, 0xcf, 0x90, 0xf2,
-	0x65, 0x0a, 0xe6, 0x9a, 0xcc, 0xd6, 0x91, 0x8d, 0x19, 0x47, 0x54, 0x5c, 0x87, 0x19, 0x93, 0x22,
-	0x83, 0x13, 0x3a, 0x91, 0x57, 0x0a, 0x14, 0xcb, 0x30, 0x1d, 0x50, 0x42, 0x3a, 0x11, 0xa9, 0x92,
-	0x1e, 0x1b, 0xe2, 0x23, 0xf8, 0x3f, 0xe8, 0xb6, 0x5d, 0x6c, 0xb6, 0x18, 0xb6, 0x7d, 0xc3, 0x65,
-	0x52, 0xbe, 0x9a, 0xaf, 0x15, 0xf5, 0xf9, 0xd8, 0xbb, 0x1f, 0x3b, 0x23, 0x29, 0x3b, 0x1d, 0xec,
-	0x62, 0x83, 0x23, 0xe9, 0xbf, 0x89, 0x52, 0xa6, 0x50, 0x51, 0x83, 0x85, 0xa8, 0x2e, 0xef, 0x52,
-	0xd4, 0x32, 0x5c, 0x3b, 0x14, 0xc4, 0xf1, 0xa4, 0xe9, 0xb0, 0x82, 0x2e, 0x66, 0xa1, 0xad, 0x34,
-	0x22, 0x2e, 0xc1, 0x8c, 0xc5, 0xcc, 0x96, 0x85, 0xa8, 0x54, 0x88, 0xe6, 0x2c, 0x58, 0xcc, 0x7c,
-	0x89, 0xe8, 0x66, 0x29, 0x14, 0x35, 0x25, 0xa3, 0xf4, 0x60, 0x61, 0x40, 0x8f, 0x54, 0x27, 0x71,
-	0x07, 0x0a, 0x14, 0x1d, 0x1a, 0xd4, 0x4a, 0x64, 0x79, 0x12, 0x2e, 0xe7, 0xe7, 0xe5, 0xea, 0x62,
-	0x3c, 0x27, 0xb3, 0x0e, 0x54, 0x4c, 0x34, 0xcf, 0xe0, 0x8e, 0xba, 0xeb, 0xf3, 0x8b, 0xd3, 0x35,
-	0x48, 0x08, 0xec, 0xfa, 0x5c, 0x4f, 0x52, 0x45, 0x19, 0x66, 0xd9, 0x21, 0xe6, 0xa6, 0x83, 0xac,
-	0x48, 0xab, 0x59, 0x3d, 0xb3, 0x95, 0x3d, 0x28, 0x35, 0x99, 0xbd, 0xe3, 0x1a, 0xd8, 0xdb, 0xf2,
-	0x3d, 0xf7, 0x6f, 0x16, 0x31, 0xc4, 0xe4, 0x1e, 0x94, 0x07, 0x2b, 0x66, 0x2b, 0xef, 0xc1, 0x7c,
-	0x78, 0x0d, 0x3e, 0xfd, 0x87, 0x9d, 0x6f, 0x36, 0x06, 0x5b, 0x85, 0x77, 0x58, 0x1d, 0x73, 0x87,
-	0x59, 0x1b, 0x65, 0x03, 0x16, 0x6f, 0x39, 0x32, 0x6d, 0x57, 0xa0, 0xe8, 0x77, 0x5d, 0x17, 0x77,
-	0x30, 0x8a, 0x27, 0x28, 0xe9, 0x7d, 0xc7, 0xfa, 0xc7, 0x3c, 0xe4, 0x9b, 0xcc, 0x16, 0xdb, 0x50,
-	0xba, 0xf5, 0x06, 0x1f, 0x8e, 0x7c, 0x3b, 0x43, 0x77, 0x2e, 0x3f, 0xfd, 0x13, 0x54, 0x36, 0xc9,
-	0x1b, 0x98, 0xcd, 0x5e, 0x42, 0x75, 0x5c, 0x66, 0x8a, 0x90, 0x6b, 0x93, 0x10, 0x59, 0xdd, 0xb7,
-	0x50, 0xec, 0x6f, 0xf6, 0xc1, 0xb8, 0xb4, 0x0c, 0x22, 0x3f, 0x9e, 0x08, 0xc9, 0x4a, 0xbf, 0x07,
-	0x18, 0x58, 0xa5, 0x32, 0x96, 0x6e, 0x86, 0x91, 0xeb, 0x93, 0x31, 0x69, 0x75, 0x79, 0xfa, 0x43,
-	0xf8, 0xfd, 0xd9, 0x7e, 0x75, 0x76, 0x55, 0x11, 0xce, 0xaf, 0x2a, 0xc2, 0xaf, 0xab, 0x8a, 0xf0,
-	0xf5, 0xba, 0x92, 0x3b, 0xbf, 0xae, 0xe4, 0x7e, 0x5c, 0x57, 0x72, 0xef, 0x1a, 0x36, 0xe6, 0x4e,
-	0xb7, 0xad, 0x9a, 0xc4, 0xd3, 0xa2, 0xb2, 0x6b, 0x3e, 0xe2, 0x87, 0x84, 0x1e, 0x68, 0x23, 0xee,
-	0x81, 0x1f, 0x07, 0x88, 0xb5, 0x0b, 0xd1, 0x77, 0xf5, 0xd9, 0xef, 0x00, 0x00, 0x00, 0xff, 0xff,
-	0x53, 0x40, 0x59, 0xc6, 0x0b, 0x06, 0x00, 0x00,
+	// 954 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x55, 0x4f, 0x6f, 0xe3, 0x54,
+	0x10, 0xaf, 0x9b, 0x34, 0x9b, 0x4c, 0xb2, 0x5d, 0x70, 0x83, 0xea, 0x0d, 0x6c, 0x9a, 0x8d, 0x76,
+	0x21, 0x14, 0x6a, 0x2b, 0x5d, 0x81, 0x10, 0x07, 0xa4, 0xb4, 0xec, 0xa1, 0x42, 0x91, 0x56, 0x2e,
+	0x7f, 0x04, 0x97, 0xe8, 0xc5, 0x9e, 0xd8, 0x4f, 0xb5, 0xfd, 0xac, 0xf7, 0x5e, 0xd3, 0xf4, 0x86,
+	0xe0, 0x80, 0xc4, 0x89, 0x0b, 0xdf, 0x81, 0x63, 0x0f, 0xcb, 0x9d, 0xe3, 0x1e, 0x38, 0xac, 0xf6,
+	0x84, 0x38, 0xac, 0x50, 0x7b, 0xe8, 0xd7, 0x40, 0x7e, 0x76, 0x1c, 0xb7, 0x4a, 0xb5, 0x68, 0xc5,
+	0xc5, 0x7a, 0x33, 0xf3, 0x9b, 0x79, 0x33, 0xbf, 0x37, 0x33, 0x86, 0x77, 0x90, 0x70, 0xe9, 0x5b,
+	0x31, 0x72, 0xc1, 0x22, 0x9f, 0x31, 0xd7, 0x9a, 0xf6, 0x2d, 0x39, 0x33, 0x63, 0xce, 0x24, 0xd3,
+	0x37, 0x94, 0xd5, 0x5c, 0x58, 0xcd, 0x69, 0xbf, 0xf5, 0x26, 0x09, 0x69, 0xc4, 0x2c, 0xf5, 0x4d,
+	0x71, 0xad, 0x4d, 0x87, 0x89, 0x90, 0x09, 0x2b, 0x14, 0x5e, 0xe2, 0x1f, 0x0a, 0x2f, 0x33, 0xdc,
+	0x4d, 0x0d, 0x23, 0x25, 0x59, 0xa9, 0x90, 0x99, 0x1e, 0xa4, 0x37, 0x93, 0x20, 0x60, 0x0e, 0x91,
+	0x94, 0x45, 0x89, 0xe7, 0x42, 0xca, 0x50, 0x9d, 0x65, 0xf9, 0xc5, 0x84, 0x93, 0x70, 0x1e, 0xe7,
+	0xdd, 0x65, 0x08, 0x8e, 0x1e, 0x15, 0x92, 0x2f, 0x89, 0x24, 0x7c, 0x8a, 0x81, 0x8b, 0x0a, 0x35,
+	0x3f, 0x67, 0x88, 0xa6, 0xc7, 0x3c, 0x96, 0x66, 0x9a, 0x9c, 0x52, 0x6d, 0xf7, 0x0f, 0x0d, 0xee,
+	0x0c, 0x85, 0xf7, 0x55, 0xec, 0x12, 0x89, 0x4f, 0xd4, 0xcd, 0xfa, 0xc7, 0x50, 0x23, 0xc7, 0xd2,
+	0x67, 0x9c, 0xca, 0x53, 0x43, 0xeb, 0x68, 0xbd, 0xda, 0x9e, 0xf1, 0xe2, 0xe9, 0x4e, 0x33, 0x2b,
+	0x70, 0xe0, 0xba, 0x1c, 0x85, 0x38, 0x94, 0x9c, 0x46, 0x9e, 0xbd, 0x80, 0xea, 0x9f, 0x41, 0x25,
+	0xcd, 0xdd, 0x58, 0xed, 0x68, 0xbd, 0xfa, 0xee, 0xdb, 0xe6, 0x12, 0x82, 0xcd, 0xf4, 0x92, 0xbd,
+	0xda, 0xb3, 0x97, 0x5b, 0x2b, 0xbf, 0x5d, 0x9e, 0x6d, 0x6b, 0x76, 0xe6, 0xf5, 0xe9, 0x47, 0x3f,
+	0x5c, 0x9e, 0x6d, 0x2f, 0xe2, 0xfd, 0x7c, 0x79, 0xb6, 0xdd, 0x4d, 0xcb, 0x9a, 0x15, 0x09, 0xb8,
+	0x96, 0x6e, 0xf7, 0x2e, 0x6c, 0x5e, 0x53, 0xd9, 0x28, 0x62, 0x16, 0x09, 0xec, 0xfe, 0x5e, 0x82,
+	0xfa, 0x50, 0x78, 0xb6, 0xe2, 0x0b, 0xb9, 0xfe, 0x08, 0x4a, 0x13, 0x44, 0x55, 0xd3, 0x22, 0xbd,
+	0x9c, 0xa7, 0x69, 0xdf, 0xfc, 0x92, 0x93, 0x48, 0x4c, 0x90, 0xef, 0x95, 0x93, 0xf4, 0xec, 0x04,
+	0xad, 0x37, 0x61, 0x2d, 0xe6, 0x8c, 0x4d, 0x54, 0x55, 0x0d, 0x3b, 0x15, 0xf4, 0x87, 0xb0, 0x1e,
+	0x1f, 0x8f, 0x03, 0xea, 0x8c, 0x04, 0xf5, 0x22, 0x12, 0x08, 0xa3, 0xd4, 0x29, 0xf5, 0x6a, 0xf6,
+	0xed, 0x54, 0x7b, 0x98, 0x2a, 0x75, 0x0b, 0x36, 0x94, 0x5d, 0x1e, 0x73, 0x1c, 0x91, 0xc0, 0x4b,
+	0x2a, 0xf3, 0x43, 0xa3, 0x9c, 0xb0, 0x6a, 0xeb, 0xb9, 0x69, 0x30, 0xb7, 0xe8, 0x9b, 0x70, 0xcb,
+	0x15, 0xce, 0xc8, 0x45, 0x6e, 0xac, 0xa9, 0xfb, 0x2a, 0xae, 0x70, 0x3e, 0x47, 0xae, 0xbf, 0x01,
+	0x25, 0xea, 0x3a, 0x46, 0x45, 0x29, 0x93, 0x63, 0x02, 0x8d, 0x9d, 0x11, 0x89, 0xc2, 0xc0, 0xb8,
+	0x95, 0x42, 0x63, 0x67, 0x10, 0x85, 0x81, 0xfe, 0x1e, 0xdc, 0x71, 0x68, 0xec, 0x23, 0x97, 0x38,
+	0x93, 0x29, 0xa0, 0xaa, 0x00, 0xeb, 0x0b, 0xb5, 0x02, 0xa6, 0x11, 0x90, 0x4b, 0xdf, 0xa8, 0xcd,
+	0x23, 0x3c, 0xe6, 0xd2, 0xbf, 0x16, 0x41, 0x01, 0xe0, 0x7a, 0x04, 0x05, 0xbc, 0x0f, 0x0d, 0x32,
+	0x99, 0xd0, 0x80, 0x12, 0x89, 0xa3, 0xd8, 0x31, 0xea, 0x0a, 0x55, 0xcf, 0x75, 0x4f, 0x1c, 0xbd,
+	0x0f, 0xcd, 0x05, 0x64, 0xe1, 0x6e, 0x34, 0x14, 0x74, 0x23, 0xb7, 0xed, 0xe7, 0xa6, 0xee, 0xaf,
+	0x1a, 0x6c, 0x14, 0xde, 0x6d, 0xfe, 0x9e, 0xfa, 0x3e, 0x54, 0x38, 0x9e, 0x10, 0xee, 0x66, 0x6d,
+	0xf9, 0x41, 0xf2, 0x4a, 0x7f, 0xbf, 0xdc, 0x7a, 0x2b, 0x6d, 0x4d, 0xe1, 0x1e, 0x99, 0x94, 0x59,
+	0x21, 0x91, 0xbe, 0x79, 0x10, 0xc9, 0x17, 0x4f, 0x77, 0x20, 0xeb, 0xd9, 0x83, 0x48, 0xda, 0x99,
+	0xab, 0xde, 0x82, 0xaa, 0x38, 0xa1, 0xd2, 0xf1, 0xd1, 0x55, 0x4f, 0x5a, 0xb5, 0x73, 0x59, 0xbf,
+	0x07, 0x10, 0x20, 0x99, 0x8c, 0x68, 0xe4, 0xe2, 0xcc, 0x28, 0x75, 0xb4, 0x5e, 0xd9, 0xae, 0x25,
+	0x9a, 0x83, 0x44, 0xd1, 0xfd, 0x53, 0x83, 0xc6, 0x50, 0x78, 0xfb, 0x01, 0xa1, 0xa1, 0x22, 0xf0,
+	0xb5, 0x1a, 0xea, 0x31, 0x40, 0x88, 0xe1, 0x18, 0xb9, 0xf0, 0x69, 0x9c, 0xcd, 0xca, 0xd6, 0xd2,
+	0x59, 0x19, 0xe6, 0xb0, 0xcc, 0xbf, 0xe0, 0x98, 0x34, 0x84, 0x4b, 0x4e, 0xb3, 0x24, 0x93, 0xa3,
+	0xbe, 0x0e, 0xab, 0xb1, 0xa3, 0x7a, 0xab, 0x61, 0xaf, 0xc6, 0x8e, 0xde, 0x06, 0x28, 0xf0, 0x9d,
+	0xb6, 0x53, 0x41, 0xd3, 0xdd, 0x85, 0x66, 0xb1, 0x9a, 0x9c, 0xe6, 0x16, 0x54, 0x63, 0x26, 0x68,
+	0xb2, 0x5e, 0x54, 0x69, 0x65, 0x3b, 0x97, 0xbb, 0x3f, 0xae, 0xaa, 0x85, 0x71, 0x88, 0x72, 0x9f,
+	0x70, 0x94, 0xe4, 0xe8, 0x75, 0xc7, 0xea, 0x7f, 0x62, 0x61, 0x08, 0xf5, 0x18, 0xb9, 0x83, 0x91,
+	0x24, 0x1e, 0xa6, 0x43, 0x58, 0xdf, 0x7d, 0x98, 0xc5, 0x29, 0x2c, 0xdc, 0x69, 0xdf, 0x1c, 0xe4,
+	0xd2, 0x37, 0x48, 0x3d, 0x5f, 0x66, 0xd1, 0x8a, 0xfe, 0xc9, 0x58, 0x87, 0x64, 0x36, 0x22, 0x8e,
+	0xa4, 0x53, 0x05, 0x55, 0x74, 0x96, 0xed, 0xdb, 0x21, 0x99, 0x0d, 0x72, 0x65, 0xf7, 0x13, 0xb5,
+	0x73, 0x8a, 0x24, 0xe4, 0xe4, 0xdd, 0x03, 0xc0, 0x59, 0x4c, 0x39, 0x8a, 0x11, 0x91, 0x8a, 0x93,
+	0x92, 0x5d, 0xcb, 0x34, 0x03, 0xb9, 0xfb, 0x53, 0x09, 0x4a, 0x43, 0xe1, 0xe9, 0x63, 0x68, 0x5c,
+	0x59, 0xba, 0x0f, 0x96, 0x97, 0x7e, 0x75, 0xb1, 0xb5, 0x3e, 0xfc, 0x2f, 0xa8, 0x3c, 0x95, 0xaf,
+	0xa1, 0x9a, 0xaf, 0xbe, 0xce, 0x4d, 0x9e, 0x73, 0x44, 0xab, 0xf7, 0x2a, 0x44, 0x1e, 0xf7, 0x5b,
+	0xa8, 0x2d, 0x46, 0xe0, 0xfe, 0x4d, 0x6e, 0x39, 0xa4, 0xf5, 0xfe, 0x2b, 0x21, 0x79, 0xe8, 0x31,
+	0x34, 0xae, 0xb4, 0xd6, 0x8d, 0xb4, 0x14, 0x51, 0x37, 0xd3, 0xb2, 0xec, 0x85, 0x5a, 0x6b, 0xdf,
+	0x27, 0xbf, 0x9d, 0xbd, 0x2f, 0x9e, 0x9d, 0xb7, 0xb5, 0xe7, 0xe7, 0x6d, 0xed, 0x9f, 0xf3, 0xb6,
+	0xf6, 0xcb, 0x45, 0x7b, 0xe5, 0xf9, 0x45, 0x7b, 0xe5, 0xaf, 0x8b, 0xf6, 0xca, 0x77, 0x7d, 0x8f,
+	0x4a, 0xff, 0x78, 0x6c, 0x3a, 0x2c, 0xb4, 0x54, 0xe0, 0x9d, 0x08, 0xe5, 0x09, 0xe3, 0x47, 0xd6,
+	0x92, 0xdf, 0x91, 0x3c, 0x8d, 0x51, 0x8c, 0x2b, 0xea, 0x77, 0xfa, 0xe8, 0xdf, 0x00, 0x00, 0x00,
+	0xff, 0xff, 0xdb, 0xab, 0x5c, 0xa1, 0x72, 0x08, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -532,13 +690,12 @@ type MsgClient interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
-	// Register defines the Register RPC.
+	// Register registers a passport and writes its holder's identity leaf.
 	Register(ctx context.Context, in *MsgRegister, opts ...grpc.CallOption) (*MsgRegisterResponse, error)
-	// ClaimAnml defines the ClaimAnml RPC.
+	// ClaimAnml mints a registered human's daily ANML to a note.
 	ClaimAnml(ctx context.Context, in *MsgClaimAnml, opts ...grpc.CallOption) (*MsgClaimAnmlResponse, error)
-	// Unregister is REMOVED and always fails. Kept registered so the historical
-	// MsgUnregister already on chain still decodes -- see msg_server_unregister.go.
-	Unregister(ctx context.Context, in *MsgUnregister, opts ...grpc.CallOption) (*MsgUnregisterResponse, error)
+	// SetCaretaker casts or refreshes a registered human's caretaker split.
+	SetCaretaker(ctx context.Context, in *MsgSetCaretaker, opts ...grpc.CallOption) (*MsgSetCaretakerResponse, error)
 }
 
 type msgClient struct {
@@ -576,9 +733,9 @@ func (c *msgClient) ClaimAnml(ctx context.Context, in *MsgClaimAnml, opts ...grp
 	return out, nil
 }
 
-func (c *msgClient) Unregister(ctx context.Context, in *MsgUnregister, opts ...grpc.CallOption) (*MsgUnregisterResponse, error) {
-	out := new(MsgUnregisterResponse)
-	err := c.cc.Invoke(ctx, "/earth.personhood.v1.Msg/Unregister", in, out, opts...)
+func (c *msgClient) SetCaretaker(ctx context.Context, in *MsgSetCaretaker, opts ...grpc.CallOption) (*MsgSetCaretakerResponse, error) {
+	out := new(MsgSetCaretakerResponse)
+	err := c.cc.Invoke(ctx, "/earth.personhood.v1.Msg/SetCaretaker", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -590,13 +747,12 @@ type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
-	// Register defines the Register RPC.
+	// Register registers a passport and writes its holder's identity leaf.
 	Register(context.Context, *MsgRegister) (*MsgRegisterResponse, error)
-	// ClaimAnml defines the ClaimAnml RPC.
+	// ClaimAnml mints a registered human's daily ANML to a note.
 	ClaimAnml(context.Context, *MsgClaimAnml) (*MsgClaimAnmlResponse, error)
-	// Unregister is REMOVED and always fails. Kept registered so the historical
-	// MsgUnregister already on chain still decodes -- see msg_server_unregister.go.
-	Unregister(context.Context, *MsgUnregister) (*MsgUnregisterResponse, error)
+	// SetCaretaker casts or refreshes a registered human's caretaker split.
+	SetCaretaker(context.Context, *MsgSetCaretaker) (*MsgSetCaretakerResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -612,8 +768,8 @@ func (*UnimplementedMsgServer) Register(ctx context.Context, req *MsgRegister) (
 func (*UnimplementedMsgServer) ClaimAnml(ctx context.Context, req *MsgClaimAnml) (*MsgClaimAnmlResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClaimAnml not implemented")
 }
-func (*UnimplementedMsgServer) Unregister(ctx context.Context, req *MsgUnregister) (*MsgUnregisterResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Unregister not implemented")
+func (*UnimplementedMsgServer) SetCaretaker(ctx context.Context, req *MsgSetCaretaker) (*MsgSetCaretakerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetCaretaker not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -674,20 +830,20 @@ func _Msg_ClaimAnml_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_Unregister_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgUnregister)
+func _Msg_SetCaretaker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetCaretaker)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MsgServer).Unregister(ctx, in)
+		return srv.(MsgServer).SetCaretaker(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/earth.personhood.v1.Msg/Unregister",
+		FullMethod: "/earth.personhood.v1.Msg/SetCaretaker",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).Unregister(ctx, req.(*MsgUnregister))
+		return srv.(MsgServer).SetCaretaker(ctx, req.(*MsgSetCaretaker))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -710,8 +866,8 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_ClaimAnml_Handler,
 		},
 		{
-			MethodName: "Unregister",
-			Handler:    _Msg_Unregister_Handler,
+			MethodName: "SetCaretaker",
+			Handler:    _Msg_SetCaretaker_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -801,24 +957,66 @@ func (m *MsgRegister) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.AffiliateCiphertext) > 0 {
+		i -= len(m.AffiliateCiphertext)
+		copy(dAtA[i:], m.AffiliateCiphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.AffiliateCiphertext)))
+		i--
+		dAtA[i] = 0x62
+	}
+	if len(m.AffiliatePc) > 0 {
+		i -= len(m.AffiliatePc)
+		copy(dAtA[i:], m.AffiliatePc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.AffiliatePc)))
+		i--
+		dAtA[i] = 0x5a
+	}
+	if len(m.CiphertextErth) > 0 {
+		i -= len(m.CiphertextErth)
+		copy(dAtA[i:], m.CiphertextErth)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.CiphertextErth)))
+		i--
+		dAtA[i] = 0x52
+	}
+	if len(m.PcErth) > 0 {
+		i -= len(m.PcErth)
+		copy(dAtA[i:], m.PcErth)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.PcErth)))
+		i--
+		dAtA[i] = 0x4a
+	}
+	if len(m.CiphertextAnml) > 0 {
+		i -= len(m.CiphertextAnml)
+		copy(dAtA[i:], m.CiphertextAnml)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.CiphertextAnml)))
+		i--
+		dAtA[i] = 0x42
+	}
+	if len(m.PcAnml) > 0 {
+		i -= len(m.PcAnml)
+		copy(dAtA[i:], m.PcAnml)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.PcAnml)))
+		i--
+		dAtA[i] = 0x3a
+	}
+	if len(m.Idc) > 0 {
+		i -= len(m.Idc)
+		copy(dAtA[i:], m.Idc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Idc)))
+		i--
+		dAtA[i] = 0x32
+	}
 	if len(m.DscDer) > 0 {
 		i -= len(m.DscDer)
 		copy(dAtA[i:], m.DscDer)
 		i = encodeVarintTx(dAtA, i, uint64(len(m.DscDer)))
 		i--
-		dAtA[i] = 0x32
+		dAtA[i] = 0x2a
 	}
 	if len(m.SignatureAlgorithm) > 0 {
 		i -= len(m.SignatureAlgorithm)
 		copy(dAtA[i:], m.SignatureAlgorithm)
 		i = encodeVarintTx(dAtA, i, uint64(len(m.SignatureAlgorithm)))
-		i--
-		dAtA[i] = 0x2a
-	}
-	if len(m.Affiliate) > 0 {
-		i -= len(m.Affiliate)
-		copy(dAtA[i:], m.Affiliate)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Affiliate)))
 		i--
 		dAtA[i] = 0x22
 	}
@@ -838,13 +1036,16 @@ func (m *MsgRegister) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x12
 	}
-	if len(m.Creator) > 0 {
-		i -= len(m.Creator)
-		copy(dAtA[i:], m.Creator)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Creator)))
-		i--
-		dAtA[i] = 0xa
+	{
+		size, err := m.Fee.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
 	}
+	i--
+	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
 }
 
@@ -868,6 +1069,11 @@ func (m *MsgRegisterResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.LeafIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.LeafIndex))
+		i--
+		dAtA[i] = 0x18
+	}
 	if m.Switched {
 		i--
 		if m.Switched {
@@ -911,13 +1117,45 @@ func (m *MsgClaimAnml) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if len(m.Creator) > 0 {
-		i -= len(m.Creator)
-		copy(dAtA[i:], m.Creator)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Creator)))
+	if len(m.Ciphertext) > 0 {
+		i -= len(m.Ciphertext)
+		copy(dAtA[i:], m.Ciphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
 		i--
-		dAtA[i] = 0xa
+		dAtA[i] = 0x2a
 	}
+	if len(m.Pc) > 0 {
+		i -= len(m.Pc)
+		copy(dAtA[i:], m.Pc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if m.Day != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Day))
+		i--
+		dAtA[i] = 0x18
+	}
+	{
+		size, err := m.Membership.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	{
+		size, err := m.Fee.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
 }
 
@@ -941,10 +1179,15 @@ func (m *MsgClaimAnmlResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Position != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Position))
+		i--
+		dAtA[i] = 0x8
+	}
 	return len(dAtA) - i, nil
 }
 
-func (m *MsgUnregister) Marshal() (dAtA []byte, err error) {
+func (m *MsgSetCaretaker) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -954,27 +1197,59 @@ func (m *MsgUnregister) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *MsgUnregister) MarshalTo(dAtA []byte) (int, error) {
+func (m *MsgSetCaretaker) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *MsgUnregister) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *MsgSetCaretaker) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if len(m.Creator) > 0 {
-		i -= len(m.Creator)
-		copy(dAtA[i:], m.Creator)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Creator)))
+	if m.MaxActivation != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.MaxActivation))
 		i--
-		dAtA[i] = 0xa
+		dAtA[i] = 0x20
 	}
+	if len(m.Percentages) > 0 {
+		for iNdEx := len(m.Percentages) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Percentages[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTx(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
+	{
+		size, err := m.Membership.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	{
+		size, err := m.Fee.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
 }
 
-func (m *MsgUnregisterResponse) Marshal() (dAtA []byte, err error) {
+func (m *MsgSetCaretakerResponse) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -984,22 +1259,20 @@ func (m *MsgUnregisterResponse) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *MsgUnregisterResponse) MarshalTo(dAtA []byte) (int, error) {
+func (m *MsgSetCaretakerResponse) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *MsgUnregisterResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *MsgSetCaretakerResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if len(m.Nullifier) > 0 {
-		i -= len(m.Nullifier)
-		copy(dAtA[i:], m.Nullifier)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Nullifier)))
+	if m.ExpiresAt != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.ExpiresAt))
 		i--
-		dAtA[i] = 0xa
+		dAtA[i] = 0x8
 	}
 	return len(dAtA) - i, nil
 }
@@ -1045,10 +1318,8 @@ func (m *MsgRegister) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.Creator)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
+	l = m.Fee.Size()
+	n += 1 + l + sovTx(uint64(l))
 	l = len(m.Proof)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
@@ -1059,15 +1330,39 @@ func (m *MsgRegister) Size() (n int) {
 			n += 1 + l + sovTx(uint64(l))
 		}
 	}
-	l = len(m.Affiliate)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	l = len(m.SignatureAlgorithm)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
 	l = len(m.DscDer)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Idc)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.PcAnml)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.CiphertextAnml)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.PcErth)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.CiphertextErth)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.AffiliatePc)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.AffiliateCiphertext)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
@@ -1085,6 +1380,9 @@ func (m *MsgRegisterResponse) Size() (n int) {
 	if m.Switched {
 		n += 2
 	}
+	if m.LeafIndex != 0 {
+		n += 1 + sovTx(uint64(m.LeafIndex))
+	}
 	return n
 }
 
@@ -1094,7 +1392,18 @@ func (m *MsgClaimAnml) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.Creator)
+	l = m.Fee.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = m.Membership.Size()
+	n += 1 + l + sovTx(uint64(l))
+	if m.Day != 0 {
+		n += 1 + sovTx(uint64(m.Day))
+	}
+	l = len(m.Pc)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Ciphertext)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
@@ -1107,31 +1416,42 @@ func (m *MsgClaimAnmlResponse) Size() (n int) {
 	}
 	var l int
 	_ = l
+	if m.Position != 0 {
+		n += 1 + sovTx(uint64(m.Position))
+	}
 	return n
 }
 
-func (m *MsgUnregister) Size() (n int) {
+func (m *MsgSetCaretaker) Size() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	l = len(m.Creator)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
+	l = m.Fee.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = m.Membership.Size()
+	n += 1 + l + sovTx(uint64(l))
+	if len(m.Percentages) > 0 {
+		for _, e := range m.Percentages {
+			l = e.Size()
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	if m.MaxActivation != 0 {
+		n += 1 + sovTx(uint64(m.MaxActivation))
 	}
 	return n
 }
 
-func (m *MsgUnregisterResponse) Size() (n int) {
+func (m *MsgSetCaretakerResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	l = len(m.Nullifier)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
+	if m.ExpiresAt != 0 {
+		n += 1 + sovTx(uint64(m.ExpiresAt))
 	}
 	return n
 }
@@ -1338,9 +1658,9 @@ func (m *MsgRegister) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -1350,23 +1670,24 @@ func (m *MsgRegister) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return ErrInvalidLengthTx
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return ErrInvalidLengthTx
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Creator = string(dAtA[iNdEx:postIndex])
+			if err := m.Fee.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -1436,38 +1757,6 @@ func (m *MsgRegister) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Affiliate", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Affiliate = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 5:
-			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field SignatureAlgorithm", wireType)
 			}
 			var stringLen uint64
@@ -1498,7 +1787,7 @@ func (m *MsgRegister) Unmarshal(dAtA []byte) error {
 			}
 			m.SignatureAlgorithm = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 6:
+		case 5:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field DscDer", wireType)
 			}
@@ -1530,6 +1819,244 @@ func (m *MsgRegister) Unmarshal(dAtA []byte) error {
 			m.DscDer = append(m.DscDer[:0], dAtA[iNdEx:postIndex]...)
 			if m.DscDer == nil {
 				m.DscDer = []byte{}
+			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Idc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Idc = append(m.Idc[:0], dAtA[iNdEx:postIndex]...)
+			if m.Idc == nil {
+				m.Idc = []byte{}
+			}
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PcAnml", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.PcAnml = append(m.PcAnml[:0], dAtA[iNdEx:postIndex]...)
+			if m.PcAnml == nil {
+				m.PcAnml = []byte{}
+			}
+			iNdEx = postIndex
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CiphertextAnml", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.CiphertextAnml = append(m.CiphertextAnml[:0], dAtA[iNdEx:postIndex]...)
+			if m.CiphertextAnml == nil {
+				m.CiphertextAnml = []byte{}
+			}
+			iNdEx = postIndex
+		case 9:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PcErth", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.PcErth = append(m.PcErth[:0], dAtA[iNdEx:postIndex]...)
+			if m.PcErth == nil {
+				m.PcErth = []byte{}
+			}
+			iNdEx = postIndex
+		case 10:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CiphertextErth", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.CiphertextErth = append(m.CiphertextErth[:0], dAtA[iNdEx:postIndex]...)
+			if m.CiphertextErth == nil {
+				m.CiphertextErth = []byte{}
+			}
+			iNdEx = postIndex
+		case 11:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AffiliatePc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.AffiliatePc = append(m.AffiliatePc[:0], dAtA[iNdEx:postIndex]...)
+			if m.AffiliatePc == nil {
+				m.AffiliatePc = []byte{}
+			}
+			iNdEx = postIndex
+		case 12:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AffiliateCiphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.AffiliateCiphertext = append(m.AffiliateCiphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.AffiliateCiphertext == nil {
+				m.AffiliateCiphertext = []byte{}
 			}
 			iNdEx = postIndex
 		default:
@@ -1636,6 +2163,25 @@ func (m *MsgRegisterResponse) Unmarshal(dAtA []byte) error {
 				}
 			}
 			m.Switched = bool(v != 0)
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LeafIndex", wireType)
+			}
+			m.LeafIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.LeafIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -1688,9 +2234,9 @@ func (m *MsgClaimAnml) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -1700,23 +2246,144 @@ func (m *MsgClaimAnml) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return ErrInvalidLengthTx
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return ErrInvalidLengthTx
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Creator = string(dAtA[iNdEx:postIndex])
+			if err := m.Fee.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Membership", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Membership.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Day", wireType)
+			}
+			m.Day = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Day |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
+			if m.Pc == nil {
+				m.Pc = []byte{}
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.Ciphertext == nil {
+				m.Ciphertext = []byte{}
+			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -1768,6 +2435,25 @@ func (m *MsgClaimAnmlResponse) Unmarshal(dAtA []byte) error {
 			return fmt.Errorf("proto: MsgClaimAnmlResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Position", wireType)
+			}
+			m.Position = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Position |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -1789,7 +2475,7 @@ func (m *MsgClaimAnmlResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *MsgUnregister) Unmarshal(dAtA []byte) error {
+func (m *MsgSetCaretaker) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1812,17 +2498,17 @@ func (m *MsgUnregister) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: MsgUnregister: wiretype end group for non-group")
+			return fmt.Errorf("proto: MsgSetCaretaker: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MsgUnregister: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: MsgSetCaretaker: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -1832,24 +2518,111 @@ func (m *MsgUnregister) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return ErrInvalidLengthTx
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return ErrInvalidLengthTx
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Creator = string(dAtA[iNdEx:postIndex])
+			if err := m.Fee.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Membership", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Membership.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Percentages", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Percentages = append(m.Percentages, types1.AllocationWeight{})
+			if err := m.Percentages[len(m.Percentages)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxActivation", wireType)
+			}
+			m.MaxActivation = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MaxActivation |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -1871,7 +2644,7 @@ func (m *MsgUnregister) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *MsgUnregisterResponse) Unmarshal(dAtA []byte) error {
+func (m *MsgSetCaretakerResponse) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1894,17 +2667,17 @@ func (m *MsgUnregisterResponse) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: MsgUnregisterResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: MsgSetCaretakerResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MsgUnregisterResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: MsgSetCaretakerResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Nullifier", wireType)
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ExpiresAt", wireType)
 			}
-			var byteLen int
+			m.ExpiresAt = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -1914,26 +2687,11 @@ func (m *MsgUnregisterResponse) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				byteLen |= int(b&0x7F) << shift
+				m.ExpiresAt |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Nullifier = append(m.Nullifier[:0], dAtA[iNdEx:postIndex]...)
-			if m.Nullifier == nil {
-				m.Nullifier = []byte{}
-			}
-			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])

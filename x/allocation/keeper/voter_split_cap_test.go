@@ -36,20 +36,13 @@ func TestVoterSplitIsCapped(t *testing.T) {
 	e := newTestEnv(t)
 	k, ctx := e.k, e.ctx
 	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
-	ms := NewMsgServerImpl(k)
-
-	acc, addr := e.addr("registered-human")
-	e.humans.add(acc)
+	acc, _ := e.addr("registered-human")
 
 	weights := seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, types.MaxVoterOptions+1)
 	// Give it a valid sum so only the length can be what rejects it.
 	weights[0].Percent = 100
 
-	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator:     addr,
-		Stream:      types.STREAM_ID_CARETAKER,
-		Percentages: weights,
-	})
+	err := k.SetVoterSplit(ctx, types.STREAM_ID_CARETAKER, acc, weights, math.NewInt(types.HumanVoterWeight))
 	require.ErrorIs(t, err, types.ErrBadPercentages,
 		"a split wider than the cap must be rejected")
 }
@@ -61,19 +54,12 @@ func TestVoterSplitRejectsZeroShares(t *testing.T) {
 	e := newTestEnv(t)
 	k, ctx := e.k, e.ctx
 	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
-	ms := NewMsgServerImpl(k)
-
-	acc, addr := e.addr("registered-human")
-	e.humans.add(acc)
+	acc, _ := e.addr("registered-human")
 
 	weights := seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, 3)
 	weights[0].Percent = 100 // sums to 100; the other two are padding
 
-	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator:     addr,
-		Stream:      types.STREAM_ID_CARETAKER,
-		Percentages: weights,
-	})
+	err := k.SetVoterSplit(ctx, types.STREAM_ID_CARETAKER, acc, weights, math.NewInt(types.HumanVoterWeight))
 	require.ErrorIs(t, err, types.ErrBadPercentages,
 		"zero-share entries direct nothing and must not be storable")
 }
@@ -84,21 +70,14 @@ func TestVoterSplitAtCapIsAccepted(t *testing.T) {
 	e := newTestEnv(t)
 	k, ctx := e.k, e.ctx
 	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
-	ms := NewMsgServerImpl(k)
-
-	acc, addr := e.addr("registered-human")
-	e.humans.add(acc)
+	acc, _ := e.addr("registered-human")
 
 	weights := seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, types.MaxVoterOptions)
 	for i := range weights {
 		weights[i].Percent = 5 // 20 x 5 = 100
 	}
 
-	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator:     addr,
-		Stream:      types.STREAM_ID_CARETAKER,
-		Percentages: weights,
-	})
+	err := k.SetVoterSplit(ctx, types.STREAM_ID_CARETAKER, acc, weights, math.NewInt(types.HumanVoterWeight))
 	require.NoError(t, err, "a full-width but valid split must still be accepted")
 }
 
@@ -114,21 +93,14 @@ func TestVoterSplitRejectsOverflowingShares(t *testing.T) {
 	e := newTestEnv(t)
 	k, ctx := e.k, e.ctx
 	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
-	ms := NewMsgServerImpl(k)
-
-	acc, addr := e.addr("registered-human")
-	e.humans.add(acc)
+	acc, _ := e.addr("registered-human")
 
 	// Two shares that overflow the uint64 sum back to exactly 100.
 	weights := seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, 2)
 	weights[0].Percent = 1 << 63         // 9223372036854775808
 	weights[1].Percent = (1 << 63) + 100 // sum wraps to 100 mod 2^64
 
-	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator:     addr,
-		Stream:      types.STREAM_ID_CARETAKER,
-		Percentages: weights,
-	})
+	err := k.SetVoterSplit(ctx, types.STREAM_ID_CARETAKER, acc, weights, math.NewInt(types.HumanVoterWeight))
 	require.ErrorIs(t, err, types.ErrBadPercentages,
 		"a share over 100 must be rejected before it can overflow the sum")
 
@@ -138,30 +110,21 @@ func TestVoterSplitRejectsOverflowingShares(t *testing.T) {
 	require.NoError(t, k.AssertInvariants(ctx))
 }
 
-// TestUnregisteredHumanCannotVote pins the human stream's eligibility rule: the
-// weight source returning zero is what stands in for "not a live registration",
-// and it has to reject rather than silently record a zero-weight vote.
-func TestUnregisteredHumanCannotVote(t *testing.T) {
+// TestCaretakerSplitsArePrivate: MsgSetAllocations refuses the caretaker
+// stream (x/personhood files its anonymous splits through SetVoterSplit), and
+// SetVoterSplit refuses a split at zero weight but allows clearing.
+func TestCaretakerSplitsArePrivate(t *testing.T) {
 	e := newTestEnv(t)
 	k, ctx := e.k, e.ctx
 	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
 	ms := NewMsgServerImpl(k)
-
-	_, addr := e.addr("not-a-human")
+	acc, addr := e.addr("anyone")
 	seedOptions(t, k, ctx, types.STREAM_ID_CARETAKER, 1)
+	split := []types.AllocationWeight{{OptionId: 1, Percent: 100}}
 
-	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator:     addr,
-		Stream:      types.STREAM_ID_CARETAKER,
-		Percentages: []types.AllocationWeight{{OptionId: 1, Percent: 100}},
-	})
-	require.ErrorIs(t, err, types.ErrNoWeight)
+	_, err := ms.SetAllocations(ctx, &types.MsgSetAllocations{Creator: addr, Stream: types.STREAM_ID_CARETAKER, Percentages: split})
+	require.ErrorIs(t, err, types.ErrUnknownStream)
 
-	// Clearing a vote is still allowed — someone whose registration lapsed must
-	// be able to tidy up after themselves.
-	_, err = ms.SetAllocations(ctx, &types.MsgSetAllocations{
-		Creator: addr,
-		Stream:  types.STREAM_ID_CARETAKER,
-	})
-	require.NoError(t, err)
+	require.ErrorIs(t, k.SetVoterSplit(ctx, types.STREAM_ID_CARETAKER, acc, split, math.ZeroInt()), types.ErrNoWeight)
+	require.NoError(t, k.SetVoterSplit(ctx, types.STREAM_ID_CARETAKER, acc, nil, math.ZeroInt()))
 }

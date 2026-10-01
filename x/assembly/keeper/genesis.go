@@ -16,6 +16,16 @@ import (
 // anyone noticing — the ballot would then close on a figure no set of votes
 // supports.
 func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
+	// Removal ballots keep their ids (their scope is derived from it), so the
+	// sequence resumes past every id already handed out.
+	if err := k.BallotSeq.Set(ctx, gs.BallotSeq); err != nil {
+		return err
+	}
+	for _, r := range gs.ProposalRounds {
+		if err := k.ProposalRound.Set(ctx, r.ProposalId, r.Round); err != nil {
+			return err
+		}
+	}
 	// Each proposal's votes go on a fresh ballot, and recordVote rebuilds its
 	// tally from them one vote at a time.
 	for _, v := range gs.ProposalVotes {
@@ -46,8 +56,8 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		if err := k.RemovalQueue.Set(ctx, collections.Join(record.ClosesAt, record.OptionId)); err != nil {
 			return err
 		}
-		ballot, err := k.newBallot(ctx)
-		if err != nil {
+		ballot := record.BallotId
+		if err := k.BallotTally.Set(ctx, ballot, types.Tally{}); err != nil {
 			return err
 		}
 		if err := k.RemovalBallotID.Set(ctx, record.OptionId, ballot); err != nil {
@@ -66,6 +76,17 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 // be cleared are left out: nothing counts them any more.
 func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) {
 	gs := types.DefaultGenesis()
+	seq, err := k.BallotSeq.Peek(ctx)
+	if err != nil {
+		return nil, err
+	}
+	gs.BallotSeq = seq
+	if err := k.ProposalRound.Walk(ctx, nil, func(id uint64, r types.ProposalRound) (bool, error) {
+		gs.ProposalRounds = append(gs.ProposalRounds, types.ProposalRoundEntry{ProposalId: id, Round: r})
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
 
 	if err := k.ProposalBallot.Walk(ctx, nil, func(proposalID, ballot uint64) (bool, error) {
 		rng := collections.NewPrefixedPairRange[uint64, []byte](ballot)

@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	codecaddress "cosmossdk.io/core/address"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -23,7 +25,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/earth-network/earth/x/assembly/types"
+	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
 	pkitypes "github.com/earth-network/earth/x/pki/types"
+	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
 
 // A real x/gov keeper, stubbed only at its edges.
@@ -94,27 +99,85 @@ type stubRouter struct{}
 func (stubRouter) Handler(sdk.Msg) baseapp.MsgServiceHandler         { return nil }
 func (stubRouter) HandlerByTypeURL(string) baseapp.MsgServiceHandler { return nil }
 
-// stubPersonhood is the electoral roll: a set of addresses, each standing for
-// one registration. The nullifier is what a vote is filed under, so two
-// addresses can deliberately share one — that is a person who moved wallets.
+// stubPersonhood accepts every membership proof (they are verified for real in
+// the app tests) and records the statement each was checked against. lapsed
+// nullifiers are refused, as a proof against a stale root would be.
 type stubPersonhood struct {
-	nullifiers map[string][]byte
-	// dsc is each nullifier's Document Signer commitment, where a test sets one.
-	dsc map[string][]byte
+	lapsed     map[string]bool
+	statements []personhoodtypes.MembershipStatement
 }
 
-func (s *stubPersonhood) register(addr sdk.AccAddress, nullifier string) {
-	s.nullifiers[addr.String()] = []byte(nullifier)
-}
-func (s *stubPersonhood) lapse(addr sdk.AccAddress) { delete(s.nullifiers, addr.String()) }
-
-func (s *stubPersonhood) LiveNullifier(_ context.Context, addr []byte) ([]byte, bool, error) {
-	n, ok := s.nullifiers[sdk.AccAddress(addr).String()]
-	return n, ok, nil
+func (s *stubPersonhood) CheckMembership(_ context.Context, m personhoodtypes.Membership) error {
+	if s.lapsed[string(m.Nullifier)] {
+		return personhoodtypes.ErrUnknownIdentityRoot
+	}
+	return nil
 }
 
-func (s *stubPersonhood) RegistrationDsc(_ context.Context, nullifier []byte) ([]byte, error) {
-	return s.dsc[string(nullifier)], nil
+func (s *stubPersonhood) VerifyMembership(_ context.Context, _ personhoodtypes.Membership, st personhoodtypes.MembershipStatement) error {
+	s.statements = append(s.statements, st)
+	return nil
+}
+
+func (s *stubPersonhood) MembershipActionGas(context.Context, uint64) (uint64, error) { return 0, nil }
+func (s *stubPersonhood) SignalOf(context.Context, shieldedtypes.PrivateMsg) (fr.Element, error) {
+	return fr.Element{}, nil
+}
+func (s *stubPersonhood) IdentityRootWindow(context.Context) (int64, error) { return 3600, nil }
+
+// privateServer drives the chamber's msgs the way the private ante does: the
+// action's check and verify, then the handler under an authorization. A
+// voter is named by an address string, which stands in for their nullifier.
+type privateServer struct {
+	k   Keeper
+	ms  types.MsgServer
+	seq *int
+}
+
+func (p privateServer) authorize(ctx sdk.Context, msg shieldedtypes.PrivateMsg, h shieldedtypes.PrivateActionHandler) (sdk.Context, error) {
+	t := msg.PrivateTransfer()
+	if len(t.Nullifiers) == 0 {
+		*p.seq++
+		t.Nullifiers = [][]byte{[]byte(fmt.Sprintf("fee-%d", *p.seq))}
+	}
+	prepared, err := h.CheckPrivateAction(ctx, msg)
+	if err != nil {
+		return ctx, err
+	}
+	if err := h.VerifyPrivateAction(ctx, msg, prepared); err != nil {
+		return ctx, err
+	}
+	ctx = shieldedkeeper.WithAuthorizedTransfer(ctx, t, nil)
+	return shieldedkeeper.WithAuthorizedAction(ctx, prepared), nil
+}
+
+func (p privateServer) VoteProposal(ctx sdk.Context, m *types.MsgVoteProposal) (*types.MsgVoteProposalResponse, error) {
+	ctx, err := p.authorize(ctx, m, voteProposalAction{p.k})
+	if err != nil {
+		return nil, err
+	}
+	return p.ms.VoteProposal(ctx, m)
+}
+
+func (p privateServer) ProposeRemoval(ctx sdk.Context, m *types.MsgProposeRemoval) (*types.MsgProposeRemovalResponse, error) {
+	ctx, err := p.authorize(ctx, m, proposeRemovalAction{p.k})
+	if err != nil {
+		return nil, err
+	}
+	return p.ms.ProposeRemoval(ctx, m)
+}
+
+func (p privateServer) VoteRemoval(ctx sdk.Context, m *types.MsgVoteRemoval) (*types.MsgVoteRemovalResponse, error) {
+	ctx, err := p.authorize(ctx, m, voteRemovalAction{p.k})
+	if err != nil {
+		return nil, err
+	}
+	return p.ms.VoteRemoval(ctx, m)
+}
+
+// voter is the membership a voter named s presents.
+func voter(s string) personhoodtypes.Membership {
+	return personhoodtypes.Membership{Nullifier: []byte(s)}
 }
 
 // stubAllocation records what the chamber asked of x/allocation.
@@ -139,7 +202,7 @@ func (s *stubAllocation) GroundworksOptionRemovable(_ context.Context, id uint64
 
 type testEnv struct {
 	k          Keeper
-	ms         types.MsgServer
+	ms         privateServer
 	ctx        sdk.Context
 	gov        *govkeeper.Keeper
 	humans     *stubPersonhood
@@ -180,7 +243,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	)
 	require.NoError(t, gov.Params.Set(ctx, v1.DefaultParams()))
 
-	humans := &stubPersonhood{nullifiers: map[string][]byte{}, dsc: map[string][]byte{}}
+	humans := &stubPersonhood{lapsed: map[string]bool{}}
 	allocation := &stubAllocation{removable: map[uint64]bool{}}
 
 	k := NewKeeper(
@@ -195,7 +258,7 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	return &testEnv{
 		k:          k,
-		ms:         NewMsgServerImpl(k),
+		ms:         privateServer{k: k, ms: NewMsgServerImpl(k), seq: new(int)},
 		ctx:        ctx,
 		gov:        gov,
 		humans:     humans,
@@ -209,8 +272,9 @@ func newTestEnv(t *testing.T) *testEnv {
 func (e *testEnv) addr(t *testing.T, name, nullifier string) (sdk.AccAddress, string) {
 	t.Helper()
 	acc := sdk.AccAddress(authtypes.NewModuleAddress(name))
-	if nullifier != "" {
-		e.humans.register(acc, nullifier)
+	if nullifier == "" {
+		s, _ := e.k.addressCodec.BytesToString(acc)
+		e.humans.lapsed[s] = true
 	}
 	s, err := e.k.addressCodec.BytesToString(acc)
 	require.NoError(t, err)
@@ -256,7 +320,7 @@ func (e *testEnv) voteAll(t *testing.T, id uint64, option types.VoteOption, name
 	for _, name := range names {
 		_, addr := e.addr(t, name, "null-"+name)
 		_, err := e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{
-			Voter: addr, ProposalId: id, Option: option,
+			Membership: voter(addr), ProposalId: id, Option: option,
 		})
 		require.NoError(t, err)
 	}

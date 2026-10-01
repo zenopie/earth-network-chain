@@ -14,6 +14,7 @@ import (
 	"github.com/earth-network/earth/x/assembly/keeper"
 	"github.com/earth-network/earth/x/assembly/types"
 	personhoodkeeper "github.com/earth-network/earth/x/personhood/keeper"
+	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
 )
 
 var _ depinject.OnePerModuleType = AppModule{}
@@ -24,7 +25,8 @@ func (AppModule) IsOnePerModuleType() {}
 func init() {
 	appconfig.Register(
 		&types.Module{},
-		appconfig.Provide(ProvideModule),
+		appconfig.Provide(ProvideModule,
+			types.ProvideVoteProposalGetSigners, types.ProvideProposeRemovalGetSigners, types.ProvideVoteRemovalGetSigners),
 	)
 }
 
@@ -39,6 +41,7 @@ type ModuleInputs struct {
 	GovKeeper        *govkeeper.Keeper
 	PersonhoodKeeper personhoodkeeper.Keeper
 	AllocationKeeper allocationkeeper.Keeper
+	ShieldedKeeper   shieldedkeeper.Keeper
 }
 
 type ModuleOutputs struct {
@@ -73,9 +76,9 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		allocationkeeper.NewChamberFacade(in.AllocationKeeper),
 	)
 	in.AllocationKeeper.RegisterChamber(chamberAddr)
-	// Votes are filed under a nullifier, so the chamber has to hear when one
-	// stops counting and take its votes back.
-	in.PersonhoodKeeper.RegisterRetirementListener(k)
+	// Every msg of the chamber is private: its fee transfer and membership
+	// proof are checked in the private ante.
+	k.RegisterPrivateActions(in.ShieldedKeeper)
 
 	return ModuleOutputs{
 		AssemblyKeeper: k,

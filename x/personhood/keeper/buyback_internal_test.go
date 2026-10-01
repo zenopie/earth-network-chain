@@ -128,7 +128,7 @@ func newBuybackKeeper(t *testing.T, dex types.DexKeeper) (Keeper, *countingBank,
 		encCfg.Codec,
 		ac,
 		authority,
-		bank, dex, nil, stubAllocation{}, burns,
+		bank, dex, nil, stubAllocation{}, burns, stubShielded{},
 	)
 	ctx := base.WithBlockTime(time.Unix(1_700_000_000, 0).UTC())
 	if err := k.Params.Set(ctx, types.DefaultParams()); err != nil {

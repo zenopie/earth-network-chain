@@ -2,20 +2,35 @@ package types
 
 import (
 	"context"
+
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+
+	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
 
-// PersonhoodKeeper is the chamber's electoral roll.
-//
-// It deals in nullifiers rather than weights: this chamber has no scale. A live registration votes once and an account without one does not
-// vote, so there is no number for this interface to carry.
+// PersonhoodKeeper is the chamber's electoral roll: the identity tree a voter
+// proves membership of, anonymously. The chamber never learns who voted, only
+// that a live registration did, and under which per-ballot nullifier.
 type PersonhoodKeeper interface {
-	// LiveNullifier returns the nullifier of addr's live registration. The bool
-	// is false when the account holds no registration, or holds one that has
-	// lapsed.
-	LiveNullifier(ctx context.Context, addr []byte) ([]byte, bool, error)
-	// RegistrationDsc returns the Document Signer commitment the registration
-	// filed under nullifier was made with, or nil if there is none.
-	RegistrationDsc(ctx context.Context, nullifier []byte) ([]byte, error)
+	// CheckMembership refuses a proof whose root is not a current identity
+	// anchor.
+	CheckMembership(ctx context.Context, m personhoodtypes.Membership) error
+	// VerifyMembership verifies the proof against the statement.
+	VerifyMembership(ctx context.Context, m personhoodtypes.Membership, st personhoodtypes.MembershipStatement) error
+	// MembershipActionGas prices a membership proof and `writes` note-sized
+	// writes.
+	MembershipActionGas(ctx context.Context, writes uint64) (uint64, error)
+	// SignalOf is a private msg's signal on this chain.
+	SignalOf(ctx context.Context, msg shieldedtypes.PrivateMsg) (fr.Element, error)
+	// IdentityRootWindow is how long a superseded identity root stays an
+	// anchor, which every activation bound subtracts.
+	IdentityRootWindow(ctx context.Context) (int64, error)
+}
+
+// ShieldedKeeper runs the chamber's private msgs through the private ante.
+type ShieldedKeeper interface {
+	RegisterPrivateAction(msgTypeURL string, h shieldedtypes.PrivateActionHandler)
 }
 
 // The chamber depends on *govkeeper.Keeper concretely rather than through an

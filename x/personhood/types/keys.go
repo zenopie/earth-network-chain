@@ -208,11 +208,36 @@ const (
 
 	// BpsDenominator is the basis-point denominator (100% = 10,000 bps).
 	BpsDenominator = 10_000
+
+	// DefaultIdentityRootWindowSeconds is how long a superseded identity-tree
+	// root stays a membership anchor: an hour, enough for a wallet to sync,
+	// prove and land a tx, and short enough that a zeroed leaf (expired,
+	// revoked, switched) stops proving soon after.
+	DefaultIdentityRootWindowSeconds = 60 * 60
+
+	// DefaultCaretakerVoteSeconds (R) is how long a caretaker split counts
+	// once cast: 30 days. The wallet refreshes it automatically.
+	DefaultCaretakerVoteSeconds = 30 * 24 * 60 * 60
+
+	// SecondsPerDay is the UTC day the ANML claim is keyed by.
+	SecondsPerDay = 86400
+
+	// IdentityRootPruneLimit caps how many expired identity roots EndBlock
+	// deletes per block. At most one root is recorded per block.
+	IdentityRootPruneLimit = 20
+
+	// ClaimNullifierPruneLimit caps how many stale claim nullifiers one block
+	// deletes. A day's claims are at most one per registration; the backlog
+	// drains over following blocks.
+	ClaimNullifierPruneLimit = 1000
+
+	// MaxIdentityLeavesQuery caps one IdentityLeaves page.
+	MaxIdentityLeavesQuery = 1000
 )
 
-// The human allocation stream is x/allocation's; this module only supplies its
-// weight source (one live registration = one vote) and draws down the
-// registration-reward pool.
+// The caretaker allocation stream is x/allocation's; this module files its
+// anonymous voters (by caretaker nullifier, one fixed weight each) and draws
+// down the registration-reward pool.
 const (
 	// AllocationStream is the stream registered humans vote in.
 	AllocationStream = allocationtypes.STREAM_ID_CARETAKER
@@ -226,7 +251,7 @@ const (
 	// drawn down on registration instead.
 	HandlerRegistrationRewards = allocationtypes.HandlerRegistrationRewards
 
-	// VoterWeight is the fixed weight of one registered human.
+	// VoterWeight is the fixed weight of one caretaker split.
 	VoterWeight = allocationtypes.HumanVoterWeight
 )
 
@@ -236,7 +261,6 @@ var ParamsKey = collections.NewPrefix("p_personhood")
 // Storage prefixes.
 var (
 	RegistrationsKey     = collections.NewPrefix("registrations") // nullifier -> Registration
-	RegByAddrKey         = collections.NewPrefix("reg_by_addr")   // addr -> nullifier
 	RegCountByDscKey     = collections.NewPrefix("regs_by_dsc")
 	RegCountByCountryKey = collections.NewPrefix("regs_by_country")
 	RegCountKey          = collections.NewPrefix("reg_count")    // uint64
@@ -269,4 +293,27 @@ var (
 	// retired. Revocation adds one; the sweep removes it when its prefix is
 	// empty, which is what makes the purge resumable across blocks.
 	PendingDscPurgeKey = collections.NewPrefix("pending_dsc_purge") // dscKey
+
+	// The identity tree (depth 32, updatable): its non-empty nodes, keyed
+	// (level, index), and its append cursor.
+	IdentityNodesKey = collections.NewPrefix("identity_nodes")
+	IdentitySizeKey  = collections.NewPrefix("identity_size")
+	// Identity roots recorded at the end of each block that moved the tree,
+	// by root and by (time, root) for pruning; and the latest, which never
+	// expires.
+	IdentityRootsKey       = collections.NewPrefix("identity_roots")
+	IdentityRootsByTimeKey = collections.NewPrefix("identity_time_index")
+	LatestIdentityRootKey  = collections.NewPrefix("latest_identity_root")
+
+	// ClaimNullifiersKey is (day, membership nullifier) for every ANML claim
+	// of the last two days. Older days are pruned: a claim for them is
+	// refused by its day anyway.
+	ClaimNullifiersKey = collections.NewPrefix("claim_nullifiers")
+
+	// CaretakerVotesKey maps a caretaker nullifier to when its split lapses;
+	// CaretakerExpiryKey orders them by that for the sweep; CaretakerCountKey
+	// counts them.
+	CaretakerVotesKey  = collections.NewPrefix("caretaker_votes")
+	CaretakerExpiryKey = collections.NewPrefix("caretaker_expiry")
+	CaretakerCountKey  = collections.NewPrefix("caretaker_count")
 )

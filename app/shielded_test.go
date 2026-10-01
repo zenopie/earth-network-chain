@@ -45,7 +45,7 @@ import (
 
 const (
 	shValErth  = 200_000_000
-	shUserErth = 10_000_000
+	shUserErth = 1_000_000_000
 	shUserAnml = 5_000_000
 	// Private gas is fixed: 2,000,000 proof + 6 x 150,000 notes + tx size.
 	shPrivateGas = 3_200_000
@@ -65,6 +65,21 @@ type shieldedEnv struct {
 // min-gas-price of 0.005uerth (the SDL's MIN_GAS_PRICES).
 func initShieldedEnv(t *testing.T) *shieldedEnv {
 	t.Helper()
+	return initShieldedEnvWith(t, shieldedEnvOpts{})
+}
+
+// shieldedEnvOpts varies the environment for other suites: a fixed genesis
+// time and deterministic keys (so every tree and time is reproducible), and a
+// hook to change the app state before InitChain.
+type shieldedEnvOpts struct {
+	genesisTime time.Time
+	keySeed     string
+	maxPrivate  uint32
+	tweak       func(t *testing.T, app *App, appState map[string]json.RawMessage)
+}
+
+func initShieldedEnvWith(t *testing.T, opts shieldedEnvOpts) *shieldedEnv {
+	t.Helper()
 	raw, err := os.ReadFile("../networks/genesis.json")
 	require.NoError(t, err)
 	var doc struct {
@@ -75,11 +90,14 @@ func initShieldedEnv(t *testing.T) *shieldedEnv {
 	}
 	require.NoError(t, json.Unmarshal(raw, &doc))
 
-	user := secp256k1.GenPrivKey()
+	user, val := secp256k1.GenPrivKey(), secp256k1.GenPrivKey()
+	if opts.keySeed != "" {
+		user = secp256k1.GenPrivKeyFromSecret([]byte(opts.keySeed + "/user"))
+		val = secp256k1.GenPrivKeyFromSecret([]byte(opts.keySeed + "/validator"))
+	}
 	userAddr := sdk.AccAddress(user.PubKey().Address()).String()
 	app0 := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()})
 	// The launch gentx is signed for earth-1; this chain gets its own.
-	val := secp256k1.GenPrivKey()
 	valAddr := sdk.AccAddress(val.PubKey().Address()).String()
 	doc.AppState["genutil"] = shieldedGentx(t, app0, val)
 
@@ -123,8 +141,14 @@ func initShieldedEnv(t *testing.T) *shieldedEnv {
 	gs := shieldedtypes.DefaultGenesis()
 	gs.Params.VerifyingKeys = map[string][]byte{shieldedtypes.CircuitTransfer: vk}
 	gs.Params.MaxPrivateTxsPerBlock = 1
+	if opts.maxPrivate > 0 {
+		gs.Params.MaxPrivateTxsPerBlock = opts.maxPrivate
+	}
 	doc.AppState[shieldedtypes.ModuleName], err = app0.AppCodec().MarshalJSON(gs)
 	require.NoError(t, err)
+	if opts.tweak != nil {
+		opts.tweak(t, app0, doc.AppState)
+	}
 
 	appState, err := json.Marshal(doc.AppState)
 	require.NoError(t, err)
@@ -134,6 +158,9 @@ func initShieldedEnv(t *testing.T) *shieldedEnv {
 	require.NoError(t, cmtjson.Unmarshal(doc.Consensus.Params, &cpJSON))
 	cp := cpJSON.ToProto()
 	now := time.Now().UTC().Truncate(time.Second)
+	if !opts.genesisTime.IsZero() {
+		now = opts.genesisTime
+	}
 	_, err = app.InitChain(&abci.RequestInitChain{
 		ChainId: shieldedtest.ChainID, Time: now, InitialHeight: 1, ConsensusParams: &cp, AppStateBytes: appState,
 	})

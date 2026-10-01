@@ -9,7 +9,12 @@
 // witness here — with the chain's own Poseidon2 and certificate parser — makes a
 // mismatch fail loudly at fixture time instead of silently at registration.
 //
-//	go run ./tools/poafixtures <variant> <outdir>
+//	go run ./tools/poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>]
+//
+// address is the circuit's `address` input (default FixtureAddress as a field;
+// x/personhood binds zk/privacy.RegistrationBinding there), doc the passport
+// number (a different doc is a different passport nullifier), date the
+// current_date the proof asserts.
 //
 // Then, from the circuits workspace:
 //
@@ -49,15 +54,37 @@ const (
 	dg1Max         = 95
 	eContentMax    = 200
 	signedAttrsMax = 200
-	currentDate    = 250101 // 2025-01-01, matching the existing fixtures
+)
+
+var (
+	// currentDate is the proof's current_date, YYMMDD.
+	currentDate = "250101" // 2025-01-01, matching the existing fixtures
+	// docNumber is the MRZ document number; the passport nullifier covers it.
+	docNumber = "L898902C3"
+	// addressOverride replaces FixtureAddress as the address input (decimal).
+	addressOverride string
 )
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: poafixtures <variant> <outdir>")
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>]")
 		os.Exit(2)
 	}
 	name, outDir := os.Args[1], os.Args[2]
+	for _, kv := range os.Args[3:] {
+		k, v, ok := strings.Cut(kv, "=")
+		switch {
+		case ok && k == "address":
+			addressOverride = v
+		case ok && k == "doc" && len(v) == 9:
+			docNumber = v
+		case ok && k == "date" && len(v) == 6 && isDigits(v):
+			currentDate = v
+		default:
+			fmt.Fprintf(os.Stderr, "bad option %q\n", kv)
+			os.Exit(2)
+		}
+	}
 	v, ok := variants()[name]
 	if !ok {
 		fmt.Fprintf(os.Stderr, "unknown variant %q\n", name)
@@ -193,11 +220,15 @@ func run(v variant, outDir string) error {
 	for _, k := range sortedKeys(keyInputs) {
 		fmt.Fprintf(&b, "%s = [%s]\n", k, strings.Join(keyInputs[k], ", "))
 	}
-	fmt.Fprintf(&b, "current_date = \"%d\"\n", currentDate)
+	fmt.Fprintf(&b, "current_date = \"%s\"\n", currentDate)
 	// The account the proof is bound to. A proof only verifies against the
 	// public input vector it was made for, so this is what stops a proof read
 	// out of one block being replayed from somebody else's wallet.
-	fmt.Fprintf(&b, "address = \"%s\"\n", AddressField(FixtureAddress))
+	address := AddressField(FixtureAddress)
+	if addressOverride != "" {
+		address = addressOverride
+	}
+	fmt.Fprintf(&b, "address = \"%s\"\n", address)
 
 	if err := os.WriteFile(filepath.Join(outDir, "Prover.toml"), []byte(b.String()), 0o644); err != nil {
 		return err
@@ -236,7 +267,7 @@ func buildDG1() [dg1Max]byte {
 	line1 := pad("P<UTOTESTHOLDER<<ALEX", 44)
 	// TD3 line 2: passport no (0-8), check (9), nationality (10-12),
 	// DOB (13-18), check (19), sex (20), expiry (21-26), ...
-	line2 := pad("L898902C36UTO7408122F3002051ZE184226B", 44)
+	line2 := pad(docNumber+"6UTO7408122F3002051ZE184226B", 44)
 	mrz := line1 + line2
 	if len(mrz) != 88 {
 		panic(fmt.Sprintf("MRZ must be 88 chars, got %d", len(mrz)))

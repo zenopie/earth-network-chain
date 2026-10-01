@@ -7,6 +7,10 @@
 //
 //	go run ./tools/privacyfixtures <membership|membership-zeroed|transfer> <outdir>
 //	go run ./tools/privacyfixtures shielded <outdir>
+//	go run ./tools/privacyfixtures passport <name>
+//
+// passport prints "address doc date" for x/personhood/testutil's registration
+// <name>, the arguments tools/poafixtures binds its passport proof with.
 //
 // membership-zeroed builds the same witness after the chain zeroed the leaf;
 // the circuit must reject it. shielded writes one <outdir>/<transfer>/ per
@@ -22,6 +26,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
+	personhoodtest "github.com/earth-network/earth/x/personhood/testutil"
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/privacy"
@@ -48,6 +53,16 @@ func arr(es []fr.Element) string {
 }
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "passport" {
+		r, ok := personhoodtest.Registrations[os.Args[2]]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown registration %q\n", os.Args[2])
+			os.Exit(2)
+		}
+		b := r.Binding()
+		fmt.Printf("address=%s doc=%s date=%s\n", b.String(), r.Doc, r.Date)
+		return
+	}
 	if len(os.Args) != 3 {
 		fmt.Fprintln(os.Stderr, "usage: privacyfixtures <membership|membership-zeroed|transfer|shielded> <outdir>")
 		os.Exit(2)

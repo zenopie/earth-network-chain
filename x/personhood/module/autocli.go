@@ -24,9 +24,24 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod:      "Registration",
-					Use:            "registration [address]",
-					Short:          "Show a wallet's registration status",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
+					Use:            "registration [passport-nullifier-hex]",
+					Short:          "Show the registration filed under a passport nullifier",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "nullifier"}},
+				},
+				{
+					RpcMethod: "IdentityTree",
+					Use:       "identity-tree",
+					Short:     "Show the identity tree's size and latest root",
+				},
+				{
+					RpcMethod: "IdentityLeaves",
+					Use:       "identity-leaves",
+					Short:     "List identity leaves (--start, --limit)",
+				},
+				{
+					RpcMethod: "CaretakerVoterCount",
+					Use:       "caretaker-voter-count",
+					Short:     "Show how many caretaker splits currently count",
 				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
@@ -39,16 +54,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod: "UpdateParams",
 					Skip:      true, // skipped because authority gated
 				},
-				{
-					RpcMethod: "Register",
-					Use:       "register",
-					Short:     "Register as a unique human (--proof snarkjs proof.json, --public-signals, --signature-algorithm; optional --affiliate)",
-				},
-				{
-					RpcMethod: "ClaimAnml",
-					Use:       "claim-anml",
-					Short:     "Claim 1 ANML (once per day, registered humans only)",
-				},
+				// Register, ClaimAnml and SetCaretaker are unsigned private msgs
+				// carrying proofs; the CLI cannot build them. Wallets build the
+				// raw tx and broadcast it.
+				{RpcMethod: "Register", Skip: true},
+				{RpcMethod: "ClaimAnml", Skip: true},
+				{RpcMethod: "SetCaretaker", Skip: true},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

@@ -30,8 +30,7 @@ func (k Keeper) ballotTally(ctx context.Context, ballot uint64) (types.Tally, er
 // newBallot opens a ballot and returns its id.
 //
 // The tally entry is written empty rather than left absent, because its
-// presence is what marks a ballot open — OnRegistrationRetired uses it to tell
-// a vote that still counts from one waiting to be cleared.
+// presence is what marks a ballot open.
 func (k Keeper) newBallot(ctx context.Context) (uint64, error) {
 	id, err := k.BallotSeq.Next(ctx)
 	if err != nil {
@@ -112,8 +111,9 @@ func (k Keeper) closeRemovalBallot(ctx context.Context, queueKey collections.Pai
 	return k.closeBallot(ctx, ballot)
 }
 
-// recordVote casts a vote on an open ballot, keeps its tally, and indexes the
-// vote under the voter's nullifier.
+// recordVote casts a vote on an open ballot and keeps its tally. A voter's
+// nullifier is the same for every proof in the ballot's scope, so a second
+// vote replaces the first.
 func (k Keeper) recordVote(ctx context.Context, ballot uint64, nullifier []byte, option types.VoteOption) (types.Tally, error) {
 	tally, err := k.ballotTally(ctx, ballot)
 	if err != nil {
@@ -123,62 +123,7 @@ func (k Keeper) recordVote(ctx context.Context, ballot uint64, nullifier []byte,
 	if err != nil {
 		return tally, err
 	}
-	if err := k.VotedBallots.Set(ctx, collections.Join(nullifier, ballot)); err != nil {
-		return tally, err
-	}
 	return tally, k.BallotTally.Set(ctx, ballot, tally)
-}
-
-// OnRegistrationRetired implements x/personhood's RetirementListener: a
-// registration that stops counting as a human — expired, purged under a revoked
-// Document Signer — has its votes taken back, off every open ballot's tally.
-//
-// The running tallies are what ballots are decided on, so this is what keeps
-// them true. It costs a read and a few writes per ballot that person has a vote
-// on, found through VotedBallots, and x/personhood already caps how many
-// registrations one block may retire — so the work lands in bounded pieces.
-func (k Keeper) OnRegistrationRetired(ctx context.Context, nullifier []byte) error {
-	var ballots []uint64
-	rng := collections.NewPrefixedPairRange[[]byte, uint64](nullifier)
-	if err := k.VotedBallots.Walk(ctx, rng, func(key collections.Pair[[]byte, uint64]) (bool, error) {
-		ballots = append(ballots, key.K2())
-		return false, nil
-	}); err != nil {
-		return err
-	}
-
-	for _, ballot := range ballots {
-		key := collKey(ballot, nullifier)
-		prev, err := k.BallotVotes.Get(ctx, key)
-		if err != nil && !errors.Is(err, collections.ErrNotFound) {
-			return err
-		}
-		if err == nil {
-			// Only an open ballot has a tally to take the vote off. A closed
-			// one is waiting for purgeClosedBallots, and the vote is simply
-			// cleared a little early.
-			if tally, err := k.BallotTally.Get(ctx, ballot); err == nil {
-				switch types.VoteOption(prev) {
-				case types.VOTE_OPTION_YES:
-					tally.Yes--
-				case types.VOTE_OPTION_NO:
-					tally.No--
-				}
-				if err := k.BallotTally.Set(ctx, ballot, tally); err != nil {
-					return err
-				}
-			} else if !errors.Is(err, collections.ErrNotFound) {
-				return err
-			}
-			if err := k.BallotVotes.Remove(ctx, key); err != nil {
-				return err
-			}
-		}
-		if err := k.VotedBallots.Remove(ctx, collections.Join(nullifier, ballot)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // purgeClosedBallots clears the votes of closed ballots, at most limit of them
@@ -217,9 +162,6 @@ func (k Keeper) purgeClosedBallots(ctx context.Context, limit int) error {
 			if err := k.BallotVotes.Remove(ctx, collKey(ballot, n)); err != nil {
 				return err
 			}
-			if err := k.VotedBallots.Remove(ctx, collections.Join(n, ballot)); err != nil {
-				return err
-			}
 		}
 		limit -= len(nullifiers)
 		if limit > 0 {
@@ -227,96 +169,6 @@ func (k Keeper) purgeClosedBallots(ctx context.Context, limit int) error {
 			if err := k.ClosedBallots.Remove(ctx, ballot); err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-// MigrateToBallots moves votes from the v0.9.0 layout, keyed by proposal and
-// option id, into ballots, and empties the old maps.
-//
-// For the v0.9.1 upgrade. O(votes), once, at a scheduled height. earth-1 holds
-// votes here only if a proposal or removal ballot is open when it runs.
-func (k Keeper) MigrateToBallots(ctx context.Context) error {
-	type vote struct {
-		id        uint64
-		nullifier []byte
-		option    int32
-	}
-	collect := func(m collections.Map[collections.Pair[uint64, []byte], int32]) ([]vote, error) {
-		var out []vote
-		err := m.Walk(ctx, nil, func(key collections.Pair[uint64, []byte], option int32) (bool, error) {
-			out = append(out, vote{key.K1(), key.K2(), option})
-			return false, nil
-		})
-		return out, err
-	}
-
-	proposalVotes, err := collect(k.LegacyProposalVotes)
-	if err != nil {
-		return err
-	}
-	for _, v := range proposalVotes {
-		ballot, ok, err := k.proposalBallot(ctx, v.id)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			if ballot, err = k.newBallot(ctx); err != nil {
-				return err
-			}
-			if err := k.ProposalBallot.Set(ctx, v.id, ballot); err != nil {
-				return err
-			}
-		}
-		if _, err := k.recordVote(ctx, ballot, v.nullifier, types.VoteOption(v.option)); err != nil {
-			return err
-		}
-		if err := k.LegacyProposalVotes.Remove(ctx, collKey(v.id, v.nullifier)); err != nil {
-			return err
-		}
-	}
-	if err := k.LegacyProposalTally.Clear(ctx, nil); err != nil {
-		return err
-	}
-
-	// Every open removal record gets a ballot, voted on or not.
-	var options []uint64
-	if err := k.RemovalBallots.Walk(ctx, nil, func(optionID uint64, _ types.RemovalBallot) (bool, error) {
-		options = append(options, optionID)
-		return false, nil
-	}); err != nil {
-		return err
-	}
-	for _, optionID := range options {
-		ballot, err := k.newBallot(ctx)
-		if err != nil {
-			return err
-		}
-		if err := k.RemovalBallotID.Set(ctx, optionID, ballot); err != nil {
-			return err
-		}
-	}
-	removalVotes, err := collect(k.LegacyRemovalVotes)
-	if err != nil {
-		return err
-	}
-	for _, v := range removalVotes {
-		ballot, err := k.RemovalBallotID.Get(ctx, v.id)
-		if errors.Is(err, collections.ErrNotFound) {
-			// A vote on a ballot that no longer exists was dead already.
-			if err := k.LegacyRemovalVotes.Remove(ctx, collKey(v.id, v.nullifier)); err != nil {
-				return err
-			}
-			continue
-		} else if err != nil {
-			return err
-		}
-		if _, err := k.recordVote(ctx, ballot, v.nullifier, types.VoteOption(v.option)); err != nil {
-			return err
-		}
-		if err := k.LegacyRemovalVotes.Remove(ctx, collKey(v.id, v.nullifier)); err != nil {
-			return err
 		}
 	}
 	return nil
