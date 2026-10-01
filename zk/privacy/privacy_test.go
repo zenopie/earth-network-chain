@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -142,6 +143,7 @@ func TestScopesDistinct(t *testing.T) {
 		"claim0": ClaimScope(0), "claim1": ClaimScope(1), "caretaker": CaretakerScope(),
 		"proposal1/0": ProposalScope(1, 0), "proposal1/1": ProposalScope(1, 1), "proposal0/1": ProposalScope(0, 1),
 		"removal1": RemovalScope(1), "propose1/0": ProposeRemovalScope(1, 0),
+		"gas202610": GasScope(202610), "gas202611": GasScope(202611),
 	} {
 		k := s.String()
 		if o, ok := seen[k]; ok {
@@ -166,3 +168,30 @@ func TestCountryField(t *testing.T) {
 		t.Fatal("the leaf does not commit to the country")
 	}
 }
+
+// Pinned for the wallet: its GasScope and GasTransparentSignal must produce
+// these exact fields.
+func TestGasScopeAndSignalPinned(t *testing.T) {
+	scope := GasScope(202610)
+	addr := make([]byte, 20)
+	for i := range addr {
+		addr[i] = byte(i + 1)
+	}
+	signal := GasTransparentSignal("earth-1", addr)
+	t.Logf("GasScope(202610) = 0x%x", FieldBytes(scope))
+	t.Logf("GasTransparentSignal(earth-1, 0x0102..14) = 0x%x", FieldBytes(signal))
+	if got, want := fmt.Sprintf("%x", FieldBytes(scope)), gasScopeVector; got != want {
+		t.Fatalf("GasScope(202610) = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprintf("%x", FieldBytes(signal)), gasSignalVector; got != want {
+		t.Fatalf("GasTransparentSignal = %s, want %s", got, want)
+	}
+	if other := GasTransparentSignal("earth-2", addr); other == signal {
+		t.Fatal("signal does not bind the chain id")
+	}
+}
+
+const (
+	gasScopeVector  = "189ca0017ef0d3fb8ebca623f3a5b50b0db38b16ff09ed877b8ed66a9548c9ff"
+	gasSignalVector = "1985e8e50ba97e2b2a44119f927d4c6ea9d58f8cafa89c8c2a60eabe3ba29c80"
+)
