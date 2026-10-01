@@ -27,10 +27,28 @@ func Det(label string, i uint64) fr.Element {
 	return privacy.H(privacy.AssetID("shielded-fixture/"+label), privacy.U64(i))
 }
 
-// Wallet is a spending key.
-type Wallet struct{ NK fr.Element }
+// Wallet is a spending key and a note-encryption key.
+type Wallet struct {
+	NK fr.Element
+	EK [32]byte // X25519 secret
+}
 
 func (w Wallet) OwnerPK() fr.Element { return privacy.OwnerPK(w.NK) }
+
+// Address is the wallet's shielded address.
+func (w Wallet) Address() privacy.ShieldedAddress {
+	pub, err := privacy.EKPub(w.EK)
+	if err != nil {
+		panic(err)
+	}
+	return privacy.ShieldedAddress{OwnerPK: w.OwnerPK(), EKPub: pub}
+}
+
+func detKey(label string, i uint64) [32]byte {
+	var k [32]byte
+	copy(k[:], privacy.FieldBytes(Det(label, i)))
+	return k
+}
 
 // Note is a note's opening.
 type Note struct {
@@ -74,8 +92,8 @@ type Scenario struct {
 }
 
 var (
-	Alice = Wallet{NK: Det("nk", 1)}
-	Bob   = Wallet{NK: Det("nk", 2)}
+	Alice = Wallet{NK: Det("nk", 1), EK: detKey("ek", 1)}
+	Bob   = Wallet{NK: Det("nk", 2), EK: detKey("ek", 2)}
 
 	// Receiver is where transfer 1 unshields to (20 raw address bytes).
 	Receiver = []byte("shielded-fixture-rcv")
@@ -85,13 +103,16 @@ func note(owner Wallet, denom string, value uint64, label string, i uint64) Note
 	return Note{Owner: owner, Denom: denom, Value: value, Rho: Det(label+"/rho", i), Rcm: Det(label+"/rcm", i)}
 }
 
-func ct(label string, i int) []byte {
-	// Stand-in ciphertexts: fixed-length, distinct, deterministic.
-	b := []byte(fmt.Sprintf("ciphertext:%s:%d:", label, i))
-	for len(b) < 180 {
-		b = append(b, byte(len(b)*7+i))
+// ct is out's real ciphertext ("earth note v1", zk/privacy.EncryptNote) to
+// its owner's address, with a deterministic ephemeral key.
+func ct(out Note, label string, i int) []byte {
+	pt := privacy.NotePlaintext{AssetID: privacy.AssetID(out.Denom), Value: out.Value, Rho: out.Rho, Rcm: out.Rcm}
+	copy(pt.Memo[:], fmt.Sprintf("%s:%d", label, i))
+	c, err := privacy.EncryptNote(pt, out.CM(), out.Owner.Address().EKPub, detKey("esk/"+label, uint64(i)))
+	if err != nil {
+		panic(err)
 	}
-	return b
+	return c
 }
 
 // Default is the scenario the committed proofs were made for:
@@ -124,7 +145,7 @@ func Default() Scenario {
 		Fee: 20_000,
 	}
 	for i := range 3 {
-		t0.Ciphertexts[i] = ct("t0", i)
+		t0.Ciphertexts[i] = ct(t0.Out[i], "t0", i)
 	}
 	t1 := Spend{
 		Name: "transfer1", Denom: erth, Owner: Bob,
@@ -143,7 +164,7 @@ func Default() Scenario {
 		Receiver: Receiver,
 	}
 	for i := range 3 {
-		t1.Ciphertexts[i] = ct("t1", i)
+		t1.Ciphertexts[i] = ct(t1.Out[i], "t1", i)
 	}
 	s.Transfers = []Spend{t0, t1}
 	return s
