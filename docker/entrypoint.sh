@@ -496,6 +496,14 @@ if [ -n "${PRIV_VALIDATOR_LADDR:-}" ]; then
   say "remote signer expected at $PRIV_VALIDATOR_LADDR"
 fi
 
+# The app mempool must stay the no-op one (max-txs = -1). Private txs are
+# unsigned: the SDK's priority and sender-nonce mempools key every tx by its
+# signer and sequence and refuse one with no signers, so a node running either
+# would drop every shielded transfer, claim, vote, swap and stake (CometBFT's
+# own mempool still orders and gossips them). Forced on every start: app.toml
+# lives in the volume and a hand edit must not survive a restart.
+sed_inplace "s|^max-txs = .*|max-txs = -1|" "$EARTH_HOME/config/app.toml"
+
 # Snapshots. Applied on every start for the same reason as the CORS settings:
 # app.toml lives in the volume, so these can change with a restart.
 #

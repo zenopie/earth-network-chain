@@ -32,6 +32,8 @@ import (
 	earthmoduletypes "github.com/earth-network/earth/x/earth/types"
 	personhoodmoduletypes "github.com/earth-network/earth/x/personhood/types"
 	pkimoduletypes "github.com/earth-network/earth/x/pki/types"
+	shieldedmoduletypes "github.com/earth-network/earth/x/shielded/types"
+	shieldedstakingmoduletypes "github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
 // x/wasm on earth is permissionless: anyone may upload code and anyone may
@@ -87,6 +89,35 @@ func wasmAcceptedQueries() wasmkeeper.AcceptedQueries {
 		},
 		"/earth.personhood.v1.Query/Params": func() proto.Message {
 			return &personhoodmoduletypes.QueryParamsResponse{}
+		},
+
+		// The live caretaker count is CaretakerVoterCount above; Referrer
+		// reports whether an address (a contract, say) holds a live referrer
+		// binding, which is public by design.
+		"/earth.personhood.v1.Query/Referrer": func() proto.Message {
+			return &personhoodmoduletypes.QueryReferrerResponse{}
+		},
+
+		// x/shielded — the pool's public face: tree size and root, whether a
+		// root is still an anchor, whether a nullifier is spent. Nothing here
+		// names an owner; a contract can only learn what any observer can.
+		"/earth.shielded.v1.Query/Tree": func() proto.Message {
+			return &shieldedmoduletypes.QueryTreeResponse{}
+		},
+		"/earth.shielded.v1.Query/Root": func() proto.Message {
+			return &shieldedmoduletypes.QueryRootResponse{}
+		},
+		"/earth.shielded.v1.Query/Nullifier": func() proto.Message {
+			return &shieldedmoduletypes.QueryNullifierResponse{}
+		},
+
+		// x/shieldedstaking — the epoch and one validator's live rate and
+		// derth supply (what a derth note is worth), keyed lookups both.
+		"/earth.shieldedstaking.v1.Query/Epoch": func() proto.Message {
+			return &shieldedstakingmoduletypes.QueryEpochResponse{}
+		},
+		"/earth.shieldedstaking.v1.Query/Validator": func() proto.Message {
+			return &shieldedstakingmoduletypes.QueryValidatorResponse{}
 		},
 
 		// x/dex — pool reserves, so a contract can price a swap before sending

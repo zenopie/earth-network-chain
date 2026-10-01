@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"strings"
+
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	cmtcfg "github.com/cometbft/cometbft/config"
 	serverconfig "github.com/cosmos/cosmos-sdk/server/config"
@@ -49,12 +51,25 @@ func initAppConfig() (string, interface{}) {
 	// In tests, we set the min gas prices to 0.
 	// srvCfg.MinGasPrices = "0stake"
 
+	// The app mempool must be the no-op one (mempool.max-txs = -1, the SDK
+	// default, pinned here so the template every node writes says so).
+	// Private txs are unsigned, and the SDK's priority and sender-nonce
+	// mempools key txs by signer and sequence and refuse any tx with none:
+	// a node running one would drop every private tx. See app/ante.go and
+	// docker/entrypoint.sh, which forces it on every start.
+	srvCfg.Mempool.MaxTxs = -1
+
 	customAppConfig := CustomAppConfig{
 		Config: *srvCfg,
 		Wasm:   wasmtypes.DefaultNodeConfig(),
 	}
 
-	customAppTemplate := serverconfig.DefaultConfigTemplate + wasmtypes.DefaultConfigTemplate()
+	customAppTemplate := strings.Replace(serverconfig.DefaultConfigTemplate,
+		"max-txs = {{ .Mempool.MaxTxs }}",
+		"# EARTH: keep -1. Private (shielded) txs are unsigned, and the SDK's app-side\n"+
+			"# mempools refuse any tx with no signer, so any other value drops every\n"+
+			"# private tx. The container entrypoint forces -1 on every start.\n"+
+			"max-txs = {{ .Mempool.MaxTxs }}", 1) + wasmtypes.DefaultConfigTemplate()
 
 	return customAppTemplate, customAppConfig
 }
