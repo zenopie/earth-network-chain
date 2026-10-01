@@ -42,3 +42,6 @@ __pycache__/
 # emptied when documentation moved to earth-network-docs. Ignored so an ignite
 # run does not quietly reintroduce it.
 docs/static/openapi.json
+
+# Genesis ceremony output (a fresh consensus key): never committed.
+.ceremony/

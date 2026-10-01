@@ -57,6 +57,19 @@ and rebuild. Adding a CSCA means adding the certificate under `csca/` — the
 trust store on disk and the one in genesis cannot disagree, because one is
 generated from the other.
 
+## TODO(ceremony): a new consensus key for the privacy relaunch
+
+The relaunch keeps chain-id `earth-1`, but `gentx/genesis-validator.json` still
+carries the old devnet validator's consensus pubkey and is a placeholder. A key
+that signed earth-1 heights before must not sign them again: at the genesis
+ceremony the operator runs
+
+    VALIDATOR_MNEMONIC='...' scripts/ceremony-gentx.sh [--pubkey '<remote signer pubkey>']
+
+which keeps the operator, self-delegation, moniker and commission, swaps in a
+fresh consensus key (refusing to reuse the old one), and is followed by
+`make genesis && make genesis-check`.
+
 ## Still to decide before this is a real launch
 
 These are in `docs/LAUNCH_CHECKLIST.md` and none of them is a thing this script
