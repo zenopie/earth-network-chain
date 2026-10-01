@@ -7,6 +7,7 @@ import "cosmos/base/v1beta1/coin.proto";
 import "cosmos/msg/v1/msg.proto";
 import "cosmos_proto/cosmos.proto";
 import "earth/dex/v1/params.proto";
+import "earth/shielded/v1/shielded.proto";
 import "gogoproto/gogo.proto";
 
 option go_package = "github.com/earth-network/earth/x/dex/types";
@@ -47,6 +48,20 @@ service Msg {
 
   // ClaimLiquidityAuction pays out a bidder's pro-rata ERTH after settlement.
   rpc ClaimLiquidityAuction(MsgClaimLiquidityAuction) returns (MsgClaimLiquidityAuctionResponse);
+
+  // NoteSwap swaps a shielded note's value through any pool and mints the
+  // output as a note. Unsigned private msg; see MsgNoteSwap.
+  rpc NoteSwap(MsgNoteSwap) returns (MsgNoteSwapResponse);
+
+  // BuyAnml swaps a transparent account's coins for ANML, minted as a note:
+  // the way into ANML for an ERTH holder (ANML never sits in an account).
+  rpc BuyAnml(MsgBuyAnml) returns (MsgBuyAnmlResponse);
+
+  // AddLiquidityShielded deposits both legs from shielded notes (the pool
+  // token by one transfer, ERTH by a second) and mints LP shares to a
+  // transparent provider. Unsigned private msg; the only way to add to the
+  // ANML/ERTH pool.
+  rpc AddLiquidityShielded(MsgAddLiquidityShielded) returns (MsgAddLiquidityShieldedResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -118,6 +133,13 @@ message MsgRemoveLiquidity {
 
   // shares is the amount of LP shares to burn.
   cosmos.base.v1beta1.Coin shares = 3 [(gogoproto.nullable) = false];
+
+  // pc receives the token leg as a shielded note, for a pool whose token is
+  // shielded-only (ANML): required there, refused anywhere else. The ERTH leg
+  // is paid to creator as usual. 32 bytes, zk/privacy.PC.
+  bytes pc = 4;
+  // ciphertext is the token note encrypted to its owner (optional).
+  bytes ciphertext = 5;
 }
 
 // MsgRemoveLiquidityResponse defines the MsgRemoveLiquidityResponse message.
@@ -196,4 +218,88 @@ message MsgClaimLiquidityAuction {
 // MsgClaimLiquidityAuctionResponse is the response type.
 message MsgClaimLiquidityAuctionResponse {
   cosmos.base.v1beta1.Coin amount = 1 [(gogoproto.nullable) = false];
+}
+
+// MsgNoteSwap spends transfer.value_out of transfer.denom_out (the asset in,
+// public) into the dex, swaps it for denom_out through the ERTH hub (one or
+// two hops, any pools), and mints the output to pc as a note. It has NO
+// signer: authorization is the transfer proof, replay protection its
+// nullifiers (see x/shielded/ante).
+//
+// The swap runs in the private ante, atomically with the spend: if the
+// output would fall below min_amount_out the whole tx fails and nothing is
+// spent. Only the amounts and the pools are visible.
+//
+// fee_from_output > 0 pays the tx fee out of the output instead of from a fee
+// note: denom_out must be uerth, transfer.fee 0 and min_amount_out >
+// fee_from_output; pc receives the output less the fee.
+//
+// signal = SpendSignal("/earth.dex.v1.MsgNoteSwap", chain_id, ciphertexts,
+// Bytes(denom_out), min_amount_out, pc, Bytes(ciphertext), fee_from_output).
+message MsgNoteSwap {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  string denom_out = 2;
+  // min_amount_out is the least output (before fee_from_output) accepted.
+  uint64 min_amount_out = 3;
+  bytes pc = 4;
+  bytes ciphertext = 5;
+  uint64 fee_from_output = 6;
+}
+
+// MsgNoteSwapResponse returns the swap's output (before any fee from output)
+// and the minted note's position.
+message MsgNoteSwapResponse {
+  cosmos.base.v1beta1.Coin token_out = 1 [(gogoproto.nullable) = false];
+  uint64 position = 2;
+}
+
+// MsgBuyAnml swaps token_in from creator (ERTH, or any token with a pool,
+// through ERTH) for ANML and mints the ANML to pc as a note.
+message MsgBuyAnml {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  cosmos.base.v1beta1.Coin token_in = 2 [(gogoproto.nullable) = false];
+  // min_amount_out is the least uanml accepted, a decimal integer.
+  string min_amount_out = 3;
+  bytes pc = 4;
+  bytes ciphertext = 5;
+}
+
+// MsgBuyAnmlResponse returns the ANML bought and the note's position.
+message MsgBuyAnmlResponse {
+  cosmos.base.v1beta1.Coin token_out = 1 [(gogoproto.nullable) = false];
+  uint64 position = 2;
+}
+
+// MsgAddLiquidityShielded deposits into pool_id from two transfers: transfer
+// releases value_out of the pool's token (ANML), erth_transfer value_out of
+// ERTH. Either may pay the fee (the tx fee is their sum). The deposit is
+// taken in the pool ratio, as MsgAddLiquidity's is; whatever of each leg the
+// ratio does not take is minted back to refund_pc as a note. The LP shares
+// go to provider, a transparent address: liquidity provision is public.
+//
+// The deposit runs in the private ante, atomically with both spends: below
+// min_shares the whole tx fails and nothing is spent.
+//
+// Both proofs bind signal = MultiSpendSignal(
+// "/earth.dex.v1.MsgAddLiquidityShielded", chain_id, [transfer.ciphertexts,
+// erth_transfer.ciphertexts], [transfer.nullifiers,
+// erth_transfer.nullifiers], pool_id, Bytes(provider address bytes),
+// Bytes(min_shares), refund_pc, Bytes(refund_ciphertext)).
+message MsgAddLiquidityShielded {
+  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Transfer erth_transfer = 2 [(gogoproto.nullable) = false];
+  uint64 pool_id = 3;
+  string provider = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // min_shares is the fewest shares accepted, a decimal integer ("" = none).
+  string min_shares = 5;
+  bytes refund_pc = 6;
+  bytes refund_ciphertext = 7;
+}
+
+// MsgAddLiquidityShieldedResponse returns the shares minted and the refunds.
+message MsgAddLiquidityShieldedResponse {
+  cosmos.base.v1beta1.Coin shares = 1 [(gogoproto.nullable) = false];
+  cosmos.base.v1beta1.Coin refund_erth = 2 [(gogoproto.nullable) = false];
+  cosmos.base.v1beta1.Coin refund_token = 3 [(gogoproto.nullable) = false];
 }

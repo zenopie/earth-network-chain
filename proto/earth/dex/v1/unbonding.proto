@@ -32,4 +32,9 @@ message LpUnbonding {
   // completion_time is the unix timestamp (seconds) at which the sweep may pay
   // this entry out.
   int64 completion_time = 4;
+
+  // pc receives the token leg as a shielded note, for a pool whose token is
+  // shielded-only (ANML); empty otherwise. See MsgRemoveLiquidity.
+  bytes pc = 5;
+  bytes ciphertext = 6;
 }

@@ -50,4 +50,15 @@ var (
 	// instead of halting the chain on it.
 	ErrInvalidUnbonding = errors.Register(ModuleName, 1117,
 		"malformed lp unbonding entry")
+
+	// ErrShieldedOnly means a transparent account would send or receive a
+	// shielded-only denom (ANML): it exists only as notes, and reaches the
+	// dex only through the note paths (MsgNoteSwap, MsgBuyAnml,
+	// MsgAddLiquidityShielded, a withdrawal paid as a note).
+	ErrShieldedOnly = errors.Register(ModuleName, 1118,
+		"denom exists only in the shielded pool")
+
+	// ErrInvalidPrivateMsg is a malformed private dex msg.
+	ErrInvalidPrivateMsg = errors.Register(ModuleName, 1119,
+		"invalid private dex msg")
 )

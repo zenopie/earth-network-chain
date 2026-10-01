@@ -30,8 +30,11 @@ type Keeper struct {
 	// burnRecorder counts what this module destroys, in x/earth. Burning is
 	// invisible after the block that does it, so it is recorded as it happens.
 	burnRecorder types.BurnRecorder
-	Pool         collections.Map[uint64, types.Pool]
-	PoolSeq      collections.Sequence
+	// shielded is the shielded pool, for the note paths (note_paths.go). Nil
+	// in unit tests that never reach them.
+	shielded types.ShieldedKeeper
+	Pool     collections.Map[uint64, types.Pool]
+	PoolSeq  collections.Sequence
 	// PoolByToken indexes the spoke token denom to its pool id (one pool per token).
 	PoolByToken collections.Map[string, uint64]
 
@@ -85,6 +88,7 @@ func NewKeeper(
 	bankKeeper types.BankKeeper,
 	stakingKeeper types.StakingKeeper,
 	burnRecorder types.BurnRecorder,
+	shielded types.ShieldedKeeper,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -100,6 +104,7 @@ func NewKeeper(
 		bankKeeper:    bankKeeper,
 		stakingKeeper: stakingKeeper,
 		burnRecorder:  burnRecorder,
+		shielded:      shielded,
 
 		Params:      collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		Pool:        collections.NewMap(sb, types.PoolKey, "pool", collections.Uint64Key, codec.CollValue[types.Pool](cdc)),
@@ -182,4 +187,20 @@ func (k Keeper) PoolForToken(ctx context.Context, tokenDenom string) (types.Pool
 		return types.Pool{}, err
 	}
 	return k.Pool.Get(ctx, poolID)
+}
+
+// isShieldedOnly reports whether denom exists only as shielded notes (ANML):
+// no ordinary account may send it to the dex or receive it from it.
+func (k Keeper) isShieldedOnly(denom string) bool {
+	return k.shielded != nil && k.shielded.IsShieldedOnly(denom)
+}
+
+// refuseShieldedOnly refuses a transparent leg in a shielded-only denom.
+func (k Keeper) refuseShieldedOnly(denoms ...string) error {
+	for _, d := range denoms {
+		if k.isShieldedOnly(d) {
+			return types.ErrShieldedOnly.Wrapf("%s: use the shielded path", d)
+		}
+	}
+	return nil
 }

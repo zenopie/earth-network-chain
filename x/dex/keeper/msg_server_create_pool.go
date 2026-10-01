@@ -19,6 +19,11 @@ import (
 // Permissionless, but not until the genesis liquidity auction has settled — see
 // Keeper.PoolCreationLocked for why the auction cannot defend its own bid denom.
 func (k msgServer) CreatePool(ctx context.Context, msg *types.MsgCreatePool) (*types.MsgCreatePoolResponse, error) {
+	// No account holds a shielded-only denom to seed a pool with; that is a
+	// "never", so it is said before the lock's "not yet".
+	if err := k.refuseShieldedOnly(msg.AmountA.Denom, msg.AmountB.Denom); err != nil {
+		return nil, err
+	}
 	// Checked before anything else: this is a "not yet", not a judgement about
 	// the message, and it should read that way in the error.
 	if locked, err := k.PoolCreationLocked(ctx); err != nil {

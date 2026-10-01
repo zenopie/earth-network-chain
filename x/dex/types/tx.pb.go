@@ -13,6 +13,7 @@ import (
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	grpc1 "github.com/cosmos/gogoproto/grpc"
 	proto "github.com/cosmos/gogoproto/proto"
+	types1 "github.com/earth-network/earth/x/shielded/types"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -371,6 +372,12 @@ type MsgRemoveLiquidity struct {
 	PoolId  uint64 `protobuf:"varint,2,opt,name=pool_id,json=poolId,proto3" json:"pool_id,omitempty"`
 	// shares is the amount of LP shares to burn.
 	Shares types.Coin `protobuf:"bytes,3,opt,name=shares,proto3" json:"shares"`
+	// pc receives the token leg as a shielded note, for a pool whose token is
+	// shielded-only (ANML): required there, refused anywhere else. The ERTH leg
+	// is paid to creator as usual. 32 bytes, zk/privacy.PC.
+	Pc []byte `protobuf:"bytes,4,opt,name=pc,proto3" json:"pc,omitempty"`
+	// ciphertext is the token note encrypted to its owner (optional).
+	Ciphertext []byte `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
 }
 
 func (m *MsgRemoveLiquidity) Reset()         { *m = MsgRemoveLiquidity{} }
@@ -425,6 +432,20 @@ func (m *MsgRemoveLiquidity) GetShares() types.Coin {
 		return m.Shares
 	}
 	return types.Coin{}
+}
+
+func (m *MsgRemoveLiquidity) GetPc() []byte {
+	if m != nil {
+		return m.Pc
+	}
+	return nil
+}
+
+func (m *MsgRemoveLiquidity) GetCiphertext() []byte {
+	if m != nil {
+		return m.Ciphertext
+	}
+	return nil
 }
 
 // MsgRemoveLiquidityResponse defines the MsgRemoveLiquidityResponse message.
@@ -899,6 +920,462 @@ func (m *MsgClaimLiquidityAuctionResponse) GetAmount() types.Coin {
 	return types.Coin{}
 }
 
+// MsgNoteSwap spends transfer.value_out of transfer.denom_out (the asset in,
+// public) into the dex, swaps it for denom_out through the ERTH hub (one or
+// two hops, any pools), and mints the output to pc as a note. It has NO
+// signer: authorization is the transfer proof, replay protection its
+// nullifiers (see x/shielded/ante).
+//
+// The swap runs in the private ante, atomically with the spend: if the
+// output would fall below min_amount_out the whole tx fails and nothing is
+// spent. Only the amounts and the pools are visible.
+//
+// fee_from_output > 0 pays the tx fee out of the output instead of from a fee
+// note: denom_out must be uerth, transfer.fee 0 and min_amount_out >
+// fee_from_output; pc receives the output less the fee.
+//
+// signal = SpendSignal("/earth.dex.v1.MsgNoteSwap", chain_id, ciphertexts,
+// Bytes(denom_out), min_amount_out, pc, Bytes(ciphertext), fee_from_output).
+type MsgNoteSwap struct {
+	Transfer types1.Transfer `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
+	DenomOut string          `protobuf:"bytes,2,opt,name=denom_out,json=denomOut,proto3" json:"denom_out,omitempty"`
+	// min_amount_out is the least output (before fee_from_output) accepted.
+	MinAmountOut  uint64 `protobuf:"varint,3,opt,name=min_amount_out,json=minAmountOut,proto3" json:"min_amount_out,omitempty"`
+	Pc            []byte `protobuf:"bytes,4,opt,name=pc,proto3" json:"pc,omitempty"`
+	Ciphertext    []byte `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	FeeFromOutput uint64 `protobuf:"varint,6,opt,name=fee_from_output,json=feeFromOutput,proto3" json:"fee_from_output,omitempty"`
+}
+
+func (m *MsgNoteSwap) Reset()         { *m = MsgNoteSwap{} }
+func (m *MsgNoteSwap) String() string { return proto.CompactTextString(m) }
+func (*MsgNoteSwap) ProtoMessage()    {}
+func (*MsgNoteSwap) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7381b70569585d60, []int{16}
+}
+func (m *MsgNoteSwap) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgNoteSwap) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgNoteSwap.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgNoteSwap) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgNoteSwap.Merge(m, src)
+}
+func (m *MsgNoteSwap) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgNoteSwap) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgNoteSwap.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgNoteSwap proto.InternalMessageInfo
+
+func (m *MsgNoteSwap) GetTransfer() types1.Transfer {
+	if m != nil {
+		return m.Transfer
+	}
+	return types1.Transfer{}
+}
+
+func (m *MsgNoteSwap) GetDenomOut() string {
+	if m != nil {
+		return m.DenomOut
+	}
+	return ""
+}
+
+func (m *MsgNoteSwap) GetMinAmountOut() uint64 {
+	if m != nil {
+		return m.MinAmountOut
+	}
+	return 0
+}
+
+func (m *MsgNoteSwap) GetPc() []byte {
+	if m != nil {
+		return m.Pc
+	}
+	return nil
+}
+
+func (m *MsgNoteSwap) GetCiphertext() []byte {
+	if m != nil {
+		return m.Ciphertext
+	}
+	return nil
+}
+
+func (m *MsgNoteSwap) GetFeeFromOutput() uint64 {
+	if m != nil {
+		return m.FeeFromOutput
+	}
+	return 0
+}
+
+// MsgNoteSwapResponse returns the swap's output (before any fee from output)
+// and the minted note's position.
+type MsgNoteSwapResponse struct {
+	TokenOut types.Coin `protobuf:"bytes,1,opt,name=token_out,json=tokenOut,proto3" json:"token_out"`
+	Position uint64     `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
+}
+
+func (m *MsgNoteSwapResponse) Reset()         { *m = MsgNoteSwapResponse{} }
+func (m *MsgNoteSwapResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgNoteSwapResponse) ProtoMessage()    {}
+func (*MsgNoteSwapResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7381b70569585d60, []int{17}
+}
+func (m *MsgNoteSwapResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgNoteSwapResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgNoteSwapResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgNoteSwapResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgNoteSwapResponse.Merge(m, src)
+}
+func (m *MsgNoteSwapResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgNoteSwapResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgNoteSwapResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgNoteSwapResponse proto.InternalMessageInfo
+
+func (m *MsgNoteSwapResponse) GetTokenOut() types.Coin {
+	if m != nil {
+		return m.TokenOut
+	}
+	return types.Coin{}
+}
+
+func (m *MsgNoteSwapResponse) GetPosition() uint64 {
+	if m != nil {
+		return m.Position
+	}
+	return 0
+}
+
+// MsgBuyAnml swaps token_in from creator (ERTH, or any token with a pool,
+// through ERTH) for ANML and mints the ANML to pc as a note.
+type MsgBuyAnml struct {
+	Creator string     `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	TokenIn types.Coin `protobuf:"bytes,2,opt,name=token_in,json=tokenIn,proto3" json:"token_in"`
+	// min_amount_out is the least uanml accepted, a decimal integer.
+	MinAmountOut string `protobuf:"bytes,3,opt,name=min_amount_out,json=minAmountOut,proto3" json:"min_amount_out,omitempty"`
+	Pc           []byte `protobuf:"bytes,4,opt,name=pc,proto3" json:"pc,omitempty"`
+	Ciphertext   []byte `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+}
+
+func (m *MsgBuyAnml) Reset()         { *m = MsgBuyAnml{} }
+func (m *MsgBuyAnml) String() string { return proto.CompactTextString(m) }
+func (*MsgBuyAnml) ProtoMessage()    {}
+func (*MsgBuyAnml) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7381b70569585d60, []int{18}
+}
+func (m *MsgBuyAnml) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgBuyAnml) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgBuyAnml.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgBuyAnml) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBuyAnml.Merge(m, src)
+}
+func (m *MsgBuyAnml) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgBuyAnml) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBuyAnml.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgBuyAnml proto.InternalMessageInfo
+
+func (m *MsgBuyAnml) GetCreator() string {
+	if m != nil {
+		return m.Creator
+	}
+	return ""
+}
+
+func (m *MsgBuyAnml) GetTokenIn() types.Coin {
+	if m != nil {
+		return m.TokenIn
+	}
+	return types.Coin{}
+}
+
+func (m *MsgBuyAnml) GetMinAmountOut() string {
+	if m != nil {
+		return m.MinAmountOut
+	}
+	return ""
+}
+
+func (m *MsgBuyAnml) GetPc() []byte {
+	if m != nil {
+		return m.Pc
+	}
+	return nil
+}
+
+func (m *MsgBuyAnml) GetCiphertext() []byte {
+	if m != nil {
+		return m.Ciphertext
+	}
+	return nil
+}
+
+// MsgBuyAnmlResponse returns the ANML bought and the note's position.
+type MsgBuyAnmlResponse struct {
+	TokenOut types.Coin `protobuf:"bytes,1,opt,name=token_out,json=tokenOut,proto3" json:"token_out"`
+	Position uint64     `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
+}
+
+func (m *MsgBuyAnmlResponse) Reset()         { *m = MsgBuyAnmlResponse{} }
+func (m *MsgBuyAnmlResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgBuyAnmlResponse) ProtoMessage()    {}
+func (*MsgBuyAnmlResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7381b70569585d60, []int{19}
+}
+func (m *MsgBuyAnmlResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgBuyAnmlResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgBuyAnmlResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgBuyAnmlResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBuyAnmlResponse.Merge(m, src)
+}
+func (m *MsgBuyAnmlResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgBuyAnmlResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBuyAnmlResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgBuyAnmlResponse proto.InternalMessageInfo
+
+func (m *MsgBuyAnmlResponse) GetTokenOut() types.Coin {
+	if m != nil {
+		return m.TokenOut
+	}
+	return types.Coin{}
+}
+
+func (m *MsgBuyAnmlResponse) GetPosition() uint64 {
+	if m != nil {
+		return m.Position
+	}
+	return 0
+}
+
+// MsgAddLiquidityShielded deposits into pool_id from two transfers: transfer
+// releases value_out of the pool's token (ANML), erth_transfer value_out of
+// ERTH. Either may pay the fee (the tx fee is their sum). The deposit is
+// taken in the pool ratio, as MsgAddLiquidity's is; whatever of each leg the
+// ratio does not take is minted back to refund_pc as a note. The LP shares
+// go to provider, a transparent address: liquidity provision is public.
+//
+// The deposit runs in the private ante, atomically with both spends: below
+// min_shares the whole tx fails and nothing is spent.
+//
+// Both proofs bind signal = MultiSpendSignal(
+// "/earth.dex.v1.MsgAddLiquidityShielded", chain_id, [transfer.ciphertexts,
+// erth_transfer.ciphertexts], [transfer.nullifiers,
+// erth_transfer.nullifiers], pool_id, Bytes(provider address bytes),
+// Bytes(min_shares), refund_pc, Bytes(refund_ciphertext)).
+type MsgAddLiquidityShielded struct {
+	Transfer     types1.Transfer `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
+	ErthTransfer types1.Transfer `protobuf:"bytes,2,opt,name=erth_transfer,json=erthTransfer,proto3" json:"erth_transfer"`
+	PoolId       uint64          `protobuf:"varint,3,opt,name=pool_id,json=poolId,proto3" json:"pool_id,omitempty"`
+	Provider     string          `protobuf:"bytes,4,opt,name=provider,proto3" json:"provider,omitempty"`
+	// min_shares is the fewest shares accepted, a decimal integer ("" = none).
+	MinShares        string `protobuf:"bytes,5,opt,name=min_shares,json=minShares,proto3" json:"min_shares,omitempty"`
+	RefundPc         []byte `protobuf:"bytes,6,opt,name=refund_pc,json=refundPc,proto3" json:"refund_pc,omitempty"`
+	RefundCiphertext []byte `protobuf:"bytes,7,opt,name=refund_ciphertext,json=refundCiphertext,proto3" json:"refund_ciphertext,omitempty"`
+}
+
+func (m *MsgAddLiquidityShielded) Reset()         { *m = MsgAddLiquidityShielded{} }
+func (m *MsgAddLiquidityShielded) String() string { return proto.CompactTextString(m) }
+func (*MsgAddLiquidityShielded) ProtoMessage()    {}
+func (*MsgAddLiquidityShielded) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7381b70569585d60, []int{20}
+}
+func (m *MsgAddLiquidityShielded) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgAddLiquidityShielded) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgAddLiquidityShielded.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgAddLiquidityShielded) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgAddLiquidityShielded.Merge(m, src)
+}
+func (m *MsgAddLiquidityShielded) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgAddLiquidityShielded) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgAddLiquidityShielded.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgAddLiquidityShielded proto.InternalMessageInfo
+
+func (m *MsgAddLiquidityShielded) GetTransfer() types1.Transfer {
+	if m != nil {
+		return m.Transfer
+	}
+	return types1.Transfer{}
+}
+
+func (m *MsgAddLiquidityShielded) GetErthTransfer() types1.Transfer {
+	if m != nil {
+		return m.ErthTransfer
+	}
+	return types1.Transfer{}
+}
+
+func (m *MsgAddLiquidityShielded) GetPoolId() uint64 {
+	if m != nil {
+		return m.PoolId
+	}
+	return 0
+}
+
+func (m *MsgAddLiquidityShielded) GetProvider() string {
+	if m != nil {
+		return m.Provider
+	}
+	return ""
+}
+
+func (m *MsgAddLiquidityShielded) GetMinShares() string {
+	if m != nil {
+		return m.MinShares
+	}
+	return ""
+}
+
+func (m *MsgAddLiquidityShielded) GetRefundPc() []byte {
+	if m != nil {
+		return m.RefundPc
+	}
+	return nil
+}
+
+func (m *MsgAddLiquidityShielded) GetRefundCiphertext() []byte {
+	if m != nil {
+		return m.RefundCiphertext
+	}
+	return nil
+}
+
+// MsgAddLiquidityShieldedResponse returns the shares minted and the refunds.
+type MsgAddLiquidityShieldedResponse struct {
+	Shares      types.Coin `protobuf:"bytes,1,opt,name=shares,proto3" json:"shares"`
+	RefundErth  types.Coin `protobuf:"bytes,2,opt,name=refund_erth,json=refundErth,proto3" json:"refund_erth"`
+	RefundToken types.Coin `protobuf:"bytes,3,opt,name=refund_token,json=refundToken,proto3" json:"refund_token"`
+}
+
+func (m *MsgAddLiquidityShieldedResponse) Reset()         { *m = MsgAddLiquidityShieldedResponse{} }
+func (m *MsgAddLiquidityShieldedResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgAddLiquidityShieldedResponse) ProtoMessage()    {}
+func (*MsgAddLiquidityShieldedResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7381b70569585d60, []int{21}
+}
+func (m *MsgAddLiquidityShieldedResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgAddLiquidityShieldedResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgAddLiquidityShieldedResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgAddLiquidityShieldedResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgAddLiquidityShieldedResponse.Merge(m, src)
+}
+func (m *MsgAddLiquidityShieldedResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgAddLiquidityShieldedResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgAddLiquidityShieldedResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgAddLiquidityShieldedResponse proto.InternalMessageInfo
+
+func (m *MsgAddLiquidityShieldedResponse) GetShares() types.Coin {
+	if m != nil {
+		return m.Shares
+	}
+	return types.Coin{}
+}
+
+func (m *MsgAddLiquidityShieldedResponse) GetRefundErth() types.Coin {
+	if m != nil {
+		return m.RefundErth
+	}
+	return types.Coin{}
+}
+
+func (m *MsgAddLiquidityShieldedResponse) GetRefundToken() types.Coin {
+	if m != nil {
+		return m.RefundToken
+	}
+	return types.Coin{}
+}
+
 func init() {
 	proto.RegisterType((*MsgUpdateParams)(nil), "earth.dex.v1.MsgUpdateParams")
 	proto.RegisterType((*MsgUpdateParamsResponse)(nil), "earth.dex.v1.MsgUpdateParamsResponse")
@@ -916,74 +1393,101 @@ func init() {
 	proto.RegisterType((*MsgBidLiquidityAuctionResponse)(nil), "earth.dex.v1.MsgBidLiquidityAuctionResponse")
 	proto.RegisterType((*MsgClaimLiquidityAuction)(nil), "earth.dex.v1.MsgClaimLiquidityAuction")
 	proto.RegisterType((*MsgClaimLiquidityAuctionResponse)(nil), "earth.dex.v1.MsgClaimLiquidityAuctionResponse")
+	proto.RegisterType((*MsgNoteSwap)(nil), "earth.dex.v1.MsgNoteSwap")
+	proto.RegisterType((*MsgNoteSwapResponse)(nil), "earth.dex.v1.MsgNoteSwapResponse")
+	proto.RegisterType((*MsgBuyAnml)(nil), "earth.dex.v1.MsgBuyAnml")
+	proto.RegisterType((*MsgBuyAnmlResponse)(nil), "earth.dex.v1.MsgBuyAnmlResponse")
+	proto.RegisterType((*MsgAddLiquidityShielded)(nil), "earth.dex.v1.MsgAddLiquidityShielded")
+	proto.RegisterType((*MsgAddLiquidityShieldedResponse)(nil), "earth.dex.v1.MsgAddLiquidityShieldedResponse")
 }
 
 func init() { proto.RegisterFile("earth/dex/v1/tx.proto", fileDescriptor_7381b70569585d60) }
 
 var fileDescriptor_7381b70569585d60 = []byte{
-	// 977 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x56, 0x41, 0x6f, 0xe3, 0x44,
-	0x14, 0xae, 0x9b, 0x36, 0x69, 0xde, 0x86, 0x2d, 0x98, 0x96, 0xa6, 0xae, 0x1a, 0x2a, 0x53, 0xa0,
-	0x54, 0xac, 0xbd, 0x2d, 0x12, 0x95, 0x22, 0x38, 0x24, 0x5d, 0x0e, 0x2b, 0x11, 0x8a, 0xdc, 0x72,
-	0x00, 0x04, 0x91, 0x93, 0x19, 0xb9, 0xa3, 0x8d, 0x67, 0x82, 0x67, 0xdc, 0xed, 0xde, 0x10, 0xdc,
-	0x38, 0xed, 0xcf, 0xd8, 0x63, 0x85, 0xf8, 0x11, 0x0b, 0xa7, 0x15, 0x5c, 0x38, 0x21, 0xd4, 0x1e,
-	0x7a, 0xe7, 0x17, 0xa0, 0x19, 0x3b, 0x8e, 0x63, 0x9b, 0x36, 0xed, 0x8a, 0x4b, 0x94, 0x79, 0xef,
-	0x7b, 0x6f, 0xde, 0xf7, 0xcd, 0x9b, 0x37, 0x86, 0x65, 0xec, 0x06, 0xe2, 0xd8, 0x46, 0xf8, 0xd4,
-	0x3e, 0xd9, 0xb1, 0xc5, 0xa9, 0x35, 0x0c, 0x98, 0x60, 0x7a, 0x4d, 0x99, 0x2d, 0x84, 0x4f, 0xad,
-	0x93, 0x1d, 0xe3, 0x35, 0xd7, 0x27, 0x94, 0xd9, 0xea, 0x37, 0x02, 0x18, 0x8d, 0x3e, 0xe3, 0x3e,
-	0xe3, 0x76, 0xcf, 0xe5, 0xd8, 0x3e, 0xd9, 0xe9, 0x61, 0xe1, 0xee, 0xd8, 0x7d, 0x46, 0x68, 0xec,
-	0x5f, 0x89, 0xfd, 0x3e, 0xf7, 0x64, 0x62, 0x9f, 0x7b, 0xb1, 0x63, 0x35, 0x72, 0x74, 0xd5, 0xca,
-	0x8e, 0x16, 0x23, 0xd7, 0x44, 0x2d, 0x43, 0x37, 0x70, 0xfd, 0x91, 0x6b, 0xc9, 0x63, 0x1e, 0x8b,
-	0x42, 0xe4, 0xbf, 0xc8, 0x6a, 0xfe, 0xac, 0xc1, 0x62, 0x87, 0x7b, 0x5f, 0x0c, 0x91, 0x2b, 0xf0,
-	0xe7, 0x0a, 0xaf, 0x7f, 0x08, 0x55, 0x37, 0x14, 0xc7, 0x2c, 0x20, 0xe2, 0x49, 0x5d, 0xdb, 0xd0,
-	0xb6, 0xaa, 0xed, 0xfa, 0xef, 0xbf, 0xdc, 0x5b, 0x8a, 0x77, 0x6a, 0x21, 0x14, 0x60, 0xce, 0x0f,
-	0x45, 0x40, 0xa8, 0xe7, 0x8c, 0xa1, 0xfa, 0x1e, 0x94, 0xa3, 0x1d, 0xeb, 0xb3, 0x1b, 0xda, 0xd6,
-	0x9d, 0xdd, 0x25, 0x2b, 0x2d, 0x81, 0x15, 0x65, 0x6f, 0x57, 0x9f, 0xff, 0xf5, 0xe6, 0xcc, 0xb3,
-	0xcb, 0xb3, 0x6d, 0xcd, 0x89, 0xe1, 0x4d, 0xeb, 0x87, 0xcb, 0xb3, 0xed, 0x71, 0xa2, 0x9f, 0x2e,
-	0xcf, 0xb6, 0xd7, 0x22, 0x22, 0xa7, 0x8a, 0x4a, 0xa6, 0x40, 0x73, 0x15, 0x56, 0x32, 0x26, 0x07,
-	0xf3, 0x21, 0xa3, 0x1c, 0x9b, 0xbf, 0x6a, 0xf0, 0x4a, 0x87, 0x7b, 0xfb, 0x01, 0x96, 0x3e, 0xc6,
-	0x06, 0xfa, 0x2e, 0x54, 0xfa, 0x72, 0xc5, 0x82, 0x6b, 0xb9, 0x8c, 0x80, 0x7a, 0x13, 0x16, 0x5c,
-	0x9f, 0x85, 0x54, 0x74, 0xdd, 0x98, 0xcb, 0xaa, 0x15, 0x47, 0xc8, 0xd3, 0xb2, 0xe2, 0xd3, 0xb2,
-	0xf6, 0x19, 0xa1, 0xed, 0x39, 0x49, 0xc8, 0xa9, 0x44, 0x01, 0xad, 0x54, 0x6c, 0xaf, 0x5e, 0xba,
-	0x51, 0x6c, 0xbb, 0x59, 0x93, 0x42, 0x8c, 0xaa, 0x30, 0xef, 0xc3, 0xf2, 0x04, 0x95, 0x11, 0x49,
-	0x7d, 0x05, 0x2a, 0x43, 0xc6, 0x06, 0x5d, 0x82, 0x14, 0xa5, 0x39, 0xa7, 0x2c, 0x97, 0x0f, 0x91,
-	0xf9, 0xe3, 0xac, 0x3a, 0xcd, 0x16, 0x42, 0x9f, 0x92, 0xef, 0x42, 0x82, 0xe4, 0xa9, 0xdc, 0x86,
-	0x7f, 0x6a, 0x83, 0xd9, 0xf4, 0x06, 0x13, 0xc2, 0x94, 0x5e, 0x42, 0x98, 0xb9, 0x9b, 0x09, 0xa3,
-	0xaf, 0x03, 0xf8, 0x84, 0x76, 0xf9, 0xb1, 0x1b, 0x60, 0x5e, 0x9f, 0x97, 0x3c, 0x9c, 0xaa, 0x4f,
-	0xe8, 0xa1, 0x32, 0x64, 0x74, 0x73, 0x54, 0x7b, 0xa4, 0x45, 0x48, 0x94, 0xdb, 0x83, 0x72, 0x9c,
-	0x43, 0x9b, 0xae, 0x82, 0x18, 0x6e, 0x3e, 0xd3, 0x40, 0xef, 0x70, 0xcf, 0xc1, 0x3e, 0x3b, 0xc1,
-	0xff, 0x93, 0xb8, 0xe3, 0xe2, 0x4a, 0x37, 0x2a, 0x2e, 0x43, 0xff, 0x13, 0x30, 0xf2, 0x95, 0x26,
-	0x0a, 0xbc, 0x0b, 0x8b, 0x7d, 0xe6, 0x0f, 0x07, 0x58, 0x10, 0x46, 0xbb, 0x82, 0xf8, 0x58, 0x55,
-	0x5e, 0x72, 0xee, 0x8e, 0xcd, 0x47, 0xc4, 0xc7, 0xe6, 0x6f, 0x1a, 0x54, 0x3a, 0xdc, 0x3b, 0x7c,
-	0xec, 0x0e, 0x6f, 0x7b, 0x87, 0x04, 0x7b, 0x84, 0x69, 0x97, 0xd0, 0xa9, 0xef, 0x90, 0x0a, 0x78,
-	0x48, 0xf5, 0x35, 0xa8, 0x22, 0x4c, 0x99, 0xdf, 0x65, 0xa1, 0x50, 0x62, 0x54, 0x9d, 0x05, 0x65,
-	0x38, 0x08, 0x85, 0xbe, 0x09, 0x77, 0x65, 0x2f, 0xc4, 0xbd, 0x24, 0x11, 0x73, 0x0a, 0x51, 0xf3,
-	0x09, 0x6d, 0x29, 0xe3, 0x41, 0x28, 0x32, 0x9a, 0x1c, 0xa8, 0x7b, 0x21, 0xb9, 0x24, 0x42, 0x7c,
-	0x04, 0xd5, 0xa8, 0x3e, 0x99, 0x61, 0xca, 0x6e, 0x88, 0x18, 0x1d, 0x84, 0xc2, 0xfc, 0x43, 0x83,
-	0xba, 0xcc, 0x28, 0xdc, 0x40, 0x24, 0x22, 0xb7, 0xc2, 0xbe, 0x94, 0xef, 0xd6, 0x03, 0x74, 0x0d,
-	0xaa, 0x3d, 0x82, 0xba, 0x8a, 0xa9, 0xd2, 0xac, 0xea, 0x2c, 0xf4, 0x08, 0x7a, 0x20, 0xd7, 0xfa,
-	0x7b, 0xf0, 0x2a, 0x0a, 0x03, 0x57, 0x1d, 0x1b, 0xc7, 0x7d, 0x46, 0x51, 0xd4, 0x27, 0x25, 0x67,
-	0x71, 0x64, 0x3f, 0x8c, 0xcc, 0xcd, 0xbd, 0xfc, 0x3c, 0xdd, 0xcc, 0xcc, 0xd3, 0xc2, 0xc2, 0xcd,
-	0x8f, 0x61, 0xe3, 0xbf, 0x7c, 0x89, 0x6e, 0xab, 0xb0, 0x80, 0x29, 0x4a, 0x77, 0x4e, 0x05, 0x53,
-	0xa4, 0x5a, 0xe6, 0xa9, 0x06, 0x6f, 0x74, 0xb8, 0xd7, 0x26, 0x28, 0x27, 0xc9, 0x7d, 0x28, 0xf7,
-	0x08, 0x42, 0xf8, 0xfa, 0x06, 0x8a, 0x71, 0xf2, 0x36, 0x44, 0x47, 0x3c, 0x6d, 0xf7, 0xc4, 0xf0,
-	0xe6, 0x1d, 0xc9, 0x3e, 0xce, 0x62, 0x7e, 0x0b, 0x8d, 0xe2, 0x8a, 0x26, 0xfb, 0x40, 0xb8, 0x83,
-	0x6e, 0x2f, 0x1e, 0xa7, 0xd3, 0xf5, 0x81, 0x70, 0x07, 0x6d, 0x82, 0xcc, 0x2f, 0x55, 0x1b, 0xec,
-	0x0f, 0x5c, 0xe2, 0xbf, 0x3c, 0xe7, 0xc9, 0xd2, 0xbf, 0x56, 0x87, 0x51, 0x98, 0x3a, 0x3d, 0xcf,
-	0x62, 0x91, 0xb4, 0x1b, 0x89, 0xb4, 0xfb, 0xcf, 0x3c, 0x94, 0x3a, 0xdc, 0xd3, 0x8f, 0xa0, 0x36,
-	0xf1, 0xf6, 0xaf, 0x4f, 0xbe, 0xd9, 0x99, 0x67, 0xd6, 0x78, 0xfb, 0x4a, 0x77, 0x52, 0xd6, 0x67,
-	0x00, 0xa9, 0x17, 0x78, 0x2d, 0x17, 0x34, 0x76, 0x1a, 0x6f, 0x5d, 0xe1, 0x4c, 0xf2, 0x1d, 0x41,
-	0x6d, 0xe2, 0x4d, 0xcb, 0x57, 0x99, 0x76, 0x17, 0x54, 0x59, 0xf8, 0x18, 0x7c, 0x03, 0x8b, 0xd9,
-	0x79, 0xbe, 0x91, 0x8b, 0xcc, 0x20, 0x8c, 0xad, 0xeb, 0x10, 0xa9, 0xc6, 0x9a, 0x53, 0xc3, 0x73,
-	0x39, 0x17, 0x21, 0xcd, 0xc6, 0x7a, 0xa1, 0x39, 0x89, 0x66, 0xb0, 0x5c, 0x3c, 0x5c, 0xde, 0xc9,
-	0xc7, 0x15, 0xe1, 0x0c, 0x6b, 0x3a, 0x5c, 0xb2, 0x21, 0x81, 0xd7, 0x8b, 0x2e, 0xee, 0x66, 0x2e,
-	0x4d, 0x01, 0xca, 0x78, 0x7f, 0x1a, 0x54, 0x9a, 0x5b, 0xf1, 0x8d, 0xc9, 0x73, 0x2b, 0xc4, 0x15,
-	0x70, 0xbb, 0xf2, 0x9a, 0x18, 0xf3, 0xdf, 0xcb, 0xef, 0xcd, 0xf6, 0x83, 0xe7, 0xe7, 0x0d, 0xed,
-	0xc5, 0x79, 0x43, 0xfb, 0xfb, 0xbc, 0xa1, 0x3d, 0xbd, 0x68, 0xcc, 0xbc, 0xb8, 0x68, 0xcc, 0xfc,
-	0x79, 0xd1, 0x98, 0xf9, 0x6a, 0xdb, 0x23, 0xe2, 0x38, 0xec, 0x59, 0x7d, 0xe6, 0xdb, 0x2a, 0xf5,
-	0x3d, 0x8a, 0xc5, 0x63, 0x16, 0x3c, 0xb2, 0xd3, 0x73, 0x53, 0x3c, 0x19, 0x62, 0xde, 0x2b, 0xab,
-	0x2f, 0xe7, 0x0f, 0xfe, 0x0d, 0x00, 0x00, 0xff, 0xff, 0x60, 0xe6, 0x78, 0x83, 0xf8, 0x0b, 0x00,
-	0x00,
+	// 1324 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xbc, 0x58, 0x4f, 0x6f, 0x1b, 0x45,
+	0x14, 0xcf, 0xda, 0x69, 0x6c, 0xbf, 0xb8, 0x4d, 0xbb, 0x4d, 0xa8, 0xb3, 0x51, 0xdd, 0xb0, 0x94,
+	0x52, 0x02, 0xb5, 0x9b, 0x80, 0xa8, 0x14, 0x51, 0x89, 0x38, 0x6d, 0x45, 0x25, 0xdc, 0x54, 0x9b,
+	0x70, 0x00, 0x04, 0xd6, 0x7a, 0x67, 0xb2, 0x1e, 0xd5, 0xbb, 0xb3, 0xec, 0xce, 0xa6, 0xe9, 0x0d,
+	0xc1, 0x8d, 0x53, 0x3f, 0x06, 0xc7, 0x08, 0xf1, 0x21, 0x0a, 0xa7, 0x0a, 0x2e, 0x3d, 0xa1, 0xaa,
+	0x3d, 0xe4, 0xcc, 0x37, 0x40, 0x33, 0x3b, 0xbb, 0x59, 0x7b, 0x37, 0xb1, 0x93, 0x40, 0x2f, 0x91,
+	0xe7, 0xfd, 0x9b, 0xf7, 0xfb, 0xcd, 0x9b, 0x37, 0x6f, 0x03, 0x73, 0xd8, 0xf4, 0x59, 0xaf, 0x89,
+	0xf0, 0x6e, 0x73, 0x67, 0xb9, 0xc9, 0x76, 0x1b, 0x9e, 0x4f, 0x19, 0x55, 0xab, 0x42, 0xdc, 0x40,
+	0x78, 0xb7, 0xb1, 0xb3, 0xac, 0x5d, 0x30, 0x1d, 0xe2, 0xd2, 0xa6, 0xf8, 0x1b, 0x19, 0x68, 0x75,
+	0x8b, 0x06, 0x0e, 0x0d, 0x9a, 0x5d, 0x33, 0xc0, 0xcd, 0x9d, 0xe5, 0x2e, 0x66, 0xe6, 0x72, 0xd3,
+	0xa2, 0xc4, 0x95, 0xfa, 0x4b, 0x52, 0xef, 0x04, 0x36, 0x0f, 0xec, 0x04, 0xb6, 0x54, 0xcc, 0x47,
+	0x8a, 0x8e, 0x58, 0x35, 0xa3, 0x45, 0xac, 0x1a, 0xc8, 0xc5, 0x33, 0x7d, 0xd3, 0x89, 0x55, 0x8b,
+	0x91, 0x2a, 0xe8, 0x11, 0xdc, 0x47, 0x18, 0x71, 0x7d, 0xfc, 0x5b, 0x5a, 0xcc, 0xda, 0xd4, 0xa6,
+	0x51, 0x50, 0xfe, 0x2b, 0x92, 0xea, 0xbf, 0x2a, 0x30, 0xd3, 0x0e, 0xec, 0x2f, 0x3d, 0x64, 0x32,
+	0xfc, 0x50, 0x44, 0x54, 0x3f, 0x81, 0x8a, 0x19, 0xb2, 0x1e, 0xf5, 0x09, 0x7b, 0x52, 0x53, 0x16,
+	0x95, 0xeb, 0x95, 0x56, 0xed, 0xcf, 0xdf, 0x6e, 0xcc, 0xca, 0x5c, 0xd6, 0x10, 0xf2, 0x71, 0x10,
+	0x6c, 0x32, 0x9f, 0xb8, 0xb6, 0x71, 0x60, 0xaa, 0xde, 0x82, 0xa9, 0x28, 0xa7, 0x5a, 0x61, 0x51,
+	0xb9, 0x3e, 0xbd, 0x32, 0xdb, 0x48, 0x93, 0xd4, 0x88, 0xa2, 0xb7, 0x2a, 0xcf, 0xfe, 0xbe, 0x32,
+	0xf1, 0xcb, 0xfe, 0xde, 0x92, 0x62, 0x48, 0xf3, 0xd5, 0xc6, 0x8f, 0xfb, 0x7b, 0x4b, 0x07, 0x81,
+	0x7e, 0xde, 0xdf, 0x5b, 0x5a, 0x88, 0xf0, 0xec, 0x0a, 0xb0, 0x43, 0x09, 0xea, 0xf3, 0x70, 0x69,
+	0x48, 0x64, 0xe0, 0xc0, 0xa3, 0x6e, 0x80, 0xf5, 0xdf, 0x15, 0x38, 0xdb, 0x0e, 0xec, 0x75, 0x1f,
+	0x73, 0x1d, 0xa5, 0x7d, 0x75, 0x05, 0x4a, 0x16, 0x5f, 0x51, 0x7f, 0x24, 0x96, 0xd8, 0x50, 0x5d,
+	0x85, 0xb2, 0xe9, 0xd0, 0xd0, 0x65, 0x1d, 0x53, 0x62, 0x99, 0x6f, 0x48, 0x0f, 0x7e, 0x9e, 0x0d,
+	0x79, 0x9e, 0x8d, 0x75, 0x4a, 0xdc, 0xd6, 0x24, 0x07, 0x64, 0x94, 0x22, 0x87, 0xb5, 0x94, 0x6f,
+	0xb7, 0x56, 0x3c, 0x96, 0x6f, 0x6b, 0xb5, 0xca, 0x89, 0x88, 0xb3, 0xd0, 0x6f, 0xc2, 0xdc, 0x00,
+	0x94, 0x18, 0xa4, 0x7a, 0x09, 0x4a, 0x1e, 0xa5, 0xfd, 0x0e, 0x41, 0x02, 0xd2, 0xa4, 0x31, 0xc5,
+	0x97, 0xf7, 0x91, 0xfe, 0x53, 0x41, 0x9c, 0xe6, 0x1a, 0x42, 0x5f, 0x90, 0xef, 0x43, 0x82, 0xf8,
+	0xa9, 0x9c, 0x04, 0x7f, 0x6a, 0x83, 0x42, 0x7a, 0x83, 0x01, 0x62, 0x8a, 0xa7, 0x20, 0x66, 0xf2,
+	0x78, 0xc4, 0xa8, 0x97, 0x01, 0x1c, 0xe2, 0x76, 0x82, 0x9e, 0xe9, 0xe3, 0xa0, 0x76, 0x86, 0xe3,
+	0x30, 0x2a, 0x0e, 0x71, 0x37, 0x85, 0x60, 0x88, 0x37, 0x43, 0x94, 0x47, 0x9a, 0x84, 0x84, 0xb9,
+	0x5b, 0x30, 0x25, 0x63, 0x28, 0xe3, 0x65, 0x20, 0xcd, 0xf5, 0x17, 0x0a, 0xa8, 0xed, 0xc0, 0x36,
+	0xb0, 0x43, 0x77, 0xf0, 0xff, 0x44, 0xee, 0x41, 0x72, 0xc5, 0x63, 0x25, 0xa7, 0x9e, 0x83, 0x82,
+	0x67, 0x09, 0x4e, 0xab, 0x46, 0xc1, 0xb3, 0xd4, 0x3a, 0x80, 0x45, 0xbc, 0x1e, 0xf6, 0x19, 0xde,
+	0x65, 0x82, 0xad, 0xaa, 0x91, 0x92, 0x0c, 0xd1, 0x75, 0x17, 0xb4, 0x2c, 0xb2, 0x84, 0xb1, 0xf7,
+	0x60, 0xc6, 0xa2, 0x8e, 0xd7, 0xc7, 0x8c, 0x50, 0xb7, 0xc3, 0x88, 0x83, 0x05, 0xd2, 0xa2, 0x71,
+	0xee, 0x40, 0xbc, 0x45, 0x1c, 0xac, 0xff, 0xa1, 0x40, 0xa9, 0x1d, 0xd8, 0x9b, 0x8f, 0x4d, 0xef,
+	0xa4, 0x77, 0x8e, 0xd1, 0x47, 0xd8, 0xed, 0x10, 0x77, 0xec, 0x3b, 0x27, 0x1c, 0xee, 0xbb, 0xea,
+	0x02, 0x54, 0x10, 0x76, 0xa9, 0xd3, 0xa1, 0x21, 0x13, 0xe4, 0x55, 0x8c, 0xb2, 0x10, 0x6c, 0x84,
+	0x4c, 0xbd, 0x0a, 0xe7, 0x78, 0xed, 0xc8, 0xda, 0xe3, 0x16, 0x93, 0xc2, 0xa2, 0xea, 0x10, 0x77,
+	0x4d, 0x08, 0x37, 0xc2, 0x61, 0x4e, 0x36, 0xc4, 0x3d, 0xe2, 0x58, 0x12, 0x22, 0x3e, 0x85, 0x4a,
+	0x94, 0x1f, 0x8f, 0x30, 0x66, 0xf5, 0x44, 0x88, 0x36, 0x42, 0xa6, 0xff, 0xa5, 0x40, 0x8d, 0x47,
+	0x64, 0xa6, 0xcf, 0x12, 0x92, 0xd7, 0x42, 0x8b, 0xd3, 0x77, 0xe2, 0x86, 0xbb, 0x00, 0x95, 0x2e,
+	0x41, 0x1d, 0x81, 0x54, 0x70, 0x56, 0x31, 0xca, 0x5d, 0x82, 0xee, 0xf0, 0xb5, 0xfa, 0x3e, 0x9c,
+	0x47, 0xa1, 0x6f, 0x8a, 0x63, 0x0b, 0xb0, 0x45, 0x5d, 0x14, 0xd5, 0x55, 0xd1, 0x98, 0x89, 0xe5,
+	0x9b, 0x91, 0x78, 0xf5, 0x56, 0xb6, 0xff, 0x5e, 0x1d, 0xea, 0xbf, 0xb9, 0x89, 0xeb, 0xb7, 0x61,
+	0xf1, 0x30, 0x5d, 0xc2, 0xdb, 0x3c, 0x94, 0xb1, 0x8b, 0xd2, 0x95, 0x53, 0xc2, 0x2e, 0x12, 0x25,
+	0xf3, 0x54, 0x81, 0xb7, 0xda, 0x81, 0xdd, 0x22, 0x28, 0x43, 0xc9, 0x4d, 0x98, 0xea, 0x12, 0x84,
+	0xf0, 0xe8, 0x02, 0x92, 0x76, 0xfc, 0xf6, 0x44, 0x47, 0x3c, 0x6e, 0xf5, 0x48, 0xf3, 0xd5, 0x69,
+	0x8e, 0x5e, 0x46, 0xd1, 0xbf, 0x83, 0x7a, 0x7e, 0x46, 0x83, 0x75, 0xc0, 0xcc, 0x7e, 0xa7, 0x2b,
+	0xdb, 0xef, 0x78, 0x75, 0xc0, 0xcc, 0x7e, 0x8b, 0x20, 0xfd, 0x2b, 0x51, 0x06, 0xeb, 0x7d, 0x93,
+	0x38, 0xa7, 0xc7, 0x3c, 0x98, 0xfa, 0x37, 0xe2, 0x30, 0x72, 0x43, 0xa7, 0xfb, 0x9f, 0x24, 0x49,
+	0x39, 0x16, 0x49, 0xfa, 0xbe, 0x02, 0xd3, 0xed, 0xc0, 0x7e, 0x40, 0x19, 0x16, 0x37, 0xfc, 0x36,
+	0x94, 0x99, 0x6f, 0xba, 0xc1, 0xb6, 0xcc, 0x76, 0x7a, 0x65, 0x41, 0xbe, 0xf6, 0xc9, 0xd8, 0xb1,
+	0xb3, 0xdc, 0xd8, 0x92, 0x26, 0x09, 0x0d, 0x72, 0x3d, 0x78, 0x61, 0x0b, 0x23, 0x2f, 0x6c, 0x51,
+	0xf4, 0xc9, 0x81, 0x0b, 0x7b, 0xdc, 0xa6, 0xa7, 0x5e, 0x83, 0x99, 0x6d, 0x8c, 0x3b, 0xdb, 0x7e,
+	0xb4, 0xab, 0x17, 0xb2, 0xda, 0x94, 0x08, 0x7b, 0x76, 0x1b, 0xe3, 0x7b, 0xbe, 0xd8, 0xda, 0x0b,
+	0x99, 0x4e, 0xe1, 0x62, 0x0a, 0xe8, 0x7f, 0x73, 0xfd, 0x55, 0x0d, 0xca, 0x1e, 0x0d, 0x08, 0x3f,
+	0x0b, 0xd9, 0xf4, 0x93, 0xb5, 0xfe, 0x52, 0x01, 0xe0, 0x35, 0x17, 0x3e, 0x59, 0x73, 0x9d, 0xfe,
+	0x1b, 0xef, 0x9d, 0xf9, 0x6c, 0x57, 0x4e, 0xc7, 0xf6, 0x50, 0x3b, 0x75, 0xc5, 0xe3, 0x29, 0x11,
+	0xbe, 0x01, 0x4a, 0x5f, 0x14, 0x32, 0x23, 0xc0, 0xa6, 0x2c, 0xcb, 0xd3, 0x56, 0xee, 0x3d, 0x38,
+	0x8b, 0x7d, 0xd6, 0xeb, 0x24, 0x31, 0x0a, 0xe3, 0xc6, 0xa8, 0x72, 0xbf, 0x58, 0x96, 0x9e, 0x02,
+	0x8a, 0x03, 0x53, 0xc0, 0xc7, 0x50, 0xf6, 0x7c, 0xba, 0x43, 0x78, 0x1f, 0x98, 0x1c, 0x51, 0x00,
+	0x89, 0xe5, 0x88, 0x01, 0x89, 0xdf, 0x37, 0x1f, 0x6f, 0x87, 0x2e, 0xea, 0x78, 0x96, 0x28, 0xfb,
+	0xaa, 0x51, 0x8e, 0x04, 0x0f, 0x2d, 0xf5, 0x03, 0xb8, 0x20, 0x95, 0xa9, 0x23, 0x2d, 0x09, 0xa3,
+	0xf3, 0x91, 0x62, 0x3d, 0x91, 0xf3, 0x6a, 0xbd, 0x72, 0x08, 0xb5, 0xa7, 0x9e, 0xb2, 0xd4, 0xcf,
+	0x60, 0x5a, 0x66, 0xc2, 0xb9, 0x1a, 0xb7, 0x94, 0x21, 0xf2, 0xb9, 0xeb, 0xb3, 0x9e, 0xda, 0x82,
+	0xaa, 0x8c, 0x20, 0x0a, 0x65, 0xdc, 0x49, 0x4a, 0x6e, 0xbb, 0xc5, 0x7d, 0x56, 0xfe, 0x29, 0x41,
+	0xb1, 0x1d, 0xd8, 0xea, 0x16, 0x54, 0x07, 0xbe, 0x8b, 0x2e, 0x0f, 0x7e, 0xcf, 0x0c, 0x7d, 0x82,
+	0x68, 0xef, 0x1e, 0xa9, 0x4e, 0xc8, 0x79, 0x00, 0x90, 0xfa, 0x3a, 0x59, 0xc8, 0x38, 0x1d, 0x28,
+	0xb5, 0x77, 0x8e, 0x50, 0x26, 0xf1, 0xb6, 0xa0, 0x3a, 0x30, 0xef, 0x67, 0xb3, 0x4c, 0xab, 0x73,
+	0xb2, 0xcc, 0x1d, 0x94, 0xbf, 0x85, 0x99, 0xe1, 0x59, 0x77, 0x31, 0xe3, 0x39, 0x64, 0xa1, 0x5d,
+	0x1f, 0x65, 0x91, 0xba, 0xfa, 0x93, 0xe2, 0x19, 0x99, 0xcb, 0x78, 0x70, 0xb1, 0x76, 0x39, 0x57,
+	0x9c, 0x78, 0x53, 0x98, 0xcb, 0x1f, 0xa4, 0xae, 0x65, 0xfd, 0xf2, 0xec, 0xb4, 0xc6, 0x78, 0x76,
+	0xc9, 0x86, 0x04, 0x2e, 0xe6, 0x0d, 0x29, 0x57, 0x33, 0x61, 0x72, 0xac, 0xb4, 0x0f, 0xc7, 0xb1,
+	0x4a, 0x63, 0xcb, 0x9f, 0x0e, 0xb2, 0xd8, 0x72, 0xed, 0x72, 0xb0, 0x1d, 0x3d, 0x12, 0x7c, 0x0e,
+	0xe5, 0xe4, 0x55, 0x9f, 0xcf, 0xf8, 0xc6, 0x2a, 0xed, 0xed, 0x43, 0x55, 0x49, 0xa4, 0xbb, 0x50,
+	0x8a, 0x1f, 0xb1, 0x5a, 0x16, 0x73, 0xa4, 0xd1, 0x16, 0x0f, 0xd3, 0x24, 0x61, 0xfa, 0x30, 0x9b,
+	0xdb, 0xb8, 0x8f, 0xae, 0xdc, 0xd8, 0x4c, 0xbb, 0x31, 0x96, 0x59, 0xbc, 0x9b, 0x76, 0xe6, 0x87,
+	0xfd, 0xbd, 0x25, 0xa5, 0x75, 0xe7, 0xd9, 0xab, 0xba, 0xf2, 0xfc, 0x55, 0x5d, 0x79, 0xf9, 0xaa,
+	0xae, 0x3c, 0x7d, 0x5d, 0x9f, 0x78, 0xfe, 0xba, 0x3e, 0xf1, 0xe2, 0x75, 0x7d, 0xe2, 0xeb, 0x25,
+	0x9b, 0xb0, 0x5e, 0xd8, 0x6d, 0x58, 0xd4, 0x69, 0x8a, 0xc8, 0x37, 0x5c, 0xcc, 0x1e, 0x53, 0xff,
+	0x51, 0x33, 0x3d, 0x22, 0xb3, 0x27, 0x1e, 0x0e, 0xba, 0x53, 0xe2, 0x9f, 0x2a, 0x1f, 0xfd, 0x1b,
+	0x00, 0x00, 0xff, 0xff, 0xf0, 0x94, 0xaf, 0x16, 0x35, 0x12, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -1023,6 +1527,17 @@ type MsgClient interface {
 	BidLiquidityAuction(ctx context.Context, in *MsgBidLiquidityAuction, opts ...grpc.CallOption) (*MsgBidLiquidityAuctionResponse, error)
 	// ClaimLiquidityAuction pays out a bidder's pro-rata ERTH after settlement.
 	ClaimLiquidityAuction(ctx context.Context, in *MsgClaimLiquidityAuction, opts ...grpc.CallOption) (*MsgClaimLiquidityAuctionResponse, error)
+	// NoteSwap swaps a shielded note's value through any pool and mints the
+	// output as a note. Unsigned private msg; see MsgNoteSwap.
+	NoteSwap(ctx context.Context, in *MsgNoteSwap, opts ...grpc.CallOption) (*MsgNoteSwapResponse, error)
+	// BuyAnml swaps a transparent account's coins for ANML, minted as a note:
+	// the way into ANML for an ERTH holder (ANML never sits in an account).
+	BuyAnml(ctx context.Context, in *MsgBuyAnml, opts ...grpc.CallOption) (*MsgBuyAnmlResponse, error)
+	// AddLiquidityShielded deposits both legs from shielded notes (the pool
+	// token by one transfer, ERTH by a second) and mints LP shares to a
+	// transparent provider. Unsigned private msg; the only way to add to the
+	// ANML/ERTH pool.
+	AddLiquidityShielded(ctx context.Context, in *MsgAddLiquidityShielded, opts ...grpc.CallOption) (*MsgAddLiquidityShieldedResponse, error)
 }
 
 type msgClient struct {
@@ -1105,6 +1620,33 @@ func (c *msgClient) ClaimLiquidityAuction(ctx context.Context, in *MsgClaimLiqui
 	return out, nil
 }
 
+func (c *msgClient) NoteSwap(ctx context.Context, in *MsgNoteSwap, opts ...grpc.CallOption) (*MsgNoteSwapResponse, error) {
+	out := new(MsgNoteSwapResponse)
+	err := c.cc.Invoke(ctx, "/earth.dex.v1.Msg/NoteSwap", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) BuyAnml(ctx context.Context, in *MsgBuyAnml, opts ...grpc.CallOption) (*MsgBuyAnmlResponse, error) {
+	out := new(MsgBuyAnmlResponse)
+	err := c.cc.Invoke(ctx, "/earth.dex.v1.Msg/BuyAnml", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) AddLiquidityShielded(ctx context.Context, in *MsgAddLiquidityShielded, opts ...grpc.CallOption) (*MsgAddLiquidityShieldedResponse, error) {
+	out := new(MsgAddLiquidityShieldedResponse)
+	err := c.cc.Invoke(ctx, "/earth.dex.v1.Msg/AddLiquidityShielded", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
@@ -1132,6 +1674,17 @@ type MsgServer interface {
 	BidLiquidityAuction(context.Context, *MsgBidLiquidityAuction) (*MsgBidLiquidityAuctionResponse, error)
 	// ClaimLiquidityAuction pays out a bidder's pro-rata ERTH after settlement.
 	ClaimLiquidityAuction(context.Context, *MsgClaimLiquidityAuction) (*MsgClaimLiquidityAuctionResponse, error)
+	// NoteSwap swaps a shielded note's value through any pool and mints the
+	// output as a note. Unsigned private msg; see MsgNoteSwap.
+	NoteSwap(context.Context, *MsgNoteSwap) (*MsgNoteSwapResponse, error)
+	// BuyAnml swaps a transparent account's coins for ANML, minted as a note:
+	// the way into ANML for an ERTH holder (ANML never sits in an account).
+	BuyAnml(context.Context, *MsgBuyAnml) (*MsgBuyAnmlResponse, error)
+	// AddLiquidityShielded deposits both legs from shielded notes (the pool
+	// token by one transfer, ERTH by a second) and mints LP shares to a
+	// transparent provider. Unsigned private msg; the only way to add to the
+	// ANML/ERTH pool.
+	AddLiquidityShielded(context.Context, *MsgAddLiquidityShielded) (*MsgAddLiquidityShieldedResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -1161,6 +1714,15 @@ func (*UnimplementedMsgServer) BidLiquidityAuction(ctx context.Context, req *Msg
 }
 func (*UnimplementedMsgServer) ClaimLiquidityAuction(ctx context.Context, req *MsgClaimLiquidityAuction) (*MsgClaimLiquidityAuctionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClaimLiquidityAuction not implemented")
+}
+func (*UnimplementedMsgServer) NoteSwap(ctx context.Context, req *MsgNoteSwap) (*MsgNoteSwapResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method NoteSwap not implemented")
+}
+func (*UnimplementedMsgServer) BuyAnml(ctx context.Context, req *MsgBuyAnml) (*MsgBuyAnmlResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BuyAnml not implemented")
+}
+func (*UnimplementedMsgServer) AddLiquidityShielded(ctx context.Context, req *MsgAddLiquidityShielded) (*MsgAddLiquidityShieldedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddLiquidityShielded not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -1311,6 +1873,60 @@ func _Msg_ClaimLiquidityAuction_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_NoteSwap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgNoteSwap)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).NoteSwap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/earth.dex.v1.Msg/NoteSwap",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).NoteSwap(ctx, req.(*MsgNoteSwap))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_BuyAnml_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgBuyAnml)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).BuyAnml(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/earth.dex.v1.Msg/BuyAnml",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).BuyAnml(ctx, req.(*MsgBuyAnml))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_AddLiquidityShielded_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgAddLiquidityShielded)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).AddLiquidityShielded(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/earth.dex.v1.Msg/AddLiquidityShielded",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).AddLiquidityShielded(ctx, req.(*MsgAddLiquidityShielded))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Msg_serviceDesc = _Msg_serviceDesc
 var _Msg_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "earth.dex.v1.Msg",
@@ -1347,6 +1963,18 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClaimLiquidityAuction",
 			Handler:    _Msg_ClaimLiquidityAuction_Handler,
+		},
+		{
+			MethodName: "NoteSwap",
+			Handler:    _Msg_NoteSwap_Handler,
+		},
+		{
+			MethodName: "BuyAnml",
+			Handler:    _Msg_BuyAnml_Handler,
+		},
+		{
+			MethodName: "AddLiquidityShielded",
+			Handler:    _Msg_AddLiquidityShielded_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1609,6 +2237,20 @@ func (m *MsgRemoveLiquidity) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.Ciphertext) > 0 {
+		i -= len(m.Ciphertext)
+		copy(dAtA[i:], m.Ciphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
+		i--
+		dAtA[i] = 0x2a
+	}
+	if len(m.Pc) > 0 {
+		i -= len(m.Pc)
+		copy(dAtA[i:], m.Pc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
+		i--
+		dAtA[i] = 0x22
+	}
 	{
 		size, err := m.Shares.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
@@ -1955,6 +2597,336 @@ func (m *MsgClaimLiquidityAuctionResponse) MarshalToSizedBuffer(dAtA []byte) (in
 	return len(dAtA) - i, nil
 }
 
+func (m *MsgNoteSwap) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgNoteSwap) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgNoteSwap) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.FeeFromOutput != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.FeeFromOutput))
+		i--
+		dAtA[i] = 0x30
+	}
+	if len(m.Ciphertext) > 0 {
+		i -= len(m.Ciphertext)
+		copy(dAtA[i:], m.Ciphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
+		i--
+		dAtA[i] = 0x2a
+	}
+	if len(m.Pc) > 0 {
+		i -= len(m.Pc)
+		copy(dAtA[i:], m.Pc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if m.MinAmountOut != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.MinAmountOut))
+		i--
+		dAtA[i] = 0x18
+	}
+	if len(m.DenomOut) > 0 {
+		i -= len(m.DenomOut)
+		copy(dAtA[i:], m.DenomOut)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.DenomOut)))
+		i--
+		dAtA[i] = 0x12
+	}
+	{
+		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgNoteSwapResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgNoteSwapResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgNoteSwapResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Position != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Position))
+		i--
+		dAtA[i] = 0x10
+	}
+	{
+		size, err := m.TokenOut.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgBuyAnml) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgBuyAnml) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgBuyAnml) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Ciphertext) > 0 {
+		i -= len(m.Ciphertext)
+		copy(dAtA[i:], m.Ciphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
+		i--
+		dAtA[i] = 0x2a
+	}
+	if len(m.Pc) > 0 {
+		i -= len(m.Pc)
+		copy(dAtA[i:], m.Pc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.MinAmountOut) > 0 {
+		i -= len(m.MinAmountOut)
+		copy(dAtA[i:], m.MinAmountOut)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.MinAmountOut)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	{
+		size, err := m.TokenIn.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	if len(m.Creator) > 0 {
+		i -= len(m.Creator)
+		copy(dAtA[i:], m.Creator)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Creator)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgBuyAnmlResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgBuyAnmlResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgBuyAnmlResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Position != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Position))
+		i--
+		dAtA[i] = 0x10
+	}
+	{
+		size, err := m.TokenOut.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgAddLiquidityShielded) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgAddLiquidityShielded) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgAddLiquidityShielded) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.RefundCiphertext) > 0 {
+		i -= len(m.RefundCiphertext)
+		copy(dAtA[i:], m.RefundCiphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.RefundCiphertext)))
+		i--
+		dAtA[i] = 0x3a
+	}
+	if len(m.RefundPc) > 0 {
+		i -= len(m.RefundPc)
+		copy(dAtA[i:], m.RefundPc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.RefundPc)))
+		i--
+		dAtA[i] = 0x32
+	}
+	if len(m.MinShares) > 0 {
+		i -= len(m.MinShares)
+		copy(dAtA[i:], m.MinShares)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.MinShares)))
+		i--
+		dAtA[i] = 0x2a
+	}
+	if len(m.Provider) > 0 {
+		i -= len(m.Provider)
+		copy(dAtA[i:], m.Provider)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Provider)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if m.PoolId != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PoolId))
+		i--
+		dAtA[i] = 0x18
+	}
+	{
+		size, err := m.ErthTransfer.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	{
+		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgAddLiquidityShieldedResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgAddLiquidityShieldedResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgAddLiquidityShieldedResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size, err := m.RefundToken.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x1a
+	{
+		size, err := m.RefundErth.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	{
+		size, err := m.Shares.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintTx(dAtA []byte, offset int, v uint64) int {
 	offset -= sovTx(v)
 	base := offset
@@ -2069,6 +3041,14 @@ func (m *MsgRemoveLiquidity) Size() (n int) {
 	}
 	l = m.Shares.Size()
 	n += 1 + l + sovTx(uint64(l))
+	l = len(m.Pc)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Ciphertext)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
 	return n
 }
 
@@ -2196,6 +3176,137 @@ func (m *MsgClaimLiquidityAuctionResponse) Size() (n int) {
 	var l int
 	_ = l
 	l = m.Amount.Size()
+	n += 1 + l + sovTx(uint64(l))
+	return n
+}
+
+func (m *MsgNoteSwap) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.Transfer.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = len(m.DenomOut)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.MinAmountOut != 0 {
+		n += 1 + sovTx(uint64(m.MinAmountOut))
+	}
+	l = len(m.Pc)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Ciphertext)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.FeeFromOutput != 0 {
+		n += 1 + sovTx(uint64(m.FeeFromOutput))
+	}
+	return n
+}
+
+func (m *MsgNoteSwapResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.TokenOut.Size()
+	n += 1 + l + sovTx(uint64(l))
+	if m.Position != 0 {
+		n += 1 + sovTx(uint64(m.Position))
+	}
+	return n
+}
+
+func (m *MsgBuyAnml) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Creator)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = m.TokenIn.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = len(m.MinAmountOut)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Pc)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Ciphertext)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	return n
+}
+
+func (m *MsgBuyAnmlResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.TokenOut.Size()
+	n += 1 + l + sovTx(uint64(l))
+	if m.Position != 0 {
+		n += 1 + sovTx(uint64(m.Position))
+	}
+	return n
+}
+
+func (m *MsgAddLiquidityShielded) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.Transfer.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = m.ErthTransfer.Size()
+	n += 1 + l + sovTx(uint64(l))
+	if m.PoolId != 0 {
+		n += 1 + sovTx(uint64(m.PoolId))
+	}
+	l = len(m.Provider)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.MinShares)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.RefundPc)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.RefundCiphertext)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	return n
+}
+
+func (m *MsgAddLiquidityShieldedResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.Shares.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = m.RefundErth.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = m.RefundToken.Size()
 	n += 1 + l + sovTx(uint64(l))
 	return n
 }
@@ -2981,6 +4092,74 @@ func (m *MsgRemoveLiquidity) Unmarshal(dAtA []byte) error {
 			}
 			if err := m.Shares.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
+			if m.Pc == nil {
+				m.Pc = []byte{}
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.Ciphertext == nil {
+				m.Ciphertext = []byte{}
 			}
 			iNdEx = postIndex
 		default:
@@ -3876,6 +5055,1062 @@ func (m *MsgClaimLiquidityAuctionResponse) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if err := m.Amount.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgNoteSwap) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgNoteSwap: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgNoteSwap: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DenomOut", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DenomOut = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MinAmountOut", wireType)
+			}
+			m.MinAmountOut = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MinAmountOut |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
+			if m.Pc == nil {
+				m.Pc = []byte{}
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.Ciphertext == nil {
+				m.Ciphertext = []byte{}
+			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FeeFromOutput", wireType)
+			}
+			m.FeeFromOutput = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.FeeFromOutput |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgNoteSwapResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgNoteSwapResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgNoteSwapResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TokenOut", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.TokenOut.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Position", wireType)
+			}
+			m.Position = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Position |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgBuyAnml) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgBuyAnml: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgBuyAnml: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Creator = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TokenIn", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.TokenIn.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MinAmountOut", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MinAmountOut = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
+			if m.Pc == nil {
+				m.Pc = []byte{}
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.Ciphertext == nil {
+				m.Ciphertext = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgBuyAnmlResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgBuyAnmlResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgBuyAnmlResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TokenOut", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.TokenOut.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Position", wireType)
+			}
+			m.Position = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Position |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgAddLiquidityShielded) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgAddLiquidityShielded: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgAddLiquidityShielded: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ErthTransfer", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.ErthTransfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PoolId", wireType)
+			}
+			m.PoolId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PoolId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Provider", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Provider = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MinShares", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MinShares = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RefundPc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.RefundPc = append(m.RefundPc[:0], dAtA[iNdEx:postIndex]...)
+			if m.RefundPc == nil {
+				m.RefundPc = []byte{}
+			}
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RefundCiphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.RefundCiphertext = append(m.RefundCiphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.RefundCiphertext == nil {
+				m.RefundCiphertext = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgAddLiquidityShieldedResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgAddLiquidityShieldedResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgAddLiquidityShieldedResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Shares", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Shares.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RefundErth", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.RefundErth.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RefundToken", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.RefundToken.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

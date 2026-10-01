@@ -4,7 +4,10 @@ import (
 	"context"
 
 	"cosmossdk.io/core/address"
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
 
 // AuthKeeper defines the expected interface for the Auth module.
@@ -63,4 +66,19 @@ type ParamSubspace interface {
 // happens. See x/earth/keeper/burns.go.
 type BurnRecorder interface {
 	RecordBurn(ctx context.Context, source string, coins sdk.Coins) error
+}
+
+// ShieldedKeeper is the shielded pool, for the dex's note paths: the asset in
+// of a note swap or shielded deposit arrives by SpendToModule, outputs and
+// refunds leave by MintNote, and a fee from output by PayFeeFromModule. It
+// also says which denoms are shielded-only (ANML), so the transparent paths
+// can refuse them by name.
+type ShieldedKeeper interface {
+	IsShieldedOnly(denom string) bool
+	AssetID(ctx context.Context, denom string) ([]byte, error)
+	CheckMint(ctx context.Context, pc, ciphertext []byte) error
+	MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error)
+	SpendToModule(ctx context.Context, t *shieldedtypes.Transfer, targetModule string) (sdk.Coin, error)
+	PayFeeFromModule(ctx context.Context, fromModule string, fee math.Int) error
+	PrivateGasPrices(ctx context.Context) (proof, note uint64, err error)
 }

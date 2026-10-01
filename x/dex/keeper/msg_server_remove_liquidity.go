@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strconv"
@@ -27,8 +28,18 @@ func (k msgServer) RemoveLiquidity(ctx context.Context, msg *types.MsgRemoveLiqu
 	}
 	creator := sdk.AccAddress(creatorBz)
 
-	if _, err := k.Pool.Get(ctx, msg.PoolId); err != nil {
+	pool, err := k.Pool.Get(ctx, msg.PoolId)
+	if err != nil {
 		return nil, errorsmod.Wrapf(types.ErrPoolNotFound, "pool %d", msg.PoolId)
+	}
+	// A shielded-only token (ANML) is paid out as a note to pc, never to the
+	// creator's account; any other pool pays both legs to the account.
+	if k.isShieldedOnly(pool.ReserveToken.Denom) {
+		if err := k.checkNoteOut(ctx, pool.ReserveToken.Denom, msg.Pc, msg.Ciphertext); err != nil {
+			return nil, errorsmod.Wrapf(err, "pool %d pays %s as a note: pc", msg.PoolId, pool.ReserveToken.Denom)
+		}
+	} else if len(msg.Pc) != 0 || len(msg.Ciphertext) != 0 {
+		return nil, errorsmod.Wrapf(types.ErrInvalidPrivateMsg, "pool %d pays its token to the account: no pc", msg.PoolId)
 	}
 	if msg.Shares.Denom != types.LPShareDenom(msg.PoolId) {
 		return nil, errorsmod.Wrapf(types.ErrInvalidDenom, "expected LP denom %s", types.LPShareDenom(msg.PoolId))
@@ -57,6 +68,12 @@ func (k msgServer) RemoveLiquidity(ctx context.Context, msg *types.MsgRemoveLiqu
 	entry, err := k.LpUnbondings.Get(ctx, key)
 	switch {
 	case err == nil:
+		// One entry pays one note: a second withdrawal in the block must
+		// name the same one.
+		if !bytes.Equal(entry.Pc, msg.Pc) || !bytes.Equal(entry.Ciphertext, msg.Ciphertext) {
+			return nil, errorsmod.Wrap(types.ErrInvalidPrivateMsg,
+				"a withdrawal from this pool is already pending at this completion time with another pc")
+		}
 		entry.Shares = entry.Shares.Add(msg.Shares)
 	case errors.Is(err, collections.ErrNotFound):
 		entry = types.LpUnbonding{
@@ -64,6 +81,8 @@ func (k msgServer) RemoveLiquidity(ctx context.Context, msg *types.MsgRemoveLiqu
 			PoolId:         msg.PoolId,
 			Shares:         msg.Shares,
 			CompletionTime: completion,
+			Pc:             msg.Pc,
+			Ciphertext:     msg.Ciphertext,
 		}
 	default:
 		return nil, err

@@ -190,7 +190,22 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 	// A dust position can round both legs to zero. The shares are burned and the
 	// entry cleared regardless, so it cannot sit in the queue being retried every
 	// block forever.
+	//
+	// A shielded-only token (the ANML of the ANML/ERTH pool) never reaches an
+	// account: it is minted as a note to the pc the withdrawal named. The
+	// ERTH leg goes to the account as for any pool.
 	payout := sdk.NewCoins(outErth, outToken)
+	if k.isShieldedOnly(outToken.Denom) {
+		if outToken.IsPositive() {
+			if len(entry.Pc) == 0 {
+				return types.ErrInvalidUnbonding.Wrapf("pool %d: no pc to pay %s to", entry.PoolId, outToken)
+			}
+			if _, _, err := k.shielded.MintNote(ctx, types.ModuleName, outToken, entry.Pc, entry.Ciphertext); err != nil {
+				return err
+			}
+		}
+		payout = sdk.NewCoins(outErth)
+	}
 	if !payout.IsZero() {
 		if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, sdk.AccAddress(addrBz), payout); err != nil {
 			return err

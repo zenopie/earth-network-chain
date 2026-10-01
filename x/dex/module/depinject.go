@@ -17,6 +17,7 @@ import (
 	"github.com/earth-network/earth/x/dex/keeper"
 	"github.com/earth-network/earth/x/dex/types"
 	earthkeeper "github.com/earth-network/earth/x/earth/keeper"
+	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
 )
 
 var _ depinject.OnePerModuleType = AppModule{}
@@ -27,7 +28,7 @@ func (AppModule) IsOnePerModuleType() {}
 func init() {
 	appconfig.Register(
 		&types.Module{},
-		appconfig.Provide(ProvideModule),
+		appconfig.Provide(ProvideModule, types.ProvideNoteSwapGetSigners, types.ProvideAddLiquidityShieldedGetSigners),
 	)
 }
 
@@ -51,6 +52,11 @@ type ModuleInputs struct {
 	// burn counters: this module destroys supply and x/earth is where the chain
 	// records that it happened.
 	EarthKeeper earthkeeper.Keeper
+	// ShieldedKeeper is the shielded pool, for the note paths: ANML exists
+	// only as notes, so swapping it, buying it and providing it as liquidity
+	// all go through the pool. This module's private msgs run through its
+	// private ante.
+	ShieldedKeeper shieldedkeeper.Keeper
 }
 
 type ModuleOutputs struct {
@@ -74,7 +80,9 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.BankKeeper,
 		in.StakingKeeper,
 		in.EarthKeeper,
+		in.ShieldedKeeper,
 	)
+	keeper.RegisterPrivateActions(in.ShieldedKeeper.RegisterPrivateAction, keeper.NewActionHandler(k))
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 
 	in.AllocationKeeper.RegisterIntegratedHandler(allocationtypes.STREAM_ID_GROUNDWORKS, allocationtypes.HandlerLPRewards,

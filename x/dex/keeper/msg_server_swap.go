@@ -44,27 +44,49 @@ func (k msgServer) Swap(ctx context.Context, msg *types.MsgSwap) (*types.MsgSwap
 // account path fails with "not allowed to receive funds". Module-to-module
 // transfers are not subject to it, which is the correct primitive for one module
 // trading against another.
+//
+// A third kind, held, is the dex's own account: the input is already in it
+// (a note swap's asset, spent there by the shielded pool) or the output stays
+// in it (to be minted as a note). Nothing moves for a held leg; the caller
+// owns that half of the transfer.
 type swapParty struct {
 	addr   sdk.AccAddress // set for an ordinary trader
 	module string         // set when the counterparty is a module account
+	held   bool           // set when the coins are (or stay) in this module
 }
 
+// held is the dex's own account; see swapParty.
+var held = swapParty{held: true}
+
 func (p swapParty) escrow(ctx context.Context, k Keeper, amt sdk.Coins) error {
-	if p.module != "" {
+	switch {
+	case p.held:
+		return nil
+	case p.module != "":
 		return k.bankKeeper.SendCoinsFromModuleToModule(ctx, p.module, types.ModuleName, amt)
 	}
 	return k.bankKeeper.SendCoinsFromAccountToModule(ctx, p.addr, types.ModuleName, amt)
 }
 
 func (p swapParty) pay(ctx context.Context, k Keeper, amt sdk.Coins) error {
-	if p.module != "" {
+	switch {
+	case p.held:
+		return nil
+	case p.module != "":
 		return k.bankKeeper.SendCoinsFromModuleToModule(ctx, types.ModuleName, p.module, amt)
 	}
 	return k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, p.addr, amt)
 }
 
+// isAccount reports whether p is an ordinary account, the one kind of party
+// that may never hold a shielded-only denom.
+func (p swapParty) isAccount() bool { return !p.held && p.module == "" }
+
 func (p swapParty) String() string {
-	if p.module != "" {
+	switch {
+	case p.held:
+		return types.ModuleName
+	case p.module != "":
 		return p.module
 	}
 	return p.addr.String()
@@ -72,7 +94,8 @@ func (p swapParty) String() string {
 
 // SwapExactIn swaps tokenIn for denomOut on behalf of an ordinary account.
 func (k Keeper) SwapExactIn(ctx context.Context, trader sdk.AccAddress, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
-	return k.swapExactIn(ctx, swapParty{addr: trader}, tokenIn, denomOut, minOut)
+	p := swapParty{addr: trader}
+	return k.swapExactIn(ctx, p, p, tokenIn, denomOut, minOut)
 }
 
 // SwapExactInForModule is SwapExactIn for another module trading against the
@@ -84,18 +107,35 @@ func (k Keeper) SwapExactIn(ctx context.Context, trader sdk.AccAddress, tokenIn 
 // discarded by design, on every block, without an event. The pillar looked like
 // it was running and was emitting nothing.
 func (k Keeper) SwapExactInForModule(ctx context.Context, moduleName string, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
-	return k.swapExactIn(ctx, swapParty{module: moduleName}, tokenIn, denomOut, minOut)
+	p := swapParty{module: moduleName}
+	return k.swapExactIn(ctx, p, p, tokenIn, denomOut, minOut)
 }
 
 // swapExactIn routes tokenIn for denomOut through the ERTH hub (1 or 2 hops),
-// charging the per-hop fee/burn and enforcing minOut.
-func (k Keeper) swapExactIn(ctx context.Context, trader swapParty, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
+// charging the per-hop fee/burn and enforcing minOut. from pays tokenIn, to
+// receives the output.
+//
+// An ordinary account may be neither side of a shielded-only denom (ANML),
+// in either direction and whatever the route: the bank's send restriction
+// would refuse the transfer anyway, and this says why before anything moves.
+func (k Keeper) swapExactIn(ctx context.Context, from, to swapParty, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
 	if !tokenIn.Amount.IsPositive() {
 		return sdk.Coin{}, errorsmod.Wrap(types.ErrInvalidAmount, "token_in must be positive")
 	}
 	if denomOut == tokenIn.Denom {
 		return sdk.Coin{}, errorsmod.Wrap(types.ErrInvalidDenom, "token_in and denom_out must differ")
 	}
+	if from.isAccount() {
+		if err := k.refuseShieldedOnly(tokenIn.Denom); err != nil {
+			return sdk.Coin{}, err
+		}
+	}
+	if to.isAccount() {
+		if err := k.refuseShieldedOnly(denomOut); err != nil {
+			return sdk.Coin{}, err
+		}
+	}
+	trader := from
 
 	hub, err := k.HubDenom(ctx)
 	if err != nil {
@@ -156,7 +196,7 @@ func (k Keeper) swapExactIn(ctx context.Context, trader swapParty, tokenIn sdk.C
 	}
 
 	tokenOut := sdk.NewCoin(denomOut, outAmt)
-	if err := trader.pay(ctx, k, sdk.NewCoins(tokenOut)); err != nil {
+	if err := to.pay(ctx, k, sdk.NewCoins(tokenOut)); err != nil {
 		return sdk.Coin{}, err
 	}
 	if totalBurn.IsPositive() {

@@ -18,6 +18,10 @@ import (
 //
 // The two amounts may be supplied in either order; they are matched to the pool
 // reserves by denom.
+//
+// A pool whose token is shielded-only (ANML/ERTH) is refused: no account
+// holds ANML, so that pool takes deposits only from notes
+// (MsgAddLiquidityShielded).
 func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity) (*types.MsgAddLiquidityResponse, error) {
 	creatorBz, err := k.addressCodec.StringToBytes(msg.Creator)
 	if err != nil {
@@ -29,22 +33,50 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 	if err != nil {
 		return nil, errorsmod.Wrapf(types.ErrPoolNotFound, "pool %d", msg.PoolId)
 	}
-	// Settle pending LP rewards into the reserve before minting shares against
-	// it, so a depositor cannot buy in ahead of rewards earned before they came.
-	if err := k.settlePoolRewards(ctx, msg.PoolId, &pool); err != nil {
+	if err := k.refuseShieldedOnly(pool.ReserveToken.Denom, msg.AmountA.Denom, msg.AmountB.Denom); err != nil {
 		return nil, err
 	}
-
 	// Match the two provided coins to the pool's erth/token reserves by denom.
 	erthIn, tokenIn, err := matchPair(msg.AmountA, msg.AmountB, pool.ReserveErth.Denom, pool.ReserveToken.Denom)
 	if err != nil {
 		return nil, err
 	}
+	shares, _, _, err := k.deposit(ctx, msg.PoolId, erthIn, tokenIn, msg.MinShares, creator,
+		func(depErt, depTok sdk.Coin) error {
+			return k.bankKeeper.SendCoinsFromAccountToModule(ctx, creator, types.ModuleName, sdk.NewCoins(depErt, depTok))
+		})
+	if err != nil {
+		return nil, err
+	}
+	return &types.MsgAddLiquidityResponse{Shares: shares}, nil
+}
+
+// deposit adds up to erthIn and tokenIn to pool poolID, taken in the pool
+// ratio, and mints the LP shares to provider. pull moves the deposit (exactly
+// the amounts the ratio takes, which deposit returns) into this module's
+// account; whatever of erthIn and tokenIn it does not take is the caller's to
+// return (MsgAddLiquidity simply never pulls it).
+func (k Keeper) deposit(ctx context.Context, poolID uint64, erthIn, tokenIn sdk.Coin, minSharesStr string,
+	provider sdk.AccAddress, pull func(depErt, depTok sdk.Coin) error,
+) (sdk.Coin, sdk.Coin, sdk.Coin, error) {
+	var none sdk.Coin
+	pool, err := k.Pool.Get(ctx, poolID)
+	if err != nil {
+		return none, none, none, errorsmod.Wrapf(types.ErrPoolNotFound, "pool %d", poolID)
+	}
+	// Settle pending LP rewards into the reserve before minting shares against
+	// it, so a depositor cannot buy in ahead of rewards earned before they came.
+	if err := k.settlePoolRewards(ctx, poolID, &pool); err != nil {
+		return none, none, none, err
+	}
+	if erthIn.Denom != pool.ReserveErth.Denom || tokenIn.Denom != pool.ReserveToken.Denom {
+		return none, none, none, errorsmod.Wrapf(types.ErrInvalidDenom, "expected %s and %s", pool.ReserveErth.Denom, pool.ReserveToken.Denom)
+	}
 	if !erthIn.Amount.IsPositive() || !tokenIn.Amount.IsPositive() {
-		return nil, errorsmod.Wrap(types.ErrInvalidAmount, "both amounts must be positive")
+		return none, none, none, errorsmod.Wrap(types.ErrInvalidAmount, "both amounts must be positive")
 	}
 
-	total := k.totalShares(ctx, msg.PoolId).Amount
+	total := k.totalShares(ctx, poolID).Amount
 
 	var (
 		shareAmt   math.Int
@@ -61,7 +93,7 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 		// depositor shares over all of it, so the next person to deposit into
 		// an empty pool could withdraw straight away with the residue.
 		if err := k.burnResidue(ctx, &pool); err != nil {
-			return nil, err
+			return none, none, none, err
 		}
 		shareAmt = initialShares(erthIn.Amount, tokenIn.Amount)
 	} else {
@@ -69,7 +101,7 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 		sharesFromToken := tokenIn.Amount.Mul(total).Quo(pool.ReserveToken.Amount)
 		shareAmt = math.MinInt(sharesFromErth, sharesFromToken)
 		if !shareAmt.IsPositive() {
-			return nil, types.ErrZeroShares
+			return none, none, none, types.ErrZeroShares
 		}
 		// Pull assets in the exact pool ratio for the shares granted.
 		depositErt.Amount = shareAmt.Mul(pool.ReserveErth.Amount).Quo(total)
@@ -77,7 +109,7 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 	}
 
 	if !shareAmt.IsPositive() {
-		return nil, types.ErrZeroShares
+		return none, none, none, types.ErrZeroShares
 	}
 
 	// Slippage. The shares above were priced against the reserves as they stand
@@ -89,42 +121,42 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 	//
 	// An empty min_shares is no minimum. Clients built before the field existed
 	// send nothing and keep working.
-	if msg.MinShares != "" {
-		minShares, ok := math.NewIntFromString(msg.MinShares)
+	if minSharesStr != "" {
+		minShares, ok := math.NewIntFromString(minSharesStr)
 		if !ok || minShares.IsNegative() {
-			return nil, errorsmod.Wrap(types.ErrInvalidAmount, "invalid min_shares")
+			return none, none, none, errorsmod.Wrap(types.ErrInvalidAmount, "invalid min_shares")
 		}
 		if shareAmt.LT(minShares) {
-			return nil, errorsmod.Wrapf(types.ErrSlippage,
+			return none, none, none, errorsmod.Wrapf(types.ErrSlippage,
 				"would mint %s shares, want >= %s", shareAmt, minShares)
 		}
 	}
 
-	if err := k.bankKeeper.SendCoinsFromAccountToModule(ctx, creator, types.ModuleName, sdk.NewCoins(depositErt, depositTok)); err != nil {
-		return nil, err
+	if err := pull(depositErt, depositTok); err != nil {
+		return none, none, none, err
 	}
 
-	shares := sdk.NewCoin(types.LPShareDenom(msg.PoolId), shareAmt)
-	if err := k.mintShares(ctx, creator, shares); err != nil {
-		return nil, err
+	shares := sdk.NewCoin(types.LPShareDenom(poolID), shareAmt)
+	if err := k.mintShares(ctx, provider, shares); err != nil {
+		return none, none, none, err
 	}
 
 	pool.ReserveErth = pool.ReserveErth.Add(depositErt)
 	pool.ReserveToken = pool.ReserveToken.Add(depositTok)
-	if err := k.SetPool(ctx, msg.PoolId, pool); err != nil {
-		return nil, err
+	if err := k.SetPool(ctx, poolID, pool); err != nil {
+		return none, none, none, err
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
 		sdk.NewEvent(
 			"add_liquidity",
-			sdk.NewAttribute("pool_id", strconv.FormatUint(msg.PoolId, 10)),
-			sdk.NewAttribute("provider", msg.Creator),
+			sdk.NewAttribute("pool_id", strconv.FormatUint(poolID, 10)),
+			sdk.NewAttribute("provider", provider.String()),
 			sdk.NewAttribute("shares", shares.String()),
 		),
 	)
 
-	return &types.MsgAddLiquidityResponse{Shares: shares}, nil
+	return shares, depositErt, depositTok, nil
 }
 
 // matchPair assigns two coins to the (erth, token) slots by denom, in whichever
@@ -141,7 +173,7 @@ func matchPair(a, b sdk.Coin, erthDenom, tokenDenom string) (erth, token sdk.Coi
 }
 
 // burnResidue destroys an empty pool's leftover reserves and zeroes them.
-func (k msgServer) burnResidue(ctx context.Context, pool *types.Pool) error {
+func (k Keeper) burnResidue(ctx context.Context, pool *types.Pool) error {
 	residue := sdk.NewCoins(pool.ReserveErth, pool.ReserveToken)
 	if residue.IsZero() {
 		return nil

@@ -69,6 +69,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Swap token_in for denom_out, routed through the ERTH hub",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "token_in"}, {ProtoField: "denom_out"}, {ProtoField: "min_amount_out"}},
 				},
+				// Note paths: unsigned private msgs (and BuyAnml, whose pc a
+				// wallet derives) are built by wallets as raw tx bytes.
+				{RpcMethod: "NoteSwap", Skip: true},
+				{RpcMethod: "BuyAnml", Skip: true},
+				{RpcMethod: "AddLiquidityShielded", Skip: true},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

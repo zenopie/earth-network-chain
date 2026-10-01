@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"cosmossdk.io/math"
+
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // DefaultGenesis returns the default genesis state
@@ -216,6 +218,13 @@ func (gs GenesisState) Validate() error {
 		if u.CompletionTime < 0 {
 			return fmt.Errorf("lp unbonding for %s in pool %d: completion_time must not be negative",
 				u.Address, u.PoolId)
+		}
+		// A pc, when present, is where the token leg is minted as a note; a
+		// malformed one would drop the entry at maturity.
+		if len(u.Pc) != 0 {
+			if _, err := privacy.FieldFromBytes(u.Pc); err != nil {
+				return fmt.Errorf("lp unbonding for %s in pool %d: pc: %w", u.Address, u.PoolId, err)
+			}
 		}
 	}
 

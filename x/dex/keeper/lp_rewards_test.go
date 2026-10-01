@@ -183,6 +183,7 @@ func initRewardFixture(t *testing.T) (keeper.Keeper, sdk.Context, *mintingBank) 
 		bank,
 		stubStakingKeeper{},
 		bank,
+		nil,
 	)
 	require.NoError(t, k.Params.Set(ctx, types.DefaultParams()))
 	// Every test built on this fixture becomes a completeness check for free.

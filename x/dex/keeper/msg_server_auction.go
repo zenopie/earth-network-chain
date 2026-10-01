@@ -36,6 +36,10 @@ func (k msgServer) StartLiquidityAuction(ctx context.Context, msg *types.MsgStar
 	if err := sdk.ValidateDenom(msg.BidDenom); err != nil {
 		return nil, errorsmod.Wrap(types.ErrInvalidDenom, err.Error())
 	}
+	// Bidders are accounts; none holds a shielded-only denom.
+	if err := k.refuseShieldedOnly(msg.BidDenom); err != nil {
+		return nil, err
+	}
 
 	hub, err := k.HubDenom(ctx)
 	if err != nil {
