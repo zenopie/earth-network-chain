@@ -75,6 +75,9 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 				if err := k.ProposalRound.Remove(ctx, id); err != nil {
 					return err
 				}
+				if err := k.forgetSubjects(ctx, id); err != nil {
+					return err
+				}
 				continue
 			}
 			return err
@@ -107,6 +110,9 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 			if err := k.ProposalRound.Remove(ctx, id); err != nil {
 				return err
 			}
+			if err := k.forgetSubjects(ctx, id); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -130,6 +136,9 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 		}
 
 		if err := k.ProposalRound.Remove(ctx, id); err != nil {
+			return err
+		}
+		if err := k.forgetSubjects(ctx, id); err != nil {
 			return err
 		}
 		if err := k.failProposal(ctx, proposal, tally, barFor(proposal)); err != nil {
@@ -289,7 +298,34 @@ func (k Keeper) closeOrphanedBallots(ctx context.Context, limit int) error {
 	if err != nil {
 		return err
 	}
+	// A cancelled proposal nobody voted on has no ballot, only its subjects.
+	checked = 0
+	err = k.Subjects.Walk(ctx, nil, func(proposalID uint64, _ types.ProposalSubjects) (bool, error) {
+		if checked >= limit {
+			return true, nil
+		}
+		checked++
+		has, err := k.gov.Proposals.Has(ctx, proposalID)
+		if err != nil {
+			return true, err
+		}
+		if !has {
+			orphans = append(orphans, proposalID)
+		}
+		return false, nil
+	})
+	if err != nil {
+		return err
+	}
 	for _, id := range orphans {
+		if err := k.forgetSubjects(ctx, id); err != nil {
+			return err
+		}
+		if _, ok, err := k.proposalBallot(ctx, id); err != nil {
+			return err
+		} else if !ok {
+			continue
+		}
 		if err := k.endProposalRound(ctx, id); err != nil {
 			return err
 		}

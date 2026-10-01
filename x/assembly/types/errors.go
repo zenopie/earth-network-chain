@@ -35,9 +35,11 @@ var (
 	// voter's own registration was made under.
 	ErrVoterIsSubject = errors.Register(ModuleName, 1106, "registration is under a Document Signer this proposal revokes")
 
-	// ErrTooManySubjects means the proposal revokes more than one Document
-	// Signer. A membership proof excludes exactly one, so the chamber cannot
-	// keep every subject out of the vote; such a proposal takes no human votes
-	// (and so fails) and must be split into one per signer.
-	ErrTooManySubjects = errors.Register(ModuleName, 1107, "proposal revokes more than one Document Signer; the chamber votes on one at a time")
+	// ErrTooManySubjects means the proposal's revocations cannot be excluded
+	// from its vote by one membership proof, which excludes one Document
+	// Signer and one country: they span countries, or one of unknown country
+	// is among several. The chamber cannot keep every subject out of the vote,
+	// so such a proposal takes no human votes (and so fails) and must be split
+	// per country. See keeper/subjects.go.
+	ErrTooManySubjects = errors.Register(ModuleName, 1107, "proposal's revocations span more than one country or signer; the chamber votes on one country at a time")
 )

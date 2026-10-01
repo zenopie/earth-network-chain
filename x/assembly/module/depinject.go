@@ -9,11 +9,13 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 
 	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
 	"github.com/earth-network/earth/x/assembly/keeper"
 	"github.com/earth-network/earth/x/assembly/types"
 	personhoodkeeper "github.com/earth-network/earth/x/personhood/keeper"
+	pkikeeper "github.com/earth-network/earth/x/pki/keeper"
 	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
 )
 
@@ -42,6 +44,7 @@ type ModuleInputs struct {
 	PersonhoodKeeper personhoodkeeper.Keeper
 	AllocationKeeper allocationkeeper.Keeper
 	ShieldedKeeper   shieldedkeeper.Keeper
+	PkiKeeper        pkikeeper.Keeper
 }
 
 type ModuleOutputs struct {
@@ -49,6 +52,8 @@ type ModuleOutputs struct {
 
 	AssemblyKeeper keeper.Keeper
 	Module         appmodule.AppModule
+	// GovHooks fix each proposal's subjects as it enters voting.
+	GovHooks govtypes.GovHooksWrapper
 }
 
 // ProvideModule builds the assembly keeper.
@@ -74,6 +79,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.PersonhoodKeeper,
 		in.GovKeeper,
 		allocationkeeper.NewChamberFacade(in.AllocationKeeper),
+		in.PkiKeeper,
 	)
 	in.AllocationKeeper.RegisterChamber(chamberAddr)
 	// Every msg of the chamber is private: its fee transfer and membership
@@ -83,5 +89,6 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	return ModuleOutputs{
 		AssemblyKeeper: k,
 		Module:         NewAppModule(in.Cdc, k),
+		GovHooks:       govtypes.GovHooksWrapper{GovHooks: k.GovHooks()},
 	}
 }

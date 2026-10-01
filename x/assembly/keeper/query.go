@@ -76,10 +76,11 @@ func inputsResponse(st personhoodtypes.MembershipStatement, round, ballot uint64
 		maxAct = uint64(st.MaxActivation)
 	}
 	return &types.QueryBallotInputsResponse{
-		Scope:         privacy.FieldBytes(st.Scope),
-		ExcludedDsc:   privacy.FieldBytes(st.ExcludedDsc),
-		MaxActivation: maxAct,
-		Round:         round,
-		BallotId:      ballot,
+		Scope:           privacy.FieldBytes(st.Scope),
+		ExcludedDsc:     privacy.FieldBytes(st.ExcludedDsc),
+		ExcludedCountry: privacy.FieldBytes(st.ExcludedCountry),
+		MaxActivation:   maxAct,
+		Round:           round,
+		BallotId:        ballot,
 	}
 }

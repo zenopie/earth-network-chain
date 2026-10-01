@@ -35,7 +35,7 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		return err
 	}
 	for _, reg := range genState.Registrations {
-		leaf, err := IdentityLeaf(reg.Idc, reg.DscKey, reg.ActivatedAt)
+		leaf, err := IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt)
 		if err != nil {
 			return fmt.Errorf("registration %x: %w", reg.Nullifier, err)
 		}

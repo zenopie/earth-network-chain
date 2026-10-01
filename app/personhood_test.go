@@ -227,10 +227,11 @@ func (e *phEnv) feeFor(name string) personhoodtest.Fee {
 // statement. maxAct overrides the chain's max_activation (to prove a statement
 // the chain will not accept).
 type member struct {
-	reg      string
-	scope    fr.Element
-	excluded fr.Element
-	maxAct   int64
+	reg             string
+	scope           fr.Element
+	excluded        fr.Element
+	excludedCountry fr.Element
+	maxAct          int64
 }
 
 // prove fills msg's fee (and membership) proofs. fee must already be set on
@@ -258,8 +259,9 @@ func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f personhoodtes
 	dsc, err := privacy.FieldFromBytes(reg.DscKey)
 	require.NoError(e.t, err)
 	w := personhoodtest.Membership{
-		IDSecret: r.IDSecret(), DscKey: dsc, ActivatedAt: uint64(reg.ActivatedAt), LeafIndex: reg.LeafIndex,
-		Root: root, Siblings: sib, Scope: m.scope, Signal: signal, ExcludedDsc: m.excluded, MaxActivation: uint64(m.maxAct),
+		IDSecret: r.IDSecret(), DscKey: dsc, Country: privacy.CountryField(reg.Country), ActivatedAt: uint64(reg.ActivatedAt),
+		LeafIndex: reg.LeafIndex, Root: root, Siblings: sib, Scope: m.scope, Signal: signal,
+		ExcludedDsc: m.excluded, ExcludedCountry: m.excludedCountry, MaxActivation: uint64(m.maxAct),
 	}
 	mt, mpub := w.Witness()
 	mproof, err := e.prover.Proof(name+".membership", "membership", mt, mpub)
@@ -356,7 +358,19 @@ func (e *phEnv) voteProposal(name, reg string, id uint64, opt assemblytypes.Vote
 	in := e.ballotInputs(&assemblytypes.QueryBallotInputsRequest{ProposalId: id})
 	f := e.feeFor("vote/" + name)
 	msg := &assemblytypes.MsgVoteProposal{Fee: e.transfer(f), ProposalId: id, Option: opt}
-	e.prove("vote/"+name, msg, f, &member{reg: reg, scope: field(e.t, in.Scope), excluded: field(e.t, in.ExcludedDsc), maxAct: int64(in.MaxActivation)})
+	e.prove("vote/"+name, msg, f, &member{reg: reg, scope: field(e.t, in.Scope), excluded: field(e.t, in.ExcludedDsc),
+		excludedCountry: field(e.t, in.ExcludedCountry), maxAct: int64(in.MaxActivation)})
+	return msg
+}
+
+// voteProposalAs proves a vote on id against a statement of the caller's
+// choosing rather than the chain's.
+func (e *phEnv) voteProposalAs(name, reg string, id uint64, opt assemblytypes.VoteOption, m member) *assemblytypes.MsgVoteProposal {
+	e.t.Helper()
+	f := e.feeFor("vote/" + name)
+	msg := &assemblytypes.MsgVoteProposal{Fee: e.transfer(f), ProposalId: id, Option: opt}
+	m.reg = reg
+	e.prove("vote/"+name, msg, f, &m)
 	return msg
 }
 
@@ -449,7 +463,8 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, uint64(0), a1.LeafIndex)
 	require.Equal(t, e.now.Unix(), a1.ActivatedAt)
-	wantLeaf := privacy.IdentityLeaf(personhoodtest.Registrations["A1"].IDC(), field(t, a1.DscKey), uint64(a1.ActivatedAt))
+	require.Equal(t, "UT", a1.Country, "the issuing CSCA's country")
+	wantLeaf := privacy.IdentityLeaf(personhoodtest.Registrations["A1"].IDC(), field(t, a1.DscKey), privacy.CountryField("UT"), uint64(a1.ActivatedAt))
 	require.Equal(t, wantLeaf, *e.leaf(0))
 	require.True(t, hasCommitment(r, personhoodtest.Registrations["A1"].AnmlNote().CM()), "1 ANML to pc_anml")
 	regEv := eventsOf(r.Events, "register")[0]
@@ -522,6 +537,32 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Equal(t, assemblytypes.Tally{No: 1}, tallyOf())
 	e.mustDeliver(e.voteProposal("B-yes", "B", pid, assemblytypes.VOTE_OPTION_YES))
 	require.Equal(t, assemblytypes.Tally{Yes: 1, No: 1}, tallyOf())
+
+	// A proposal revoking two Document Signers of one country (B's and C1's,
+	// both under a "UT" CSCA) excludes that whole country: its subjects are
+	// fixed as it enters voting, from x/pki's view of each signer's issuer.
+	country, placed, err := e.app.PkiKeeper.DscIssuerCountry(ctxNow(), loadPassport(t, "B").dscDER)
+	require.NoError(t, err)
+	require.True(t, placed)
+	require.Equal(t, "UT", country)
+	var revokes []sdk.Msg
+	for _, name := range []string{"B", "C1"} {
+		revokes = append(revokes, &pkitypes.MsgRevokeDsc{Authority: e.bech(e.app.GovKeeper.GetGovernanceAccount(ctxNow()).GetAddress()),
+			CertificateDer: loadPassport(t, name).dscDER})
+	}
+	prop2, err := govv1.NewMsgSubmitProposal(revokes, e.fee(1_000_000), e.bech(e.userAddr()), "", "revoke UT signers", "test", false)
+	require.NoError(t, err)
+	fb = e.finalize(e.signedTx(2_000_000, e.fee(20_000), prop2))
+	requireOK(t, fb.TxResults[0])
+	const pid2 = uint64(2)
+	in2 := e.ballotInputs(&assemblytypes.QueryBallotInputsRequest{ProposalId: pid2})
+	require.Equal(t, privacy.FieldBytes(privacy.CountryField("UT")), in2.ExcludedCountry)
+	require.Equal(t, make([]byte, 32), in2.ExcludedDsc)
+	// A1 is a UT registration too: no proof of its leaf satisfies the
+	// statement, and one made as if nothing were excluded is refused.
+	res = e.checkTx(e.tx(e.voteProposalAs("A-ut", "A1", pid2, assemblytypes.VOTE_OPTION_NO,
+		member{scope: field(t, in2.Scope), maxAct: int64(in2.MaxActivation)})))
+	require.Equal(t, personhoodtypes.ErrInvalidMembership.ABCICode(), res.Code, res.Log)
 
 	// ------------------------------------------------------- DSC revocation
 	// B proves membership against today's root, then B's Document Signer is

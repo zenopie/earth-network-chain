@@ -69,7 +69,16 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			}
 		}
 	}
-	return nil
+
+	// Subjects are not carried: they are recomputed for every proposal in
+	// voting from x/gov's and x/pki's state, both imported before this module.
+	return k.gov.VotingPeriodProposals.Walk(ctx, nil, func(id uint64, _ []byte) (bool, error) {
+		p, err := k.gov.Proposals.Get(ctx, id)
+		if err != nil {
+			return true, err
+		}
+		return false, k.classifyProposal(ctx, p)
+	})
 }
 
 // ExportGenesis writes out the votes still in flight. Closed ballots waiting to

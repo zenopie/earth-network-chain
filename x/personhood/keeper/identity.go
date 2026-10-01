@@ -17,8 +17,8 @@ import (
 )
 
 // The identity tree: depth 32, one leaf per registration ever written,
-// leaf = H(TAG_LEAF, idc, dsc_key, activated_at), computed here from public
-// msg fields. A leaf is zeroed when its registration expires, its Document
+// leaf = H(TAG_LEAF, idc, dsc_key, country, activated_at), computed here from
+// public msg fields and the DSC's recorded issuing country. A leaf is zeroed when its registration expires, its Document
 // Signer is revoked, or its holder switches to a new identity secret; a zero
 // leaf proves nothing (see zk/merkle).
 //
@@ -65,8 +65,10 @@ func (k Keeper) identityTree(ctx context.Context) (*merkle.Tree, error) {
 	return merkle.New(identityStore{ctx: ctx, k: k}, size), nil
 }
 
-// IdentityLeaf computes the leaf a registration writes.
-func IdentityLeaf(idc, dscKey []byte, activatedAt int64) (fr.Element, error) {
+// IdentityLeaf computes the leaf a registration writes. country is the
+// registration's recorded issuing country (see privacy.CountryField: "" and
+// anything not an alpha-2 code are 0, unknown).
+func IdentityLeaf(idc, dscKey []byte, country string, activatedAt int64) (fr.Element, error) {
 	idcEl, err := types.Field("idc", idc)
 	if err != nil {
 		return fr.Element{}, err
@@ -75,7 +77,7 @@ func IdentityLeaf(idc, dscKey []byte, activatedAt int64) (fr.Element, error) {
 	if err != nil {
 		return fr.Element{}, err
 	}
-	return privacy.IdentityLeaf(idcEl, dsc, uint64(activatedAt)), nil
+	return privacy.IdentityLeaf(idcEl, dsc, privacy.CountryField(country), uint64(activatedAt)), nil
 }
 
 // appendLeaf writes a new identity leaf and returns its index.

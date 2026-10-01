@@ -114,6 +114,9 @@ var (
 	// ProposalRoundKey is each proposal's current round of human voting when
 	// it is past the first (after an expedited demotion).
 	ProposalRoundKey = collections.NewPrefix("proposal_round") // proposal id -> ProposalRound
+
+	// SubjectsKey is each proposal's subjects, fixed as it enters voting.
+	SubjectsKey = collections.NewPrefix("subjects") // proposal id -> ProposalSubjects
 )
 
 // ClosedVotePurgeLimit caps how many votes of closed ballots one block clears.

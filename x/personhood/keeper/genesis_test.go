@@ -23,7 +23,7 @@ func TestGenesis(t *testing.T) {
 func TestGenesisRoundTripsPopulatedState(t *testing.T) {
 	f := initFixture(t)
 	r0, r2 := genesisReg(0, 1_700_000_000), genesisReg(2, 1_700_000_500)
-	r0.Country, r2.Country = "GBR", "USA"
+	r0.Country, r2.Country = "GB", "US"
 	original := types.GenesisState{
 		Params:           types.DefaultParams(),
 		IdentityTreeSize: 3, // leaf 1 was zeroed
@@ -37,7 +37,7 @@ func TestGenesisRoundTripsPopulatedState(t *testing.T) {
 	count, err := f.keeper.RegCount.Get(f.ctx)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), count)
-	n, err := f.keeper.RegCountByCountry.Get(f.ctx, "GBR")
+	n, err := f.keeper.RegCountByCountry.Get(f.ctx, "GB")
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), n)
 	size, err := f.keeper.IdentityTreeSize(f.ctx)
@@ -48,7 +48,7 @@ func TestGenesisRoundTripsPopulatedState(t *testing.T) {
 	require.True(t, l.IsZero())
 	l, err = f.keeper.IdentityLeafAt(f.ctx, 2)
 	require.NoError(t, err)
-	require.Equal(t, privacy.IdentityLeaf(privacy.U64(3), privacy.U64(77), 1_700_000_500), l)
+	require.Equal(t, privacy.IdentityLeaf(privacy.U64(3), privacy.U64(77), privacy.CountryField("US"), 1_700_000_500), l)
 	// The rebuilt root is the latest anchor.
 	root, err := f.keeper.CurrentIdentityRoot(f.ctx)
 	require.NoError(t, err)

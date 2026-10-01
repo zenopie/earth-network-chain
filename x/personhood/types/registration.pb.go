@@ -32,7 +32,7 @@ type Registration struct {
 	// nothing the holder does after registering is keyed by it.
 	Nullifier []byte `protobuf:"bytes,1,opt,name=nullifier,proto3" json:"nullifier,omitempty"`
 	// leaf_index is the identity tree position of this registration's leaf
-	// H(TAG_LEAF, idc, dsc_key, activated_at). Zeroed when the registration
+	// H(TAG_LEAF, idc, dsc_key, country, activated_at). Zeroed when the registration
 	// expires, its signer is revoked, or its holder switches.
 	LeafIndex uint64 `protobuf:"varint,2,opt,name=leaf_index,json=leafIndex,proto3" json:"leaf_index,omitempty"`
 	// registered_at is the unix time (seconds) of the registration; it expires
@@ -45,7 +45,10 @@ type Registration struct {
 	// dsc_key is the Poseidon2 commitment to the Document Signer that produced
 	// the registration proof, which the leaf also commits to.
 	DscKey []byte `protobuf:"bytes,5,opt,name=dsc_key,json=dscKey,proto3" json:"dsc_key,omitempty"`
-	// country is the DSC's ISO 3166-1 alpha-2 issuing country, or "".
+	// country is the ISO 3166-1 alpha-2 of the CSCA that verified the DSC, or
+	// "" when it names none. The leaf commits to zk/privacy.CountryField of it
+	// (0 for unknown), so an assembly vote can exclude a country's
+	// registrations.
 	Country string `protobuf:"bytes,6,opt,name=country,proto3" json:"country,omitempty"`
 	// idc is the identity commitment H(TAG_ID, id_secret) the leaf was made
 	// from. Public in MsgRegister already; kept so genesis can rebuild the tree.
@@ -282,8 +285,8 @@ func (m *IdentityRoot) GetTreeSize() uint64 {
 
 // Membership is an anonymous proof that its prover holds a live identity-tree
 // leaf (membership circuit, bb v5.0.0 UltraHonk). The chain supplies the other
-// public inputs itself: scope, signal, excluded_dsc and max_activation are
-// fixed by the msg carrying it.
+// public inputs itself: scope, signal, excluded_dsc, excluded_country and
+// max_activation are fixed by the msg carrying it.
 type Membership struct {
 	Proof []byte `protobuf:"bytes,1,opt,name=proof,proto3" json:"proof,omitempty"`
 	// root is the identity-tree anchor the proof was made against.

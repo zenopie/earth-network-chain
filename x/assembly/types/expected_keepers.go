@@ -28,6 +28,17 @@ type PersonhoodKeeper interface {
 	IdentityRootWindow(ctx context.Context) (int64, error)
 }
 
+// PkiKeeper places a revocation in a country (see keeper/subjects.go).
+type PkiKeeper interface {
+	// DscIssuerCountry is the issuing country of the registrations under a
+	// DSC certificate: "" when unknown, placed false when no CSCA can have
+	// issued it.
+	DscIssuerCountry(ctx context.Context, der []byte) (country string, placed bool, err error)
+	// CscaKeyCountry is the country of the trust-store certificates carrying
+	// a CSCA certificate's key, "" when unknown.
+	CscaKeyCountry(ctx context.Context, der []byte) (string, error)
+}
+
 // ShieldedKeeper runs the chamber's private msgs through the private ante.
 type ShieldedKeeper interface {
 	RegisterPrivateAction(msgTypeURL string, h shieldedtypes.PrivateActionHandler)

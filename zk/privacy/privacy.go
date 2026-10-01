@@ -67,9 +67,23 @@ func IDC(idSecret fr.Element) fr.Element { return H(TagID, idSecret) }
 // OwnerPK is H(TAG_OWNER, nk).
 func OwnerPK(nk fr.Element) fr.Element { return H(TagOwner, nk) }
 
-// IdentityLeaf is H(TAG_LEAF, idc, dsc_key, activated_at), computed by the chain.
-func IdentityLeaf(idc, dscKey fr.Element, activatedAt uint64) fr.Element {
-	return H(TagLeaf, idc, dscKey, U64(activatedAt))
+// IdentityLeaf is H(TAG_LEAF, idc, dsc_key, country, activated_at), computed
+// by the chain. country is CountryField of the registration's issuing country.
+func IdentityLeaf(idc, dscKey, country fr.Element, activatedAt uint64) fr.Element {
+	return H(TagLeaf, idc, dscKey, country, U64(activatedAt))
+}
+
+// CountryField encodes an ISO 3166-1 alpha-2 code for the identity leaf and
+// the membership circuit's excluded_country: its two ASCII bytes read
+// big-endian ("DE" -> 0x4445, privacy_core::country_code). Anything that is
+// not two uppercase letters, including "" (the issuing CSCA names no country),
+// is 0: unknown. 0 is also "exclude no country" in the circuit, so a leaf of
+// unknown country can be excluded only by its DSC.
+func CountryField(cc string) fr.Element {
+	if len(cc) != 2 || cc[0] < 'A' || cc[0] > 'Z' || cc[1] < 'A' || cc[1] > 'Z' {
+		return fr.Element{}
+	}
+	return U64(uint64(cc[0])<<8 | uint64(cc[1]))
 }
 
 // ScopeNullifier is H(TAG_SN, id_secret, scope).

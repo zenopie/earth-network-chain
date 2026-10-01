@@ -105,7 +105,7 @@ func (k Keeper) VerifyDscIssuer(ctx context.Context, der []byte) (*certs.PublicK
 		return nil, "", types.ErrDscRevoked
 	}
 
-	cands, sawRevoked, truncated, err := k.issuerCandidates(ctx, dsc)
+	cands, sawRevoked, truncated, err := k.issuerCandidates(ctx, dsc, false)
 	if err != nil {
 		return nil, "", err
 	}
@@ -284,8 +284,10 @@ func (k Keeper) IsCscaRevoked(ctx context.Context, pubkey []byte) (bool, error) 
 // The revocation filter belongs here rather than in VerifyDsc because this is
 // the one place every trust decision about an issuer passes through. Filtering
 // at the call site would leave the next caller of issuerCandidates verifying
-// against certificates governance has withdrawn.
-func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs.Cert, bool, bool, error) {
+// against certificates governance has withdrawn. includeRevoked lifts it for
+// the one caller asking about the past rather than deciding trust:
+// DscIssuerCountry.
+func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert, includeRevoked bool) ([]*certs.Cert, bool, bool, error) {
 	var out []*certs.Cert
 	sawRevoked := false
 	truncated := false
@@ -331,7 +333,9 @@ func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs
 		}
 		if revoked {
 			sawRevoked = true
-			return nil
+			if !includeRevoked {
+				return nil
+			}
 		}
 		out = append(out, pc)
 		return nil
@@ -353,4 +357,84 @@ func (k Keeper) issuerCandidates(ctx context.Context, dsc *certs.Cert) ([]*certs
 		return nil, false, false, err
 	}
 	return out, sawRevoked, truncated, nil
+}
+
+// DscIssuerCountry is the issuing country x/personhood recorded, or would
+// record, for registrations under a Document Signer: the country of the CSCA
+// whose key verified it (see VerifyDscIssuer). For x/assembly, which must know
+// which country's registrations a revocation proposal is about.
+//
+// It asks about registrations already made, so neither the DSC's validity
+// nor any revocation matters: every candidate issuer whose key verifies the
+// signature counts, revoked or not. A registration's issuer was one of them
+// (CSCA records are never deleted and verification is deterministic), so
+// when they all name one country, that is the registration's. placed is false
+// when no candidate verifies the DSC: nobody can have registered under it.
+// country is "" — unknown — when the candidates disagree, name no country, or
+// the candidate list was cut short.
+//
+// Up to MaxIssuerCandidates signature verifications: callers run it once per
+// proposal, not per vote.
+func (k Keeper) DscIssuerCountry(ctx context.Context, der []byte) (country string, placed bool, err error) {
+	dsc, err := certs.ParseCert(der)
+	if err != nil {
+		return "", false, nil
+	}
+	cands, _, truncated, err := k.issuerCandidates(ctx, dsc, true)
+	if err != nil {
+		return "", false, err
+	}
+	pub := dsc.PublicKey.CanonicalBytes()
+	countries := map[string]bool{}
+	for _, csca := range cands {
+		if bytes.Equal(csca.PublicKey.CanonicalBytes(), pub) {
+			continue
+		}
+		if certs.VerifySignedBy(dsc, csca.PublicKey) == nil {
+			countries[csca.Country()] = true
+		}
+	}
+	if len(countries) == 0 {
+		// Cut short, the real issuer may be among the ones not examined.
+		return "", truncated, nil
+	}
+	if len(countries) != 1 || truncated {
+		return "", true, nil
+	}
+	for c := range countries {
+		country = c
+	}
+	return country, true, nil
+}
+
+// CscaKeyCountry is the country of the registrations a CSCA revocation is
+// about: those made under any trust-store certificate carrying the presented
+// certificate's key (MsgRevokeCsca revokes the key). "" — unknown — when no
+// stored certificate carries the key, when they name no country, or when they
+// disagree.
+//
+// Walks the whole trust store (a few hundred certificates): callers run it
+// once per proposal, not per vote.
+func (k Keeper) CscaKeyCountry(ctx context.Context, der []byte) (string, error) {
+	cert, err := certs.ParseCert(der)
+	if err != nil {
+		return "", nil
+	}
+	pub := cert.PublicKey.CanonicalBytes()
+	countries := map[string]bool{}
+	err = k.Cscas.Walk(ctx, nil, func(_ []byte, rec types.Csca) (bool, error) {
+		c, err := certs.ParseCert(rec.CertificateDer)
+		if err != nil || !bytes.Equal(c.PublicKey.CanonicalBytes(), pub) {
+			return false, nil
+		}
+		countries[c.Country()] = true
+		return false, nil
+	})
+	if err != nil || len(countries) != 1 {
+		return "", err
+	}
+	for c := range countries {
+		return c, nil
+	}
+	return "", nil
 }

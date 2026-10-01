@@ -56,3 +56,21 @@ message ProposalRound {
   uint64 round = 1;
   int64 opened_at = 2;
 }
+
+// ProposalSubjects is who a proposal is about, fixed when it enters voting:
+// the registrations its revocations would remove, which may not vote on it.
+// Exactly one of excluded_dsc / excluded_country is set, or neither, or
+// refusal says why the proposal cannot be voted on. See x/assembly
+// keeper/subjects.go.
+message ProposalSubjects {
+  // excluded_dsc is the one Document Signer (Poseidon2 commitment) the
+  // proposal revokes, when that is all it revokes.
+  bytes excluded_dsc = 1;
+  // excluded_country is the ISO 3166-1 alpha-2 code of the one country every
+  // revocation in the proposal belongs to.
+  string excluded_country = 2;
+  // refusal is set when the subjects cannot be excluded with one proof (they
+  // span countries, or one is of unknown country among several): no vote can
+  // be cast and the proposal must be split.
+  string refusal = 3;
+}

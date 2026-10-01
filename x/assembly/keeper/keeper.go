@@ -25,6 +25,7 @@ type Keeper struct {
 	personhood types.PersonhoodKeeper
 	gov        *govkeeper.Keeper
 	allocation types.AllocationKeeper
+	pki        types.PkiKeeper
 
 	// chamberAddr is the module address x/allocation recognises as this chamber
 	// when it is asked to remove an option.
@@ -45,6 +46,9 @@ type Keeper struct {
 	ClosedBallots collections.KeySet[uint64]
 	// ProposalRound is a proposal's round past its first. See types.ProposalRound.
 	ProposalRound collections.Map[uint64, types.ProposalRound]
+	// Subjects is each proposal's subjects, fixed as it enters voting. See
+	// subjects.go.
+	Subjects collections.Map[uint64, types.ProposalSubjects]
 }
 
 func NewKeeper(
@@ -55,6 +59,7 @@ func NewKeeper(
 	personhood types.PersonhoodKeeper,
 	gov *govkeeper.Keeper,
 	allocation types.AllocationKeeper,
+	pki types.PkiKeeper,
 ) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
 
@@ -64,6 +69,7 @@ func NewKeeper(
 		personhood:   personhood,
 		gov:          gov,
 		allocation:   allocation,
+		pki:          pki,
 		chamberAddr:  chamberAddr,
 
 		BallotSeq: collections.NewSequence(sb, types.BallotSeqKey, "ballot_seq"),
@@ -85,6 +91,8 @@ func NewKeeper(
 			collections.Uint64Key),
 		ProposalRound: collections.NewMap(sb, types.ProposalRoundKey, "proposal_round",
 			collections.Uint64Key, codec.CollValue[types.ProposalRound](cdc)),
+		Subjects: collections.NewMap(sb, types.SubjectsKey, "subjects",
+			collections.Uint64Key, codec.CollValue[types.ProposalSubjects](cdc)),
 	}
 
 	schema, err := sb.Build()

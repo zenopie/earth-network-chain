@@ -72,14 +72,16 @@ func (m Membership) ValidateBasic() error {
 }
 
 // MembershipPublicInputs lays out the membership circuit's public inputs:
-// root, scope, nullifier, signal, excluded_dsc, max_activation.
-func MembershipPublicInputs(m Membership, scope, signal, excludedDsc fr.Element, maxActivation uint64) [][]byte {
+// root, scope, nullifier, signal, excluded_dsc, excluded_country,
+// max_activation.
+func MembershipPublicInputs(m Membership, scope, signal, excludedDsc, excludedCountry fr.Element, maxActivation uint64) [][]byte {
 	return [][]byte{
 		m.Root,
 		privacy.FieldBytes(scope),
 		m.Nullifier,
 		privacy.FieldBytes(signal),
 		privacy.FieldBytes(excludedDsc),
+		privacy.FieldBytes(excludedCountry),
 		privacy.FieldBytes(privacy.U64(maxActivation)),
 	}
 }
@@ -265,6 +267,9 @@ type MembershipStatement struct {
 	Scope       fr.Element
 	Signal      fr.Element
 	ExcludedDsc fr.Element
+	// ExcludedCountry is CountryField of a country whose registrations may
+	// not prove, or 0 for none.
+	ExcludedCountry fr.Element
 	// MaxActivation is the latest activated_at a leaf may carry, in unix
 	// seconds. Negative clamps to 0: nobody qualifies.
 	MaxActivation int64

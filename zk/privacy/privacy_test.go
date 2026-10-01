@@ -126,3 +126,19 @@ func TestScopesDistinct(t *testing.T) {
 		seen[k] = name
 	}
 }
+
+// Pinned in privacy_core as country_code.
+func TestCountryField(t *testing.T) {
+	if got := CountryField("DE"); got.Text(16) != "4445" {
+		t.Fatalf("CountryField(DE) = %s", got.Text(16))
+	}
+	for _, cc := range []string{"", "D", "DEU", "de", "D1", "??"} {
+		if f := CountryField(cc); !f.IsZero() {
+			t.Errorf("CountryField(%q) is not 0 (unknown)", cc)
+		}
+	}
+	a, b := IdentityLeaf(U64(1), U64(2), CountryField("DE"), 3), IdentityLeaf(U64(1), U64(2), CountryField("FR"), 3)
+	if a.Equal(&b) {
+		t.Fatal("the leaf does not commit to the country")
+	}
+}

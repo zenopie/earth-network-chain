@@ -81,8 +81,8 @@ func (k Keeper) votingProposal(ctx context.Context, id uint64) (v1.Proposal, err
 }
 
 // proposalInputs is the statement (less the signal) a vote on proposal's
-// current round proves: scope proposal/id/round; the signer it revokes
-// excluded; an identity activated an identity root window before the round
+// current round proves: scope proposal/id/round; its subjects (the signer or
+// country it revokes) excluded; an identity activated an identity root window before the round
 // opened, so a person who switched identity during the round cannot vote in
 // it twice.
 func (k Keeper) proposalInputs(ctx context.Context, proposal v1.Proposal) (personhoodtypes.MembershipStatement, uint64, error) {
@@ -91,7 +91,7 @@ func (k Keeper) proposalInputs(ctx context.Context, proposal v1.Proposal) (perso
 	if err != nil {
 		return st, 0, err
 	}
-	excluded, err := excludedDsc(proposal)
+	excludedDsc, excludedCountry, err := k.exclusions(ctx, proposal)
 	if err != nil {
 		return st, 0, err
 	}
@@ -100,7 +100,8 @@ func (k Keeper) proposalInputs(ctx context.Context, proposal v1.Proposal) (perso
 		return st, 0, err
 	}
 	st.Scope = privacy.ProposalScope(proposal.Id, round)
-	st.ExcludedDsc = excluded
+	st.ExcludedDsc = excludedDsc
+	st.ExcludedCountry = excludedCountry
 	st.MaxActivation = openedAt - window
 	return st, round, nil
 }

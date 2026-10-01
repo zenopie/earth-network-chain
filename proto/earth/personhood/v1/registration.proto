@@ -13,7 +13,7 @@ message Registration {
   // nothing the holder does after registering is keyed by it.
   bytes nullifier = 1;
   // leaf_index is the identity tree position of this registration's leaf
-  // H(TAG_LEAF, idc, dsc_key, activated_at). Zeroed when the registration
+  // H(TAG_LEAF, idc, dsc_key, country, activated_at). Zeroed when the registration
   // expires, its signer is revoked, or its holder switches.
   uint64 leaf_index = 2;
   // registered_at is the unix time (seconds) of the registration; it expires
@@ -26,7 +26,10 @@ message Registration {
   // dsc_key is the Poseidon2 commitment to the Document Signer that produced
   // the registration proof, which the leaf also commits to.
   bytes dsc_key = 5;
-  // country is the DSC's ISO 3166-1 alpha-2 issuing country, or "".
+  // country is the ISO 3166-1 alpha-2 of the CSCA that verified the DSC, or
+  // "" when it names none. The leaf commits to zk/privacy.CountryField of it
+  // (0 for unknown), so an assembly vote can exclude a country's
+  // registrations.
   string country = 6;
   // idc is the identity commitment H(TAG_ID, id_secret) the leaf was made
   // from. Public in MsgRegister already; kept so genesis can rebuild the tree.
@@ -66,8 +69,8 @@ message IdentityRoot {
 
 // Membership is an anonymous proof that its prover holds a live identity-tree
 // leaf (membership circuit, bb v5.0.0 UltraHonk). The chain supplies the other
-// public inputs itself: scope, signal, excluded_dsc and max_activation are
-// fixed by the msg carrying it.
+// public inputs itself: scope, signal, excluded_dsc, excluded_country and
+// max_activation are fixed by the msg carrying it.
 message Membership {
   bytes proof = 1;
   // root is the identity-tree anchor the proof was made against.

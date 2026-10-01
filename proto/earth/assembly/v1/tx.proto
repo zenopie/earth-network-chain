@@ -44,8 +44,10 @@ service Msg {
 // stake, and the votes it records are deleted by the tally that counts them.
 //
 // membership is proven with scope zk/privacy.ProposalScope(proposal_id, round),
-// excluded_dsc the Document Signer the proposal revokes (0 for none) and
-// max_activation the round's opening time minus the identity root window: a
+// excluded_dsc / excluded_country the proposal's subjects (a single revoked
+// Document Signer, or the one country all its revocations belong to; see
+// ProposalSubjects) and max_activation the round's opening time minus the
+// identity root window: a
 // person who switched identity after the round opened cannot vote in it
 // again. Query BallotInputs for the round's values.
 //
@@ -68,7 +70,7 @@ message MsgVoteProposalResponse {}
 // registration to open it.
 //
 // membership is proven with scope zk/privacy.ProposeRemovalScope(option_id,
-// today's UTC day), excluded_dsc 0 and max_activation the start of today
+// today's UTC day), excluded_dsc and excluded_country 0 and max_activation the start of today
 // (UTC) minus the identity root window. Its nullifier is not recorded.
 //
 // signal fields: option_id.
@@ -87,7 +89,7 @@ message MsgProposeRemovalResponse {
 // MsgVoteRemoval votes on an open removal ballot.
 //
 // membership is proven with scope zk/privacy.RemovalScope(ballot_id),
-// excluded_dsc 0 and max_activation the ballot's opening time minus the
+// excluded_dsc and excluded_country 0 and max_activation the ballot's opening time minus the
 // identity root window.
 //
 // signal fields: option_id, option.

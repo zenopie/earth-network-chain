@@ -200,8 +200,24 @@ func (s *stubAllocation) GroundworksOptionRemovable(_ context.Context, id uint64
 	return s.removable[id], nil
 }
 
+// stubPki places revocations in countries by certificate bytes.
+type stubPki struct {
+	dsc  map[string]string // der -> country; absent: unplaced
+	csca map[string]string // der -> country
+}
+
+func (s *stubPki) DscIssuerCountry(_ context.Context, der []byte) (string, bool, error) {
+	c, ok := s.dsc[string(der)]
+	return c, ok, nil
+}
+
+func (s *stubPki) CscaKeyCountry(_ context.Context, der []byte) (string, error) {
+	return s.csca[string(der)], nil
+}
+
 type testEnv struct {
 	k          Keeper
+	pki        *stubPki
 	ms         privateServer
 	ctx        sdk.Context
 	gov        *govkeeper.Keeper
@@ -245,6 +261,7 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	humans := &stubPersonhood{lapsed: map[string]bool{}}
 	allocation := &stubAllocation{removable: map[uint64]bool{}}
+	pki := &stubPki{dsc: map[string]string{}, csca: map[string]string{}}
 
 	k := NewKeeper(
 		runtime.NewKVStoreService(asmStoreKey),
@@ -254,10 +271,12 @@ func newTestEnv(t *testing.T) *testEnv {
 		humans,
 		gov,
 		allocation,
+		pki,
 	)
 
 	return &testEnv{
 		k:          k,
+		pki:        pki,
 		ms:         privateServer{k: k, ms: NewMsgServerImpl(k), seq: new(int)},
 		ctx:        ctx,
 		gov:        gov,

@@ -157,7 +157,7 @@ func seedReg(t *testing.T, k Keeper, ctx sdk.Context, i int, dsc []byte, at int6
 	t.Helper()
 	idc := privacy.FieldBytes(privacy.U64(uint64(i + 1)))
 	dscField := privacy.FieldBytes(privacy.H(privacy.Bytes(dsc)))
-	leaf, err := IdentityLeaf(idc, dscField, at)
+	leaf, err := IdentityLeaf(idc, dscField, "", at)
 	require.NoError(t, err)
 	idx, err := k.appendLeaf(ctx, leaf)
 	require.NoError(t, err)

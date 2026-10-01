@@ -39,6 +39,9 @@ message QueryBallotInputsResponse {
   uint64 max_activation = 3;
   uint64 round = 4;
   uint64 ballot_id = 5;
+  // excluded_country is zk/privacy.CountryField of the excluded country, 32
+  // bytes (zero for none).
+  bytes excluded_country = 6;
 }
 
 message QueryProposalTallyRequest {

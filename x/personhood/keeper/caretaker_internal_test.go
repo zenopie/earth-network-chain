@@ -187,7 +187,7 @@ func TestClaimChecksAndPrune(t *testing.T) {
 // latest always; a zeroed leaf therefore stops proving one window after.
 func TestIdentityRootWindow(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
-	leaf, err := IdentityLeaf(privacy.FieldBytes(privacy.U64(1)), nil, 5)
+	leaf, err := IdentityLeaf(privacy.FieldBytes(privacy.U64(1)), nil, "", 5)
 	require.NoError(t, err)
 	_, err = k.appendLeaf(ctx, leaf)
 	require.NoError(t, err)

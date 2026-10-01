@@ -40,16 +40,18 @@ func arr(es []fr.Element) string {
 
 // Membership is one membership proof's witness and public inputs.
 type Membership struct {
-	IDSecret      fr.Element
-	DscKey        fr.Element
-	ActivatedAt   uint64
-	LeafIndex     uint64
-	Root          fr.Element
-	Siblings      [merkle.Depth]fr.Element
-	Scope         fr.Element
-	Signal        fr.Element
-	ExcludedDsc   fr.Element
-	MaxActivation uint64
+	IDSecret        fr.Element
+	DscKey          fr.Element
+	Country         fr.Element
+	ActivatedAt     uint64
+	LeafIndex       uint64
+	Root            fr.Element
+	Siblings        [merkle.Depth]fr.Element
+	Scope           fr.Element
+	Signal          fr.Element
+	ExcludedDsc     fr.Element
+	ExcludedCountry fr.Element
+	MaxActivation   uint64
 }
 
 // Nullifier is the proof's nullifier for its scope.
@@ -58,13 +60,13 @@ func (m Membership) Nullifier() fr.Element { return privacy.ScopeNullifier(m.IDS
 // Witness is the Prover.toml and public inputs in ABI order.
 func (m Membership) Witness() (string, []fr.Element) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "id_secret = %s\ndsc_key = %s\nactivated_at = \"%d\"\nleaf_index = \"%d\"\n",
-		q(m.IDSecret), q(m.DscKey), m.ActivatedAt, m.LeafIndex)
+	fmt.Fprintf(&b, "id_secret = %s\ndsc_key = %s\ncountry = %s\nactivated_at = \"%d\"\nleaf_index = \"%d\"\n",
+		q(m.IDSecret), q(m.DscKey), q(m.Country), m.ActivatedAt, m.LeafIndex)
 	fmt.Fprintf(&b, "siblings = %s\n", arr(m.Siblings[:]))
 	nf := m.Nullifier()
-	fmt.Fprintf(&b, "root = %s\nscope = %s\nnullifier = %s\nsignal = %s\nexcluded_dsc = %s\nmax_activation = \"%d\"\n",
-		q(m.Root), q(m.Scope), q(nf), q(m.Signal), q(m.ExcludedDsc), m.MaxActivation)
-	return b.String(), []fr.Element{m.Root, m.Scope, nf, m.Signal, m.ExcludedDsc, privacy.U64(m.MaxActivation)}
+	fmt.Fprintf(&b, "root = %s\nscope = %s\nnullifier = %s\nsignal = %s\nexcluded_dsc = %s\nexcluded_country = %s\nmax_activation = \"%d\"\n",
+		q(m.Root), q(m.Scope), q(nf), q(m.Signal), q(m.ExcludedDsc), q(m.ExcludedCountry), m.MaxActivation)
+	return b.String(), []fr.Element{m.Root, m.Scope, nf, m.Signal, m.ExcludedDsc, m.ExcludedCountry, privacy.U64(m.MaxActivation)}
 }
 
 // Note is a note's opening.

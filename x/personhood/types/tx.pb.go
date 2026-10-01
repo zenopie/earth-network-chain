@@ -346,7 +346,8 @@ func (m *MsgRegisterResponse) GetLeafIndex() uint64 {
 
 // MsgClaimAnml mints 1 ANML to pc, once per person per UTC day.
 //
-// membership is proven with scope zk/privacy.ClaimScope(day), excluded_dsc 0
+// membership is proven with scope zk/privacy.ClaimScope(day), excluded_dsc and
+// excluded_country 0
 // and max_activation the start of the previous UTC day. day must be today.
 //
 // signal fields: day, pc, Bytes(ciphertext).
@@ -474,7 +475,8 @@ func (m *MsgClaimAnmlResponse) GetPosition() uint64 {
 // MsgSetCaretaker casts, replaces or clears (empty percentages) the prover's
 // caretaker split. The split is public; who cast it is not.
 //
-// membership is proven with scope zk/privacy.CaretakerScope(), excluded_dsc 0
+// membership is proven with scope zk/privacy.CaretakerScope(), excluded_dsc and
+// excluded_country 0
 // and max_activation this msg's max_activation, which must be at most now -
 // caretaker_vote_seconds - identity_root_window_seconds. The wallet names the
 // bound (rounded down, say to the hour, so it says nothing about when the tx
