@@ -177,3 +177,64 @@ func TestNoteCiphertextGolden(t *testing.T) {
 		t.Error("encrypted to the zero point")
 	}
 }
+
+// v2 (value-blind) golden: the goldenKeys esk, rho and rcm, memo "golden memo".
+// Cross-checked against Python cryptography (X25519, HKDF-SHA256,
+// ChaCha20-Poly1305) when it was recorded.
+const goldenBlindCT = "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a8b8d4fe44e9fcb771cba93975cb4507ff1d20e446a6a4cd8336f9a50186a7de58a5b4570c62bfd9cd347f5921103700103da6af3ce492bbd1f936a4310b3b01a1d583847125f7632547dfb2ea23c438f21cd4a419f9ef66d92660af42686e93c890bc37f68cf282f46ca2550ab2df0ce7191a11e7721ce736e0d1bdd62af8be221017ee455ab79e7b2ea0e756a86c39910"
+
+func TestBlindNoteCiphertextGolden(t *testing.T) {
+	ek, esk, owner, n := goldenKeys()
+	bn := BlindNote{Rho: n.Rho, Rcm: n.Rcm, Memo: n.Memo}
+	ct, err := EncryptBlindNote(bn, owner.EKPub, esk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ct) != BlindNoteCiphertextBytes || BlindNoteCiphertextBytes != 177 {
+		t.Fatalf("ciphertext is %d bytes", len(ct))
+	}
+	if hex.EncodeToString(ct) != goldenBlindCT {
+		t.Fatalf("ciphertext %x", ct)
+	}
+	got, err := DecryptBlindNote(ct, ek)
+	if err != nil || got != bn {
+		t.Fatalf("decrypt: %v", err)
+	}
+	// The recipient's acceptance check: with the published asset and value
+	// the opening recomputes the note's cm; with any other value it does not.
+	cm := n.CM(owner.OwnerPK)
+	if CM(n.AssetID, n.Value, got.PC(owner.OwnerPK)) != cm {
+		t.Fatal("opening does not recompute cm")
+	}
+	if CM(n.AssetID, n.Value+1, got.PC(owner.OwnerPK)) == cm {
+		t.Fatal("cm check accepts another value")
+	}
+
+	// Not ours; tampered; truncated; a v1 ciphertext is not a v2 one; low-order key.
+	var other [32]byte
+	other[0] = 9
+	if _, err := DecryptBlindNote(ct, other); err == nil {
+		t.Error("opened with the wrong key")
+	}
+	bad := append([]byte{}, ct...)
+	bad[100] ^= 1
+	if _, err := DecryptBlindNote(bad, ek); err == nil {
+		t.Error("tampered ciphertext opened")
+	}
+	if _, err := DecryptBlindNote(ct[:176], ek); err == nil {
+		t.Error("truncated ciphertext opened")
+	}
+	v1, err := EncryptNote(n, cm, owner.EKPub, esk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecryptBlindNote(v1, ek); err == nil {
+		t.Error("v1 ciphertext opened as v2")
+	}
+	if _, err := DecryptNote(append(ct, make([]byte, 40)...), cm, ek); err == nil {
+		t.Error("v2 ciphertext opened as v1")
+	}
+	if _, err := EncryptBlindNote(bn, [32]byte{}, esk); err == nil {
+		t.Error("encrypted to the zero point")
+	}
+}

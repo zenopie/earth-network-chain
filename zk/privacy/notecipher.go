@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -154,4 +155,116 @@ func DecryptNote(ct []byte, cm fr.Element, ek [32]byte) (NotePlaintext, error) {
 		return NotePlaintext{}, errors.New("note: not ours")
 	}
 	return parseNotePlaintext(pt)
+}
+
+// ---- v2: value-blind ("earth note v2") ---------------------------------------
+//
+// A v1 ciphertext needs the note's cm, so its value, when it is made. Notes
+// whose value the chain decides when the msg runs cannot have one: a dex
+// swap's output (MsgBuyAnml, MsgNoteSwap), an LP withdrawal priced at
+// maturity, a derth mint at the live rate. For those the sender encrypts only
+// the secrets the recipient cannot learn from the chain:
+//
+//	ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 12 zero bytes, aad = none, pt)
+//	key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.note.v2", info = epk)
+//	pt    = 0x02 || rho (32) || rcm (32) || memo (64)
+//
+// 177 bytes; the length alone tells v1 (217) from v2. The asset and value are
+// what the chain publishes for that note (the mint/shield event's amount at
+// the note's position). The recipient opens ct, recomputes
+// pc = PC(owner_pk, rho, rcm) and cm = CM(AssetID(denom), value, pc), and
+// accepts the note only if cm equals the commitment in the tree. info cannot
+// bind cm (the sender does not know it), so binding a v2 ciphertext to its
+// note is exactly that cm check: a v2 ciphertext replayed onto another output
+// opens but names a pc whose cm does not match, and is dropped. esk is fresh
+// per note, so the fixed nonce never repeats under one key.
+
+const (
+	// BlindNoteVersion is the v2 plaintext's leading byte.
+	BlindNoteVersion byte = 0x02
+	// BlindNotePlaintextBytes is 1 + 32 + 32 + 64.
+	BlindNotePlaintextBytes = 1 + 32 + 32 + NoteMemoBytes
+	// BlindNoteCiphertextBytes is epk + plaintext + the Poly1305 tag.
+	BlindNoteCiphertextBytes = 32 + BlindNotePlaintextBytes + chacha20poly1305.Overhead
+)
+
+var blindNoteSalt = []byte("earth.note.v2")
+
+// BlindNote is a v2 opening: the note's secrets without its asset or value.
+type BlindNote struct {
+	Rho  fr.Element
+	Rcm  fr.Element
+	Memo [NoteMemoBytes]byte
+}
+
+// PC is the note's owner commitment for ownerPK.
+func (n BlindNote) PC(ownerPK fr.Element) fr.Element { return PC(ownerPK, n.Rho, n.Rcm) }
+
+func (n BlindNote) bytes() []byte {
+	b := make([]byte, 0, BlindNotePlaintextBytes)
+	b = append(b, BlindNoteVersion)
+	b = append(b, FieldBytes(n.Rho)...)
+	b = append(b, FieldBytes(n.Rcm)...)
+	return append(b, n.Memo[:]...)
+}
+
+func blindNoteAEAD(shared, epk []byte) (cipher.AEAD, error) {
+	key := make([]byte, chacha20poly1305.KeySize)
+	if _, err := io.ReadFull(hkdf.New(sha256.New, shared, blindNoteSalt, epk), key); err != nil {
+		return nil, err
+	}
+	return chacha20poly1305.New(key)
+}
+
+// EncryptBlindNote encrypts n's secrets to ekPub with the ephemeral secret esk
+// (32 random bytes; deterministic only in fixtures).
+func EncryptBlindNote(n BlindNote, ekPub [32]byte, esk [32]byte) ([]byte, error) {
+	epk, err := curve25519.X25519(esk[:], curve25519.Basepoint)
+	if err != nil {
+		return nil, err
+	}
+	shared, err := curve25519.X25519(esk[:], ekPub[:])
+	if err != nil {
+		return nil, fmt.Errorf("note: %w", err) // a low-order ek_pub
+	}
+	aead, err := blindNoteAEAD(shared, epk)
+	if err != nil {
+		return nil, err
+	}
+	return aead.Seal(epk, make([]byte, chacha20poly1305.NonceSize), n.bytes(), nil), nil
+}
+
+// DecryptBlindNote opens a v2 ciphertext with the encryption secret ek. An
+// error means the note is not ours (or is malformed). The caller must still
+// check CM(asset, value, n.PC(owner_pk)) == cm with the asset and value the
+// chain published for the note before trusting the opening.
+func DecryptBlindNote(ct []byte, ek [32]byte) (BlindNote, error) {
+	var n BlindNote
+	if len(ct) != BlindNoteCiphertextBytes {
+		return n, errors.New("note: wrong ciphertext length")
+	}
+	epk := ct[:32]
+	shared, err := curve25519.X25519(ek[:], epk)
+	if err != nil {
+		return n, fmt.Errorf("note: %w", err)
+	}
+	aead, err := blindNoteAEAD(shared, epk)
+	if err != nil {
+		return n, err
+	}
+	pt, err := aead.Open(nil, make([]byte, chacha20poly1305.NonceSize), ct[32:], nil)
+	if err != nil {
+		return n, errors.New("note: not ours")
+	}
+	if len(pt) != BlindNotePlaintextBytes || pt[0] != BlindNoteVersion {
+		return n, errors.New("note: unknown plaintext version or length")
+	}
+	if n.Rho, err = FieldFromBytes(pt[1:33]); err != nil {
+		return n, err
+	}
+	if n.Rcm, err = FieldFromBytes(pt[33:65]); err != nil {
+		return n, err
+	}
+	copy(n.Memo[:], pt[65:])
+	return n, nil
 }
