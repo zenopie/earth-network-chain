@@ -34,6 +34,7 @@ func initialShares(reserveErth, reserveToken math.Int) math.Int {
 type hopResult struct {
 	amountOut       math.Int // net output to the trader (or to the next hop)
 	burnErth        math.Int // ERTH to burn from the pool reserves
+	feeErth         math.Int // the whole swap fee: burnErth plus the half left to LPs
 	volumeErth      math.Int // ERTH throughput of the hop (for volume weighting)
 	newReserveErth  math.Int
 	newReserveToken math.Int
@@ -63,6 +64,7 @@ func swapTokenForHub(reserveErth, reserveToken, amountTokenIn math.Int, swapFee 
 	return hopResult{
 		amountOut:  userErth,
 		burnErth:   burn,
+		feeErth:    feeErth,
 		volumeErth: grossErth,
 		// userErth leaves the pool (to trader/next hop) and burn is removed;
 		// the pool half of the fee stays behind, boosting the ERTH reserve.
@@ -82,6 +84,7 @@ func swapHubForToken(reserveErth, reserveToken, amountErthIn math.Int, swapFee m
 	return hopResult{
 		amountOut:  tokenOut,
 		burnErth:   burn,
+		feeErth:    feeErth,
 		volumeErth: amountErthIn,
 		// The full input enters the pool minus the burned half; the pool half of
 		// the fee therefore stays behind as LP earnings.

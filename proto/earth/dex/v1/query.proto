@@ -55,6 +55,16 @@ service Query {
   rpc PolBurns(QueryPolBurnsRequest) returns (QueryPolBurnsResponse) {
     option (google.api.http).get = "/earth/dex/v1/pol_burns";
   }
+
+  // SimulateSwapExactIn is what swapping offer_amount of offer_denom for
+  // ask_denom would pay out at the current state, computed by the swap itself
+  // (routing through the ERTH hub, pending LP rewards settled into the
+  // reserves first) in a cache that is discarded: nothing is written. A note
+  // swap's output is exactly this when nothing trades before it; wallets set
+  // min_amount_out from it.
+  rpc SimulateSwapExactIn(QuerySimulateSwapExactInRequest) returns (QuerySimulateSwapExactInResponse) {
+    option (google.api.http).get = "/earth/dex/v1/simulate_swap_exact_in";
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -160,4 +170,29 @@ message QueryPolBurnsRequest {}
 // liquidity that is still being retired.
 message QueryPolBurnsResponse {
   repeated PolBurn pol_burns = 1 [(gogoproto.nullable) = false];
+}
+
+// QuerySimulateSwapExactInRequest is the request type for Query/SimulateSwapExactIn.
+message QuerySimulateSwapExactInRequest {
+  string offer_denom = 1;
+  string offer_amount = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string ask_denom = 3;
+}
+
+// QuerySimulateSwapExactInResponse is the response type for Query/SimulateSwapExactIn.
+message QuerySimulateSwapExactInResponse {
+  // token_out is what the trader receives, in ask_denom.
+  cosmos.base.v1beta1.Coin token_out = 1 [(gogoproto.nullable) = false];
+  // fee is the swap fee in uerth summed over every hop (two for token to
+  // token): half stays in the pools for LPs, half (erth_burned) is burned.
+  cosmos.base.v1beta1.Coin fee = 2 [(gogoproto.nullable) = false];
+  string erth_burned = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
 }

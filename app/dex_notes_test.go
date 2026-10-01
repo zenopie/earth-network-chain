@@ -19,9 +19,11 @@ import (
 	abci "github.com/cometbft/cometbft/abci/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/stretchr/testify/require"
 
+	dexkeeper "github.com/earth-network/earth/x/dex/keeper"
 	dextypes "github.com/earth-network/earth/x/dex/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/privacy"
@@ -349,4 +351,35 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	e.w.scan(e)
 	require.True(t, back.known, "the ANML leg was minted as a note to the withdrawal's pc")
 	e.dexInvariants()
+}
+
+// The SimulateSwapExactIn query on the real app, over ABCI as a wallet's
+// node serves it: it returns what the swap then pays, and its burn and
+// pool writes stay in its discarded cache (supply, the dex's balance and
+// the pool are unchanged, even from an uncached context).
+func TestDexSimulateSwapQuery(t *testing.T) {
+	e := initDexEnv(t)
+	req := &dextypes.QuerySimulateSwapExactInRequest{OfferDenom: "uerth", OfferAmount: math.NewInt(1_000 * ssErth), AskDenom: "uanml"}
+
+	bz, err := req.Marshal()
+	require.NoError(t, err)
+	qres, err := e.app.Query(t.Context(), &abci.RequestQuery{Path: "/earth.dex.v1.Query/SimulateSwapExactIn", Data: bz})
+	require.NoError(t, err)
+	require.Equal(t, uint32(0), qres.Code, qres.Log)
+	var viaAbci dextypes.QuerySimulateSwapExactInResponse
+	require.NoError(t, viaAbci.Unmarshal(qres.Value))
+	require.Equal(t, "uanml", viaAbci.TokenOut.Denom)
+	require.Equal(t, sdk.NewCoin("uerth", math.NewInt(1_000*ssErth).MulRaw(3).QuoRaw(1000)), viaAbci.Fee)
+
+	ctx := e.ctx()
+	supply := e.app.BankKeeper.GetSupply(ctx, "uerth")
+	dexBal := e.app.BankKeeper.GetAllBalances(ctx, authtypes.NewModuleAddress(dextypes.ModuleName))
+	pool := e.pool(anmlPool)
+	res, err := dexkeeper.NewQueryServerImpl(e.app.DexKeeper).SimulateSwapExactIn(ctx, req)
+	require.NoError(t, err)
+	require.True(t, res.ErthBurned.IsPositive())
+	require.Equal(t, supply, e.app.BankKeeper.GetSupply(ctx, "uerth"))
+	require.Equal(t, dexBal, e.app.BankKeeper.GetAllBalances(ctx, authtypes.NewModuleAddress(dextypes.ModuleName)))
+	require.Equal(t, pool, e.pool(anmlPool))
+	require.Equal(t, e.quote("uerth", uint64(1_000*ssErth), "uanml"), res.TokenOut.Amount.Uint64())
 }

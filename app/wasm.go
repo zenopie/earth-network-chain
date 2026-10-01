@@ -131,6 +131,12 @@ func wasmAcceptedQueries() wasmkeeper.AcceptedQueries {
 		"/earth.dex.v1.Query/Params": func() proto.Message {
 			return &dexmoduletypes.QueryParamsResponse{}
 		},
+		// The swap itself priced in a discarded cache (pending LP rewards
+		// settled first): bounded work, two pools at most, gas metered
+		// against the caller like any other read.
+		"/earth.dex.v1.Query/SimulateSwapExactIn": func() proto.Message {
+			return &dexmoduletypes.QuerySimulateSwapExactInResponse{}
+		},
 
 		// x/allocation — a contract that wants to be an allocation option, or
 		// to report what a voter has committed, reads it here.

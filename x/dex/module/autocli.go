@@ -34,6 +34,14 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:       "pol-burns",
 					Short:     "Show how much protocol-owned liquidity is left to retire",
 				},
+				{
+					RpcMethod: "SimulateSwapExactIn",
+					Use:       "simulate-swap [offer-denom] [offer-amount] [ask-denom]",
+					Short:     "What a swap would pay out now (pending LP rewards settled), writing nothing",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{ProtoField: "offer_denom"}, {ProtoField: "offer_amount"}, {ProtoField: "ask_denom"},
+					},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

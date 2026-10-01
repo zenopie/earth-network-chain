@@ -147,7 +147,7 @@ func (k Keeper) QuoteHubToToken(ctx context.Context, tokenDenom string, amountEr
 		return math.Int{}, err
 	}
 	cacheCtx, _ := sdk.UnwrapSDKContext(ctx).CacheContext() // writes intentionally discarded
-	out, _, err := k.hopHubToToken(cacheCtx, tokenDenom, amountErthIn, params.SwapFee)
+	out, _, _, err := k.hopHubToToken(cacheCtx, tokenDenom, amountErthIn, params.SwapFee)
 	if err != nil {
 		return math.Int{}, err
 	}

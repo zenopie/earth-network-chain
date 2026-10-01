@@ -119,93 +119,107 @@ func (k Keeper) SwapExactInForModule(ctx context.Context, moduleName string, tok
 // in either direction and whatever the route: the bank's send restriction
 // would refuse the transfer anyway, and this says why before anything moves.
 func (k Keeper) swapExactIn(ctx context.Context, from, to swapParty, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error) {
+	out, _, err := k.swapExactInFees(ctx, from, to, tokenIn, denomOut, minOut)
+	return out, err
+}
+
+// swapFees is what a swap charged, in ERTH over every hop: fee in total, of
+// which burn was burned and the rest left in the pools.
+type swapFees struct {
+	fee, burn math.Int
+}
+
+// swapExactInFees is swapExactIn that also reports the fees it charged.
+func (k Keeper) swapExactInFees(ctx context.Context, from, to swapParty, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, swapFees, error) {
 	if !tokenIn.Amount.IsPositive() {
-		return sdk.Coin{}, errorsmod.Wrap(types.ErrInvalidAmount, "token_in must be positive")
+		return sdk.Coin{}, swapFees{}, errorsmod.Wrap(types.ErrInvalidAmount, "token_in must be positive")
 	}
 	if denomOut == tokenIn.Denom {
-		return sdk.Coin{}, errorsmod.Wrap(types.ErrInvalidDenom, "token_in and denom_out must differ")
+		return sdk.Coin{}, swapFees{}, errorsmod.Wrap(types.ErrInvalidDenom, "token_in and denom_out must differ")
 	}
 	if from.isAccount() {
 		if err := k.refuseShieldedOnly(tokenIn.Denom); err != nil {
-			return sdk.Coin{}, err
+			return sdk.Coin{}, swapFees{}, err
 		}
 	}
 	if to.isAccount() {
 		if err := k.refuseShieldedOnly(denomOut); err != nil {
-			return sdk.Coin{}, err
+			return sdk.Coin{}, swapFees{}, err
 		}
 	}
 	trader := from
 
 	hub, err := k.HubDenom(ctx)
 	if err != nil {
-		return sdk.Coin{}, err
+		return sdk.Coin{}, swapFees{}, err
 	}
 	params, err := k.Params.Get(ctx)
 	if err != nil {
-		return sdk.Coin{}, err
+		return sdk.Coin{}, swapFees{}, err
 	}
 	fee := params.SwapFee
 
 	// Escrow the input.
 	if err := trader.escrow(ctx, k, sdk.NewCoins(tokenIn)); err != nil {
-		return sdk.Coin{}, err
+		return sdk.Coin{}, swapFees{}, err
 	}
 
 	var (
 		outAmt    math.Int
 		totalBurn = math.ZeroInt()
+		totalFee  math.Int
 	)
 
 	switch {
 	case tokenIn.Denom == hub:
 		// ERTH -> token
-		out, burn, err := k.hopHubToToken(ctx, denomOut, tokenIn.Amount, fee)
+		out, burn, hopFee, err := k.hopHubToToken(ctx, denomOut, tokenIn.Amount, fee)
 		if err != nil {
-			return sdk.Coin{}, err
+			return sdk.Coin{}, swapFees{}, err
 		}
-		outAmt, totalBurn = out, burn
+		outAmt, totalBurn, totalFee = out, burn, hopFee
 
 	case denomOut == hub:
 		// token -> ERTH
-		out, burn, err := k.hopTokenToHub(ctx, tokenIn.Denom, tokenIn.Amount, fee)
+		out, burn, hopFee, err := k.hopTokenToHub(ctx, tokenIn.Denom, tokenIn.Amount, fee)
 		if err != nil {
-			return sdk.Coin{}, err
+			return sdk.Coin{}, swapFees{}, err
 		}
-		outAmt, totalBurn = out, burn
+		outAmt, totalBurn, totalFee = out, burn, hopFee
 
 	default:
 		// tokenA -> ERTH -> tokenB
-		erthMid, burn1, err := k.hopTokenToHub(ctx, tokenIn.Denom, tokenIn.Amount, fee)
+		erthMid, burn1, fee1, err := k.hopTokenToHub(ctx, tokenIn.Denom, tokenIn.Amount, fee)
 		if err != nil {
-			return sdk.Coin{}, err
+			return sdk.Coin{}, swapFees{}, err
 		}
-		out, burn2, err := k.hopHubToToken(ctx, denomOut, erthMid, fee)
+		out, burn2, fee2, err := k.hopHubToToken(ctx, denomOut, erthMid, fee)
 		if err != nil {
-			return sdk.Coin{}, err
+			return sdk.Coin{}, swapFees{}, err
 		}
 		outAmt = out
 		totalBurn = burn1.Add(burn2)
+		totalFee = fee1.Add(fee2)
 	}
 
 	if !outAmt.IsPositive() {
-		return sdk.Coin{}, errorsmod.Wrap(types.ErrInsufficientPool, "output rounds to zero")
+		return sdk.Coin{}, swapFees{}, errorsmod.Wrap(types.ErrInsufficientPool, "output rounds to zero")
 	}
 	if outAmt.LT(minOut) {
-		return sdk.Coin{}, errorsmod.Wrapf(types.ErrSlippage, "got %s, want >= %s", outAmt, minOut)
+		return sdk.Coin{}, swapFees{}, errorsmod.Wrapf(types.ErrSlippage, "got %s, want >= %s", outAmt, minOut)
 	}
 
 	tokenOut := sdk.NewCoin(denomOut, outAmt)
 	if err := to.pay(ctx, k, sdk.NewCoins(tokenOut)); err != nil {
-		return sdk.Coin{}, err
+		return sdk.Coin{}, swapFees{}, err
 	}
 	if totalBurn.IsPositive() {
 		burned := sdk.NewCoins(sdk.NewCoin(hub, totalBurn))
 		if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, burned); err != nil {
-			return sdk.Coin{}, err
+			return sdk.Coin{}, swapFees{}, err
 		}
 		if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceSwapFee, burned); err != nil {
-			return sdk.Coin{}, err
+			return sdk.Coin{}, swapFees{}, err
 		}
 	}
 
@@ -219,63 +233,65 @@ func (k Keeper) swapExactIn(ctx context.Context, from, to swapParty, tokenIn sdk
 		),
 	)
 
-	return tokenOut, nil
+	return tokenOut, swapFees{fee: totalFee, burn: totalBurn}, nil
 }
 
 // hopTokenToHub executes one spoke-token -> ERTH hop against the token's pool and
-// persists the updated reserves. It returns the net ERTH out and the ERTH burned.
-func (k Keeper) hopTokenToHub(ctx context.Context, tokenDenom string, amountIn math.Int, swapFee math.LegacyDec) (out, burn math.Int, err error) {
+// persists the updated reserves. It returns the net ERTH out, the ERTH burned
+// and the whole ERTH fee.
+func (k Keeper) hopTokenToHub(ctx context.Context, tokenDenom string, amountIn math.Int, swapFee math.LegacyDec) (out, burn, fee math.Int, err error) {
 	pool, err := k.PoolForToken(ctx, tokenDenom)
 	if err != nil {
-		return math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolNotFound, "no pool for %s", tokenDenom)
+		return math.Int{}, math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolNotFound, "no pool for %s", tokenDenom)
 	}
 	// The price accumulator is advanced inside settlePoolRewards below, which
 	// runs before the swap maths, so the interval that just elapsed is booked at
 	// the pre-trade price without this path having to remember to do it.
 	// Compound pending LP rewards into the reserve before pricing against it.
 	if err := k.settlePoolRewards(ctx, pool.PoolId, &pool); err != nil {
-		return math.Int{}, math.Int{}, err
+		return math.Int{}, math.Int{}, math.Int{}, err
 	}
 	r := swapTokenForHub(pool.ReserveErth.Amount, pool.ReserveToken.Amount, amountIn, swapFee)
 	if !r.amountOut.IsPositive() || !r.newReserveErth.IsPositive() {
-		return math.Int{}, math.Int{}, errorsmod.Wrap(types.ErrInsufficientPool, "swap would drain the pool")
+		return math.Int{}, math.Int{}, math.Int{}, errorsmod.Wrap(types.ErrInsufficientPool, "swap would drain the pool")
 	}
 	pool.ReserveErth.Amount = r.newReserveErth
 	pool.ReserveToken.Amount = r.newReserveToken
 	if err := k.applyVolume(ctx, &pool, r.volumeErth, sdk.UnwrapSDKContext(ctx).BlockTime()); err != nil {
-		return math.Int{}, math.Int{}, err
+		return math.Int{}, math.Int{}, math.Int{}, err
 	}
 	if err := k.SetPool(ctx, pool.PoolId, pool); err != nil {
-		return math.Int{}, math.Int{}, err
+		return math.Int{}, math.Int{}, math.Int{}, err
 	}
-	return r.amountOut, r.burnErth, nil
+	return r.amountOut, r.burnErth, r.feeErth, nil
 }
 
 // hopHubToToken executes one ERTH -> spoke-token hop against the token's pool and
-// persists the updated reserves. It returns the net token out and the ERTH burned.
-func (k Keeper) hopHubToToken(ctx context.Context, tokenDenom string, amountErthIn math.Int, swapFee math.LegacyDec) (out, burn math.Int, err error) {
+// persists the updated reserves. It returns the net token out, the ERTH burned
+// and the whole ERTH fee.
+func (k Keeper) hopHubToToken(ctx context.Context, tokenDenom string, amountErthIn math.Int, swapFee math.LegacyDec) (out, burn, fee math.Int, err error) {
 	pool, err := k.PoolForToken(ctx, tokenDenom)
 	if err != nil {
-		return math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolNotFound, "no pool for %s", tokenDenom)
+		return math.Int{}, math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolNotFound, "no pool for %s", tokenDenom)
 	}
 	// The price accumulator is advanced inside settlePoolRewards below, which
 	// runs before the swap maths, so the interval that just elapsed is booked at
 	// the pre-trade price without this path having to remember to do it.
 	// Compound pending LP rewards into the reserve before pricing against it.
 	if err := k.settlePoolRewards(ctx, pool.PoolId, &pool); err != nil {
-		return math.Int{}, math.Int{}, err
+		return math.Int{}, math.Int{}, math.Int{}, err
 	}
 	r := swapHubForToken(pool.ReserveErth.Amount, pool.ReserveToken.Amount, amountErthIn, swapFee)
 	if !r.amountOut.IsPositive() || !r.newReserveToken.IsPositive() {
-		return math.Int{}, math.Int{}, errorsmod.Wrap(types.ErrInsufficientPool, "swap would drain the pool")
+		return math.Int{}, math.Int{}, math.Int{}, errorsmod.Wrap(types.ErrInsufficientPool, "swap would drain the pool")
 	}
 	pool.ReserveErth.Amount = r.newReserveErth
 	pool.ReserveToken.Amount = r.newReserveToken
 	if err := k.applyVolume(ctx, &pool, r.volumeErth, sdk.UnwrapSDKContext(ctx).BlockTime()); err != nil {
-		return math.Int{}, math.Int{}, err
+		return math.Int{}, math.Int{}, math.Int{}, err
 	}
 	if err := k.SetPool(ctx, pool.PoolId, pool); err != nil {
-		return math.Int{}, math.Int{}, err
+		return math.Int{}, math.Int{}, math.Int{}, err
 	}
-	return r.amountOut, r.burnErth, nil
+	return r.amountOut, r.burnErth, r.feeErth, nil
 }

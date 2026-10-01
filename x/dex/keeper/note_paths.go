@@ -305,6 +305,14 @@ func (k msgServer) AddLiquidityShielded(ctx context.Context, m *types.MsgAddLiqu
 // against the pools as they stand, written nowhere. For wallets choosing a
 // note swap's min_amount_out, and tests.
 func (k Keeper) SimulateSwapExactIn(ctx context.Context, tokenIn sdk.Coin, denomOut string) (sdk.Coin, error) {
+	out, _, err := k.simulateSwapExactIn(ctx, tokenIn, denomOut)
+	return out, err
+}
+
+// simulateSwapExactIn runs the swap a note swap would (both legs held by the
+// dex, pending LP rewards settled first) in a cache context it never writes,
+// so neither state nor events escape. Gas is still charged to ctx's meter.
+func (k Keeper) simulateSwapExactIn(ctx context.Context, tokenIn sdk.Coin, denomOut string) (sdk.Coin, swapFees, error) {
 	cache, _ := sdk.UnwrapSDKContext(ctx).CacheContext()
-	return k.swapExactIn(cache, held, held, tokenIn, denomOut, math.ZeroInt())
+	return k.swapExactInFees(cache, held, held, tokenIn, denomOut, math.ZeroInt())
 }
