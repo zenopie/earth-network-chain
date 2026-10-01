@@ -85,7 +85,7 @@ block = ('    # x/shielded verifies every private tx against these (bb v5.0.0\n'
          '    # circuits. Without them every private msg is refused.\n'
          '    shielded:\n      params:\n        verifying_keys:\n' +
          ''.join(f'          {c}: "{v}"\n' for c, v in keys.items()))
-pat = re.compile(r'    # x/shielded verifies every private tx.*?\n    shielded:\n      params:\n        verifying_keys:\n(?:          .*\n)+', re.S)
+pat = re.compile(r'    # x/shielded verifies every private tx.*?\n    shielded:\n      params:\n        verifying_keys:\n(?:          [^\n]*\n)+', re.S)
 if pat.search(s):
     s = pat.sub(lambda _: block, s, count=1)
 else:
