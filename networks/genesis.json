@@ -243,7 +243,7 @@
         "base_proposer_reward": "0.000000000000000000",
         "bonus_proposer_reward": "0.000000000000000000",
         "community_tax": "0.000000000000000000",
-        "withdraw_addr_enabled": true
+        "withdraw_addr_enabled": false
       },
       "previous_proposer": "",
       "validator_accumulated_commissions": [],

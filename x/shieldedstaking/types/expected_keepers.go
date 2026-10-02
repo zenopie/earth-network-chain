@@ -42,6 +42,9 @@ type StakingKeeper interface {
 	// GetBondedValidatorsByPower is the active set: the validators whose
 	// operators' self-bond rewards compound at each epoch end.
 	GetBondedValidatorsByPower(ctx context.Context) ([]stakingtypes.Validator, error)
+	// GetAllValidators is every validator, for the genesis check that no
+	// operator's withdraw address points elsewhere.
+	GetAllValidators(ctx context.Context) ([]stakingtypes.Validator, error)
 }
 
 // DistrKeeper is x/distribution: rewards and the community pool.
@@ -51,6 +54,9 @@ type DistrKeeper interface {
 	CalculateDelegationRewards(ctx context.Context, val stakingtypes.ValidatorI, del stakingtypes.DelegationI, endingPeriod uint64) (sdk.DecCoins, error)
 	FundCommunityPool(ctx context.Context, amount sdk.Coins, sender sdk.AccAddress) error
 	GetDelegatorWithdrawAddr(ctx context.Context, delAddr sdk.AccAddress) (sdk.AccAddress, error)
+	// DeleteDelegatorWithdrawAddr resets delAddr's withdraw address to
+	// itself (the default when none is stored).
+	DeleteDelegatorWithdrawAddr(ctx context.Context, delAddr, withdrawAddr sdk.AccAddress) error
 }
 
 // SlashingKeeper reports tombstoning.

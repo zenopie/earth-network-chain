@@ -20,4 +20,5 @@ var (
 	ErrStakeTree           = errors.Register(ModuleName, 1113, "stake note tree refused the note or anchor")
 	ErrStakeNullifierSpent = errors.Register(ModuleName, 1114, "stake nullifier already spent")
 	ErrInvalidStakeProof   = errors.Register(ModuleName, 1115, "stake proof does not verify")
+	ErrOperatorWithdraw    = errors.Register(ModuleName, 1116, "a validator operator's rewards are paid to the operator account: its self-bond compounds")
 )

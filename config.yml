@@ -137,6 +137,10 @@ genesis:
         # It is a rounding artefact of a few uerth per block, not a funding
         # source.
         community_tax: "0"
+        # No withdraw addresses: only validator operators hold delegations, and
+        # an operator's self-bond rewards compound, so they must land in the
+        # operator account (x/shieldedstaking/keeper/withdraw_addr.go).
+        withdraw_addr_enabled: false
     # The genesis pre-mine, all of it on the x/dex module account. Sized to 20
     # years (365 d/y) of emissions:
     #   4 pillars x 1 ERTH/sec x 630,720,000 s = 2,522,880,000 ERTH

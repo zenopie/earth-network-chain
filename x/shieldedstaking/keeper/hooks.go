@@ -107,7 +107,11 @@ func (h StakingHooks) BeforeValidatorSlashed(ctx context.Context, val sdk.ValAdd
 	return nil
 }
 
-func (StakingHooks) AfterValidatorCreated(context.Context, sdk.ValAddress) error   { return nil }
+// AfterValidatorCreated refuses a validator whose operator already pays its
+// rewards to another account: its self-bond could not compound.
+func (h StakingHooks) AfterValidatorCreated(ctx context.Context, val sdk.ValAddress) error {
+	return h.k.checkOperatorWithdrawAddr(ctx, sdk.AccAddress(val))
+}
 func (StakingHooks) BeforeValidatorModified(context.Context, sdk.ValAddress) error { return nil }
 func (StakingHooks) AfterValidatorRemoved(context.Context, sdk.ConsAddress, sdk.ValAddress) error {
 	return nil

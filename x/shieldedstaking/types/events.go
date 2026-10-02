@@ -15,6 +15,9 @@ const (
 	EventTypePosition       = "shieldedstaking_position"
 	EventTypeInvariant      = "shieldedstaking_invariant_broken"
 	EventTypeSelfBond       = "shieldedstaking_self_bond_compounded"
+	// An operator's withdraw address pointed elsewhere at epoch end (set by
+	// a route the refusals do not reach) and was reset to the operator.
+	EventTypeWithdrawAddrReset = "shieldedstaking_withdraw_addr_reset"
 	// The stake note tree's stream, for wallets and indexers: every append
 	// (position, commitment; a minted note's denom, amount and stake pc, a
 	// created note's ciphertext), every spent nullifier, every recorded root.
@@ -48,4 +51,5 @@ const (
 	AttributeKeyNullifier   = "nullifier"
 	AttributeKeyCiphertext  = "ciphertext"
 	AttributeKeyTreeSize    = "tree_size"
+	AttributeKeyWithdrawAddr = "withdraw_address"
 )

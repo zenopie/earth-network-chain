@@ -121,8 +121,9 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 // validator, its operator's self-bond rewards to the same validator from the
 // operator account: a validator's self-bond auto-compounds as the module's
 // delegations do. Only the delegation's own rewards, in uerth: commission is
-// untouched and stays withdrawable. An operator whose withdraw address is
-// another account is skipped (its rewards are paid there, as it asked). Each
+// untouched and stays withdrawable. Every operator compounds: one whose
+// withdraw address points elsewhere has it reset first (withdraw_addr.go);
+// only a jailed validator is skipped. Each
 // validator runs in its own cache context; a failure is logged, emitted and
 // skipped, never returned. The re-delegation moves the operator's bond, so
 // x/allocation's staking hook resyncs its Groundworks weight.
@@ -154,10 +155,10 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 		}
 		return err
 	}
-	if wa, err := k.distr.GetDelegatorWithdrawAddr(ctx, op); err != nil {
+	// The rewards must land in the operator account: never skip an operator
+	// for a withdraw address elsewhere, reset it (see withdraw_addr.go).
+	if err := k.resetOperatorWithdrawAddr(ctx, op); err != nil {
 		return err
-	} else if !wa.Equals(op) {
-		return nil
 	}
 	before := k.bank.GetBalance(ctx, op, types.BondDenom).Amount
 	if _, err := k.distr.WithdrawDelegationRewards(ctx, op, valAddr); err != nil {

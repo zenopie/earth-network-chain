@@ -49,7 +49,7 @@ func initRootCmd(
 	// add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		server.StatusCommand(),
-		genutilcli.Commands(txConfig, basicManager, app.DefaultNodeHome),
+		withOperatorWithdrawCheck(genutilcli.Commands(txConfig, basicManager, app.DefaultNodeHome)),
 		queryCommand(),
 		txCommand(),
 		keys.Commands(),

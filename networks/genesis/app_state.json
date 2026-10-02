@@ -24,7 +24,8 @@
   },
   "distribution": {
     "params": {
-      "community_tax": "0.000000000000000000"
+      "community_tax": "0.000000000000000000",
+      "withdraw_addr_enabled": false
     }
   },
   "gov": {

@@ -34,6 +34,9 @@ type HandlerOptions struct {
 	TXCounterStoreService corestoretypes.KVStoreService
 	ShieldedKeeper        *shieldedkeeper.Keeper
 	StakingValidatorCodec address.Codec
+	// WithdrawChecker refuses a validator operator's withdraw address
+	// elsewhere (x/shieldedstaking's keeper).
+	WithdrawChecker shieldedstakingante.WithdrawChecker
 }
 
 // NewAnteHandler builds this chain's ante chain.
@@ -95,6 +98,9 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	if options.ShieldedKeeper == nil {
 		return nil, errors.New("shielded keeper is required for ante builder")
 	}
+	if options.WithdrawChecker == nil {
+		return nil, errors.New("withdraw checker is required for ante builder")
+	}
 	sk := *options.ShieldedKeeper
 
 	anteDecorators := []sdk.AnteDecorator{
@@ -116,6 +122,10 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// refuses a plain tx before it pays a fee for nothing.
 		shieldedstakingante.StakingMsgFilterDecorator{
 			AddressCodec: options.AccountKeeper.AddressCodec(), ValidatorCodec: options.StakingValidatorCodec,
+		},
+		// An operator's self-bond compounds: its rewards stay in its account.
+		shieldedstakingante.WithdrawAddrFilterDecorator{
+			AddressCodec: options.AccountKeeper.AddressCodec(), K: options.WithdrawChecker,
 		},
 		ante.NewTxTimeoutHeightDecorator(),
 		ante.NewValidateMemoDecorator(options.AccountKeeper),
@@ -172,6 +182,7 @@ func (app *App) setAnteHandler() error {
 		TXCounterStoreService: runtime.NewKVStoreService(app.GetKey(wasmtypes.StoreKey)),
 		ShieldedKeeper:        &app.ShieldedKeeper,
 		StakingValidatorCodec: app.StakingKeeper.ValidatorAddressCodec(),
+		WithdrawChecker:       app.ShieldedStakingKeeper,
 	})
 	if err != nil {
 		return fmt.Errorf("building ante handler: %w", err)
