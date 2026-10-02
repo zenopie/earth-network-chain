@@ -16,28 +16,25 @@ const (
 	// GovModuleName duplicates the gov module's name to avoid a dependency with x/gov.
 	GovModuleName = "gov"
 
-	// FeeDenom is the only denom a private fee is paid in. The transfer
-	// circuit's fee slot is hard-wired to ASSET_ERTH = AssetID("uerth").
+	// FeeDenom is the only denom a private fee is paid in: a bundle's uerth
+	// balance pays it.
 	FeeDenom = "uerth"
 
 	// AnmlDenom exists only inside the pool (and a few module accounts).
 	AnmlDenom = "uanml"
 
-	// CircuitTransfer and CircuitMembership name the verifying keys in Params.
-	CircuitTransfer   = "transfer"
+	// CircuitAction and CircuitMembership name the verifying keys in Params.
+	CircuitAction     = "action"
 	CircuitMembership = "membership"
 
-	// TransferArity is the transfer circuit's input and output count.
-	TransferArity = 3
+	// MinActionsPerBundle is the padding rule: every bundle carries at least
+	// two actions, so a one-note spend (the commonest shape) is not told
+	// apart by its action count. Wallets pad with dummy actions.
+	MinActionsPerBundle = 2
 
-	// MaxTransfersPerMsg bounds how many transfers one private msg spends
-	// (types.MultiTransferMsg): a stake vote and its fee, or a deposit's two
-	// assets.
-	MaxTransfersPerMsg = 2
-
-	// TransferPublicInputs is the transfer circuit's public input count:
-	// root, nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal.
-	TransferPublicInputs = 11
+	// MaxBundlesPerMsg bounds how many bundles one private msg spends: a stake
+	// vote's (against the proposal's snapshot root) and its fee's.
+	MaxBundlesPerMsg = 2
 
 	// MaxProofBytes bounds a proof's size before anything parses it. bb v5.0.0
 	// UltraHonk proofs are 14,656 bytes whatever the circuit.
@@ -46,7 +43,7 @@ const (
 	// MaxCiphertextBytes bounds one note ciphertext. A note plaintext (asset,
 	// value, rho, rcm, memo) plus an ephemeral key and tag fits in far less;
 	// the bound caps what one private tx can make every node store in events
-	// and hash into its signal.
+	// and hash into its sighash.
 	MaxCiphertextBytes = 1024
 
 	// RootPruneLimit caps how many expired roots EndBlock deletes per block.
@@ -87,7 +84,7 @@ var (
 	// EndBlock checks exactly those against the bank and clears the set.
 	DirtyDenomsKey = collections.NewPrefix(10)
 
-	// PrivateTxCountKey counts private txs executed in the current block.
-	// Removed at EndBlock.
-	PrivateTxCountKey = collections.NewPrefix(11)
+	// PrivateActionCountKey counts the actions the private txs of the current
+	// block carried. Removed at EndBlock.
+	PrivateActionCountKey = collections.NewPrefix(11)
 )

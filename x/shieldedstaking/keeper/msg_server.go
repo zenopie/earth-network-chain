@@ -59,7 +59,8 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	if err != nil {
 		return nil, err
 	}
-	paid, err := k.shielded.SpendToModule(ctx, &m.Transfer, types.ModuleName)
+	paid, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
+		types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +103,8 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	if err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.SpendToModule(ctx, &m.Transfer, types.ModuleName)
+	derth, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
+		types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +160,7 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 // (executeClaim): a claim is atomic with its spend, so it can pay its fee
 // from what it claims.
 func (k msgServer) ClaimUnbonding(goCtx context.Context, m *types.MsgClaimUnbonding) (*types.MsgClaimUnbondingResponse, error) {
-	res, executed, err := shieldedkeeper.AuthorizedResult(goCtx, &m.Transfer)
+	res, executed, err := shieldedkeeper.AuthorizedResult(goCtx, m)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +181,8 @@ func (k Keeper) executeClaim(ctx sdk.Context, m *types.MsgClaimUnbonding) (*type
 	if err != nil {
 		return nil, err
 	}
-	claim, err := k.shielded.SpendToModule(ctx, &m.Transfer, types.ModuleName)
+	claim, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
+		types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +240,8 @@ func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*typ
 	if err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.SpendToModule(ctx, &m.Transfer, types.ModuleName)
+	derth, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
+		types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +268,8 @@ func (k msgServer) LockPosition(goCtx context.Context, m *types.MsgLockPosition)
 	if err := k.checkLock(ctx, m); err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.SpendToModule(ctx, &m.Transfer, types.ModuleName)
+	derth, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
+		types.ModuleName)
 	if err != nil {
 		return nil, err
 	}

@@ -135,7 +135,9 @@ type privateServer struct {
 }
 
 func (p privateServer) authorize(ctx sdk.Context, msg shieldedtypes.PrivateMsg, h shieldedtypes.PrivateActionHandler) (sdk.Context, error) {
-	t := msg.PrivateTransfer()
+	// TODO(orchard-phase2): the msgs carry no bundle yet; the legacy fee
+	// transfer's nullifiers still make each msg distinct.
+	t := msg.(shieldedtypes.TransferMsg).PrivateTransfer()
 	if len(t.Nullifiers) == 0 {
 		*p.seq++
 		t.Nullifiers = [][]byte{[]byte(fmt.Sprintf("fee-%d", *p.seq))}
@@ -147,7 +149,10 @@ func (p privateServer) authorize(ctx sdk.Context, msg shieldedtypes.PrivateMsg, 
 	if err := h.VerifyPrivateAction(ctx, msg, prepared); err != nil {
 		return ctx, err
 	}
-	ctx = shieldedkeeper.WithAuthorizedTransfer(ctx, t, nil)
+	ctx, err = shieldedkeeper.AuthorizeMsg(ctx, msg, nil, 0)
+	if err != nil {
+		return ctx, err
+	}
 	return shieldedkeeper.WithAuthorizedAction(ctx, prepared), nil
 }
 

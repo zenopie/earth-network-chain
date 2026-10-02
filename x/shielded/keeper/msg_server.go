@@ -5,8 +5,6 @@ import (
 	"context"
 
 	errorsmod "cosmossdk.io/errors"
-	storetypes "cosmossdk.io/store/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/shielded/types"
 )
@@ -74,32 +72,22 @@ func (k msgServer) Shield(ctx context.Context, msg *types.MsgShield) (*types.Msg
 	return &types.MsgShieldResponse{Position: pos, Commitment: cm}, nil
 }
 
-// Transfer completes a private transfer the ante has already verified and
-// executed (inputs spent, outputs appended, fee paid): all that remains is
-// paying value_out to the receiver.
+// Send completes a private send the ante has already verified and executed:
+// inputs spent, outputs appended, the fee paid and any unshield paid to the
+// receiver, all atomically in the ante. What remains is reporting where the
+// outputs landed.
 //
-// Refused unless the private ante authorized this transfer in this tx; see
+// Refused unless the private ante authorized this very msg in this tx; see
 // authorization.go for why that check is the whole of this msg's access
 // control.
-//
-// The payout runs on an infinite gas meter. Its price was charged up front
-// with the rest of the private msg's fixed gas, and an out-of-gas here would
-// strand value the ante has already released from the notes.
-func (k msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types.MsgTransferResponse, error) {
-	t := &msg.Transfer
-	positions, err := AuthorizedPositions(ctx, t)
+func (k msgServer) Send(ctx context.Context, msg *types.MsgSend) (*types.MsgSendResponse, error) {
+	positions, err := AuthorizedPositions(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
-	if t.ValueOut > 0 {
-		recv, err := msg.ReceiverBytes(k.addressCodec)
-		if err != nil {
-			return nil, err
-		}
-		unmetered := sdk.UnwrapSDKContext(ctx).WithGasMeter(storetypes.NewInfiniteGasMeter())
-		if _, err := k.Unshield(unmetered, t, recv); err != nil {
-			return nil, err
-		}
+	var out []uint64
+	if len(positions) > 0 {
+		out = positions[0]
 	}
-	return &types.MsgTransferResponse{Positions: positions}, nil
+	return &types.MsgSendResponse{Positions: out}, nil
 }

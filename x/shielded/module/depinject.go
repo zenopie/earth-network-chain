@@ -21,9 +21,9 @@ func (AppModule) IsOnePerModuleType() {}
 func init() {
 	appconfig.Register(
 		&types.Module{},
-		// ProvideTransferGetSigners takes no inputs: the interface registry
+		// ProvideSendGetSigners takes no inputs: the interface registry
 		// consumes it before any keeper exists.
-		appconfig.Provide(ProvideModule, types.ProvideTransferGetSigners),
+		appconfig.Provide(ProvideModule, types.ProvideSendGetSigners),
 	)
 }
 

@@ -2,8 +2,6 @@ package keeper_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -89,30 +87,24 @@ func (fakeAuth) GetModuleAddress(name string) sdk.AccAddress                 { r
 func (fakeAuth) GetModuleAccount(context.Context, string) sdk.ModuleAccountI { return nil }
 
 type fixture struct {
-	t    *testing.T
-	ctx  sdk.Context
-	k    keeper.Keeper
-	bank *fakeBank
-	ac   address.Codec
-	msgs types.MsgServer
+	t      *testing.T
+	ctx    sdk.Context
+	k      keeper.Keeper
+	bank   *fakeBank
+	ac     address.Codec
+	msgs   types.MsgServer
+	prover *shieldedtest.Prover
 }
 
 const personhood = "personhood"
 
-func readTestdata(t *testing.T, parts ...string) []byte {
-	t.Helper()
-	bz, err := os.ReadFile(filepath.Join(append([]string{"..", "testdata"}, parts...)...))
-	require.NoError(t, err, "run scripts/shielded-fixtures.sh")
-	return bz
-}
-
 // initFixture builds a keeper over a fresh store with default genesis, the
-// transfer verifying key set, and the scenario's chain id.
+// action verifying key set, and the scenario's chain id.
 func initFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := initFixtureEmpty(t, newFakeBank())
 	gs := types.DefaultGenesis()
-	gs.Params.VerifyingKeys = map[string][]byte{types.CircuitTransfer: readTestdata(t, "transfer.vk")}
+	gs.Params.VerifyingKeys = map[string][]byte{types.CircuitAction: f.prover.VerifyingKey(t)}
 	require.NoError(t, f.k.InitGenesis(f.ctx, *gs))
 	return f
 }
@@ -131,7 +123,7 @@ func initFixtureEmpty(t *testing.T, bank *fakeBank) *fixture {
 		authtypes.NewModuleAddress(types.GovModuleName), fakeAuth{ac}, bank,
 		[]string{types.AnmlDenom}, []string{personhood})
 	bank.restriction = k.SendRestriction
-	return &fixture{t: t, ctx: ctx, k: k, bank: bank, ac: ac, msgs: keeper.NewMsgServerImpl(k)}
+	return &fixture{t: t, ctx: ctx, k: k, bank: bank, ac: ac, msgs: keeper.NewMsgServerImpl(k), prover: shieldedtest.DefaultProver(t)}
 }
 
 // nextBlock ends the current block and starts the next one dt later.
@@ -166,7 +158,10 @@ func (f *fixture) shieldScenario(s shieldedtest.Scenario) {
 
 // runPrivate drives a private msg through the keeper side of the ante, then
 // its handler, as the private chain does.
-func (f *fixture) runPrivate(msg *types.MsgTransfer) (*types.MsgTransferResponse, error) {
+func (f *fixture) runPrivate(msg *types.MsgSend) (*types.MsgSendResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	prepared, err := f.k.CheckPrivateMsg(f.ctx, msg)
 	if err != nil {
 		return nil, err
@@ -181,7 +176,7 @@ func (f *fixture) runPrivate(msg *types.MsgTransfer) (*types.MsgTransferResponse
 	}
 	write() // the ante's writes stand whatever the handler does
 	hctx, writeMsg := f.ctx.CacheContext()
-	res, err := f.msgs.Transfer(keeper.CarryAuthorization(hctx, actx), msg)
+	res, err := f.msgs.Send(keeper.CarryAuthorization(hctx, actx), msg)
 	if err != nil {
 		return nil, err
 	}
@@ -189,15 +184,21 @@ func (f *fixture) runPrivate(msg *types.MsgTransfer) (*types.MsgTransferResponse
 	return res, nil
 }
 
-func (f *fixture) scenarioMsg(s shieldedtest.Scenario, i int) *types.MsgTransfer {
+// scenarioMsg is send i of s, proven (from the proof cache).
+func (f *fixture) scenarioMsg(s shieldedtest.Scenario, i int) *types.MsgSend {
 	f.t.Helper()
-	sp := s.Transfers[i]
-	tr, err := s.Transfer(i, readTestdata(f.t, sp.Name, "proof"))
+	msg, err := s.Msg(i, f.bech(shieldedtest.Receiver), func(toml string, pub [][]byte) []byte {
+		return f.prover.Prove(f.t, toml, pub)
+	})
 	require.NoError(f.t, err)
-	msg := &types.MsgTransfer{Transfer: tr}
-	if sp.Receiver != nil {
-		msg.Receiver = f.bech(sp.Receiver)
-	}
-	require.NoError(f.t, msg.ValidateBasic())
 	return msg
+}
+
+// verify is CheckPrivateMsg then VerifyPrivateMsg.
+func (f *fixture) verify(ctx sdk.Context, msg types.PrivateMsg) error {
+	prepared, err := f.k.CheckPrivateMsg(ctx, msg)
+	if err != nil {
+		return err
+	}
+	return f.k.VerifyPrivateMsg(ctx, prepared)
 }

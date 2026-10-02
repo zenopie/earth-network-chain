@@ -6,107 +6,322 @@ import (
 	"time"
 
 	"cosmossdk.io/math"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/stretchr/testify/require"
 
 	"github.com/earth-network/earth/x/shielded/keeper"
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"github.com/earth-network/earth/x/shielded/types"
+	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// The scenario end to end at the keeper: shields, a private send, an
-// unshield — each proof verified for real against a tree the keeper built.
-func TestScenarioShieldTransferUnshield(t *testing.T) {
+// runScenario shields the scenario's notes and runs its accepted sends up to
+// (not including) send n, a block each.
+func (f *fixture) runScenario(s shieldedtest.Scenario, n int) {
+	f.t.Helper()
+	f.shieldScenario(s)
+	f.nextBlock(5 * time.Second)
+	for i := range n {
+		if s.Sends[i].Refused {
+			continue
+		}
+		_, err := f.runPrivate(f.scenarioMsg(s, i))
+		require.NoError(f.t, err, s.Sends[i].Name)
+		f.nextBlock(5 * time.Second)
+	}
+}
+
+// The scenario end to end at the keeper: shields, then bundles of 2, 3 (mixed
+// assets), 2 (an unshield paying its fee from what it releases) and 10
+// actions, each action proof and binding signature verified for real against
+// a tree the keeper built; then a double spend and a one-action bundle,
+// refused.
+func TestScenarioBundles(t *testing.T) {
 	f := initFixture(t)
 	s := shieldedtest.Default()
 	f.shieldScenario(s)
 	f.nextBlock(5 * time.Second)
+	feeCollector := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
 
-	// transfer 0: private send.
-	msg0 := f.scenarioMsg(s, 0)
-	res, err := f.runPrivate(msg0)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{2, 3, 4}, res.Positions)
-	f.nextBlock(5 * time.Second)
+	want := map[int][]uint64{
+		shieldedtest.Send2:       {11, 12},
+		shieldedtest.Multi3:      {13, 14, 15},
+		shieldedtest.Unshield2:   {16, 17},
+		shieldedtest.Consolidate: {18, 19, 20, 21, 22, 23, 24, 25, 26, 27},
+	}
+	for _, i := range []int{shieldedtest.Send2, shieldedtest.Multi3, shieldedtest.Unshield2, shieldedtest.Consolidate} {
+		msg := f.scenarioMsg(s, i)
+		res, err := f.runPrivate(msg)
+		require.NoError(t, err, s.Sends[i].Name)
+		require.Equal(t, want[i], res.Positions, s.Sends[i].Name)
+		// Every nullifier is now spent: the same msg again is a double spend.
+		_, err = f.k.CheckPrivateMsg(f.ctx, msg)
+		require.ErrorIs(t, err, types.ErrNullifierSpent)
+		f.nextBlock(5 * time.Second)
+	}
 
-	// Double spend: every nullifier is now spent.
-	_, err = f.k.CheckPrivateMsg(f.ctx, msg0)
-	require.ErrorIs(t, err, types.ErrNullifierSpent)
-
-	// transfer 1: unshield 500,000 to the receiver.
-	msg1 := f.scenarioMsg(s, 1)
-	res, err = f.runPrivate(msg1)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{5, 6, 7}, res.Positions)
+	// The unshield paid 500,000 to the receiver and its 30,000 fee out of the
+	// same 530,000 uerth balance: no fee note.
 	require.Equal(t, int64(500_000), f.bank.GetBalance(f.ctx, shieldedtest.Receiver, types.FeeDenom).Amount.Int64())
-
-	// Turnstile: 1,100,000 in; 2 x 20,000 fees + 500,000 out.
+	// Fees: 30,000 + 40,000 + 30,000 + 130,000.
+	require.Equal(t, int64(230_000), f.bank.GetBalance(f.ctx, feeCollector, types.FeeDenom).Amount.Int64())
 	ts, err := f.k.Turnstile(f.ctx, types.FeeDenom)
 	require.NoError(t, err)
-	require.Equal(t, int64(1_100_000), ts.In.Int64())
-	require.Equal(t, int64(540_000), ts.Out.Int64())
-	require.Equal(t, int64(40_000), f.bank.GetBalance(f.ctx, authtypes.NewModuleAddress(authtypes.FeeCollectorName), types.FeeDenom).Amount.Int64())
-	f.nextBlock(5 * time.Second) // asserts the moved turnstiles
+	require.Equal(t, int64(1_116_000), ts.In.Int64())
+	require.Equal(t, int64(730_000), ts.Out.Int64())
+	ts, err = f.k.Turnstile(f.ctx, types.AnmlDenom)
+	require.NoError(t, err)
+	require.Equal(t, int64(5_000_000), ts.In.Int64())
+	require.True(t, ts.Out.IsZero(), "the ANML send released nothing")
 	require.NoError(t, f.k.AssertInvariants(f.ctx))
 
 	// The keeper's tree is the scenario's tree.
-	want, err := s.TreeBefore(len(s.Transfers))
+	wantTree, err := s.TreeBefore(shieldedtest.DoubleSpend)
 	require.NoError(t, err)
-	wantRoot, err := want.Root()
+	wantRoot, err := wantTree.Root()
 	require.NoError(t, err)
 	got, err := f.k.CurrentRoot(f.ctx)
 	require.NoError(t, err)
 	require.Equal(t, privacy.FieldBytes(wantRoot), got)
 	size, err := f.k.Size(f.ctx)
 	require.NoError(t, err)
-	require.Equal(t, uint64(8), size)
+	require.Equal(t, uint64(28), size)
+
+	// A fresh bundle (new outputs, a new sighash, valid proofs) spending
+	// send2's note again: its nullifier is already in the set.
+	double := f.scenarioMsg(s, shieldedtest.DoubleSpend)
+	require.NoError(t, double.ValidateBasic())
+	_, err = f.runPrivate(double)
+	require.ErrorIs(t, err, types.ErrNullifierSpent)
+
+	// One action with a real proof and a valid binding signature: the bundle
+	// verifies in zk/orchard, and the chain refuses it for its shape alone.
+	single := f.scenarioMsg(s, shieldedtest.SingleAction)
+	ob, err := single.Bundle.ToOrchard()
+	require.NoError(t, err)
+	sighash, err := types.Sighash(single, shieldedtest.ChainID, f.ac)
+	require.NoError(t, err)
+	require.NoError(t, ob.Verify(sighash, orchard.CanonicalBase, func(p []byte, in [][]byte) (bool, error) {
+		return f.k.VerifyCircuit(f.ctx, types.CircuitAction, p, in) == nil, nil
+	}))
+	require.ErrorIs(t, single.ValidateBasic(), types.ErrInvalidBundle)
+	require.ErrorContains(t, single.ValidateBasic(), "pad with dummies")
 }
 
-func TestProofBindsEveryPublicInput(t *testing.T) {
+// The chain's sighash is the scenario's (the wallet's): the msg type, the
+// chain id, the bundle digest, the receiver and the fee.
+func TestSighashMatchesWallet(t *testing.T) {
+	s := shieldedtest.Default()
+	f := initFixture(t)
+	for i := range s.Sends {
+		msg := f.scenarioMsg(s, i)
+		got, err := types.Sighash(msg, shieldedtest.ChainID, f.ac)
+		require.NoError(t, err)
+		b, err := s.Bundle(i)
+		require.NoError(t, err)
+		want, err := s.Sighash(i, b)
+		require.NoError(t, err)
+		require.Equal(t, want, got, s.Sends[i].Name)
+	}
+}
+
+// Everything the sighash binds is bound: change any of it and the binding
+// signature fails; re-sign it with the real binding key (a wallet that leaked
+// its rcvs, or the relay that built it) and the action proofs fail, because
+// each binds the old sighash. A proof cannot be moved into another tx.
+func TestSighashBindsEverything(t *testing.T) {
 	f := initFixture(t)
 	s := shieldedtest.Default()
-	f.shieldScenario(s)
-	f.nextBlock(5 * time.Second)
-	_, err := f.runPrivate(f.scenarioMsg(s, 0))
-	require.NoError(t, err)
-	f.nextBlock(5 * time.Second)
+	f.runScenario(s, shieldedtest.Unshield2)
+	i := shieldedtest.Unshield2
 
-	mutations := map[string]func(m *types.MsgTransfer){
-		"receiver":   func(m *types.MsgTransfer) { m.Receiver = f.bech(f.addr("thief")) },
-		"ciphertext": func(m *types.MsgTransfer) { m.Transfer.Ciphertexts[1] = []byte("garbage") },
-		"fee":        func(m *types.MsgTransfer) { m.Transfer.Fee++ },
-		"value_out":  func(m *types.MsgTransfer) { m.Transfer.ValueOut-- },
-		"commitment": func(m *types.MsgTransfer) {
-			m.Transfer.Commitments[0] = privacy.FieldBytes(shieldedtest.Det("x", 1))
+	mutations := map[string]func(m *types.MsgSend){
+		"receiver":   func(m *types.MsgSend) { m.Receiver = f.bech(f.addr("thief")) },
+		"ciphertext": func(m *types.MsgSend) { m.Bundle.Actions[1].Ciphertext = []byte("garbage") },
+		"commitment": func(m *types.MsgSend) {
+			m.Bundle.Actions[0].Commitment = privacy.FieldBytes(shieldedtest.Det("x", 1))
+		},
+		"fee and receiver's share": func(m *types.MsgSend) { m.Fee += 1_000 },
+		"actions swapped": func(m *types.MsgSend) {
+			m.Bundle.Actions[0], m.Bundle.Actions[1] = m.Bundle.Actions[1], m.Bundle.Actions[0]
 		},
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
-			m := f.scenarioMsg(s, 1)
+			m := f.scenarioMsg(s, i)
 			mutate(m)
-			prepared, err := f.k.CheckPrivateMsg(f.ctx, m)
+			require.NoError(t, m.ValidateBasic())
+			require.ErrorIs(t, f.verify(f.ctx, m), types.ErrInvalidBindingSig)
+			// Re-signed over the new sighash with the true bsk: the
+			// balance holds, the proofs do not.
+			sh, err := types.Sighash(m, shieldedtest.ChainID, f.ac)
 			require.NoError(t, err)
-			require.ErrorIs(t, f.k.VerifyPrivateMsg(f.ctx, prepared), types.ErrInvalidProof)
+			m.Bundle.BindingSig, err = orchard.SignBinding(orchard.BindingSigningKey(s.Bsk(i)), sh, bytes.NewReader(make([]byte, 32)))
+			require.NoError(t, err)
+			require.ErrorIs(t, f.verify(f.ctx, m), types.ErrInvalidProof)
 		})
 	}
-	// Wrong chain: the signal binds the chain id.
-	m := f.scenarioMsg(s, 1)
-	other := f.ctx.WithChainID("earth-1")
-	prepared, err := f.k.CheckPrivateMsg(other, m)
-	require.NoError(t, err)
-	require.ErrorIs(t, f.k.VerifyPrivateMsg(other, prepared), types.ErrInvalidProof)
 
-	// Unshield of an asset the proof did not hide: asset_pub comes from the
-	// registry and no longer matches.
-	_, err = f.k.RegisterAsset(f.ctx, "ufoo")
+	// Wrong chain: the sighash binds the chain id.
+	other := f.ctx.WithChainID("earth-1")
+	require.ErrorIs(t, f.verify(other, f.scenarioMsg(s, i)), types.ErrInvalidBindingSig)
+
+	// A proof lifted into another msg: send2's proof of action 0, placed in a
+	// bundle otherwise identical to unshield2's.
+	m := f.scenarioMsg(s, i)
+	m.Bundle.Actions[0].Proof = f.scenarioMsg(s, shieldedtest.Send2).Bundle.Actions[0].Proof
+	require.ErrorIs(t, f.verify(f.ctx, m), types.ErrInvalidProof)
+	require.ErrorContains(t, f.verify(f.ctx, m), "bundle 0 action 0")
+
+	// And the real msg still verifies.
+	require.NoError(t, f.verify(f.ctx, f.scenarioMsg(s, i)))
+}
+
+// Value cannot be created: a balance claiming more (or less) than the
+// actions commit to fails the binding signature, even signed with the real
+// binding key, and a cv changed after proving fails both.
+func TestInflationRefused(t *testing.T) {
+	f := initFixture(t)
+	s := shieldedtest.Default()
+	f.runScenario(s, shieldedtest.Unshield2)
+	i := shieldedtest.Unshield2
+
+	resign := func(m *types.MsgSend) {
+		sh, err := types.Sighash(m, shieldedtest.ChainID, f.ac)
+		require.NoError(t, err)
+		m.Bundle.BindingSig, err = orchard.SignBinding(orchard.BindingSigningKey(s.Bsk(i)), sh, bytes.NewReader(make([]byte, 32)))
+		require.NoError(t, err)
+	}
+	for name, mutate := range map[string]func(m *types.MsgSend){
+		"balance +1": func(m *types.MsgSend) { m.Bundle.Balances[0].Amount++ },
+		"balance -1": func(m *types.MsgSend) { m.Bundle.Balances[0].Amount-- },
+		"extra ANML out": func(m *types.MsgSend) {
+			m.Bundle.Balances = append(m.Bundle.Balances, types.ValueBalance{Denom: types.AnmlDenom, Amount: 1})
+		},
+		"cv shifted by G": func(m *types.MsgSend) {
+			cv, _ := orchard.PointFromBytes(m.Bundle.Actions[1].Cv)
+			m.Bundle.Actions[1].Cv = orchard.PointBytes(orchard.Add(cv, orchard.ValueBase(privacy.AssetID(types.FeeDenom))))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := f.scenarioMsg(s, i)
+			mutate(m)
+			resign(m)
+			prepared, err := f.k.CheckPrivateMsg(f.ctx, m)
+			if err != nil {
+				// The ANML balance has no receiver able to take it.
+				require.ErrorIs(t, err, types.ErrSendRestricted)
+				err = f.k.VerifyPrivateMsg(f.ctx, keeper.PreparedPrivateMsg{Msg: m, Bundles: mustOrchard(t, m), Sighash: mustSighash(t, f, m)})
+			} else {
+				err = f.k.VerifyPrivateMsg(f.ctx, prepared)
+			}
+			require.ErrorIs(t, err, types.ErrInvalidBindingSig)
+		})
+	}
+}
+
+// The -G attack: two outputs of v ANML, one under G and one under -G, net to
+// zero, so their binding signature verifies and v ANML would come from
+// nothing. The chain cannot see it; the action circuit's canonical-y check is
+// the whole defence. Shown here: the forged bundle balances at the binding
+// level, no witness for the -G action exists (the circuit refuses it, when
+// EARTH_CIRCUITS is set), and with any proof the chain holds in its place the
+// bundle is refused.
+func TestNegatedBaseInflationNeedsAnImpossibleProof(t *testing.T) {
+	f := initFixture(t)
+	s := shieldedtest.Default()
+	f.shieldScenario(s)
+	f.nextBlock(5 * time.Second)
+	tree, err := s.TreeBefore(0)
 	require.NoError(t, err)
-	m = f.scenarioMsg(s, 1)
-	m.Transfer.DenomOut = "ufoo"
-	prepared, err = f.k.CheckPrivateMsg(f.ctx, m)
+	root, err := tree.Root()
 	require.NoError(t, err)
-	require.ErrorIs(t, f.k.VerifyPrivateMsg(f.ctx, prepared), types.ErrInvalidProof)
+
+	const v = 1_000_000
+	anml := privacy.AssetID(types.AnmlDenom)
+	g := orchard.ValueBase(anml)
+	r1, r2 := shieldedtest.Det("forge/rcv", 0), shieldedtest.Det("forge/rcv", 1)
+	out1 := shieldedtest.Note{Owner: shieldedtest.Alice, Denom: types.AnmlDenom, Value: v, Rho: shieldedtest.Det("forge/rho", 0), Rcm: shieldedtest.Det("forge/rcm", 0)}
+	out2 := out1
+	out2.Rho, out2.Rcm = shieldedtest.Det("forge/rho", 1), shieldedtest.Det("forge/rcm", 1)
+	cv1 := orchard.ValueCommit(privacy.AssetID(types.FeeDenom), 0, anml, v, r1) // honest: -v*G + r1*R
+	cv2 := orchard.Add(orchard.Mul(g, orchard.ScalarU64(v)), orchard.Mul(orchard.R, orchard.ScalarFromField(r2)))
+	dummy := func(j uint64) (fr.Element, fr.Element) {
+		return shieldedtest.Det("forge/drho", j), shieldedtest.Det("forge/drcm", j)
+	}
+	rho1, rcm1 := dummy(0)
+	rho2, rcm2 := dummy(1)
+	b := types.Bundle{Actions: []types.Action{
+		{Anchor: privacy.FieldBytes(root), Nullifier: privacy.FieldBytes(privacy.NF(shieldedtest.Alice.NK, rho1, 0)),
+			Commitment: privacy.FieldBytes(out1.CM()), Cv: orchard.PointBytes(cv1)},
+		{Anchor: privacy.FieldBytes(root), Nullifier: privacy.FieldBytes(privacy.NF(shieldedtest.Alice.NK, rho2, 0)),
+			Commitment: privacy.FieldBytes(out2.CM()), Cv: orchard.PointBytes(cv2)},
+	}}
+	// A MsgSend must pay a fee, and nothing is spent: the forger mints the
+	// fee the same way, a third action committing +1*G_uerth (a -G_uerth
+	// output of 1), against a public uerth balance of 1.
+	m := &types.MsgSend{Bundle: b, Fee: 1}
+	m.Bundle.Balances = []types.ValueBalance{{Denom: types.FeeDenom, Amount: 1}}
+	gErth := orchard.ValueBase(privacy.AssetID(types.FeeDenom))
+	r3 := shieldedtest.Det("forge/rcv", 2)
+	rho3, _ := dummy(2)
+	cv3 := orchard.Add(orchard.Mul(gErth, orchard.ScalarU64(1)), orchard.Mul(orchard.R, orchard.ScalarFromField(r3)))
+	out3 := out1
+	out3.Rho, out3.Denom, out3.Value = shieldedtest.Det("forge/rho", 2), types.FeeDenom, 1
+	m.Bundle.Actions = append(m.Bundle.Actions, types.Action{Anchor: privacy.FieldBytes(root),
+		Nullifier: privacy.FieldBytes(privacy.NF(shieldedtest.Alice.NK, rho3, 0)), Commitment: privacy.FieldBytes(out3.CM()), Cv: orchard.PointBytes(cv3)})
+	sighash, err := types.Sighash(m, shieldedtest.ChainID, f.ac)
+	require.NoError(t, err)
+	m.Bundle.BindingSig, err = orchard.SignBinding(orchard.BindingSigningKey([]fr.Element{r1, r2, r3}), sighash, bytes.NewReader(make([]byte, 32)))
+	require.NoError(t, err)
+
+	// 1. At the binding level the forgery balances.
+	ob, err := m.Bundle.ToOrchard()
+	require.NoError(t, err)
+	require.NoError(t, ob.CheckBalance(sighash, orchard.CanonicalBase), "bvk cannot see the -G base")
+
+	// 2. The honest action has a proof; the forged one has no witness.
+	pub0 := ob.PublicInputs(0, sighash)
+	toml0 := shieldedtest.ActionToml(shieldedtest.ActionInputs{NK: shieldedtest.Alice.NK, SAsset: privacy.AssetID(types.FeeDenom),
+		SRho: rho1, SRcm: rcm1, OAsset: anml, OValue: v, OPC: out1.PC(), Rcv: r1}, pub0)
+	m.Bundle.Actions[0].Proof = f.prover.Prove(t, toml0, pub0)
+	pub1 := ob.PublicInputs(1, sighash)
+	toml1 := shieldedtest.ActionToml(shieldedtest.ActionInputs{NK: shieldedtest.Alice.NK, SAsset: privacy.AssetID(types.FeeDenom),
+		SRho: rho2, SRcm: rcm2, OAsset: anml, OValue: v, OPC: out2.PC(), Rcv: r2}, pub1)
+	if shieldedtest.Circuits() != "" {
+		_, err := f.prover.TryProve(toml1, pub1)
+		require.ErrorIs(t, err, shieldedtest.ErrWitnessRefused, "the circuit must refuse a cv under -G")
+		require.ErrorContains(t, err, "bad value commitment")
+	} else {
+		t.Log("EARTH_CIRCUITS unset: not re-running the circuit on the forged witness (circuits/action tests it: test_negated_*_base_rejected)")
+	}
+
+	// 3. Any proof the attacker does have, in the forged slots: refused.
+	m.Bundle.Actions[1].Proof = m.Bundle.Actions[0].Proof
+	m.Bundle.Actions[2].Proof = m.Bundle.Actions[0].Proof
+	require.NoError(t, m.ValidateBasic())
+	_, err = f.runPrivate(m)
+	require.ErrorIs(t, err, types.ErrInvalidProof)
+	require.ErrorContains(t, err, "bundle 0 action 1")
+	ts, err := f.k.Turnstile(f.ctx, types.AnmlDenom)
+	require.NoError(t, err)
+	require.True(t, ts.Out.IsZero())
+}
+
+func mustOrchard(t *testing.T, m *types.MsgSend) []*orchard.Bundle {
+	ob, err := m.Bundle.ToOrchard()
+	require.NoError(t, err)
+	return []*orchard.Bundle{ob}
+}
+
+func mustSighash(t *testing.T, f *fixture, m *types.MsgSend) fr.Element {
+	sh, err := types.Sighash(m, shieldedtest.ChainID, f.ac)
+	require.NoError(t, err)
+	return sh
 }
 
 func TestCheckPrivateMsgRefusals(t *testing.T) {
@@ -115,87 +330,133 @@ func TestCheckPrivateMsgRefusals(t *testing.T) {
 	f.shieldScenario(s)
 	f.nextBlock(5 * time.Second)
 
-	// Unknown root.
-	m := f.scenarioMsg(s, 0)
-	m.Transfer.Root = privacy.FieldBytes(shieldedtest.Det("root", 9))
-	_, err := f.k.CheckPrivateMsg(f.ctx, m)
-	require.ErrorIs(t, err, types.ErrUnknownRoot)
+	// Unknown anchor, on a real spend and on a dummy alike.
+	for _, j := range []int{0, 1} {
+		m := f.scenarioMsg(s, shieldedtest.Send2)
+		m.Bundle.Actions[j].Anchor = privacy.FieldBytes(shieldedtest.Det("root", 9))
+		_, err := f.k.CheckPrivateMsg(f.ctx, m)
+		require.ErrorIs(t, err, types.ErrUnknownRoot, "action %d", j)
+	}
 
-	// Unregistered denom out.
-	m = f.scenarioMsg(s, 0)
-	m.Transfer.ValueOut, m.Transfer.DenomOut, m.Receiver = 1, "unope", f.bech(f.addr("r"))
-	_, err = f.k.CheckPrivateMsg(f.ctx, m)
+	// Unregistered denom.
+	m := f.scenarioMsg(s, shieldedtest.Send2)
+	m.Bundle.Balances = append(m.Bundle.Balances, types.ValueBalance{Denom: "unope", Amount: 1})
+	m.Receiver = f.bech(f.addr("r"))
+	_, err := f.k.CheckPrivateMsg(f.ctx, m)
 	require.ErrorIs(t, err, types.ErrAssetNotRegistered)
 
 	// Unshielding ANML to an account: the bank would refuse it after the ante
 	// spent the inputs, so the check refuses it first.
-	m = f.scenarioMsg(s, 0)
-	m.Transfer.ValueOut, m.Transfer.DenomOut, m.Receiver = 1, types.AnmlDenom, f.bech(f.addr("r"))
+	m = f.scenarioMsg(s, shieldedtest.Send2)
+	m.Bundle.Balances = append(m.Bundle.Balances, types.ValueBalance{Denom: types.AnmlDenom, Amount: 1})
+	m.Receiver = f.bech(f.addr("r"))
 	_, err = f.k.CheckPrivateMsg(f.ctx, m)
 	require.ErrorIs(t, err, types.ErrSendRestricted)
 
 	// The pool itself as receiver: it would count Out with no coins moving.
-	m = f.scenarioMsg(s, 0)
-	m.Transfer.ValueOut, m.Transfer.DenomOut, m.Receiver = 1, types.FeeDenom, f.bech(f.k.PoolAddress())
+	m = f.scenarioMsg(s, shieldedtest.Send2)
+	m.Fee -= 1
+	m.Receiver = f.bech(f.k.PoolAddress())
 	_, err = f.k.CheckPrivateMsg(f.ctx, m)
 	require.ErrorIs(t, err, types.ErrSendRestricted)
 
 	// Blocked receiver.
 	blocked := f.addr("blocked")
 	f.bank.blocked[string(blocked)] = true
-	m = f.scenarioMsg(s, 0)
-	m.Transfer.ValueOut, m.Transfer.DenomOut, m.Receiver = 1, types.FeeDenom, f.bech(blocked)
+	m = f.scenarioMsg(s, shieldedtest.Send2)
+	m.Fee -= 1
+	m.Receiver = f.bech(blocked)
 	_, err = f.k.CheckPrivateMsg(f.ctx, m)
 	require.ErrorIs(t, err, types.ErrSendRestricted)
 
-	// No verifying key: refused, not accepted.
+	// max_actions_per_bundle below the bundle's size.
 	params, err := f.k.Params.Get(f.ctx)
 	require.NoError(t, err)
+	params.MaxActionsPerBundle = 2
+	params.MaxPrivateActionsPerBlock = 4
+	require.NoError(t, params.Validate())
+	require.NoError(t, f.k.Params.Set(f.ctx, params))
+	_, err = f.k.CheckPrivateMsg(f.ctx, f.scenarioMsg(s, shieldedtest.Multi3))
+	require.ErrorIs(t, err, types.ErrInvalidBundle)
+	require.ErrorContains(t, err, "max_actions_per_bundle")
+
+	// No verifying key: refused, not accepted.
 	params.VerifyingKeys = nil
 	require.NoError(t, f.k.Params.Set(f.ctx, params))
-	prepared, err := f.k.CheckPrivateMsg(f.ctx, f.scenarioMsg(s, 0))
+	prepared, err := f.k.CheckPrivateMsg(f.ctx, f.scenarioMsg(s, shieldedtest.Send2))
 	require.NoError(t, err)
 	require.ErrorIs(t, f.k.VerifyPrivateMsg(f.ctx, prepared), types.ErrMissingVerifyingKey)
 }
 
-// A private msg's handler refuses unless the ante authorized its transfer in
+// A private msg's handler refuses unless the ante authorized this very msg in
 // this tx: the defence against a contract or ICA host dispatching it.
 func TestHandlerRequiresAnteAuthorization(t *testing.T) {
 	f := initFixture(t)
 	s := shieldedtest.Default()
-	f.shieldScenario(s)
-	f.nextBlock(5 * time.Second)
-	m := f.scenarioMsg(s, 0)
+	f.runScenario(s, shieldedtest.Unshield2)
+	m := f.scenarioMsg(s, shieldedtest.Unshield2)
 
-	_, err := f.msgs.Transfer(f.ctx, m)
+	_, err := f.msgs.Send(f.ctx, m)
 	require.ErrorIs(t, err, types.ErrUnauthorized)
-	require.False(t, keeper.AuthorizedNullifiers(f.ctx, m.Transfer.Nullifiers...))
+	require.False(t, keeper.AuthorizedNullifiers(f.ctx, m.Bundle.Nullifiers()...))
 
-	// Authorized for a different transfer: still refused.
-	other := f.scenarioMsg(s, 1)
-	actx := keeper.WithAuthorizedTransfer(f.ctx, &other.Transfer, []uint64{0, 1, 2})
-	_, err = f.msgs.Transfer(actx, m)
-	require.ErrorIs(t, err, types.ErrUnauthorized)
-
-	// SpendToModule pays an authorized transfer's value_out once.
-	_, err = f.runPrivate(m)
+	// Authorized for a different msg: still refused, even one differing only
+	// in its receiver.
+	other := f.scenarioMsg(s, shieldedtest.Send2)
+	actx, err := keeper.AuthorizeMsg(f.ctx, other, nil, 0)
 	require.NoError(t, err)
-	f.nextBlock(5 * time.Second)
+	_, err = f.msgs.Send(actx, m)
+	require.ErrorIs(t, err, types.ErrUnauthorized)
+	twin := *m
+	twin.Receiver = f.bech(f.addr("twin"))
+	actx, err = keeper.AuthorizeMsg(f.ctx, &twin, nil, 0)
+	require.NoError(t, err)
+	_, err = f.msgs.Send(actx, m)
+	require.ErrorIs(t, err, types.ErrUnauthorized)
+
+	// ReleaseToModule pays an authorized msg's remainder of a denom once,
+	// whole; a denom it does not release is refused.
+	actx, err = keeper.AuthorizeMsg(f.ctx, m, nil, 0)
+	require.NoError(t, err)
+	require.True(t, keeper.AuthorizedNullifiers(actx, m.Bundle.Nullifiers()...))
+	coin, err := f.k.ReleaseToModule(actx, m, types.FeeDenom, personhood)
+	require.NoError(t, err)
+	require.Equal(t, "500000uerth", coin.String(), "the balance less the fee")
+	_, err = f.k.ReleaseToModule(actx, m, types.FeeDenom, personhood)
+	require.ErrorIs(t, err, types.ErrAlreadyReleased)
+	_, err = f.k.ReleaseToModule(actx, m, types.AnmlDenom, personhood)
+	require.ErrorIs(t, err, types.ErrReleaseMap)
+
+	// Through the ante, the unshield is paid there and nothing is left.
 	cctx, _ := f.ctx.CacheContext()
-	prepared, err := f.k.CheckPrivateMsg(cctx, other)
+	require.NoError(t, f.verify(cctx, m))
+	actx, err = f.k.ExecutePrivateMsg(cctx, m)
 	require.NoError(t, err)
-	require.NoError(t, f.k.VerifyPrivateMsg(cctx, prepared))
-	actx, err = f.k.ExecutePrivateMsg(cctx, other)
-	require.NoError(t, err)
-	coin, err := f.k.SpendToModule(actx, &other.Transfer, personhood)
-	require.NoError(t, err)
-	require.Equal(t, "500000uerth", coin.String())
-	require.Equal(t, int64(500_000), f.bank.GetBalance(actx, mod(personhood), types.FeeDenom).Amount.Int64())
-	_, err = f.k.SpendToModule(actx, &other.Transfer, personhood)
+	_, err = f.k.ReleaseToModule(actx, m, types.FeeDenom, personhood)
 	require.ErrorIs(t, err, types.ErrAlreadyReleased)
-	_, err = f.msgs.Transfer(actx, other)
-	require.ErrorIs(t, err, types.ErrAlreadyReleased)
+	res, err := f.msgs.Send(actx, m)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{16, 17}, res.Positions)
 	require.NoError(t, f.k.AssertInvariants(actx))
+}
+
+// A fee from output (a Phase 2 claim or swap paying out of what it produces)
+// must be paid in full, exactly, before the ante returns.
+func TestFeeFromOutputMustBePaid(t *testing.T) {
+	f := initFixture(t)
+	s := shieldedtest.Default()
+	m := f.scenarioMsg(s, shieldedtest.Send2)
+	actx, err := keeper.AuthorizeMsg(f.ctx, m, nil, 7_000)
+	require.NoError(t, err)
+	require.ErrorIs(t, f.k.ExecutePrivateAction(actx, m, nil), sdkerrors.ErrInsufficientFee)
+	f.bank.mint(mod(personhood), sdk.NewInt64Coin(types.FeeDenom, 10_000))
+	require.ErrorIs(t, f.k.PayFeeFromModule(actx, personhood, math.NewInt(6_999)), types.ErrUnauthorized)
+	require.NoError(t, f.k.PayFeeFromModule(actx, personhood, math.NewInt(7_000)))
+	require.ErrorIs(t, f.k.PayFeeFromModule(actx, personhood, math.NewInt(1)), types.ErrUnauthorized, "paid once")
+	require.NoError(t, f.k.ExecutePrivateAction(actx, m, nil))
+	require.Equal(t, int64(7_000), f.bank.GetBalance(actx, authtypes.NewModuleAddress(authtypes.FeeCollectorName), types.FeeDenom).Amount.Int64())
+	// Outside the ante: no authorization, no payment.
+	require.ErrorIs(t, f.k.PayFeeFromModule(f.ctx, personhood, math.NewInt(1)), types.ErrUnauthorized)
 }
 
 func TestSendRestriction(t *testing.T) {
@@ -315,37 +576,32 @@ func TestRootWindow(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestBlockCap(t *testing.T) {
+// The block cap counts actions, not txs.
+func TestBlockCapCountsActions(t *testing.T) {
 	f := initFixture(t)
 	params, err := f.k.Params.Get(f.ctx)
 	require.NoError(t, err)
-	params.MaxPrivateTxsPerBlock = 2
+	params.MaxPrivateActionsPerBlock = 5
 	require.NoError(t, f.k.Params.Set(f.ctx, params))
-	require.NoError(t, f.k.CountPrivateTx(f.ctx))
-	require.NoError(t, f.k.CountPrivateTx(f.ctx))
-	require.ErrorIs(t, f.k.CountPrivateTx(f.ctx), types.ErrBlockCap)
+	require.NoError(t, f.k.CountPrivateActions(f.ctx, 2))
+	require.NoError(t, f.k.CountPrivateActions(f.ctx, 3))
+	require.ErrorIs(t, f.k.CountPrivateActions(f.ctx, 1), types.ErrBlockCap)
 	f.nextBlock(5 * time.Second)
-	require.NoError(t, f.k.CountPrivateTx(f.ctx), "the count resets every block")
+	require.ErrorIs(t, f.k.CountPrivateActions(f.ctx, 6), types.ErrBlockCap, "one msg over the cap never fits")
+	require.NoError(t, f.k.CountPrivateActions(f.ctx, 5), "the count resets every block")
 }
 
 func TestGenesisRoundTrip(t *testing.T) {
 	f := initFixture(t)
 	s := shieldedtest.Default()
-	f.shieldScenario(s)
-	f.nextBlock(5 * time.Second)
-	_, err := f.runPrivate(f.scenarioMsg(s, 0))
-	require.NoError(t, err)
-	f.nextBlock(5 * time.Second)
-	_, err = f.runPrivate(f.scenarioMsg(s, 1))
-	require.NoError(t, err)
-	f.nextBlock(5 * time.Second)
+	f.runScenario(s, shieldedtest.DoubleSpend)
 
 	gs, err := f.k.ExportGenesis(f.ctx)
 	require.NoError(t, err)
 	require.NoError(t, gs.Validate())
-	require.Len(t, gs.Commitments, 8)
-	require.Len(t, gs.Nullifiers, 6)
-	require.Len(t, gs.Roots, 4) // empty, after shields, after t0, after t1
+	require.Len(t, gs.Commitments, 28)
+	require.Len(t, gs.Nullifiers, 17)
+	require.Len(t, gs.Roots, 6) // empty, after shields, after each of 4 sends
 
 	// Import into a fresh keeper over the same bank balances.
 	g := initFixtureEmpty(t, f.bank)
@@ -358,8 +614,8 @@ func TestGenesisRoundTrip(t *testing.T) {
 	r2, _ := g.k.CurrentRoot(g.ctx)
 	require.Equal(t, r1, r2)
 
-	// The spent set came across: transfer 1 cannot be replayed.
-	_, err = g.k.CheckPrivateMsg(g.ctx, g.scenarioMsg(s, 1))
+	// The spent set came across: the consolidation cannot be replayed.
+	_, err = g.k.CheckPrivateMsg(g.ctx, g.scenarioMsg(s, shieldedtest.Consolidate))
 	require.ErrorIs(t, err, types.ErrNullifierSpent)
 
 	// A genesis whose turnstiles disagree with the bank is refused.

@@ -169,7 +169,7 @@ func (h ActionHandler) AcceptsPrivateAnchor(ctx context.Context, msg shieldedtyp
 // authorized is the handlers' gate: the ante checked this very msg's action
 // and executed its transfer in this tx. Returns ctx on an infinite meter.
 func (k Keeper) authorized(ctx context.Context, msg shieldedtypes.PrivateMsg) (sdk.Context, error) {
-	if _, err := shieldedkeeper.AuthorizedAction(ctx, msg.PrivateTransfer()); err != nil {
+	if _, err := shieldedkeeper.AuthorizedAction(ctx, msg); err != nil {
 		return sdk.Context{}, err
 	}
 	return sdk.UnwrapSDKContext(ctx).WithGasMeter(storetypes.NewInfiniteGasMeter()), nil

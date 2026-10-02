@@ -8,8 +8,8 @@ import (
 
 // AutoCLIOptions implements the autocli.HasAutoCLIConfig interface.
 //
-// Only queries and MsgShield have commands. MsgTransfer is unsigned and
-// carries a proof: wallets build its raw tx bytes and broadcast them, which
+// Only queries and MsgShield have commands. MsgSend is unsigned and
+// carries proofs: wallets build its raw tx bytes and broadcast them, which
 // the CLI's sign-and-send flow cannot do.
 func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 	return &autocliv1.ModuleOptions{
@@ -40,7 +40,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 			RpcCommandOptions: []*autocliv1.RpcCommandOptions{
 				{RpcMethod: "UpdateParams", Skip: true},
 				{RpcMethod: "RegisterAsset", Skip: true},
-				{RpcMethod: "Transfer", Skip: true},
+				{RpcMethod: "Send", Skip: true},
 				{
 					RpcMethod: "Shield",
 					Use:       "shield [amount] [pc-base64]",

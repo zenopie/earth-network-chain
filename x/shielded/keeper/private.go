@@ -12,46 +12,72 @@ import (
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 
 	"github.com/earth-network/earth/x/shielded/types"
-	"github.com/earth-network/earth/zk/privacy"
+	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/ultrahonk"
 )
 
 // The private ante (x/shielded/ante) drives a private msg through these, in
-// order: CheckPrivateMsg (state only, cheap), VerifyPrivateMsg (the proof),
-// ExecutePrivateMsg (spend, append, pay). Each is exported for the ante
-// alone; other modules use MintNote, SpendToModule and AuthorizedNullifiers.
+// order: CheckPrivateMsg (state only, cheap), VerifyPrivateMsg (binding
+// signatures, then every action proof), ExecutePrivateMsg (spend, append,
+// pay, unshield). Each is exported for the ante alone; other modules use
+// MintNote, ReleaseToModule and AuthorizedAction.
 
 // PreparedPrivateMsg is what CheckPrivateMsg derived for verification.
 type PreparedPrivateMsg struct {
-	Msg       types.PrivateMsg
-	Transfers []*types.Transfer
-	// AssetPubs[i] is Transfers[i]'s asset_pub.
-	AssetPubs []fr.Element
-	Signal    fr.Element
+	Msg types.PrivateMsg
+	// Bundles are the msg's bundles in zk/orchard's terms, in order.
+	Bundles []*orchard.Bundle
+	// Sighash is what every action proof binds and every binding signature
+	// signs.
+	Sighash fr.Element
 }
 
 // CheckPrivateMsg runs every stateful check on a private msg that can be run
-// before its proofs, for each of its transfers: the anchor, the nullifiers,
-// the asset, the room left in the tree and, for an unshield, whether the bank
-// would pay the receiver. Anything that could make the msg fail after the
-// ante spends its inputs is refused here instead.
+// before its proofs: the bundle size cap, every action's anchor, every
+// nullifier, every balance's asset, the room left in the tree, and the
+// release map (an unshield the bank would refuse, value with nowhere to go).
+// Anything that could make the msg fail after the ante spends its inputs is
+// refused here instead.
 func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (PreparedPrivateMsg, error) {
-	ts := types.TransfersOf(msg)
-	p := PreparedPrivateMsg{Msg: msg, Transfers: ts}
-	for i, t := range ts {
-		// Only the primary transfer may be vouched for outside the window
-		// (a stake vote's snapshot root); any other (the fee transfer paying
-		// for it) spends against a current root.
-		var err error
-		if i == 0 {
-			err = k.checkPrivateAnchor(ctx, msg, t.Root)
-		} else {
-			err = k.checkAnchor(ctx, t.Root)
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return PreparedPrivateMsg{}, err
+	}
+	bs := msg.PrivateBundles()
+	p := PreparedPrivateMsg{Msg: msg, Bundles: make([]*orchard.Bundle, len(bs))}
+	for i, b := range bs {
+		if len(b.Actions) > int(params.MaxActionsPerBundle) {
+			return PreparedPrivateMsg{}, errorsmod.Wrapf(types.ErrInvalidBundle,
+				"bundle %d: %d actions, max_actions_per_bundle is %d", i, len(b.Actions), params.MaxActionsPerBundle)
 		}
-		if err != nil {
-			return PreparedPrivateMsg{}, err
+	}
+	// Anchors: the first bundle's actions may be vouched for by the msg's
+	// action handler (a stake vote's snapshot root); every other bundle
+	// spends against the window. Dummy spends need a valid anchor too.
+	valid := map[string]bool{}
+	for i, b := range bs {
+		for j := range b.Actions {
+			root := b.Actions[j].Anchor
+			key := string(root)
+			if i == 0 {
+				key = "0:" + key
+			}
+			if valid[key] {
+				continue
+			}
+			if i == 0 {
+				err = k.checkPrivateAnchor(ctx, msg, root)
+			} else {
+				err = k.checkAnchor(ctx, root)
+			}
+			if err != nil {
+				return PreparedPrivateMsg{}, errorsmod.Wrapf(err, "bundle %d action %d", i, j)
+			}
+			valid[key] = true
 		}
-		for _, nf := range t.Nullifiers {
+	}
+	for _, b := range bs {
+		for _, nf := range b.Nullifiers() {
 			spent, err := k.Nullifiers.Has(ctx, nf)
 			if err != nil {
 				return PreparedPrivateMsg{}, err
@@ -60,38 +86,64 @@ func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (Prep
 				return PreparedPrivateMsg{}, types.ErrNullifierSpent.Wrapf("%X", nf)
 			}
 		}
-		var assetPub fr.Element // 0 unless value leaves the pool
-		if t.ValueOut > 0 {
-			id, err := k.AssetID(ctx, t.DenomOut)
-			if err != nil {
-				return PreparedPrivateMsg{}, err
-			}
-			if assetPub, err = privacy.FieldFromBytes(id); err != nil {
+		// Only registered denoms can leave: their asset id is AssetID(denom)
+		// (the registry is checked to agree), which is what the digest and
+		// the binding key use.
+		for _, bal := range b.Balances {
+			if _, err := k.AssetID(ctx, bal.Denom); err != nil {
 				return PreparedPrivateMsg{}, err
 			}
 		}
-		p.AssetPubs = append(p.AssetPubs, assetPub)
 	}
-	// Every transfer's outputs, plus a note the action may mint.
-	if err := k.checkCapacity(ctx, uint64(types.TransferArity*len(ts)+1)); err != nil {
+	// Every bundle's outputs, plus a note the action may mint.
+	if err := k.checkCapacity(ctx, uint64(types.ActionCount(msg)+1)); err != nil {
 		return PreparedPrivateMsg{}, err
 	}
-	if m, ok := msg.(*types.MsgTransfer); ok && m.Transfer.ValueOut > 0 {
-		recv, err := m.ReceiverBytes(k.addressCodec)
-		if err != nil {
-			return PreparedPrivateMsg{}, err
-		}
-		coin := sdk.NewCoin(m.Transfer.DenomOut, math.NewIntFromUint64(m.Transfer.ValueOut-m.FeeFromOutput))
-		if err := k.checkUnshield(ctx, coin, recv); err != nil {
-			return PreparedPrivateMsg{}, err
-		}
+	if err := k.checkReleaseMap(ctx, msg); err != nil {
+		return PreparedPrivateMsg{}, err
 	}
-	signal, err := msg.Signal(sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
+	sighash, err := types.Sighash(msg, sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
 	if err != nil {
 		return PreparedPrivateMsg{}, err
 	}
-	p.Signal = signal
+	p.Sighash = sighash
+	for i, b := range bs {
+		if p.Bundles[i], err = b.ToOrchard(); err != nil {
+			return PreparedPrivateMsg{}, err
+		}
+	}
 	return p, nil
+}
+
+// checkReleaseMap refuses a msg whose released value (types.Remainders) has
+// no destination the chain can pay before anything is spent: an unshield's
+// receiver must be able to take every coin, and a msg with neither a
+// receiver nor an action handler (which releases to its module) must release
+// nothing beyond its fee.
+func (k Keeper) checkReleaseMap(ctx context.Context, msg types.PrivateMsg) error {
+	rem, err := types.Remainders(msg)
+	if err != nil {
+		return err
+	}
+	if um, ok := msg.(types.UnshieldMsg); ok {
+		recv, err := um.UnshieldReceiver(k.addressCodec)
+		if err != nil {
+			return err
+		}
+		if (recv == nil) != (len(rem) == 0) {
+			return types.ErrReleaseMap.Wrap("a receiver is named exactly when the balances exceed the fee")
+		}
+		for _, r := range rem {
+			if err := k.checkUnshield(ctx, sdk.NewCoin(r.Denom, math.NewIntFromUint64(r.Amount)), recv); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if _, ok := k.PrivateAction(msg); !ok && len(rem) > 0 {
+		return types.ErrReleaseMap.Wrap("the msg releases value it has nowhere to send")
+	}
+	return nil
 }
 
 // checkPrivateAnchor is checkAnchor, except that a msg whose action handler
@@ -120,74 +172,68 @@ func (k Keeper) checkPrivateAnchor(ctx context.Context, msg types.PrivateMsg, ro
 	return nil
 }
 
-// VerifyPrivateMsg verifies each transfer's proof against the public inputs
-// the chain computed: the transfer's own fields, its asset_pub from the
-// registry and the msg's one signal.
+// VerifyPrivateMsg verifies, under the msg's one sighash, each bundle's
+// binding signature (cheap: the value balance) and then every action proof
+// of every bundle, the proofs in parallel. The first failure in bundle and
+// action order is reported, whatever finished first.
 func (k Keeper) VerifyPrivateMsg(ctx context.Context, p PreparedPrivateMsg) error {
 	params, err := k.Params.Get(ctx)
 	if err != nil {
 		return err
 	}
-	vk := params.VerifyingKeys[types.CircuitTransfer]
+	vk := params.VerifyingKeys[types.CircuitAction]
 	if len(vk) == 0 {
-		return types.ErrMissingVerifyingKey.Wrap(types.CircuitTransfer)
+		return types.ErrMissingVerifyingKey.Wrap(types.CircuitAction)
 	}
-	for i, t := range p.Transfers {
-		ok, err := ultrahonk.Verify(vk, t.Proof, t.PublicInputs(p.AssetPubs[i], p.Signal))
-		if err != nil {
-			return errorsmod.Wrapf(types.ErrInvalidProof, "transfer %d: %s", i, err.Error())
+	for i, b := range p.Bundles {
+		if err := b.CheckBalance(p.Sighash, orchard.CanonicalBase); err != nil {
+			return errorsmod.Wrapf(types.ErrInvalidBindingSig, "bundle %d: %v", i, err)
 		}
-		if !ok {
-			return types.ErrInvalidProof.Wrapf("transfer %d", i)
-		}
+	}
+	err = orchard.VerifyProofs(p.Bundles, p.Sighash, func(proof []byte, in [][]byte) (bool, error) {
+		return ultrahonk.Verify(vk, proof, in)
+	})
+	if err != nil {
+		return errorsmod.Wrap(types.ErrInvalidProof, err.Error())
 	}
 	return nil
 }
 
-// ExecutePrivateMsg spends every transfer's nullifiers, appends its outputs
-// and pays its fee, and returns ctx carrying the authorization the msg's
-// handler requires. An unshield paying its fee from its output pays it here,
-// out of the uerth leaving the pool; the receiver is paid the rest.
+// ExecutePrivateMsg spends every bundle's nullifiers, appends its outputs and
+// pays the fee, records the authorization the msg's handler requires, and,
+// for an unshield, pays the receiver everything the bundles released beyond
+// the fee. It returns ctx carrying the authorization.
 func (k Keeper) ExecutePrivateMsg(ctx sdk.Context, msg types.PrivateMsg) (sdk.Context, error) {
-	ts := types.TransfersOf(msg)
-	positions := make([][]uint64, len(ts))
-	for i, t := range ts {
-		pos, err := k.executeTransfer(ctx, t)
+	bs := msg.PrivateBundles()
+	positions := make([][]uint64, len(bs))
+	for i, b := range bs {
+		pos, err := k.executeBundle(ctx, b)
 		if err != nil {
 			return ctx, err
 		}
 		positions[i] = pos
-		if t.Fee > 0 {
-			if err := k.payFee(ctx, t.FeeInt()); err != nil {
+	}
+	if fee := msg.PrivateFee(); fee > 0 {
+		if err := k.payFee(ctx, math.NewIntFromUint64(fee)); err != nil {
+			return ctx, err
+		}
+	}
+	ctx, err := AuthorizeMsg(ctx, msg, positions, types.FeeFromOutputOf(msg))
+	if err != nil {
+		return ctx, err
+	}
+	if um, ok := msg.(types.UnshieldMsg); ok {
+		recv, err := um.UnshieldReceiver(k.addressCodec)
+		if err != nil {
+			return ctx, err
+		}
+		if recv != nil {
+			if err := k.unshield(ctx, msg, recv); err != nil {
 				return ctx, err
 			}
 		}
 	}
-	ctx = WithAuthorizedTransfers(ctx, ts, positions, types.FeeFromOutputOf(msg))
-	if m, ok := msg.(*types.MsgTransfer); ok && m.FeeFromOutput > 0 {
-		if err := k.withholdFee(ctx, &m.Transfer, m.FeeFromOutput); err != nil {
-			return ctx, err
-		}
-	}
 	return ctx, nil
-}
-
-// withholdFee pays fee out of t's released uerth, before the handler pays the
-// rest of it out.
-func (k Keeper) withholdFee(ctx sdk.Context, t *types.Transfer, fee uint64) error {
-	a, at, err := authorizedFor(ctx, t)
-	if err != nil {
-		return err
-	}
-	if t.DenomOut != types.FeeDenom || at.value <= fee {
-		return errorsmod.Wrap(types.ErrInvalidTransfer, "fee from output exceeds the unshield")
-	}
-	if err := k.payFee(ctx, math.NewIntFromUint64(fee)); err != nil {
-		return err
-	}
-	at.withheld += fee
-	a.feePaid += fee
-	return nil
 }
 
 // ExecutePrivateAction runs msg's action in the ante, if its handler asks to
@@ -214,23 +260,24 @@ func (k Keeper) ExecutePrivateAction(ctx sdk.Context, msg types.PrivateMsg, prep
 	return nil
 }
 
-// CountPrivateTx admits one more private tx into the current block, or
-// refuses once max_private_txs_per_block have run. EndBlock resets it.
-func (k Keeper) CountPrivateTx(ctx context.Context) error {
+// CountPrivateActions admits n more actions into the current block, or
+// refuses once max_private_actions_per_block would be exceeded. EndBlock
+// resets the count.
+func (k Keeper) CountPrivateActions(ctx context.Context, n uint64) error {
 	params, err := k.Params.Get(ctx)
 	if err != nil {
 		return err
 	}
-	n, err := k.PrivateTxCount.Get(ctx)
+	c, err := k.PrivateActionCount.Get(ctx)
 	if errors.Is(err, collections.ErrNotFound) {
-		n = 0
+		c = 0
 	} else if err != nil {
 		return err
 	}
-	if n >= uint64(params.MaxPrivateTxsPerBlock) {
-		return types.ErrBlockCap.Wrapf("%d", params.MaxPrivateTxsPerBlock)
+	if c+n > uint64(params.MaxPrivateActionsPerBlock) {
+		return types.ErrBlockCap.Wrapf("%d actions in this block, %d more exceed %d", c, n, params.MaxPrivateActionsPerBlock)
 	}
-	return k.PrivateTxCount.Set(ctx, n+1)
+	return k.PrivateActionCount.Set(ctx, c+n)
 }
 
 // MinFee is the consensus floor on a private tx's fee, never below 1.

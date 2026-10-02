@@ -69,7 +69,7 @@ type BurnRecorder interface {
 }
 
 // ShieldedKeeper is the shielded pool, for the dex's note paths: the asset in
-// of a note swap or shielded deposit arrives by SpendToModule, outputs and
+// of a note swap or shielded deposit arrives by ReleaseToModule, outputs and
 // refunds leave by MintNote, and a fee from output by PayFeeFromModule. It
 // also says which denoms are shielded-only (ANML), so the transparent paths
 // can refuse them by name.
@@ -78,7 +78,7 @@ type ShieldedKeeper interface {
 	AssetID(ctx context.Context, denom string) ([]byte, error)
 	CheckMint(ctx context.Context, pc, ciphertext []byte) error
 	MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error)
-	SpendToModule(ctx context.Context, t *shieldedtypes.Transfer, targetModule string) (sdk.Coin, error)
+	ReleaseToModule(ctx context.Context, msg shieldedtypes.PrivateMsg, denom, targetModule string) (sdk.Coin, error)
 	PayFeeFromModule(ctx context.Context, fromModule string, fee math.Int) error
 	PrivateGasPrices(ctx context.Context) (proof, note uint64, err error)
 }

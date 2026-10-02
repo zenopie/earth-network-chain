@@ -11,6 +11,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	"github.com/earth-network/earth/x/shielded/types"
+	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
@@ -53,7 +54,7 @@ func (k Keeper) noteFor(ctx context.Context, coin sdk.Coin, pc, ciphertext []byt
 }
 
 // CheckMint refuses, without writing, the pc and ciphertext a later MintNote
-// would refuse, and a tree without room for a private msg's three outputs
+// would refuse, and a tree without room for the largest private msg's outputs
 // plus the note. For a private action's check, which must refuse before the
 // ante spends anything. The asset and the source's balance are the caller's
 // to ensure.
@@ -64,7 +65,7 @@ func (k Keeper) CheckMint(ctx context.Context, pc, ciphertext []byte) error {
 	if len(ciphertext) > types.MaxCiphertextBytes {
 		return errorsmod.Wrapf(types.ErrInvalidNote, "ciphertext exceeds %d bytes", types.MaxCiphertextBytes)
 	}
-	return k.checkCapacity(ctx, types.TransferArity+1)
+	return k.checkCapacity(ctx, types.MaxBundlesPerMsg*orchard.MaxActions+1)
 }
 
 // MintNote moves coin out of fromModule's account into the pool and appends a
@@ -134,12 +135,13 @@ func (k Keeper) depositNote(ctx context.Context, coin sdk.Coin, cm, ciphertext [
 	return k.appendNote(ctx, cm, ciphertext)
 }
 
-// executeTransfer is the note side of a verified transfer: spend its three
-// nullifiers and append its three outputs. The ante runs it, after every
-// check, so that the msg's own handler cannot fail in a way that leaves the
-// inputs spent and the outputs missing.
-func (k Keeper) executeTransfer(ctx context.Context, t *types.Transfer) ([]uint64, error) {
-	for _, nf := range t.Nullifiers {
+// executeBundle is the note side of a verified bundle: spend every action's
+// nullifier and append every action's output, in action order. The ante runs
+// it, after every check, so that the msg's own handler cannot fail in a way
+// that leaves the inputs spent and the outputs missing.
+func (k Keeper) executeBundle(ctx context.Context, b *types.Bundle) ([]uint64, error) {
+	for i := range b.Actions {
+		nf := b.Actions[i].Nullifier
 		spent, err := k.Nullifiers.Has(ctx, nf)
 		if err != nil {
 			return nil, err
@@ -154,9 +156,9 @@ func (k Keeper) executeTransfer(ctx context.Context, t *types.Transfer) ([]uint6
 			sdk.NewAttribute(types.AttributeKeyNullifier, hex.EncodeToString(nf)),
 		))
 	}
-	positions := make([]uint64, 0, types.TransferArity)
-	for i, cm := range t.Commitments {
-		pos, err := k.appendNote(ctx, cm, t.Ciphertexts[i])
+	positions := make([]uint64, 0, len(b.Actions))
+	for i := range b.Actions {
+		pos, err := k.appendNote(ctx, b.Actions[i].Commitment, b.Actions[i].Ciphertext)
 		if err != nil {
 			return nil, err
 		}
@@ -169,7 +171,7 @@ func (k Keeper) executeTransfer(ctx context.Context, t *types.Transfer) ([]uint6
 // x/earth's SplitCollectedFees burns half and distribution pays the rest.
 func (k Keeper) payFee(ctx context.Context, fee math.Int) error {
 	if !fee.IsPositive() {
-		return errorsmod.Wrap(types.ErrInvalidTransfer, "private fee must be positive")
+		return errorsmod.Wrap(types.ErrReleaseMap, "private fee must be positive")
 	}
 	coins := sdk.NewCoins(sdk.NewCoin(types.FeeDenom, fee))
 	if err := k.bankKeeper.SendCoinsFromModuleToModule(ctx, types.ModuleName, authtypes.FeeCollectorName, coins); err != nil {
@@ -184,50 +186,43 @@ func (k Keeper) payFee(ctx context.Context, fee math.Int) error {
 	return nil
 }
 
-// release claims t's public output (value_out of denom_out, less any fee
-// the ante withheld from it) for payment.
-func (k Keeper) release(ctx context.Context, t *types.Transfer) (sdk.Coin, error) {
-	_, at, err := authorizedFor(ctx, t)
+// unshield pays every remainder of an authorized msg to receiver: what its
+// bundles released beyond the fee. The ante runs it for an UnshieldMsg, right
+// after the fee, so an unshield is atomic with its spend.
+func (k Keeper) unshield(ctx context.Context, msg types.PrivateMsg, receiver sdk.AccAddress) error {
+	rem, err := types.Remainders(msg)
 	if err != nil {
-		return sdk.Coin{}, err
-	}
-	if t.ValueOut == 0 {
-		return sdk.Coin{}, errorsmod.Wrap(types.ErrInvalidTransfer, "transfer releases nothing")
-	}
-	if at.released {
-		return sdk.Coin{}, types.ErrAlreadyReleased
-	}
-	at.released = true
-	return sdk.NewCoin(t.DenomOut, math.NewIntFromUint64(t.ValueOut-at.withheld)), nil
-}
-
-// Unshield pays an authorized transfer's value_out to receiver.
-func (k Keeper) Unshield(ctx context.Context, t *types.Transfer, receiver sdk.AccAddress) (sdk.Coin, error) {
-	coin, err := k.release(ctx, t)
-	if err != nil {
-		return sdk.Coin{}, err
-	}
-	if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, receiver, sdk.NewCoins(coin)); err != nil {
-		return sdk.Coin{}, err
-	}
-	if err := k.countOut(ctx, coin.Denom, coin.Amount); err != nil {
-		return sdk.Coin{}, err
+		return err
 	}
 	recv, _ := k.addressCodec.BytesToString(receiver)
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeUnshield,
-		sdk.NewAttribute(types.AttributeKeyReceiver, recv),
-		sdk.NewAttribute(types.AttributeKeyAmount, coin.String()),
-	))
-	return coin, nil
+	for _, r := range rem {
+		coin, err := release(ctx, msg, r.Denom)
+		if err != nil {
+			return err
+		}
+		if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, receiver, sdk.NewCoins(coin)); err != nil {
+			return err
+		}
+		if err := k.countOut(ctx, coin.Denom, coin.Amount); err != nil {
+			return err
+		}
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeUnshield,
+			sdk.NewAttribute(types.AttributeKeyReceiver, recv),
+			sdk.NewAttribute(types.AttributeKeyAmount, coin.String()),
+		))
+	}
+	return nil
 }
 
-// SpendToModule pays an authorized transfer's value_out to targetModule's
+// ReleaseToModule pays an authorized msg's whole remainder of denom (its
+// bundles' balance of denom, less the fee for uerth) to targetModule's
 // account: the entry point for private msgs of other modules (a dex swap
-// from a note, a private delegation). The caller's handler must be for a
-// PrivateMsg whose Signal binds everything the payment depends on, and
-// should not fail after this returns — the ante has already spent the inputs.
-func (k Keeper) SpendToModule(ctx context.Context, t *types.Transfer, targetModule string) (sdk.Coin, error) {
-	coin, err := k.release(ctx, t)
+// from notes, a private delegation). Each denom is released once. The
+// caller's handler must be for a PrivateMsg whose sighash binds everything
+// the payment depends on, and should not fail after this returns: the ante
+// has already spent the inputs.
+func (k Keeper) ReleaseToModule(ctx context.Context, msg types.PrivateMsg, denom, targetModule string) (sdk.Coin, error) {
+	coin, err := release(ctx, msg, denom)
 	if err != nil {
 		return sdk.Coin{}, err
 	}

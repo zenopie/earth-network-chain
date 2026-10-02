@@ -22,7 +22,7 @@ import (
 // with its fixed gas, and running out halfway would strand a fee already paid.
 func authorized[T any](ctx context.Context, msg shieldedtypes.PrivateMsg) (sdk.Context, T, error) {
 	var zero T
-	a, err := shieldedkeeper.AuthorizedAction(ctx, msg.PrivateTransfer())
+	a, err := shieldedkeeper.AuthorizedAction(ctx, msg)
 	if err != nil {
 		return sdk.Context{}, zero, err
 	}

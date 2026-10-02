@@ -37,7 +37,7 @@ import (
 //
 // The pool's ERTH reserves and this module's balance stay exactly what
 // checkPoolTokenSolvency expects: the asset in arrives in this module's
-// account (SpendToModule) and goes into the reserves; the output leaves the
+// account (ReleaseToModule) and goes into the reserves; the output leaves the
 // reserves and this module's account (MintNote) in the same execution.
 
 // Fixed gas per action, on top of the transfers' and one note write per note
@@ -168,7 +168,8 @@ func (k Keeper) checkNoteSwap(ctx context.Context, m *types.MsgNoteSwap) error {
 // the private ante after the transfer was spent; any error (min_amount_out
 // not met) fails the whole tx, spend included.
 func (k Keeper) executeNoteSwap(ctx sdk.Context, m *types.MsgNoteSwap) (*types.MsgNoteSwapResponse, error) {
-	in, err := k.shielded.SpendToModule(ctx, &m.Transfer, types.ModuleName)
+	in, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
+		types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -193,14 +194,14 @@ func (k Keeper) executeNoteSwap(ctx sdk.Context, m *types.MsgNoteSwap) (*types.M
 
 // NoteSwap returns the swap the private ante executed.
 func (k msgServer) NoteSwap(ctx context.Context, m *types.MsgNoteSwap) (*types.MsgNoteSwapResponse, error) {
-	return anteResult[*types.MsgNoteSwapResponse](ctx, &m.Transfer)
+	return anteResult[*types.MsgNoteSwapResponse](ctx, m)
 }
 
 // anteResult is what a private msg's handler returns: the result of the
 // action the ante ran, and nothing else.
-func anteResult[R any](ctx context.Context, t *shieldedtypes.Transfer) (R, error) {
+func anteResult[R any](ctx context.Context, msg shieldedtypes.PrivateMsg) (R, error) {
 	var zero R
-	res, executed, err := shieldedkeeper.AuthorizedResult(ctx, t)
+	res, executed, err := shieldedkeeper.AuthorizedResult(ctx, msg)
 	if err != nil {
 		return zero, err
 	}
@@ -269,11 +270,13 @@ func (k Keeper) executeAddShielded(ctx sdk.Context, m *types.MsgAddLiquidityShie
 	if err != nil {
 		return nil, err
 	}
-	tokenIn, err := k.shielded.SpendToModule(ctx, &m.Transfer, types.ModuleName)
+	tokenIn, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
+		types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
-	erthIn, err := k.shielded.SpendToModule(ctx, &m.ErthTransfer, types.ModuleName)
+	erthIn, err := k.shielded.ReleaseToModule(ctx, m, m.ErthTransfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
+		types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +301,7 @@ func (k Keeper) executeAddShielded(ctx sdk.Context, m *types.MsgAddLiquidityShie
 
 // AddLiquidityShielded returns the deposit the private ante executed.
 func (k msgServer) AddLiquidityShielded(ctx context.Context, m *types.MsgAddLiquidityShielded) (*types.MsgAddLiquidityShieldedResponse, error) {
-	return anteResult[*types.MsgAddLiquidityShieldedResponse](ctx, &m.Transfer)
+	return anteResult[*types.MsgAddLiquidityShieldedResponse](ctx, m)
 }
 
 // SimulateSwapExactIn is what swapping tokenIn for denomOut would pay out

@@ -1,26 +1,35 @@
-// Package testutil is a deterministic shielded-pool scenario shared by the
-// proof generator (tools/privacyfixtures shielded, run by
-// scripts/shielded-fixtures.sh) and the tests that replay it on a real chain.
+// Package testutil is a deterministic shielded-pool scenario of Orchard-style
+// bundles, shared by x/shielded's keeper tests and the app tests that replay
+// it on a real chain, plus the action prover (prover.go) whose cached proofs
+// they verify.
 //
-// The chain appends notes in a fixed order — the Shields first, then each
-// Transfer's three outputs — so both sides can rebuild the exact tree every
-// proof was made against. Change anything here and the committed proofs in
-// x/shielded/testdata stop verifying: regenerate them.
+// The chain appends notes in a fixed order (the Shields first, then each
+// accepted Send's outputs in action order), so both sides rebuild the exact
+// tree every action was proven against. Every value is derived, so every
+// action's public inputs, and hence its proof file under
+// x/shielded/testdata/proofs, is reproducible. Change anything here and run
+// scripts/shielded-fixtures.sh to prove what is missing.
 package testutil
 
 import (
+	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
 	"github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/merkle"
+	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// ChainID is the chain the scenario's signals are bound to.
+// ChainID is the chain the scenario's sighashes are bound to.
 const ChainID = "earth-shielded-test"
+
+// MsgSendType is MsgSend's type URL, the first thing its sighash binds.
+const MsgSendType = "/earth.shielded.v1.MsgSend"
 
 // Det is a deterministic pseudo-random field element.
 func Det(label string, i uint64) fr.Element {
@@ -64,38 +73,39 @@ func (n Note) CM() fr.Element {
 	return privacy.CM(privacy.AssetID(n.Denom), n.Value, n.PC())
 }
 
-// Input is one transfer input: a note at Position, or a dummy (Value 0) with
-// a fresh rho whose nullifier is published but whose membership is not
-// checked.
-type Input struct {
-	Note     Note
+// Action is one action of a Send: a real spend of the note at Position (or a
+// dummy spend when Spend is nil) and an output (a dummy when its value is 0).
+type Action struct {
+	Spend    *Note
 	Position uint32
+	Out      Note
 }
 
-// Spend is one transfer.
-type Spend struct {
-	Name        string
-	Denom       string // the hidden asset A of slots 0-1
-	Owner       Wallet // owns every real input
-	In          [3]Input
-	Out         [3]Note // slot 2 is uerth
-	Ciphertexts [3][]byte
-	Fee         uint64
-	ValueOut    uint64
-	Receiver    []byte // raw address bytes, nil unless ValueOut > 0
+// Send is one MsgSend: Owner's notes spent through one bundle.
+type Send struct {
+	Name     string
+	Owner    Wallet
+	Actions  []Action
+	Fee      uint64
+	Receiver []byte // raw address bytes, nil unless something is unshielded
+	// Refused marks a send the chain must refuse: its outputs are never
+	// appended, so later sends' trees leave them out.
+	Refused bool
 }
 
 // Scenario is the whole deterministic history.
 type Scenario struct {
-	Shields   []Note
-	Transfers []Spend
+	Shields []Note
+	Sends   []Send
 }
 
 var (
 	Alice = Wallet{NK: Det("nk", 1), EK: detKey("ek", 1)}
 	Bob   = Wallet{NK: Det("nk", 2), EK: detKey("ek", 2)}
+	// Nobody receives the dummy outputs.
+	Nobody = Wallet{NK: Det("nk", 3), EK: detKey("ek", 3)}
 
-	// Receiver is where transfer 1 unshields to (20 raw address bytes).
+	// Receiver is where the unshield pays (20 raw address bytes).
 	Receiver = []byte("shielded-fixture-rcv")
 )
 
@@ -103,8 +113,142 @@ func note(owner Wallet, denom string, value uint64, label string, i uint64) Note
 	return Note{Owner: owner, Denom: denom, Value: value, Rho: Det(label+"/rho", i), Rcm: Det(label+"/rcm", i)}
 }
 
-// ct is out's real ciphertext ("earth note v1", zk/privacy.EncryptNote) to
-// its owner's address, with a deterministic ephemeral key.
+// Scenario sends by name, in order.
+const (
+	Send2        = 0 // a send padded to two actions
+	Multi3       = 1 // ANML send + ERTH fee, one mixed-asset action
+	Unshield2    = 2 // unshield of uerth paying its fee out of what it releases
+	Consolidate  = 3 // ten actions: eight small notes and two changes merged
+	DoubleSpend  = 4 // send2's note again, under a fresh bundle: refused
+	SingleAction = 5 // one action, a real proof: refused by the padding rule
+)
+
+// Default is the scenario:
+//
+//	positions 0..10  MsgShield (Alice): 1,000,000 uerth; 100,000 uerth;
+//	                 5,000,000 uanml; eight notes of 2,000 uerth
+//	send2       Alice -> Bob 700,000 uerth, change 270,000; fee 30,000.  11,12
+//	multi3      Alice -> Bob 1,000,000 uanml; the ERTH note pays the fee and
+//	            its spend action outputs the ANML change (mixed assets);
+//	            ERTH change 60,000; fee 40,000.                          13..15
+//	unshield2   Bob unshields 500,000 uerth to Receiver from his 700,000,
+//	            change 170,000; the fee comes out of the unshield.       16,17
+//	consolidate Alice merges 8 x 2,000 + 270,000 + 60,000 into 216,000;
+//	            fee 130,000 (ten actions).                               18..27
+//	doublespend Alice spends position 0 again: refused (nullifier spent).
+//	single1     Bob spends his 170,000 in one action: refused (padding).
+func Default() Scenario {
+	const erth, anml = types.FeeDenom, types.AnmlDenom
+	s := Scenario{Shields: []Note{
+		note(Alice, erth, 1_000_000, "shield", 0),
+		note(Alice, erth, 100_000, "shield", 1),
+		note(Alice, anml, 5_000_000, "shield", 2),
+	}}
+	for k := range uint64(8) {
+		s.Shields = append(s.Shields, note(Alice, erth, 2_000, "small", k))
+	}
+	sh := func(i int) *Note { return &s.Shields[i] }
+	dummy := func(label string, i uint64) Note { return note(Nobody, erth, 0, label, i) }
+
+	send2 := Send{Name: "send2", Owner: Alice, Fee: 30_000, Actions: []Action{
+		{Spend: sh(0), Position: 0, Out: note(Bob, erth, 700_000, "send2/out", 0)},
+		{Out: note(Alice, erth, 270_000, "send2/out", 1)},
+	}}
+	multi3 := Send{Name: "multi3", Owner: Alice, Fee: 40_000, Actions: []Action{
+		{Spend: sh(2), Position: 2, Out: note(Bob, anml, 1_000_000, "multi3/out", 0)},
+		{Spend: sh(1), Position: 1, Out: note(Alice, anml, 4_000_000, "multi3/out", 1)},
+		{Out: note(Alice, erth, 60_000, "multi3/out", 2)},
+	}}
+	unshield2 := Send{Name: "unshield2", Owner: Bob, Fee: 30_000, Receiver: Receiver, Actions: []Action{
+		{Spend: &send2.Actions[0].Out, Position: 11, Out: note(Bob, erth, 170_000, "unshield2/out", 0)},
+		{Out: dummy("unshield2/out", 1)},
+	}}
+	cons := Send{Name: "consolidate", Owner: Alice, Fee: 130_000}
+	for k := range 8 {
+		out := dummy("consolidate/out", uint64(k))
+		if k == 0 {
+			out = note(Alice, erth, 216_000, "consolidate/out", 0)
+		}
+		cons.Actions = append(cons.Actions, Action{Spend: sh(3 + k), Position: uint32(3 + k), Out: out})
+	}
+	cons.Actions = append(cons.Actions,
+		Action{Spend: &send2.Actions[1].Out, Position: 12, Out: dummy("consolidate/out", 8)},
+		Action{Spend: &multi3.Actions[2].Out, Position: 15, Out: dummy("consolidate/out", 9)},
+	)
+	double := Send{Name: "doublespend", Owner: Alice, Fee: 30_000, Refused: true, Actions: []Action{
+		{Spend: sh(0), Position: 0, Out: note(Alice, erth, 970_000, "doublespend/out", 0)},
+		{Out: dummy("doublespend/out", 1)},
+	}}
+	single := Send{Name: "single1", Owner: Bob, Fee: 30_000, Refused: true, Actions: []Action{
+		{Spend: &unshield2.Actions[0].Out, Position: 16, Out: note(Bob, erth, 140_000, "single1/out", 0)},
+	}}
+	s.Sends = []Send{send2, multi3, unshield2, cons, double, single}
+	return s
+}
+
+// TreeBefore is the note tree as it stands when send i is proven: every
+// shield, then the outputs of the accepted sends before i.
+func (s Scenario) TreeBefore(i int) (*merkle.Tree, error) {
+	t := merkle.NewMem()
+	for _, n := range s.Shields {
+		if _, err := t.Append(n.CM()); err != nil {
+			return nil, err
+		}
+	}
+	for _, sd := range s.Sends[:i] {
+		if sd.Refused {
+			continue
+		}
+		for _, a := range sd.Actions {
+			if _, err := t.Append(a.Out.CM()); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return t, nil
+}
+
+// dummySpend is action j's dummy spend note: value 0, a fresh rho.
+func (sd Send) dummySpend(j int) Note {
+	return note(sd.Owner, types.FeeDenom, 0, sd.Name+"/dummy", uint64(j))
+}
+
+// spendOf is action j's spent note and position (a dummy at position 0).
+func (sd Send) spendOf(j int) (Note, uint32) {
+	a := sd.Actions[j]
+	if a.Spend == nil {
+		return sd.dummySpend(j), 0
+	}
+	return *a.Spend, a.Position
+}
+
+// Rcv is action j's value-commitment randomness.
+func (sd Send) Rcv(j int) fr.Element { return Det(sd.Name+"/rcv", uint64(j)) }
+
+// Balances is the bundle's value balance: per denom, spends less outputs,
+// every one positive (one per denom, in denom order).
+func (sd Send) Balances() []types.ValueBalance {
+	net := map[string]int64{}
+	for j := range sd.Actions {
+		sp, _ := sd.spendOf(j)
+		net[sp.Denom] += int64(sp.Value)
+		net[sd.Actions[j].Out.Denom] -= int64(sd.Actions[j].Out.Value)
+	}
+	var out []types.ValueBalance
+	for d, v := range net {
+		if v < 0 {
+			panic(fmt.Sprintf("%s creates %s", sd.Name, d))
+		}
+		if v > 0 {
+			out = append(out, types.ValueBalance{Denom: d, Amount: uint64(v)})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Denom < out[j].Denom })
+	return out
+}
+
+// ct is out's real ciphertext ("earth note v1", zk/privacy.EncryptNote) to its
+// owner's address, with a deterministic ephemeral key.
 func ct(out Note, label string, i int) []byte {
 	pt := privacy.NotePlaintext{AssetID: privacy.AssetID(out.Denom), Value: out.Value, Rho: out.Rho, Rcm: out.Rcm}
 	copy(pt.Memo[:], fmt.Sprintf("%s:%d", label, i))
@@ -115,187 +259,157 @@ func ct(out Note, label string, i int) []byte {
 	return c
 }
 
-// Default is the scenario the committed proofs were made for:
-//
-//	positions 0,1   MsgShield: Alice 1,000,000 uerth and 100,000 uerth (fee note)
-//	transfer 0      Alice -> Bob 700,000; change 300,000 to Alice; fee note
-//	                change 80,000 to Bob; fee 20,000.        outputs at 2,3,4
-//	transfer 1      Bob unshields 500,000 to Receiver, keeps 200,000, a zero
-//	                output, fee change 60,000; fee 20,000.  outputs at 5,6,7
-func Default() Scenario {
-	const erth = types.FeeDenom
-	s := Scenario{
-		Shields: []Note{
-			note(Alice, erth, 1_000_000, "shield", 0),
-			note(Alice, erth, 100_000, "shield", 1),
-		},
+// Bundle is send i's bundle without proofs or binding signature: what the
+// sighash binds.
+func (s Scenario) Bundle(i int) (*types.Bundle, error) {
+	sd := s.Sends[i]
+	t, err := s.TreeBefore(i)
+	if err != nil {
+		return nil, err
 	}
-	t0 := Spend{
-		Name: "transfer0", Denom: erth, Owner: Alice,
-		In: [3]Input{
-			{Note: s.Shields[0], Position: 0},
-			{Note: note(Alice, erth, 0, "t0/dummy", 0), Position: 0},
-			{Note: s.Shields[1], Position: 1},
-		},
-		Out: [3]Note{
-			note(Bob, erth, 700_000, "t0/out", 0),
-			note(Alice, erth, 300_000, "t0/out", 1),
-			note(Bob, erth, 80_000, "t0/out", 2),
-		},
-		Fee: 20_000,
+	root, err := t.Root()
+	if err != nil {
+		return nil, err
 	}
-	for i := range 3 {
-		t0.Ciphertexts[i] = ct(t0.Out[i], "t0", i)
+	b := &types.Bundle{Balances: sd.Balances()}
+	for j, a := range sd.Actions {
+		sp, pos := sd.spendOf(j)
+		cv := orchard.ValueCommit(privacy.AssetID(sp.Denom), sp.Value, privacy.AssetID(a.Out.Denom), a.Out.Value, sd.Rcv(j))
+		b.Actions = append(b.Actions, types.Action{
+			Anchor:     privacy.FieldBytes(root),
+			Nullifier:  privacy.FieldBytes(privacy.NF(sd.Owner.NK, sp.Rho, pos)),
+			Commitment: privacy.FieldBytes(a.Out.CM()),
+			Cv:         orchard.PointBytes(cv),
+			Ciphertext: ct(a.Out, sd.Name, j),
+		})
 	}
-	t1 := Spend{
-		Name: "transfer1", Denom: erth, Owner: Bob,
-		In: [3]Input{
-			{Note: t0.Out[0], Position: 2},
-			{Note: note(Bob, erth, 0, "t1/dummy", 0), Position: 0},
-			{Note: t0.Out[2], Position: 4},
-		},
-		Out: [3]Note{
-			note(Bob, erth, 200_000, "t1/out", 0),
-			note(Bob, erth, 0, "t1/out", 1),
-			note(Bob, erth, 60_000, "t1/out", 2),
-		},
-		Fee:      20_000,
-		ValueOut: 500_000,
-		Receiver: Receiver,
-	}
-	for i := range 3 {
-		t1.Ciphertexts[i] = ct(t1.Out[i], "t1", i)
-	}
-	s.Transfers = []Spend{t0, t1}
-	return s
+	return b, nil
 }
 
-// TreeBefore is the note tree as it stands when transfer i is proven: every
-// shield, then the outputs of transfers 0..i-1.
-func (s Scenario) TreeBefore(i int) (*merkle.Tree, error) {
-	t := merkle.NewMem()
-	for _, n := range s.Shields {
-		if _, err := t.Append(n.CM()); err != nil {
+// SighashFields is MsgSend's fields for send i: Bytes(receiver), fee.
+func (sd Send) SighashFields() []fr.Element {
+	return []fr.Element{privacy.Bytes(sd.Receiver), privacy.U64(sd.Fee)}
+}
+
+// Sighash is send i's MsgSend sighash on ChainID, computed from the
+// scenario's own values (the chain recomputes it from the msg).
+func (s Scenario) Sighash(i int, b *types.Bundle) (fr.Element, error) {
+	ob, err := b.ToOrchard()
+	if err != nil {
+		return fr.Element{}, err
+	}
+	return orchard.Sighash(MsgSendType, ChainID, []*orchard.Bundle{ob}, s.Sends[i].SighashFields()...), nil
+}
+
+// ActionWitness is action j of send i under sighash: its Prover.toml for the
+// action circuit and the public inputs the chain computes.
+func (s Scenario) ActionWitness(i, j int, b *types.Bundle, sighash fr.Element) (string, [][]byte, error) {
+	sd := s.Sends[i]
+	t, err := s.TreeBefore(i)
+	if err != nil {
+		return "", nil, err
+	}
+	sp, pos := sd.spendOf(j)
+	var path [merkle.Depth]fr.Element
+	if sp.Value != 0 {
+		if path, err = t.Path(uint64(pos)); err != nil {
+			return "", nil, err
+		}
+	}
+	ob, err := b.ToOrchard()
+	if err != nil {
+		return "", nil, err
+	}
+	out := sd.Actions[j].Out
+	return ActionToml(ActionInputs{
+		NK: sd.Owner.NK, SAsset: privacy.AssetID(sp.Denom), SValue: sp.Value, SRho: sp.Rho, SRcm: sp.Rcm,
+		SPos: pos, SPath: path[:], OAsset: privacy.AssetID(out.Denom), OValue: out.Value, OPC: out.PC(),
+		Rcv: sd.Rcv(j),
+	}, ob.PublicInputs(j, sighash)), ob.PublicInputs(j, sighash), nil
+}
+
+// ActionInputs is an action circuit witness's private part.
+type ActionInputs struct {
+	NK, SAsset fr.Element
+	SValue     uint64
+	SRho, SRcm fr.Element
+	SPos       uint32
+	SPath      []fr.Element
+	OAsset     fr.Element
+	OValue     uint64
+	OPC, Rcv   fr.Element
+}
+
+// ActionToml is the action circuit's Prover.toml for in and the public
+// inputs pub (anchor, nf, cm_out, cv_x, cv_y, sighash).
+func ActionToml(in ActionInputs, pub [][]byte) string {
+	q := func(b []byte) string { return fmt.Sprintf("\"0x%x\"", b) }
+	qe := func(e fr.Element) string { return q(privacy.FieldBytes(e)) }
+	path := make([]string, merkle.Depth)
+	for k := range path {
+		var e fr.Element
+		if k < len(in.SPath) {
+			e = in.SPath[k]
+		}
+		path[k] = qe(e)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "nk = %s\ns_asset = %s\ns_value = \"%d\"\ns_rho = %s\ns_rcm = %s\ns_pos = \"%d\"\ns_path = [%s]\n",
+		qe(in.NK), qe(in.SAsset), in.SValue, qe(in.SRho), qe(in.SRcm), in.SPos, strings.Join(path, ", "))
+	fmt.Fprintf(&b, "o_asset = %s\no_value = \"%d\"\no_pc = %s\nrcv = %s\n", qe(in.OAsset), in.OValue, qe(in.OPC), qe(in.Rcv))
+	names := []string{"anchor", "nf", "cm_out", "cv_x", "cv_y", "sighash"}
+	for k, n := range names {
+		fmt.Fprintf(&b, "%s = %s\n", n, q(pub[k]))
+	}
+	return b.String()
+}
+
+// Sign makes send i's binding signature over sighash (deterministic nonce
+// input, so fixtures are stable).
+func (s Scenario) Sign(i int, sighash fr.Element) ([]byte, error) {
+	sd := s.Sends[i]
+	rcvs := make([]fr.Element, len(sd.Actions))
+	for j := range rcvs {
+		rcvs[j] = sd.Rcv(j)
+	}
+	return orchard.SignBinding(orchard.BindingSigningKey(rcvs), sighash, bytes.NewReader(make([]byte, 32)))
+}
+
+// Bsk is send i's binding signing key, for tests re-signing a tampered msg.
+func (s Scenario) Bsk(i int) []fr.Element {
+	sd := s.Sends[i]
+	rcvs := make([]fr.Element, len(sd.Actions))
+	for j := range rcvs {
+		rcvs[j] = sd.Rcv(j)
+	}
+	return rcvs
+}
+
+// Msg builds send i as a proven, signed MsgSend. receiver is the bech32 of
+// Receiver (or "" when the send unshields nothing); prove supplies each
+// action's proof from its witness.
+func (s Scenario) Msg(i int, receiver string, prove func(toml string, pub [][]byte) []byte) (*types.MsgSend, error) {
+	b, err := s.Bundle(i)
+	if err != nil {
+		return nil, err
+	}
+	sighash, err := s.Sighash(i, b)
+	if err != nil {
+		return nil, err
+	}
+	for j := range b.Actions {
+		toml, pub, err := s.ActionWitness(i, j, b, sighash)
+		if err != nil {
 			return nil, err
 		}
+		b.Actions[j].Proof = prove(toml, pub)
 	}
-	for _, sp := range s.Transfers[:i] {
-		for _, o := range sp.Out {
-			if _, err := t.Append(o.CM()); err != nil {
-				return nil, err
-			}
-		}
+	if b.BindingSig, err = s.Sign(i, sighash); err != nil {
+		return nil, err
 	}
-	return t, nil
-}
-
-// Nullifiers of s's inputs.
-func (sp Spend) Nullifiers() [3]fr.Element {
-	var nf [3]fr.Element
-	for i, in := range sp.In {
-		nf[i] = privacy.NF(sp.Owner.NK, in.Note.Rho, in.Position)
+	m := &types.MsgSend{Bundle: *b, Fee: s.Sends[i].Fee}
+	if s.Sends[i].Receiver != nil {
+		m.Receiver = receiver
 	}
-	return nf
-}
-
-// Signal is MsgTransfer's signal for this spend on ChainID.
-func (sp Spend) Signal() fr.Element {
-	return privacy.TransferSignal(ChainID, sp.Receiver, sp.Ciphertexts, 0)
-}
-
-// DenomOut is the unshielded denom, "" when nothing leaves the pool.
-func (sp Spend) DenomOut() string {
-	if sp.ValueOut == 0 {
-		return ""
-	}
-	return sp.Denom
-}
-
-// Transfer builds the msg's Transfer for spend i with proof.
-func (s Scenario) Transfer(i int, proof []byte) (types.Transfer, error) {
-	sp := s.Transfers[i]
-	t, err := s.TreeBefore(i)
-	if err != nil {
-		return types.Transfer{}, err
-	}
-	root, err := t.Root()
-	if err != nil {
-		return types.Transfer{}, err
-	}
-	out := types.Transfer{
-		Proof: proof, Root: privacy.FieldBytes(root),
-		Fee: sp.Fee, ValueOut: sp.ValueOut, DenomOut: sp.DenomOut(),
-	}
-	nf := sp.Nullifiers()
-	for j := range 3 {
-		out.Nullifiers = append(out.Nullifiers, privacy.FieldBytes(nf[j]))
-		out.Commitments = append(out.Commitments, privacy.FieldBytes(sp.Out[j].CM()))
-		out.Ciphertexts = append(out.Ciphertexts, sp.Ciphertexts[j])
-	}
-	return out, nil
-}
-
-// Witness is spend i's Prover.toml and the public inputs the chain computes,
-// in ABI order.
-func (s Scenario) Witness(i int) (string, []fr.Element, error) {
-	sp := s.Transfers[i]
-	t, err := s.TreeBefore(i)
-	if err != nil {
-		return "", nil, err
-	}
-	root, err := t.Root()
-	if err != nil {
-		return "", nil, err
-	}
-	q := func(e fr.Element) string { b := e.Bytes(); return fmt.Sprintf("\"0x%x\"", b[:]) }
-	arr := func(es []fr.Element) string {
-		p := make([]string, len(es))
-		for j, e := range es {
-			p[j] = q(e)
-		}
-		return "[" + strings.Join(p, ", ") + "]"
-	}
-	var vals, outVals, pos [3]string
-	var rho, rcm, outPC [3]fr.Element
-	var paths [3]string
-	for j, in := range sp.In {
-		vals[j] = fmt.Sprintf("\"%d\"", in.Note.Value)
-		pos[j] = fmt.Sprintf("\"%d\"", in.Position)
-		rho[j], rcm[j] = in.Note.Rho, in.Note.Rcm
-		var sib [merkle.Depth]fr.Element
-		if in.Note.Value != 0 {
-			if sib, err = t.Path(uint64(in.Position)); err != nil {
-				return "", nil, err
-			}
-		}
-		paths[j] = arr(sib[:])
-		outVals[j] = fmt.Sprintf("\"%d\"", sp.Out[j].Value)
-		outPC[j] = sp.Out[j].PC()
-	}
-	nf := sp.Nullifiers()
-	var cm [3]fr.Element
-	for j := range 3 {
-		cm[j] = sp.Out[j].CM()
-	}
-	var assetPub fr.Element
-	if sp.ValueOut > 0 {
-		assetPub = privacy.AssetID(sp.Denom)
-	}
-	signal := sp.Signal()
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "# Generated by tools/privacyfixtures shielded (%s). Do not edit.\n", sp.Name)
-	fmt.Fprintf(&b, "asset = %s\nnk = %s\n", q(privacy.AssetID(sp.Denom)), q(sp.Owner.NK))
-	fmt.Fprintf(&b, "in_value = [%s]\nin_rho = %s\nin_rcm = %s\nin_pos = [%s]\n",
-		strings.Join(vals[:], ", "), arr(rho[:]), arr(rcm[:]), strings.Join(pos[:], ", "))
-	fmt.Fprintf(&b, "in_path = [%s]\n", strings.Join(paths[:], ", "))
-	fmt.Fprintf(&b, "out_value = [%s]\nout_pc = %s\n", strings.Join(outVals[:], ", "), arr(outPC[:]))
-	fmt.Fprintf(&b, "root = %s\nnf = %s\ncm_out = %s\nfee = \"%d\"\nv_pub_out = \"%d\"\nasset_pub = %s\nsignal = %s\n",
-		q(root), arr(nf[:]), arr(cm[:]), sp.Fee, sp.ValueOut, q(assetPub), q(signal))
-
-	pub := []fr.Element{root}
-	pub = append(pub, nf[:]...)
-	pub = append(pub, cm[:]...)
-	pub = append(pub, privacy.U64(sp.Fee), privacy.U64(sp.ValueOut), assetPub, signal)
-	return b.String(), pub, nil
+	return m, nil
 }

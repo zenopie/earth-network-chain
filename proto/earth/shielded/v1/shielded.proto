@@ -7,8 +7,54 @@ import "gogoproto/gogo.proto";
 
 option go_package = "github.com/earth-network/earth/x/shielded/types";
 
-// Transfer is one 3-in/3-out transfer proof (circuits/transfer) and its public
-// inputs, as carried by every private msg that spends notes. Public input
+// Action is one spend and one output of a shielded bundle (circuits/action),
+// either of which may be a dummy, and the proof of it. Public input order:
+// anchor, nullifier, commitment, cv_x, cv_y, sighash; the chain computes the
+// sighash from the enclosing msg (zk/orchard.Sighash), so it is not carried.
+message Action {
+  // anchor is the note-tree root the spend is proven against: 32 bytes, a
+  // root recorded within root_window_seconds (or one the msg's action
+  // handler vouches for). Required of dummy spends too.
+  bytes anchor = 1;
+  // nullifier of the spent note, 32 bytes, distinct across the msg. A dummy
+  // (value-0) spend still publishes, and spends, a fresh nullifier.
+  bytes nullifier = 2;
+  // commitment of the output note, 32 bytes, appended to the tree.
+  bytes commitment = 3;
+  // cv is the action's value commitment on Grumpkin, x || y, 64 bytes:
+  // cv = v_spend*G(asset_spend) - v_out*G(asset_out) + rcv*R.
+  bytes cv = 4;
+  // ciphertext is the output note encrypted to its owner, emitted for
+  // wallets to trial-decrypt. Bound by the sighash.
+  bytes ciphertext = 5;
+  // proof is the bb v5.0.0 UltraHonk proof of the action circuit.
+  bytes proof = 6;
+}
+
+// ValueBalance is value of one denom leaving the pool through a bundle: its
+// spends exceed its outputs by amount. Only positive balances exist.
+message ValueBalance {
+  string denom = 1;
+  uint64 amount = 2;
+}
+
+// Bundle is an Orchard-style shielded bundle: at least two actions, the
+// public value balance per denom, and the binding signature (Schnorr over
+// Grumpkin, zk/orchard) proving the actions' value commitments sum to the
+// balances. The enclosing msg says where each balance goes (the fee, an
+// unshield receiver, a module); the private ante checks it is spent exactly.
+message Bundle {
+  repeated Action actions = 1 [(gogoproto.nullable) = false];
+  // balances, one per denom, each positive.
+  repeated ValueBalance balances = 2 [(gogoproto.nullable) = false];
+  // binding_sig is Rn.x || Rn.y || s, 96 bytes, over the msg's sighash.
+  bytes binding_sig = 3;
+}
+
+// Transfer is the retired 3-in/3-out transfer (circuits/transfer, removed).
+// TODO(orchard-phase2): still embedded by personhood, assembly,
+// shieldedstaking and dex msgs until they carry bundles; the private ante
+// refuses every msg that has no bundle, so none of them executes. Public input
 // order: root, nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal. The chain
 // computes asset_pub from denom_out (0 when value_out is 0) and signal from
 // the enclosing msg (see zk/privacy.SpendSignal); neither is carried.

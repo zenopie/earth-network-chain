@@ -54,7 +54,7 @@ type Keeper struct {
 	Turnstiles  collections.Map[string, types.Turnstile]
 	DirtyDenoms collections.KeySet[string]
 
-	PrivateTxCount collections.Item[uint64]
+	PrivateActionCount collections.Item[uint64]
 
 	// actions are the private actions other modules attach to their private
 	// msgs, by msg type URL. A map, so the copies of Keeper that module wiring
@@ -110,7 +110,7 @@ func NewKeeper(
 			codec.CollValue[types.Turnstile](cdc)),
 		DirtyDenoms: collections.NewKeySet(sb, types.DirtyDenomsKey, "dirty_denoms", collections.StringKey),
 
-		PrivateTxCount: collections.NewItem(sb, types.PrivateTxCountKey, "private_tx_count", collections.Uint64Value),
+		PrivateActionCount: collections.NewItem(sb, types.PrivateActionCountKey, "private_action_count", collections.Uint64Value),
 	}
 	for _, d := range shieldedOnlyDenoms {
 		k.shieldedOnly[d] = true

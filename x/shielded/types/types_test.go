@@ -2,53 +2,141 @@ package types_test
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/math"
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"github.com/earth-network/earth/x/shielded/types"
+	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-func validTransfer(t *testing.T) types.MsgTransfer {
+// validSend is the scenario's unshield2 with placeholder proofs: shape only.
+func validSend(t *testing.T) *types.MsgSend {
 	t.Helper()
-	tr, err := shieldedtest.Default().Transfer(0, []byte("proof"))
+	m, err := shieldedtest.Default().Msg(shieldedtest.Unshield2, "earth1receiver", func(string, [][]byte) []byte { return []byte("proof") })
 	require.NoError(t, err)
-	return types.MsgTransfer{Transfer: tr}
+	return m
 }
 
-func TestMsgTransferValidateBasic(t *testing.T) {
-	require.NoError(t, (&types.MsgTransfer{Transfer: validTransfer(t).Transfer}).ValidateBasic())
+func TestMsgSendValidateBasic(t *testing.T) {
+	require.NoError(t, validSend(t).ValidateBasic())
 	nonCanonical := bytes.Repeat([]byte{0xff}, 32)
-	cases := map[string]func(m *types.MsgTransfer){
-		"no proof":            func(m *types.MsgTransfer) { m.Transfer.Proof = nil },
-		"huge proof":          func(m *types.MsgTransfer) { m.Transfer.Proof = make([]byte, types.MaxProofBytes+1) },
-		"short root":          func(m *types.MsgTransfer) { m.Transfer.Root = m.Transfer.Root[:31] },
-		"non-canonical root":  func(m *types.MsgTransfer) { m.Transfer.Root = nonCanonical },
-		"two nullifiers":      func(m *types.MsgTransfer) { m.Transfer.Nullifiers = m.Transfer.Nullifiers[:2] },
-		"non-canonical nf":    func(m *types.MsgTransfer) { m.Transfer.Nullifiers[2] = nonCanonical },
-		"duplicate nf":        func(m *types.MsgTransfer) { m.Transfer.Nullifiers[2] = m.Transfer.Nullifiers[0] },
-		"four commitments":    func(m *types.MsgTransfer) { m.Transfer.Commitments = append(m.Transfer.Commitments, m.Transfer.Root) },
-		"non-canonical cm":    func(m *types.MsgTransfer) { m.Transfer.Commitments[1] = nonCanonical },
-		"huge ciphertext":     func(m *types.MsgTransfer) { m.Transfer.Ciphertexts[0] = make([]byte, types.MaxCiphertextBytes+1) },
-		"asset without value": func(m *types.MsgTransfer) { m.Transfer.DenomOut = "uerth" },
-		"value without asset": func(m *types.MsgTransfer) { m.Transfer.ValueOut = 1; m.Receiver = "x" },
-		"value, no receiver":  func(m *types.MsgTransfer) { m.Transfer.ValueOut, m.Transfer.DenomOut = 1, "uerth" },
-		"receiver, no value":  func(m *types.MsgTransfer) { m.Receiver = "earth1xyz" },
-		"bad denom": func(m *types.MsgTransfer) {
-			m.Transfer.ValueOut, m.Transfer.DenomOut, m.Receiver = 1, "!", "x"
+	offCurve := func() []byte {
+		b := validSend(t).Bundle.Actions[0].Cv
+		c := append([]byte(nil), b...)
+		c[63] ^= 1
+		return c
+	}()
+
+	cases := map[string]func(m *types.MsgSend){
+		"one action (padding)": func(m *types.MsgSend) { m.Bundle.Actions = m.Bundle.Actions[:1] },
+		"no actions":           func(m *types.MsgSend) { m.Bundle.Actions = nil },
+		"33 actions": func(m *types.MsgSend) {
+			for len(m.Bundle.Actions) < orchard.MaxActions+1 {
+				a := m.Bundle.Actions[0]
+				a.Nullifier = privacy.FieldBytes(privacy.U64(uint64(len(m.Bundle.Actions))))
+				m.Bundle.Actions = append(m.Bundle.Actions, a)
+			}
 		},
+		"no proof":             func(m *types.MsgSend) { m.Bundle.Actions[0].Proof = nil },
+		"huge proof":           func(m *types.MsgSend) { m.Bundle.Actions[1].Proof = make([]byte, types.MaxProofBytes+1) },
+		"short anchor":         func(m *types.MsgSend) { m.Bundle.Actions[0].Anchor = m.Bundle.Actions[0].Anchor[:31] },
+		"non-canonical anchor": func(m *types.MsgSend) { m.Bundle.Actions[1].Anchor = nonCanonical },
+		"non-canonical nf":     func(m *types.MsgSend) { m.Bundle.Actions[1].Nullifier = nonCanonical },
+		"duplicate nf":         func(m *types.MsgSend) { m.Bundle.Actions[1].Nullifier = m.Bundle.Actions[0].Nullifier },
+		"non-canonical cm":     func(m *types.MsgSend) { m.Bundle.Actions[0].Commitment = nonCanonical },
+		"cv off the curve":     func(m *types.MsgSend) { m.Bundle.Actions[0].Cv = offCurve },
+		"cv short":             func(m *types.MsgSend) { m.Bundle.Actions[0].Cv = m.Bundle.Actions[0].Cv[:63] },
+		"cv x >= p": func(m *types.MsgSend) {
+			m.Bundle.Actions[0].Cv = append(nonCanonical, m.Bundle.Actions[0].Cv[32:]...)
+		},
+		"huge ciphertext":   func(m *types.MsgSend) { m.Bundle.Actions[0].Ciphertext = make([]byte, types.MaxCiphertextBytes+1) },
+		"zero balance":      func(m *types.MsgSend) { m.Bundle.Balances[0].Amount = 0 },
+		"duplicate balance": func(m *types.MsgSend) { m.Bundle.Balances = append(m.Bundle.Balances, m.Bundle.Balances[0]) },
+		"bad denom":         func(m *types.MsgSend) { m.Bundle.Balances[0].Denom = "!" },
+		"too many balances": func(m *types.MsgSend) {
+			for k := range 5 {
+				m.Bundle.Balances = append(m.Bundle.Balances, types.ValueBalance{Denom: fmt.Sprintf("ux%d", k), Amount: 1})
+			}
+		},
+		"short binding sig":       func(m *types.MsgSend) { m.Bundle.BindingSig = m.Bundle.BindingSig[:95] },
+		"no fee":                  func(m *types.MsgSend) { m.Fee = 0 },
+		"fee above uerth balance": func(m *types.MsgSend) { m.Fee = m.Bundle.Balances[0].Amount + 1 },
+		"remainder, no receiver":  func(m *types.MsgSend) { m.Receiver = "" },
+		"receiver, no remainder":  func(m *types.MsgSend) { m.Fee = m.Bundle.Balances[0].Amount },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			m := validTransfer(t)
-			mutate(&m)
+			m := validSend(t)
+			mutate(m)
 			require.Error(t, m.ValidateBasic())
 		})
 	}
+	// A u64-max balance is fine (Remainders sums across bundles with an
+	// overflow check).
+	m := validSend(t)
+	m.Bundle.Balances[0].Amount = ^uint64(0)
+	m.Fee = ^uint64(0)
+	m.Receiver = ""
+	require.NoError(t, m.ValidateBasic())
+}
+
+func TestRemainders(t *testing.T) {
+	m := validSend(t)
+	rem, err := types.Remainders(m)
+	require.NoError(t, err)
+	require.Equal(t, []types.Remainder{{Denom: types.FeeDenom, Amount: 500_000}}, rem)
+	m.Bundle.Balances = append(m.Bundle.Balances, types.ValueBalance{Denom: types.AnmlDenom, Amount: 7})
+	rem, err = types.Remainders(m)
+	require.NoError(t, err)
+	require.Equal(t, []types.Remainder{{Denom: types.AnmlDenom, Amount: 7}, {Denom: types.FeeDenom, Amount: 500_000}}, rem, "denom order")
+	m.Fee = 530_001
+	_, err = types.Remainders(m)
+	require.ErrorIs(t, err, types.ErrReleaseMap)
+	require.Equal(t, uint64(530_001), types.TotalFee(m).Uint64())
+}
+
+// The sighash covers the msg type, chain id, bundle and the msg's fields.
+func TestSighash(t *testing.T) {
+	ac := addresscodec.NewBech32Codec("earth")
+	s := shieldedtest.Default()
+	m, err := s.Msg(shieldedtest.Unshield2, "", func(string, [][]byte) []byte { return []byte("proof") })
+	require.NoError(t, err)
+	m.Receiver, err = ac.BytesToString(shieldedtest.Receiver)
+	require.NoError(t, err)
+	got, err := types.Sighash(m, shieldedtest.ChainID, ac)
+	require.NoError(t, err)
+	b, err := s.Bundle(shieldedtest.Unshield2)
+	require.NoError(t, err)
+	want, err := s.Sighash(shieldedtest.Unshield2, b)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+	// Proofs and the binding signature are not bound (they are made over it).
+	m.Bundle.Actions[0].Proof = []byte("other")
+	m.Bundle.BindingSig = make([]byte, 96)
+	again, err := types.Sighash(m, shieldedtest.ChainID, ac)
+	require.NoError(t, err)
+	require.Equal(t, got, again)
+	m.Fee++
+	moved, err := types.Sighash(m, shieldedtest.ChainID, ac)
+	require.NoError(t, err)
+	require.NotEqual(t, got, moved)
+}
+
+func TestPrivateMsgGas(t *testing.T) {
+	p := types.DefaultParams()
+	b2 := &types.Bundle{Actions: make([]types.Action, 2)}
+	b10 := &types.Bundle{Actions: make([]types.Action, 10)}
+	per := types.DefaultProofVerificationGas + 2*types.DefaultNoteGas
+	require.Equal(t, per, p.ActionGas())
+	require.Equal(t, types.DefaultBundleGas+2*per, p.PrivateMsgGas([]*types.Bundle{b2}))
+	require.Equal(t, 2*types.DefaultBundleGas+12*per, p.PrivateMsgGas([]*types.Bundle{b2, b10}))
 }
 
 func TestMsgShieldValidateBasic(t *testing.T) {
@@ -66,38 +154,24 @@ func TestMsgShieldValidateBasic(t *testing.T) {
 	}
 }
 
-// asset_pub and signal are computed, not carried: 0 unless value leaves, and
-// the scenario's own public inputs otherwise.
-func TestPublicInputsLayout(t *testing.T) {
-	s := shieldedtest.Default()
-	for i := range s.Transfers {
-		_, want, err := s.Witness(i)
-		require.NoError(t, err)
-		tr, err := s.Transfer(i, []byte("p"))
-		require.NoError(t, err)
-		var assetPub = want[9]
-		got := tr.PublicInputs(assetPub, s.Transfers[i].Signal())
-		require.Len(t, got, types.TransferPublicInputs)
-		for j := range want {
-			require.Equal(t, privacy.FieldBytes(want[j]), got[j], "input %d", j)
-		}
-	}
-	// transfer 0 unshields nothing: asset_pub is 0.
-	_, pub, _ := s.Witness(0)
-	require.True(t, pub[9].IsZero())
-}
-
 func TestParamsValidate(t *testing.T) {
 	require.NoError(t, types.DefaultParams().Validate())
 	for name, mutate := range map[string]func(p *types.Params){
-		"zero min fee":   func(p *types.Params) { p.MinFee = math.ZeroInt() },
-		"nil min fee":    func(p *types.Params) { p.MinFee = math.Int{} },
-		"zero proof gas": func(p *types.Params) { p.ProofVerificationGas = 0 },
-		"zero note gas":  func(p *types.Params) { p.NoteGas = 0 },
-		"zero window":    func(p *types.Params) { p.RootWindowSeconds = 0 },
-		"no txs":         func(p *types.Params) { p.MaxPrivateTxsPerBlock = 0 },
-		"unknown vk":     func(p *types.Params) { p.VerifyingKeys = map[string][]byte{"passport": {1}} },
-		"empty vk":       func(p *types.Params) { p.VerifyingKeys = map[string][]byte{types.CircuitTransfer: nil} },
+		"zero min fee":    func(p *types.Params) { p.MinFee = math.ZeroInt() },
+		"nil min fee":     func(p *types.Params) { p.MinFee = math.Int{} },
+		"zero proof gas":  func(p *types.Params) { p.ProofVerificationGas = 0 },
+		"zero note gas":   func(p *types.Params) { p.NoteGas = 0 },
+		"zero window":     func(p *types.Params) { p.RootWindowSeconds = 0 },
+		"zero bundle gas": func(p *types.Params) { p.BundleGas = 0 },
+		"no actions":      func(p *types.Params) { p.MaxPrivateActionsPerBlock = 0 },
+		"bundle of one":   func(p *types.Params) { p.MaxActionsPerBundle = 1 },
+		"bundle of 33":    func(p *types.Params) { p.MaxActionsPerBundle = 33; p.MaxPrivateActionsPerBlock = 66 },
+		"block below two max bundles": func(p *types.Params) {
+			p.MaxPrivateActionsPerBlock = 2*p.MaxActionsPerBundle - 1
+		},
+		"unknown vk": func(p *types.Params) { p.VerifyingKeys = map[string][]byte{"passport": {1}} },
+		"retired vk": func(p *types.Params) { p.VerifyingKeys = map[string][]byte{types.CircuitTransfer: {1}} },
+		"empty vk":   func(p *types.Params) { p.VerifyingKeys = map[string][]byte{types.CircuitAction: nil} },
 	} {
 		p := types.DefaultParams()
 		mutate(&p)

@@ -34,7 +34,7 @@ func (k Keeper) RegisterPrivateActions(sk types.ShieldedKeeper) {
 // that did not come through the private ante, and a context on an infinite gas
 // meter (the action's work was priced up front).
 func authorized(ctx context.Context, msg shieldedtypes.PrivateMsg) (sdk.Context, personhoodtypes.MembershipStatement, error) {
-	a, err := shieldedkeeper.AuthorizedAction(ctx, msg.PrivateTransfer())
+	a, err := shieldedkeeper.AuthorizedAction(ctx, msg)
 	if err != nil {
 		return sdk.Context{}, personhoodtypes.MembershipStatement{}, err
 	}

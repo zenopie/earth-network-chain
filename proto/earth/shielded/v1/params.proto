@@ -16,7 +16,7 @@ message Params {
   // of Params (see x/personhood Params).
   option (gogoproto.stable_marshaler) = true;
 
-  // verifying_keys maps a circuit name ("transfer", "membership") to its
+  // verifying_keys maps a circuit name ("action", "membership") to its
   // Barretenberg UltraHonk (bb v5.0.0) verifying key. A private msg whose
   // circuit has no key is refused.
   map<string, bytes> verifying_keys = 1;
@@ -31,22 +31,31 @@ message Params {
     (amino.dont_omitempty) = true
   ];
 
-  // proof_verification_gas is charged per private msg before its proof is
-  // verified, whatever the outcome, and also in simulate mode.
+  // proof_verification_gas is charged per action (one action proof), before
+  // it is verified, whatever the outcome, and also in simulate mode.
   uint64 proof_verification_gas = 3;
 
-  // note_gas is charged per output commitment a private msg appends (and per
-  // nullifier it spends). Private msgs execute their pool writes on an
-  // infinite gas meter after paying this fixed price up front, so a private
-  // tx's gas is a function of its size and shape alone and cannot run out
-  // halfway through.
+  // note_gas is charged per nullifier spent and per commitment appended (two
+  // per action), and per note a private action mints. Private msgs execute
+  // their pool writes on an infinite gas meter after paying this fixed price
+  // up front, so a private tx's gas is a function of its shape alone and
+  // cannot run out halfway through.
   uint64 note_gas = 4;
 
   // root_window_seconds is how long a note-tree root stays a valid anchor
   // after the block that produced it. The latest root is always valid.
   uint64 root_window_seconds = 5;
 
-  // max_private_txs_per_block caps how many private txs one block executes.
-  // Each carries a proof whose verification is the dominant block cost.
-  uint32 max_private_txs_per_block = 6;
+  // max_private_actions_per_block caps how many actions (proofs) the private
+  // txs of one block carry in total. Proof verification is the dominant
+  // block cost.
+  uint32 max_private_actions_per_block = 6;
+
+  // max_actions_per_bundle caps one bundle: 2 (the padding minimum) to 32
+  // (zk/orchard.MaxActions, part of the balance's soundness bound).
+  uint32 max_actions_per_bundle = 7;
+
+  // bundle_gas is charged per bundle on top of its actions: the sighash,
+  // the binding key and the binding signature.
+  uint64 bundle_gas = 8;
 }

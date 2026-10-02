@@ -1,29 +1,30 @@
 // Package ante runs unsigned private txs through their own decorator chain.
 //
 // A private tx has no account behind it. It carries exactly one PrivateMsg,
-// no signatures and no signer infos; its authorization is the msg's transfer
-// proof, its replay protection is that transfer's nullifiers, and its fee is
-// paid out of the pool by the transfer's ERTH fee slot. None of the SDK's
+// no signatures and no signer infos; its authorization is the msg's bundles
+// (an action proof per action and a binding signature per bundle, all over
+// the msg's sighash), its replay protection is their nullifiers, and its fee
+// is paid out of the pool by the bundles' uerth balance. None of the SDK's
 // account decorators apply (DeductFee calls FeePayer, which indexes
 // signers[0] and panics with none), and the SDK's ValidateBasic refuses any
 // unsigned tx, so the private chain replaces them:
 //
 //	SetUpContext, LimitSimulationGas, CircuitBreaker  (as the normal chain)
-//	ValidateTx        tx shape; fee == the transfer's fee, in uerth
+//	ValidateTx        tx shape; bundle shapes; fee == the msg's fee, in uerth
 //	TxTimeoutHeight, ValidateMemo, ConsumeGasForTxSize  (as the normal chain)
-//	PrivateMsg        fixed gas; block cap; state checks; proofs;
-//	                  spend + append; fee floor; fee to fee_collector;
-//	                  an action that must be atomic with the spend, and a
-//	                  fee paid from that action's output
+//	PrivateMsg        fixed gas; block cap; state checks; binding signatures
+//	                  and proofs; spend + append; fee floor; fee to
+//	                  fee_collector; unshield; an action that must be atomic
+//	                  with the spend, and a fee paid from that action's output
 //
-// A msg may spend more than one transfer (types.MultiTransferMsg: a stake
-// vote and the transfer paying its fee); each is checked, proven and executed
-// as a single one is, and the fee is their sum. A msg may instead pay its fee
-// out of the uerth its action produces (types.FeeFromOutputMsg); that fee is
-// held to the same floor, and the ante refuses the tx unless it was paid in
-// full before the ante returns.
+// A msg may spend more than one bundle (a stake vote and the bundle paying
+// its fee); each is checked, proven and executed as a single one is, under
+// the msg's one sighash. A msg may instead pay its fee out of the uerth its
+// action produces (types.FeeFromOutputMsg); that fee is held to the same
+// floor, and the ante refuses the tx unless it was paid in full before the
+// ante returns.
 //
-// A msg of another module may carry an action beyond its transfer (see
+// A msg of another module may carry an action beyond its bundles (see
 // types.PrivateActionHandler); its checks and proofs run in the same pass,
 // before anything is written.
 //
@@ -33,11 +34,11 @@
 // outputs, or a fee paid without its note spent (which would let the same
 // notes pay fees forever).
 //
-// Gas is fixed per msg (params.PrivateMsgGas) and charged before any work;
-// the pool's writes then run on an infinite gas meter. A private tx's gas is
-// therefore a function of its bytes alone, identical in CheckTx, DeliverTx
-// and simulate, and whoever relays an unsigned tx cannot lower its gas limit
-// to make it fail halfway.
+// Gas is fixed per bundle and per action (types.Params.PrivateMsgGas) and
+// charged before any work; the pool's writes then run on an infinite gas
+// meter. A private tx's gas is therefore a function of its shape alone,
+// identical in CheckTx, DeliverTx and simulate, and whoever relays an
+// unsigned tx cannot lower its gas limit to make it fail halfway.
 package ante
 
 import (
@@ -123,14 +124,14 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 		// in SigVerificationDecorator, which private txs never reach.
 		return ctx, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "private txs cannot be unordered")
 	}
-	// The declared fee must be exactly what the proof releases, in uerth, so
+	// The declared fee must be exactly what the bundles pay, in uerth, so
 	// explorers, CometBFT and anything reading AuthInfo.Fee see the real fee.
 	declared := sdk.Coins(fee.Amount)
 	if !declared.IsValid() && !declared.Empty() {
 		return ctx, errorsmod.Wrapf(sdkerrors.ErrInsufficientFee, "invalid fee %s", declared)
 	}
 	msg := tx.GetMsgs()[0].(types.PrivateMsg)
-	if err := types.ValidateTransfers(msg); err != nil {
+	if err := types.ValidateBundles(msg); err != nil {
 		return ctx, err
 	}
 	want := sdk.NewCoins(sdk.NewCoin(types.FeeDenom, types.TotalFee(msg)))
@@ -142,20 +143,23 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 
 // PrivateMsgDecorator does the private msg's work, in order:
 //
-//  1. charge params.PrivateMsgGas, plus the action's fixed gas (before
-//     anything, whatever follows);
-//  2. in FinalizeBlock, admit the tx under max_private_txs_per_block;
+//  1. refuse a bundle over max_actions_per_bundle, then charge
+//     params.PrivateMsgGas (bundle_gas per bundle, proof and two notes per
+//     action) plus the action's fixed gas (before anything, whatever follows);
+//  2. in FinalizeBlock, admit the tx's actions under
+//     max_private_actions_per_block;
 //  3. the fee floor: fee >= params.min_fee always, and >= the node's
 //     min-gas-price x gas in CheckTx;
-//  4. the stateful checks (anchor, nullifiers, asset, receiver, room), then
-//     the action's;
-//  5. verify the proof, then the action's (skipped on recheck, where neither
-//     the proofs nor their public inputs can have changed; charged but not
-//     required in simulate, so a wallet can estimate a tx before proving over
-//     its final fee);
-//  6. spend the nullifiers, append the outputs, pay the fee to
-//     fee_collector (where x/earth burns half), and authorize the msg and
-//     its action;
+//  4. the stateful checks (anchors, nullifiers, assets, room, the release
+//     map), then the action's;
+//  5. verify every binding signature, then every action proof (in parallel),
+//     then the action's proofs (skipped on recheck, where neither the proofs
+//     nor their public inputs can have changed; charged but not required in
+//     simulate, so a wallet can estimate a tx before proving over its final
+//     fee);
+//  6. spend the nullifiers, append the outputs, pay the fee to fee_collector
+//     (where x/earth burns half), pay an unshield's receiver, and authorize
+//     the msg and its action;
 //  7. run the action here if its handler must be atomic with the spend
 //     (types.PrivateActionExecutor), and require any fee from output paid.
 type PrivateMsgDecorator struct {
@@ -168,7 +172,14 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	if err != nil {
 		return ctx, err
 	}
-	ctx.GasMeter().ConsumeGas(params.PrivateMsgGasFor(len(types.TransfersOf(msg))), "shielded: private msg (proofs, nullifiers, notes)")
+	bundles := msg.PrivateBundles()
+	for i, b := range bundles {
+		if len(b.Actions) > int(params.MaxActionsPerBundle) {
+			return ctx, errorsmod.Wrapf(types.ErrInvalidBundle, "bundle %d: %d actions, max_actions_per_bundle is %d",
+				i, len(b.Actions), params.MaxActionsPerBundle)
+		}
+	}
+	ctx.GasMeter().ConsumeGas(params.PrivateMsgGas(bundles), "shielded: private msg (bundles: proofs, nullifiers, notes)")
 	action, hasAction := d.K.PrivateAction(msg)
 	if hasAction {
 		g, err := action.PrivateActionGas(ctx, msg)
@@ -182,7 +193,7 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	pool := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
 
 	if ctx.ExecMode() == sdk.ExecModeFinalize {
-		if err := d.K.CountPrivateTx(pool); err != nil {
+		if err := d.K.CountPrivateActions(pool, uint64(types.ActionCount(msg))); err != nil {
 			return ctx, err
 		}
 	}
@@ -191,8 +202,8 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	if !ok {
 		return ctx, errorsmod.Wrap(sdkerrors.ErrTxDecode, "tx is not a FeeTx")
 	}
-	// The whole fee: every transfer's, plus what the msg pays from its
-	// output. Held to the same floor and price whichever pays it.
+	// The whole fee: the bundles', plus what the msg pays from its output.
+	// Held to the same floor and price whichever pays it.
 	amt := types.TotalFee(msg)
 	minFee, err := d.K.MinFee(pool)
 	if err != nil {

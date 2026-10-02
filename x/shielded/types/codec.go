@@ -14,21 +14,21 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 		&MsgUpdateParams{},
 		&MsgRegisterAsset{},
 		&MsgShield{},
-		&MsgTransfer{},
+		&MsgSend{},
 	)
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)
 }
 
-// ProvideTransferGetSigners declares MsgTransfer's signers to be empty. It is
+// ProvideSendGetSigners declares MsgSend's signers to be empty. It is
 // the only way such a msg can exist at all: runtime.ProvideInterfaceRegistry
 // validates the signing context and fails app construction for any Msg
 // without a cosmos.msg.v1.signer option and without a custom getter.
 //
 // Provided on its own, with no inputs, because the interface registry is
 // built before any keeper: taking it from ProvideModule would be a cycle.
-func ProvideTransferGetSigners() signing.CustomGetSigner {
+func ProvideSendGetSigners() signing.CustomGetSigner {
 	return signing.CustomGetSigner{
-		MsgType: protoreflect.FullName("earth.shielded.v1.MsgTransfer"),
+		MsgType: protoreflect.FullName("earth.shielded.v1.MsgSend"),
 		Fn:      func(proto.Message) ([][]byte, error) { return [][]byte{}, nil },
 	}
 }
