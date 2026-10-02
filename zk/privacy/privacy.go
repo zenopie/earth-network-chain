@@ -41,6 +41,11 @@ var (
 	TagScope = tag("earth.scope")
 )
 
+// TODO(orchard-phase2): MsgTransferType, SpendSignal, TransferSignal,
+// MultiSpendSignal and ActionSignal are the retired transfer's signals, kept
+// only for the Phase 2 modules' legacy msgs; bundles bind
+// zk/orchard.Sighash.
+//
 // MsgTransferType is earth.shielded.v1.MsgTransfer's type URL, the kind
 // TransferSignal binds.
 const MsgTransferType = "/earth.shielded.v1.MsgTransfer"

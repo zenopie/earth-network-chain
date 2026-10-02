@@ -1,5 +1,8 @@
 # Orchard-style shielded bundles for Earth (spike, 2026-10-02)
 
+> **Phase 1 is in production code** on `privacy/orchard` (chain and mobile).
+> Where it departs from the spike below, section 12 wins.
+
 Replaces the fixed 3-in/3-out `transfer` circuit with N per-action proofs, a
 public value balance per asset, and a binding signature. Pre-genesis: no
 migration of state, only of code and formats.
@@ -308,9 +311,32 @@ signature, value-base canonicality and the bundle release accounting.
 
 ## 11. Reproduce
 
-    # mobile spike/orchard
+    # mobile privacy/orchard
     cd circuits && nargo test --package action && nargo test --package privacy_core
-    # chain spike/orchard
-    go test ./zk/orchard/
-    NARGO=nargo BB=bb ./scripts/orchard-bundles.sh <mobile checkout> 1 3 10
+    # chain privacy/orchard
+    go test ./zk/orchard/ ./x/shielded/... ./app
+    ./scripts/privacy-vks.sh <mobile>/circuits         # action + membership keys
+    ./scripts/shielded-fixtures.sh <mobile>/circuits   # x/shielded scenario proofs
+    NARGO=nargo BB=bb ./scripts/orchard-bundles.sh <mobile checkout> 1 2 3 10
     go test ./zk/ultrahonk/ -run TestOrchard -bench Orchard
+
+## 12. Phase 1 (production) deltas, 2026-10-02
+
+| Spike | Production (x/shielded, zk/orchard) |
+| --- | --- |
+| One anchor per bundle | **One anchor per action** (`Action.anchor`), every one checked against the window, dummies included. Bundle 0's actions may be vouched for by the msg's `PrivateAnchorAcceptor` (stake votes); other bundles must be in the window. |
+| `digest = H(TAG_BUNDLE, anchor, N, ...)` | `digest = H(TAG_BUNDLE, N, [anchor_i, nf_i, cm_i, cvx_i, cvy_i, Bytes(ct_i)]..., M, [asset_j, value_j]...)` |
+| `sighash = Signal(type, chain, D_0, ...)` | `sighash = Signal(type URL, chain id, K, D_0..D_{K-1}, msg fields)`; K (bundle count) keeps a digest from posing as a field. MsgSend's fields: `Bytes(receiver raw address), fee`. |
+| `MsgTransfer{bundle, receiver, fee, fee_from_output}` | `MsgSend{bundle, receiver, fee}`. Release map: the uerth balance pays `fee` to fee_collector; every remainder (all denoms) goes to `receiver`, paid **in the ante** (atomic with the spend); no receiver ⇔ balances == fee. An unshield of uerth pays its fee from what it releases, with no fee note. `FeeFromOutputMsg` + `PayFeeFromModule` stay for Phase 2 executors (claims, swaps). |
+| Asset registry stores G_a | Bases derived (`orchard.ValueBase`, memoized); only registered denoms may carry a balance. |
+| Balance per bundle | Balances `{denom, amount}`, positive, one per denom, at most 2 per action. |
+| `1..32` actions | **2..32**: `MinActionsPerBundle = 2` (padding, stateless), param `max_actions_per_bundle` (2..32, default 16). |
+| Gas `base + N·(proof + 2·note)` | `bundle_gas` (100,000) per bundle + `proof_verification_gas + 2·note_gas` per action, charged before any work. `max_private_actions_per_block` (default 32, ≥ 2 × max per bundle) counts actions. |
+| Verification order | shape → per-bundle size cap → gas → block cap → anchors → nullifiers → assets → capacity → release map → sighash → **every binding signature** → **every action proof in parallel** (`orchard.VerifyProofs`, first failure in bundle/action order, deterministic). |
+| Authorization keyed by nullifiers | Keyed by SHA-256 of the msg's proto bytes; `AuthorizedAction/Result/Positions(ctx, msg)`, `ReleaseToModule(ctx, msg, denom, module)` (whole remainder, once). |
+
+Circuit unchanged in size (8,120 gates); 38 tests. The transfer circuit, its
+key and fixtures are gone; Phase 2 modules (personhood, assembly,
+shieldedstaking, dex) still carry a legacy `Transfer` and report no bundle,
+so the ante refuses their private msgs until they are ported
+(`TODO(orchard-phase2)`).
