@@ -62,7 +62,7 @@ func gasCheckCmd() *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "registration",
-		Short: "Would the registration in the MsgRegister on stdin (proto JSON) be accepted? Its fee transfer is not checked. Prints the passport nullifier and whether it is a switch",
+		Short: "Would the registration in the MsgRegister on stdin (proto JSON) be accepted? Its fee bundle is not checked (it may be empty). Prints the passport nullifier and whether it is a switch",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := newGasCheckEnv(cmd)
@@ -166,11 +166,7 @@ func newGasCheckEnv(cmd *cobra.Command) (*gasCheckEnv, error) {
 		return nil, fmt.Errorf("block %d: %w", height, err)
 	}
 
-	registry := codectypes.NewInterfaceRegistry()
-	personhoodtypes.RegisterInterfaces(registry)
-	pkitypes.RegisterInterfaces(registry)
-	shieldedtypes.RegisterInterfaces(registry)
-	cdc := codec.NewProtoCodec(registry)
+	cdc := gasCheckCodec()
 	addrCodec := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
 	authority := authtypes.NewModuleAddress("gov")
 
@@ -193,6 +189,16 @@ func newGasCheckEnv(cmd *cobra.Command) (*gasCheckEnv, error) {
 		WithEventManager(sdk.NewEventManager())
 
 	return &gasCheckEnv{ctx: ctx, cdc: cdc, addrCodec: addrCodec, personhood: personhood, height: height}, nil
+}
+
+// gasCheckCodec decodes what the backend pipes in: a MsgRegister (its fee
+// bundle included) or a Membership, as proto JSON.
+func gasCheckCodec() codec.Codec {
+	registry := codectypes.NewInterfaceRegistry()
+	personhoodtypes.RegisterInterfaces(registry)
+	pkitypes.RegisterInterfaces(registry)
+	shieldedtypes.RegisterInterfaces(registry)
+	return codec.NewProtoCodec(registry)
 }
 
 // refusal prints the chain's answer, or fails the command if the answer never

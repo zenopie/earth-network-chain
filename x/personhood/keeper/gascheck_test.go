@@ -54,6 +54,13 @@ func TestCheckRegistrationAgreesWithTheChain(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, switched)
 	require.Len(t, nf, 32)
+	// The msg as a wallet sends it, its fee bundle in place (unfunded,
+	// unproven: the backend has not paid for it yet): the same answer.
+	withFee := passportMsg(t, "A1")
+	withFee.Fee = feeStub()
+	nf2, _, err := k.CheckRegistration(ctx, withFee)
+	require.NoError(t, err)
+	require.Equal(t, nf, nf2)
 
 	// A live registration under the passport: the same check reports a switch.
 	require.NoError(t, k.addRegistration(ctx, types.Registration{Nullifier: nf, RegisteredAt: ctx.BlockTime().Unix(),

@@ -4,8 +4,38 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protowire"
+
+	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
+
+// The registration check reads the MsgRegister a wallet builds, fee bundle
+// included, as proto JSON: it decodes field for field.
+func TestGasCheckDecodesMsgRegisterWithBundle(t *testing.T) {
+	cdc := gasCheckCodec()
+	b32 := func(v byte) []byte { b := make([]byte, 32); b[31] = v; return b }
+	msg := personhoodtypes.MsgRegister{
+		Fee: shieldedtypes.Bundle{
+			Actions: []shieldedtypes.Action{
+				{Anchor: b32(1), Nullifier: b32(2), Commitment: b32(3), Cv: make([]byte, 64), Ciphertext: []byte("ct0"), Proof: []byte{9}},
+				{Anchor: b32(1), Nullifier: b32(4), Commitment: b32(5), Cv: make([]byte, 64), Ciphertext: []byte("ct1"), Proof: []byte{8}},
+			},
+			Balances:   []shieldedtypes.ValueBalance{{Denom: "uerth", Amount: 50_000}},
+			BindingSig: make([]byte, 96),
+		},
+		Proof: []byte{1, 2}, PublicSignals: []string{"1", "2"}, SignatureAlgorithm: "lean_poa", DscDer: []byte{3},
+		Idc: b32(6), PcAnml: b32(7), PcErth: b32(8), CiphertextAnml: []byte("a"), CiphertextErth: []byte("e"),
+	}
+	raw, err := cdc.MarshalJSON(&msg)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"binding_sig"`)
+	var got personhoodtypes.MsgRegister
+	require.NoError(t, cdc.UnmarshalJSON(raw, &got))
+	require.Equal(t, msg, got)
+	require.Equal(t, uint64(50_000), got.PrivateFee())
+}
 
 func encodePairs(pairs ...pair) []byte {
 	var out []byte
