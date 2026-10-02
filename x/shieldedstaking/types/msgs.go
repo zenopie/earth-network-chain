@@ -15,7 +15,7 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// Msg type URLs: the kind every signal binds first.
+// Msg type URLs: the kind every sighash binds first.
 const (
 	TypeMsgDelegate       = "/earth.shieldedstaking.v1.MsgDelegate"
 	TypeMsgUndelegate     = "/earth.shieldedstaking.v1.MsgUndelegate"
@@ -37,11 +37,10 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgUnlockPosition)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgPositionVote)(nil)
 
-	_ shieldedtypes.MultiTransferMsg = (*MsgStakeVote)(nil)
 	_ shieldedtypes.FeeFromOutputMsg = (*MsgClaimUnbonding)(nil)
 )
 
-// ---- field encodings the signals and position signatures bind ------------
+// ---- field encodings the sighashes and position signatures bind ----------
 //
 // Wallets must reproduce these byte for byte.
 
@@ -123,20 +122,44 @@ func checkNoteOut(pc, ct []byte) error {
 	return nil
 }
 
-func checkMoves(t *shieldedtypes.Transfer, denom string) error {
-	if err := t.ValidateBasic(); err != nil {
+// checkMoves checks msg's release map: a positive fee (unless outputFee pays
+// it), and exactly denom released beyond it (a positive amount), or nothing
+// when denom is "".
+func checkMoves(msg shieldedtypes.PrivateMsg, denom string, outputFee uint64) error {
+	if err := shieldedtypes.ValidateBundles(msg); err != nil {
+		return err
+	}
+	if (msg.PrivateFee() == 0) == (outputFee == 0) {
+		return errorsmod.Wrap(ErrInvalidMsg, "the fee is paid by the bundle or from the output, exactly one")
+	}
+	rem, err := shieldedtypes.Remainders(msg)
+	if err != nil {
 		return err
 	}
 	if denom == "" {
-		if t.ValueOut != 0 {
-			return errorsmod.Wrap(ErrInvalidMsg, "this msg moves no value: value_out must be 0")
+		if len(rem) != 0 {
+			return errorsmod.Wrap(ErrInvalidMsg, "this msg moves no value: the bundle's only balance is its uerth fee")
 		}
 		return nil
 	}
-	if t.ValueOut == 0 || t.DenomOut != denom {
-		return errorsmod.Wrapf(ErrInvalidMsg, "transfer must release a positive amount of %s", denom)
+	if len(rem) != 1 || rem[0].Denom != denom {
+		return errorsmod.Wrapf(ErrInvalidMsg, "the bundle must release a positive amount of %s and nothing else beyond its fee", denom)
 	}
 	return nil
+}
+
+// released is what msg releases of denom beyond its fee (0 if nothing).
+func released(msg shieldedtypes.PrivateMsg, denom string) uint64 {
+	rem, err := shieldedtypes.Remainders(msg)
+	if err != nil {
+		return 0
+	}
+	for _, r := range rem {
+		if r.Denom == denom {
+			return r.Amount
+		}
+	}
+	return 0
 }
 
 func checkValidator(v string) error {
@@ -153,27 +176,30 @@ func checkSig(sig []byte) error {
 	return nil
 }
 
-func spend(msgType, chainID string, t *shieldedtypes.Transfer, extra ...fr.Element) fr.Element {
-	return privacy.SpendSignal(msgType, chainID, t.Ciphertexts3(), extra...)
-}
+func bundle(b *shieldedtypes.Bundle) []*shieldedtypes.Bundle { return []*shieldedtypes.Bundle{b} }
 
 // ---- MsgDelegate ----------------------------------------------------------
 
-func (m *MsgDelegate) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgDelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgDelegate) PrivateFee() uint64                      { return m.Fee }
 
-func (m *MsgDelegate) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+// Amount is the uerth delegated: the bundle's uerth balance less the fee.
+func (m *MsgDelegate) Amount() uint64 { return released(m, BondDenom) }
+
+// SighashFields: Bytes(validator), pc, Bytes(ciphertext), fee.
+func (m *MsgDelegate) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := field("pc", m.Pc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
-	return spend(TypeMsgDelegate, chainID, &m.Transfer, privacy.Bytes([]byte(m.Validator)), pc, privacy.Bytes(m.Ciphertext)), nil
+	return []fr.Element{privacy.Bytes([]byte(m.Validator)), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgDelegate) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(&m.Transfer, BondDenom); err != nil {
+	if err := checkMoves(m, BondDenom, 0); err != nil {
 		return err
 	}
 	return checkNoteOut(m.Pc, m.Ciphertext)
@@ -181,21 +207,26 @@ func (m *MsgDelegate) ValidateBasic() error {
 
 // ---- MsgUndelegate --------------------------------------------------------
 
-func (m *MsgUndelegate) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgUndelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgUndelegate) PrivateFee() uint64                      { return m.Fee }
 
-func (m *MsgUndelegate) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+// Amount is the derth undelegated.
+func (m *MsgUndelegate) Amount() uint64 { return released(m, DerthDenom(m.Validator)) }
+
+// SighashFields: Bytes(validator), pc, Bytes(ciphertext), fee.
+func (m *MsgUndelegate) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := field("pc", m.Pc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
-	return spend(TypeMsgUndelegate, chainID, &m.Transfer, privacy.Bytes([]byte(m.Validator)), pc, privacy.Bytes(m.Ciphertext)), nil
+	return []fr.Element{privacy.Bytes([]byte(m.Validator)), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgUndelegate) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(&m.Transfer, DerthDenom(m.Validator)); err != nil {
+	if err := checkMoves(m, DerthDenom(m.Validator), 0); err != nil {
 		return err
 	}
 	return checkNoteOut(m.Pc, m.Ciphertext)
@@ -203,15 +234,21 @@ func (m *MsgUndelegate) ValidateBasic() error {
 
 // ---- MsgClaimUnbonding ----------------------------------------------------
 
-func (m *MsgClaimUnbonding) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgClaimUnbonding) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgClaimUnbonding) PrivateFee() uint64                      { return m.Fee }
 
-func (m *MsgClaimUnbonding) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+// Amount is the unbond denom claimed.
+func (m *MsgClaimUnbonding) Amount() uint64 { return released(m, UnbondDenom(m.Validator, m.Epoch)) }
+
+// SighashFields: Bytes(validator), epoch, pc, Bytes(ciphertext),
+// fee_from_output, fee.
+func (m *MsgClaimUnbonding) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := field("pc", m.Pc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
-	return spend(TypeMsgClaimUnbonding, chainID, &m.Transfer, privacy.Bytes([]byte(m.Validator)),
-		privacy.U64(m.Epoch), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.FeeFromOutput)), nil
+	return []fr.Element{privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Epoch), pc, privacy.Bytes(m.Ciphertext),
+		privacy.U64(m.FeeFromOutput), privacy.U64(m.Fee)}, nil
 }
 
 // OutputFee implements x/shielded's FeeFromOutputMsg.
@@ -221,10 +258,7 @@ func (m *MsgClaimUnbonding) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(&m.Transfer, UnbondDenom(m.Validator, m.Epoch)); err != nil {
-		return err
-	}
-	if err := shieldedtypes.ValidateTransfers(m); err != nil {
+	if err := checkMoves(m, UnbondDenom(m.Validator, m.Epoch), m.FeeFromOutput); err != nil {
 		return err
 	}
 	return checkNoteOut(m.Pc, m.Ciphertext)
@@ -232,46 +266,46 @@ func (m *MsgClaimUnbonding) ValidateBasic() error {
 
 // ---- MsgStakeVote ---------------------------------------------------------
 
-func (m *MsgStakeVote) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
-
-// PrivateTransfers is the vote transfer, then the fee transfer.
-func (m *MsgStakeVote) PrivateTransfers() []*shieldedtypes.Transfer {
-	return []*shieldedtypes.Transfer{&m.Transfer, &m.FeeTransfer}
+// PrivateBundles is the vote bundle, then the fee bundle.
+func (m *MsgStakeVote) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Bundle, &m.FeeBundle}
 }
 
-// Signal binds both transfers (each one's ciphertexts and nullifiers), the
-// proposal, the vote and where the derth is minted back. Both proofs carry
-// it, so neither transfer can be paired with another.
-func (m *MsgStakeVote) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+func (m *MsgStakeVote) PrivateFee() uint64 { return m.Fee }
+
+// Weight is the derth the vote bundle releases: the vote's weight.
+func (m *MsgStakeVote) Weight() uint64 { return m.Bundle.Balance(DerthDenom(m.Validator)) }
+
+// SighashFields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
+// pc, Bytes(ciphertext), fee. Both bundles' digests precede them, so neither
+// bundle can be paired with another.
+func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := field("pc", m.Pc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
-	return shieldedtypes.MultiSignal(TypeMsgStakeVote, chainID, m.PrivateTransfers(), privacy.U64(m.ProposalId),
-		privacy.Bytes([]byte(m.Validator)), privacy.Bytes(OptionsBytes(m.Options)), pc, privacy.Bytes(m.Ciphertext))
+	return []fr.Element{privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
+		privacy.Bytes(OptionsBytes(m.Options)), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.Fee)}, nil
+}
+
+func onlyBalance(b *shieldedtypes.Bundle, denom string) bool {
+	return len(b.Balances) == 1 && b.Balances[0].Denom == denom && b.Balances[0].Amount > 0
 }
 
 func (m *MsgStakeVote) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(&m.Transfer, DerthDenom(m.Validator)); err != nil {
+	if err := checkMoves(m, DerthDenom(m.Validator), 0); err != nil {
 		return err
 	}
-	// The vote transfer is proven against the snapshot root and pays no fee
-	// (its slot 2 is a dummy); the fee transfer pays it, against a current
-	// root, and moves nothing else.
-	if m.Transfer.Fee != 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "the vote transfer pays no fee: fee_transfer does")
+	// The vote bundle, proven against the snapshot root, releases only the
+	// weight; the fee bundle, against current roots, pays exactly the fee.
+	if !onlyBalance(&m.Bundle, DerthDenom(m.Validator)) {
+		return errorsmod.Wrapf(ErrInvalidMsg, "the vote bundle's only balance is %s, the weight", DerthDenom(m.Validator))
 	}
-	if err := checkMoves(&m.FeeTransfer, ""); err != nil {
-		return errorsmod.Wrap(err, "fee_transfer")
-	}
-	if m.FeeTransfer.Fee == 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "fee_transfer must pay a fee")
-	}
-	if err := shieldedtypes.ValidateTransfers(m); err != nil {
-		return err
+	if !onlyBalance(&m.FeeBundle, shieldedtypes.FeeDenom) || m.FeeBundle.Balances[0].Amount != m.Fee {
+		return errorsmod.Wrap(ErrInvalidMsg, "fee_bundle's only balance is the uerth fee")
 	}
 	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
 		return err
@@ -281,18 +315,24 @@ func (m *MsgStakeVote) ValidateBasic() error {
 
 // ---- positions ------------------------------------------------------------
 
-func (m *MsgLockPosition) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgLockPosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgLockPosition) PrivateFee() uint64                      { return m.Fee }
 
-func (m *MsgLockPosition) Signal(chainID string, _ address.Codec) (fr.Element, error) {
-	return spend(TypeMsgLockPosition, chainID, &m.Transfer, privacy.Bytes([]byte(m.Validator)),
-		privacy.Bytes(m.Pubkey), privacy.Bytes(SplitsBytes(m.Splits))), nil
+// Amount is the derth locked.
+func (m *MsgLockPosition) Amount() uint64 { return released(m, DerthDenom(m.Validator)) }
+
+// SighashFields: Bytes(validator), Bytes(pubkey), Bytes(SplitsBytes(splits)),
+// fee.
+func (m *MsgLockPosition) SighashFields(address.Codec) ([]fr.Element, error) {
+	return []fr.Element{privacy.Bytes([]byte(m.Validator)), privacy.Bytes(m.Pubkey),
+		privacy.Bytes(SplitsBytes(m.Splits)), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgLockPosition) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(&m.Transfer, DerthDenom(m.Validator)); err != nil {
+	if err := checkMoves(m, DerthDenom(m.Validator), 0); err != nil {
 		return err
 	}
 	if len(m.Pubkey) != 33 || (m.Pubkey[0] != 2 && m.Pubkey[0] != 3) {
@@ -304,15 +344,18 @@ func (m *MsgLockPosition) ValidateBasic() error {
 	return nil
 }
 
-func (m *MsgUpdatePosition) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgUpdatePosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgUpdatePosition) PrivateFee() uint64                      { return m.Fee }
 
-func (m *MsgUpdatePosition) Signal(chainID string, _ address.Codec) (fr.Element, error) {
-	return spend(TypeMsgUpdatePosition, chainID, &m.Transfer, privacy.U64(m.PositionId),
-		privacy.Bytes(SplitsBytes(m.Splits)), privacy.Bytes(m.Signature)), nil
+// SighashFields: position_id, Bytes(SplitsBytes(splits)), Bytes(signature),
+// fee.
+func (m *MsgUpdatePosition) SighashFields(address.Codec) ([]fr.Element, error) {
+	return []fr.Element{privacy.U64(m.PositionId), privacy.Bytes(SplitsBytes(m.Splits)),
+		privacy.Bytes(m.Signature), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgUpdatePosition) ValidateBasic() error {
-	if err := checkMoves(&m.Transfer, ""); err != nil {
+	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
 	if len(m.Splits) > allocationtypes.MaxVoterOptions {
@@ -325,19 +368,21 @@ func (m *MsgUpdatePosition) ValidateBasic() error {
 // see PositionSignBytes).
 func (m *MsgUpdatePosition) SignPayload() []byte { return SplitsBytes(m.Splits) }
 
-func (m *MsgUnlockPosition) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgUnlockPosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgUnlockPosition) PrivateFee() uint64                      { return m.Fee }
 
-func (m *MsgUnlockPosition) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+// SighashFields: position_id, pc, Bytes(ciphertext), Bytes(signature), fee.
+func (m *MsgUnlockPosition) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := field("pc", m.Pc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
-	return spend(TypeMsgUnlockPosition, chainID, &m.Transfer, privacy.U64(m.PositionId), pc,
-		privacy.Bytes(m.Ciphertext), privacy.Bytes(m.Signature)), nil
+	return []fr.Element{privacy.U64(m.PositionId), pc, privacy.Bytes(m.Ciphertext),
+		privacy.Bytes(m.Signature), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgUnlockPosition) ValidateBasic() error {
-	if err := checkMoves(&m.Transfer, ""); err != nil {
+	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
 	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
@@ -352,15 +397,18 @@ func (m *MsgUnlockPosition) SignPayload() []byte {
 	return append(append([]byte{}, m.Pc...), m.Ciphertext...)
 }
 
-func (m *MsgPositionVote) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgPositionVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgPositionVote) PrivateFee() uint64                      { return m.Fee }
 
-func (m *MsgPositionVote) Signal(chainID string, _ address.Codec) (fr.Element, error) {
-	return spend(TypeMsgPositionVote, chainID, &m.Transfer, privacy.U64(m.PositionId), privacy.U64(m.ProposalId),
-		privacy.Bytes(OptionsBytes(m.Options)), privacy.Bytes(m.Signature)), nil
+// SighashFields: position_id, proposal_id, Bytes(OptionsBytes(options)),
+// Bytes(signature), fee.
+func (m *MsgPositionVote) SighashFields(address.Codec) ([]fr.Element, error) {
+	return []fr.Element{privacy.U64(m.PositionId), privacy.U64(m.ProposalId),
+		privacy.Bytes(OptionsBytes(m.Options)), privacy.Bytes(m.Signature), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgPositionVote) ValidateBasic() error {
-	if err := checkMoves(&m.Transfer, ""); err != nil {
+	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
 	if err := ValidateOptions(m.Options); err != nil {

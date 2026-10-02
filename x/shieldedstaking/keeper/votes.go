@@ -22,9 +22,9 @@ import (
 // When a proposal enters voting this module snapshots the note-tree anchor and,
 // per validator, the derth supply and rate. A derth/v note that was in the tree
 // then (and is unspent when it votes) votes by being spent: MsgStakeVote's
-// transfer proves against the snapshot root and releases the note's derth to
-// this module, which records the vote and mints the derth straight back to a
-// new note. The spent nullifier stops a second vote, and the new note is not
+// vote bundle proves every action against the snapshot root and releases the
+// note's derth to this module, which records the vote and mints the derth
+// straight back to a new note. The spent nullifier stops a second vote, and the new note is not
 // in the snapshot root. A position created before the snapshot votes with its
 // key. The weight is public; the voter is not.
 //

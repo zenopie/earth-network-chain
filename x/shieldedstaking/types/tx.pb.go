@@ -124,19 +124,20 @@ func (m *MsgUpdateParamsResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
-// MsgDelegate spends transfer.value_out uerth into the module for validator
-// and mints a derth/<validator> note to pc at the live rate. The ERTH is
-// delegated at the epoch's end.
+// MsgDelegate releases bundle's uerth balance less fee into the module for
+// validator and mints a derth/<validator> note to pc at the live rate. The
+// ERTH is delegated at the epoch's end. bundle's balances: uerth only.
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgDelegate", chain_id,
-// ciphertexts, Bytes(validator), pc, Bytes(ciphertext)).
+// sighash fields: Bytes(validator), pc, Bytes(ciphertext), fee.
 type MsgDelegate struct {
-	Transfer  types.Transfer `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
-	Validator string         `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
+	Bundle    types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
+	Validator string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
 	// pc owns the derth note.
 	Pc []byte `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
 	// ciphertext is the derth note encrypted to its owner (optional).
 	Ciphertext []byte `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	// fee is paid out of bundle's uerth balance; the rest is delegated.
+	Fee uint64 `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 
 func (m *MsgDelegate) Reset()         { *m = MsgDelegate{} }
@@ -172,11 +173,11 @@ func (m *MsgDelegate) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgDelegate proto.InternalMessageInfo
 
-func (m *MsgDelegate) GetTransfer() types.Transfer {
+func (m *MsgDelegate) GetBundle() types.Bundle {
 	if m != nil {
-		return m.Transfer
+		return m.Bundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
 }
 
 func (m *MsgDelegate) GetValidator() string {
@@ -198,6 +199,13 @@ func (m *MsgDelegate) GetCiphertext() []byte {
 		return m.Ciphertext
 	}
 	return nil
+}
+
+func (m *MsgDelegate) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
+	}
+	return 0
 }
 
 // MsgDelegateResponse returns the derth minted and the note's position.
@@ -253,16 +261,17 @@ func (m *MsgDelegateResponse) GetPosition() uint64 {
 	return 0
 }
 
-// MsgUndelegate spends transfer.value_out of derth/<validator> and mints an
-// unbond/<validator>/<epoch> note of its ERTH value to pc.
+// MsgUndelegate releases bundle's derth/<validator> balance and mints an
+// unbond/<validator>/<epoch> note of its ERTH value to pc. bundle's
+// balances: derth/<validator> and the uerth fee.
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgUndelegate", chain_id,
-// ciphertexts, Bytes(validator), pc, Bytes(ciphertext)).
+// sighash fields: Bytes(validator), pc, Bytes(ciphertext), fee.
 type MsgUndelegate struct {
-	Transfer   types.Transfer `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
-	Validator  string         `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
-	Pc         []byte         `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext []byte         `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	Bundle     types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
+	Validator  string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
+	Pc         []byte       `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
+	Ciphertext []byte       `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	Fee        uint64       `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 
 func (m *MsgUndelegate) Reset()         { *m = MsgUndelegate{} }
@@ -298,11 +307,11 @@ func (m *MsgUndelegate) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUndelegate proto.InternalMessageInfo
 
-func (m *MsgUndelegate) GetTransfer() types.Transfer {
+func (m *MsgUndelegate) GetBundle() types.Bundle {
 	if m != nil {
-		return m.Transfer
+		return m.Bundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
 }
 
 func (m *MsgUndelegate) GetValidator() string {
@@ -324,6 +333,13 @@ func (m *MsgUndelegate) GetCiphertext() []byte {
 		return m.Ciphertext
 	}
 	return nil
+}
+
+func (m *MsgUndelegate) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
+	}
+	return 0
 }
 
 // MsgUndelegateResponse returns the unbond note's denom, value and position.
@@ -387,26 +403,28 @@ func (m *MsgUndelegateResponse) GetPosition() uint64 {
 	return 0
 }
 
-// MsgClaimUnbonding spends transfer.value_out of unbond/<validator>/<epoch>
-// once that record has matured and mints ERTH = value x payout / requested to
-// pc (less fee_from_output).
+// MsgClaimUnbonding releases bundle's unbond/<validator>/<epoch> balance once
+// that record has matured and mints ERTH = value x payout / requested to pc
+// (less fee_from_output). bundle's balances: the unbond denom, and the uerth
+// fee unless fee_from_output pays it.
 //
 // The claim runs in the private ante, atomically with the spend (see
 // x/shielded/types.PrivateActionExecutor).
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgClaimUnbonding",
-// chain_id, ciphertexts, Bytes(validator), epoch, pc, Bytes(ciphertext),
-// fee_from_output).
+// sighash fields: Bytes(validator), epoch, pc, Bytes(ciphertext),
+// fee_from_output, fee.
 type MsgClaimUnbonding struct {
-	Transfer   types.Transfer `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
-	Validator  string         `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
-	Epoch      uint64         `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	Pc         []byte         `protobuf:"bytes,4,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext []byte         `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	// fee_from_output pays the tx fee out of the claimed ERTH instead of from a
-	// fee note: transfer.fee must be 0, and the claim must pay more than it.
-	// The note minted to pc holds the rest. 0: the fee is transfer.fee.
+	Bundle     types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
+	Validator  string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
+	Epoch      uint64       `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	Pc         []byte       `protobuf:"bytes,4,opt,name=pc,proto3" json:"pc,omitempty"`
+	Ciphertext []byte       `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	// fee_from_output pays the tx fee out of the claimed ERTH instead of from
+	// the bundle: fee must then be 0 (the bundle has no uerth balance), and the
+	// claim must pay more than it. The note minted to pc holds the rest.
 	FeeFromOutput uint64 `protobuf:"varint,6,opt,name=fee_from_output,json=feeFromOutput,proto3" json:"fee_from_output,omitempty"`
+	// fee is paid out of bundle's uerth balance (0 with fee_from_output).
+	Fee uint64 `protobuf:"varint,7,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 
 func (m *MsgClaimUnbonding) Reset()         { *m = MsgClaimUnbonding{} }
@@ -442,11 +460,11 @@ func (m *MsgClaimUnbonding) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgClaimUnbonding proto.InternalMessageInfo
 
-func (m *MsgClaimUnbonding) GetTransfer() types.Transfer {
+func (m *MsgClaimUnbonding) GetBundle() types.Bundle {
 	if m != nil {
-		return m.Transfer
+		return m.Bundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
 }
 
 func (m *MsgClaimUnbonding) GetValidator() string {
@@ -480,6 +498,13 @@ func (m *MsgClaimUnbonding) GetCiphertext() []byte {
 func (m *MsgClaimUnbonding) GetFeeFromOutput() uint64 {
 	if m != nil {
 		return m.FeeFromOutput
+	}
+	return 0
+}
+
+func (m *MsgClaimUnbonding) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
 	}
 	return 0
 }
@@ -539,34 +564,36 @@ func (m *MsgClaimUnbondingResponse) GetPosition() uint64 {
 }
 
 // MsgStakeVote votes derth/<validator> on proposal_id by spending it
-// (spend-to-vote). transfer is proven against the proposal's snapshot root
-// (ProposalSnapshot.root; the ante accepts it for this msg even once it has
-// left the pool's root window) and releases value_out of
-// derth/<validator> (asset public) to this module: that value is the vote's
-// weight. Its fee is 0 and its slot 2 a dummy. The handler records the vote
-// and mints the same value back to pc as a new note. The spent nullifier
-// stops the note voting again, and the new note is not in the snapshot root,
-// so it cannot vote on this proposal either. Final: a stake vote is not
-// replaced. Any change the transfer keeps (a wallet should release the whole
-// note) is likewise a new note outside the snapshot, and cannot vote.
+// (spend-to-vote). Two bundles:
 //
-// fee_transfer pays the fee: a transfer of ERTH proven against a current root
-// (the pool's ordinary window), releasing nothing (value_out 0), so the fee
-// note need not predate the snapshot.
+// bundle (the vote, bundle 0): EVERY action's anchor is the proposal's
+// snapshot root (ProposalSnapshot.root; the ante accepts it for this msg
+// even once it has left the pool's root window), dummy spends included, and
+// its only balance is derth/<validator>: the vote's weight, released to this
+// module. The handler records the vote and mints the same value back to pc as
+// a new note. The spent nullifiers stop the notes voting again, and the new
+// note is not in the snapshot root, so it cannot vote on this proposal
+// either. Final: a stake vote is not replaced. Any change the bundle keeps (a
+// wallet should release the whole note) is likewise a new note outside the
+// snapshot, and cannot vote.
 //
-// Both proofs bind one signal = MultiSpendSignal(
-// "/earth.shieldedstaking.v1.MsgStakeVote", chain_id, [transfer.ciphertexts,
-// fee_transfer.ciphertexts], [transfer.nullifiers, fee_transfer.nullifiers],
-// proposal_id, Bytes(validator), Bytes(options), pc, Bytes(ciphertext)).
+// fee_bundle (bundle 1) pays the fee: its only balance is uerth == fee, its
+// anchors in the pool's ordinary window, so the fee note need not predate
+// the snapshot.
+//
+// sighash = Sighash(type URL, chain id, 2, digest(bundle), digest(fee_bundle),
+// proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), pc,
+// Bytes(ciphertext), fee).
 type MsgStakeVote struct {
-	Transfer   types.Transfer           `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
+	Bundle     types.Bundle             `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	ProposalId uint64                   `protobuf:"varint,2,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
 	Validator  string                   `protobuf:"bytes,3,opt,name=validator,proto3" json:"validator,omitempty"`
 	Options    []*v1.WeightedVoteOption `protobuf:"bytes,7,rep,name=options,proto3" json:"options,omitempty"`
 	// pc receives the re-minted derth note.
-	Pc          []byte         `protobuf:"bytes,9,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext  []byte         `protobuf:"bytes,10,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	FeeTransfer types.Transfer `protobuf:"bytes,11,opt,name=fee_transfer,json=feeTransfer,proto3" json:"fee_transfer"`
+	Pc         []byte       `protobuf:"bytes,9,opt,name=pc,proto3" json:"pc,omitempty"`
+	Ciphertext []byte       `protobuf:"bytes,10,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	FeeBundle  types.Bundle `protobuf:"bytes,11,opt,name=fee_bundle,json=feeBundle,proto3" json:"fee_bundle"`
+	Fee        uint64       `protobuf:"varint,12,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 
 func (m *MsgStakeVote) Reset()         { *m = MsgStakeVote{} }
@@ -602,11 +629,11 @@ func (m *MsgStakeVote) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgStakeVote proto.InternalMessageInfo
 
-func (m *MsgStakeVote) GetTransfer() types.Transfer {
+func (m *MsgStakeVote) GetBundle() types.Bundle {
 	if m != nil {
-		return m.Transfer
+		return m.Bundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
 }
 
 func (m *MsgStakeVote) GetProposalId() uint64 {
@@ -644,11 +671,18 @@ func (m *MsgStakeVote) GetCiphertext() []byte {
 	return nil
 }
 
-func (m *MsgStakeVote) GetFeeTransfer() types.Transfer {
+func (m *MsgStakeVote) GetFeeBundle() types.Bundle {
 	if m != nil {
-		return m.FeeTransfer
+		return m.FeeBundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
+}
+
+func (m *MsgStakeVote) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
+	}
+	return 0
 }
 
 // MsgStakeVoteResponse returns the re-minted note's position.
@@ -696,17 +730,18 @@ func (m *MsgStakeVoteResponse) GetPosition() uint64 {
 	return 0
 }
 
-// MsgLockPosition spends transfer.value_out of derth/<validator> into the
-// module as a new Groundworks position splitting its weight by splits,
-// controlled by pubkey.
+// MsgLockPosition releases bundle's derth/<validator> balance into the module
+// as a new Groundworks position splitting its weight by splits, controlled
+// by pubkey. bundle's balances: derth/<validator> and the uerth fee.
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgLockPosition", chain_id,
-// ciphertexts, Bytes(validator), Bytes(pubkey), Bytes(splits)).
+// sighash fields: Bytes(validator), Bytes(pubkey), Bytes(SplitsBytes(splits)),
+// fee.
 type MsgLockPosition struct {
-	Transfer  types.Transfer            `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
+	Bundle    types.Bundle              `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	Validator string                    `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
 	Splits    []types1.AllocationWeight `protobuf:"bytes,3,rep,name=splits,proto3" json:"splits"`
 	Pubkey    []byte                    `protobuf:"bytes,4,opt,name=pubkey,proto3" json:"pubkey,omitempty"`
+	Fee       uint64                    `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 
 func (m *MsgLockPosition) Reset()         { *m = MsgLockPosition{} }
@@ -742,11 +777,11 @@ func (m *MsgLockPosition) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgLockPosition proto.InternalMessageInfo
 
-func (m *MsgLockPosition) GetTransfer() types.Transfer {
+func (m *MsgLockPosition) GetBundle() types.Bundle {
 	if m != nil {
-		return m.Transfer
+		return m.Bundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
 }
 
 func (m *MsgLockPosition) GetValidator() string {
@@ -768,6 +803,13 @@ func (m *MsgLockPosition) GetPubkey() []byte {
 		return m.Pubkey
 	}
 	return nil
+}
+
+func (m *MsgLockPosition) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
+	}
+	return 0
 }
 
 // MsgLockPositionResponse returns the position id.
@@ -816,12 +858,16 @@ func (m *MsgLockPositionResponse) GetPositionId() uint64 {
 }
 
 // MsgUpdatePosition replaces a position's split. signature is the position
-// key's over PositionSignBytes (see types).
+// key's over PositionSignBytes (see types). bundle pays the fee only.
+//
+// sighash fields: position_id, Bytes(SplitsBytes(splits)), Bytes(signature),
+// fee.
 type MsgUpdatePosition struct {
-	Transfer   types.Transfer            `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
+	Bundle     types.Bundle              `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	PositionId uint64                    `protobuf:"varint,2,opt,name=position_id,json=positionId,proto3" json:"position_id,omitempty"`
 	Splits     []types1.AllocationWeight `protobuf:"bytes,3,rep,name=splits,proto3" json:"splits"`
 	Signature  []byte                    `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
+	Fee        uint64                    `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 
 func (m *MsgUpdatePosition) Reset()         { *m = MsgUpdatePosition{} }
@@ -857,11 +903,11 @@ func (m *MsgUpdatePosition) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdatePosition proto.InternalMessageInfo
 
-func (m *MsgUpdatePosition) GetTransfer() types.Transfer {
+func (m *MsgUpdatePosition) GetBundle() types.Bundle {
 	if m != nil {
-		return m.Transfer
+		return m.Bundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
 }
 
 func (m *MsgUpdatePosition) GetPositionId() uint64 {
@@ -883,6 +929,13 @@ func (m *MsgUpdatePosition) GetSignature() []byte {
 		return m.Signature
 	}
 	return nil
+}
+
+func (m *MsgUpdatePosition) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
+	}
+	return 0
 }
 
 // MsgUpdatePositionResponse is empty.
@@ -923,12 +976,16 @@ func (m *MsgUpdatePositionResponse) XXX_DiscardUnknown() {
 var xxx_messageInfo_MsgUpdatePositionResponse proto.InternalMessageInfo
 
 // MsgUnlockPosition closes a position and mints its derth as a note to pc.
+// bundle pays the fee only.
+//
+// sighash fields: position_id, pc, Bytes(ciphertext), Bytes(signature), fee.
 type MsgUnlockPosition struct {
-	Transfer   types.Transfer `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
-	PositionId uint64         `protobuf:"varint,2,opt,name=position_id,json=positionId,proto3" json:"position_id,omitempty"`
-	Pc         []byte         `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext []byte         `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	Signature  []byte         `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
+	Bundle     types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
+	PositionId uint64       `protobuf:"varint,2,opt,name=position_id,json=positionId,proto3" json:"position_id,omitempty"`
+	Pc         []byte       `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
+	Ciphertext []byte       `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	Signature  []byte       `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
+	Fee        uint64       `protobuf:"varint,6,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 
 func (m *MsgUnlockPosition) Reset()         { *m = MsgUnlockPosition{} }
@@ -964,11 +1021,11 @@ func (m *MsgUnlockPosition) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUnlockPosition proto.InternalMessageInfo
 
-func (m *MsgUnlockPosition) GetTransfer() types.Transfer {
+func (m *MsgUnlockPosition) GetBundle() types.Bundle {
 	if m != nil {
-		return m.Transfer
+		return m.Bundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
 }
 
 func (m *MsgUnlockPosition) GetPositionId() uint64 {
@@ -997,6 +1054,13 @@ func (m *MsgUnlockPosition) GetSignature() []byte {
 		return m.Signature
 	}
 	return nil
+}
+
+func (m *MsgUnlockPosition) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
+	}
+	return 0
 }
 
 // MsgUnlockPositionResponse returns the note's position.
@@ -1045,13 +1109,18 @@ func (m *MsgUnlockPositionResponse) GetPosition() uint64 {
 }
 
 // MsgPositionVote votes a position (created before the proposal entered
-// voting) on an x/gov proposal; a later vote replaces it.
+// voting) on an x/gov proposal; a later vote replaces it. bundle pays the fee
+// only.
+//
+// sighash fields: position_id, proposal_id, Bytes(OptionsBytes(options)),
+// Bytes(signature), fee.
 type MsgPositionVote struct {
-	Transfer   types.Transfer           `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer"`
+	Bundle     types.Bundle             `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	PositionId uint64                   `protobuf:"varint,2,opt,name=position_id,json=positionId,proto3" json:"position_id,omitempty"`
 	ProposalId uint64                   `protobuf:"varint,3,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
 	Options    []*v1.WeightedVoteOption `protobuf:"bytes,4,rep,name=options,proto3" json:"options,omitempty"`
 	Signature  []byte                   `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
+	Fee        uint64                   `protobuf:"varint,6,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 
 func (m *MsgPositionVote) Reset()         { *m = MsgPositionVote{} }
@@ -1087,11 +1156,11 @@ func (m *MsgPositionVote) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgPositionVote proto.InternalMessageInfo
 
-func (m *MsgPositionVote) GetTransfer() types.Transfer {
+func (m *MsgPositionVote) GetBundle() types.Bundle {
 	if m != nil {
-		return m.Transfer
+		return m.Bundle
 	}
-	return types.Transfer{}
+	return types.Bundle{}
 }
 
 func (m *MsgPositionVote) GetPositionId() uint64 {
@@ -1120,6 +1189,13 @@ func (m *MsgPositionVote) GetSignature() []byte {
 		return m.Signature
 	}
 	return nil
+}
+
+func (m *MsgPositionVote) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
+	}
+	return 0
 }
 
 // MsgPositionVoteResponse is empty.
@@ -1183,77 +1259,79 @@ func init() {
 func init() { proto.RegisterFile("earth/shieldedstaking/v1/tx.proto", fileDescriptor_ebf40c3361e45611) }
 
 var fileDescriptor_ebf40c3361e45611 = []byte{
-	// 1118 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x57, 0x31, 0x6f, 0xdb, 0x46,
-	0x14, 0x36, 0x2d, 0x4a, 0x16, 0x9f, 0x14, 0xc7, 0x61, 0xdd, 0x46, 0x56, 0x02, 0x45, 0x21, 0xea,
-	0xc4, 0x75, 0x60, 0x0a, 0xb6, 0x81, 0x14, 0x70, 0xd1, 0x21, 0x76, 0xd0, 0x22, 0x46, 0x0d, 0x1b,
-	0x4c, 0xd3, 0x02, 0x5d, 0x54, 0x5a, 0x3c, 0x51, 0x84, 0x49, 0x1e, 0x71, 0x77, 0x52, 0xed, 0x2d,
-	0xe8, 0xd8, 0xa9, 0x73, 0xd1, 0x1f, 0xd0, 0xd1, 0x43, 0xff, 0x40, 0xb7, 0xa0, 0x5d, 0x82, 0x0e,
-	0x45, 0xa7, 0xa0, 0xb5, 0x07, 0x4f, 0xfd, 0x0f, 0x05, 0x79, 0x47, 0x8a, 0xa4, 0x2d, 0x59, 0x46,
-	0x1d, 0xa0, 0x8b, 0xa0, 0xf7, 0xf8, 0xdd, 0x7b, 0xef, 0xfb, 0xee, 0xf1, 0xdd, 0x11, 0xee, 0x23,
-	0x93, 0xb0, 0x5e, 0x8b, 0xf6, 0x1c, 0xe4, 0x5a, 0xc8, 0xa2, 0xcc, 0x3c, 0x70, 0x7c, 0xbb, 0x35,
-	0x58, 0x6d, 0xb1, 0x43, 0x3d, 0x20, 0x98, 0x61, 0xb5, 0x16, 0x41, 0xf4, 0x1c, 0x44, 0x1f, 0xac,
-	0xd6, 0x6f, 0x99, 0x9e, 0xe3, 0xe3, 0x56, 0xf4, 0xcb, 0xc1, 0xf5, 0xdb, 0x1d, 0x4c, 0x3d, 0x4c,
-	0x5b, 0x36, 0x1e, 0x84, 0x41, 0x6c, 0x3c, 0xc8, 0x3d, 0xf0, 0x68, 0x14, 0xdd, 0xa3, 0xb6, 0x78,
-	0xb0, 0xc0, 0x1f, 0xb4, 0x23, 0xab, 0xc5, 0x0d, 0xf1, 0xe8, 0x7d, 0x5e, 0x9c, 0xe9, 0xba, 0xb8,
-	0x63, 0x32, 0x07, 0xfb, 0xe1, 0xca, 0xa1, 0x25, 0x50, 0xcd, 0x2c, 0x85, 0x10, 0x13, 0xff, 0x17,
-	0x88, 0xc5, 0x91, 0x24, 0x03, 0x93, 0x98, 0x5e, 0x9c, 0x6e, 0xde, 0xc6, 0x36, 0xe6, 0x65, 0x84,
-	0xff, 0xb8, 0x57, 0xfb, 0x55, 0x82, 0x9b, 0x3b, 0xd4, 0x7e, 0x11, 0x58, 0x26, 0x43, 0x7b, 0x11,
-	0x5e, 0x7d, 0x0c, 0x8a, 0xd9, 0x67, 0x3d, 0x4c, 0x1c, 0x76, 0x54, 0x93, 0x9a, 0xd2, 0x92, 0xb2,
-	0x59, 0xfb, 0xfd, 0xe7, 0x95, 0x79, 0x51, 0xfd, 0x13, 0xcb, 0x22, 0x88, 0xd2, 0xe7, 0x8c, 0x38,
-	0xbe, 0x6d, 0x0c, 0xa1, 0xea, 0x16, 0x94, 0x78, 0xc6, 0xda, 0x74, 0x53, 0x5a, 0xaa, 0xac, 0x35,
-	0xf5, 0x51, 0xda, 0xea, 0x3c, 0xd3, 0xa6, 0xf2, 0xea, 0xcd, 0xbd, 0xa9, 0x9f, 0xce, 0x8e, 0x97,
-	0x25, 0x43, 0x2c, 0xdd, 0xd8, 0xf8, 0xf6, 0xec, 0x78, 0x79, 0x18, 0xf4, 0xbb, 0xb3, 0xe3, 0xe5,
-	0x87, 0x9c, 0xe0, 0xe1, 0x39, 0x8a, 0xb9, 0xc2, 0xb5, 0x05, 0xb8, 0x9d, 0x73, 0x19, 0x88, 0x06,
-	0xd8, 0xa7, 0x48, 0xfb, 0x41, 0x82, 0xca, 0x0e, 0xb5, 0x9f, 0x22, 0x17, 0xd9, 0x26, 0x43, 0xea,
-	0xc7, 0x50, 0x66, 0xc4, 0xf4, 0x69, 0x17, 0x91, 0x88, 0x62, 0x65, 0xed, 0x4e, 0xae, 0xda, 0xb0,
-	0xcc, 0xcf, 0x05, 0x64, 0x53, 0x0e, 0x0b, 0x35, 0x92, 0x25, 0xea, 0x5d, 0x50, 0x06, 0xa6, 0xeb,
-	0x58, 0x26, 0xc3, 0x24, 0x62, 0xab, 0x18, 0x43, 0x87, 0x3a, 0x0b, 0xd3, 0x41, 0xa7, 0x56, 0x68,
-	0x4a, 0x4b, 0x55, 0x63, 0x3a, 0xe8, 0xa8, 0x0d, 0x80, 0x8e, 0x13, 0xf4, 0x10, 0x61, 0xe8, 0x90,
-	0xd5, 0xe4, 0xc8, 0x9f, 0xf2, 0x68, 0x9f, 0xc2, 0x3b, 0xa9, 0xda, 0xe2, 0x9a, 0xd5, 0x79, 0x28,
-	0x5a, 0x88, 0xb0, 0x5e, 0x54, 0xa0, 0x6c, 0x70, 0x43, 0xad, 0x43, 0x39, 0xc0, 0xd4, 0x09, 0x5b,
-	0x24, 0xca, 0x2c, 0x1b, 0x89, 0xad, 0xfd, 0x28, 0xc1, 0x8d, 0x50, 0x01, 0xdf, 0xfa, 0x5f, 0xf2,
-	0x6c, 0xc3, 0xbb, 0x99, 0xea, 0xb2, 0x4c, 0x7d, 0xec, 0xf1, 0x6e, 0x33, 0xb8, 0x11, 0x7a, 0x07,
-	0xa6, 0xdb, 0x47, 0x82, 0x26, 0x37, 0x32, 0xfc, 0x0b, 0x39, 0xfe, 0x6f, 0x24, 0xb8, 0xb5, 0x43,
-	0xed, 0x2d, 0xd7, 0x74, 0xbc, 0x17, 0xfe, 0x3e, 0xf6, 0x2d, 0xc7, 0xb7, 0xdf, 0xae, 0x06, 0xf3,
-	0x50, 0x44, 0x01, 0xee, 0xf4, 0x44, 0x2d, 0xdc, 0x10, 0xca, 0xc8, 0x23, 0x94, 0x29, 0xe6, 0x95,
-	0x51, 0x1f, 0xc0, 0xcd, 0x2e, 0x42, 0xed, 0x2e, 0xc1, 0x5e, 0x1b, 0xf7, 0x59, 0xd0, 0x67, 0xb5,
-	0x52, 0x14, 0xef, 0x46, 0x17, 0xa1, 0x4f, 0x08, 0xf6, 0x76, 0x23, 0xa7, 0xb6, 0x0b, 0x0b, 0xe7,
-	0xf8, 0x25, 0x2a, 0xbe, 0x07, 0x25, 0xd3, 0xc3, 0x7d, 0x9f, 0x89, 0x86, 0x11, 0xd6, 0xd8, 0x8e,
-	0x79, 0x59, 0x80, 0xea, 0x0e, 0xb5, 0x9f, 0x33, 0xf3, 0x00, 0x7d, 0x81, 0xff, 0x7b, 0xc3, 0xdc,
-	0x83, 0x4a, 0x40, 0x70, 0x80, 0xa9, 0xe9, 0xb6, 0x1d, 0x4b, 0xa4, 0x83, 0xd8, 0xf5, 0xcc, 0xca,
-	0xaa, 0x59, 0xc8, 0xab, 0xf9, 0x11, 0xcc, 0xe0, 0x20, 0x2c, 0x8c, 0xd6, 0x66, 0x9a, 0x85, 0xa5,
-	0xca, 0xda, 0x7d, 0x5d, 0x4c, 0x9d, 0x70, 0xd6, 0x0e, 0x56, 0xf5, 0x2f, 0x91, 0x63, 0xf7, 0x18,
-	0xb2, 0xc2, 0x5a, 0x77, 0x23, 0xa4, 0x11, 0xaf, 0x10, 0xa2, 0x2b, 0x23, 0x44, 0x87, 0x73, 0xa2,
-	0x3f, 0x85, 0x6a, 0x28, 0x7a, 0x42, 0xb7, 0x32, 0x29, 0xdd, 0x4a, 0x17, 0xa1, 0xd8, 0xb5, 0x2d,
-	0x97, 0xe5, 0xb9, 0xe2, 0xb6, 0x5c, 0x2e, 0xce, 0x95, 0xb6, 0xe5, 0x72, 0x69, 0x6e, 0x66, 0x5b,
-	0x2e, 0x97, 0xe7, 0x14, 0xd1, 0xae, 0xc6, 0xec, 0x00, 0x33, 0xd4, 0xf6, 0xfb, 0xae, 0xeb, 0x74,
-	0x1d, 0x44, 0x0c, 0x65, 0xf8, 0xb7, 0x18, 0x10, 0x8c, 0xbb, 0xda, 0x1a, 0xcc, 0xa7, 0x77, 0x20,
-	0xd9, 0xce, 0xf4, 0xb6, 0x49, 0xb9, 0x6d, 0xfb, 0x8d, 0x8f, 0xed, 0xcf, 0x70, 0xe7, 0x60, 0x4f,
-	0xf8, 0xde, 0x6e, 0x9b, 0x6f, 0x41, 0x89, 0x06, 0xae, 0xc3, 0x68, 0xad, 0x10, 0xed, 0xcb, 0xa2,
-	0x08, 0x9d, 0x3a, 0xaf, 0x06, 0xab, 0xfa, 0x93, 0xc4, 0xe2, 0xfb, 0x24, 0x92, 0x88, 0xa5, 0x61,
-	0x83, 0x06, 0xfd, 0xfd, 0x03, 0x74, 0x24, 0xde, 0x0c, 0x61, 0x69, 0x1b, 0xd1, 0xdc, 0x4e, 0x93,
-	0x49, 0x44, 0x08, 0xfb, 0x49, 0xf8, 0xc2, 0x7e, 0x92, 0x44, 0x3f, 0x09, 0xd7, 0x33, 0x4b, 0xfb,
-	0x83, 0xbf, 0xf2, 0x62, 0xe8, 0x5f, 0x93, 0x16, 0xb9, 0xac, 0xd3, 0xf9, 0xac, 0xd7, 0x23, 0xc7,
-	0x5d, 0x50, 0xa8, 0x63, 0xfb, 0x26, 0xeb, 0x13, 0x24, 0x14, 0x19, 0x3a, 0xb4, 0x3b, 0xd1, 0xab,
-	0x9e, 0xe5, 0x95, 0x1c, 0x67, 0xbf, 0x08, 0xd6, 0xbe, 0x7b, 0x8d, 0x1d, 0x70, 0x29, 0xeb, 0x2b,
-	0xce, 0xfb, 0x2c, 0xc1, 0x62, 0x9e, 0xe0, 0x87, 0x9c, 0x60, 0x86, 0xc2, 0x44, 0xcd, 0xff, 0x0f,
-	0x6f, 0xfe, 0x78, 0xcd, 0x75, 0x8d, 0xad, 0xb1, 0xd4, 0x73, 0x73, 0xad, 0x70, 0x6e, 0xae, 0xa5,
-	0x26, 0x97, 0x7c, 0xe5, 0xc9, 0x35, 0x5e, 0x28, 0x7e, 0xad, 0x49, 0xd3, 0x8d, 0x65, 0x5a, 0xfb,
-	0x7b, 0x06, 0x0a, 0x3b, 0xd4, 0x56, 0x5d, 0xa8, 0x66, 0xae, 0x70, 0x1f, 0x8c, 0xbe, 0x7a, 0xe5,
-	0x6e, 0x48, 0xf5, 0xd5, 0x89, 0xa1, 0xc9, 0xe6, 0x7c, 0x0d, 0xe5, 0xe4, 0x22, 0xb5, 0x38, 0x76,
-	0x79, 0x0c, 0xab, 0xaf, 0x4c, 0x04, 0x4b, 0x32, 0x74, 0x01, 0x52, 0x97, 0x98, 0x87, 0xe3, 0x4b,
-	0x4c, 0x80, 0xf5, 0xd6, 0x84, 0xc0, 0x24, 0x0f, 0x81, 0xd9, 0xdc, 0x65, 0xe1, 0xd1, 0xd8, 0x10,
-	0x59, 0x70, 0x7d, 0xfd, 0x0a, 0xe0, 0x24, 0x67, 0x07, 0x94, 0xe1, 0x71, 0xfb, 0x60, 0x6c, 0x84,
-	0x04, 0x57, 0xd7, 0x27, 0xc3, 0x25, 0x49, 0x5c, 0xa8, 0x66, 0x0e, 0x87, 0xf1, 0x0d, 0x91, 0x86,
-	0x5e, 0xd2, 0x10, 0x17, 0x4e, 0x69, 0x02, 0xb3, 0xb9, 0x01, 0xfc, 0x68, 0x92, 0xae, 0x8a, 0x33,
-	0xae, 0x5f, 0x01, 0x9c, 0xc9, 0x99, 0x1d, 0x7f, 0x97, 0xe4, 0xcc, 0x80, 0x2f, 0xcb, 0x79, 0xf1,
-	0x54, 0x72, 0xa1, 0x9a, 0x99, 0x3a, 0xe3, 0x55, 0x4d, 0x43, 0x2f, 0x51, 0xf5, 0xa2, 0x97, 0xbb,
-	0x5e, 0x7c, 0x19, 0x7e, 0x19, 0x6d, 0xee, 0xbd, 0x3a, 0x69, 0x48, 0xaf, 0x4f, 0x1a, 0xd2, 0x5f,
-	0x27, 0x0d, 0xe9, 0xfb, 0xd3, 0xc6, 0xd4, 0xeb, 0xd3, 0xc6, 0xd4, 0x9f, 0xa7, 0x8d, 0xa9, 0xaf,
-	0x1e, 0xdb, 0x0e, 0xeb, 0xf5, 0xf7, 0xf5, 0x0e, 0xf6, 0x5a, 0x51, 0xf4, 0x15, 0x1f, 0xb1, 0x6f,
-	0x30, 0x39, 0x68, 0x8d, 0xfa, 0x62, 0x62, 0x47, 0x01, 0xa2, 0xfb, 0xa5, 0xe8, 0xdb, 0x6f, 0xfd,
-	0xdf, 0x00, 0x00, 0x00, 0xff, 0xff, 0x6b, 0x27, 0x6a, 0x7d, 0x1f, 0x0f, 0x00, 0x00,
+	// 1145 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x57, 0x4f, 0x6b, 0xdc, 0x46,
+	0x14, 0xb7, 0xbc, 0xda, 0xf5, 0xea, 0xed, 0xc6, 0x71, 0x54, 0xb7, 0x91, 0xb7, 0x61, 0xb3, 0x59,
+	0x9a, 0xc4, 0x75, 0xb0, 0x16, 0xdb, 0x90, 0x80, 0x0b, 0x85, 0xd8, 0xa5, 0x25, 0xa6, 0xc6, 0x46,
+	0x21, 0x2d, 0xf4, 0xb2, 0x95, 0x57, 0xb3, 0x5a, 0x61, 0x49, 0x23, 0x34, 0xa3, 0xad, 0x7d, 0x2b,
+	0x3d, 0xf4, 0xd0, 0x53, 0x3f, 0x45, 0xc9, 0xd1, 0x87, 0x7e, 0x88, 0x50, 0x28, 0x84, 0x5e, 0xda,
+	0x53, 0x69, 0xed, 0x83, 0xa1, 0xdf, 0xa0, 0xb7, 0x22, 0xcd, 0x48, 0x2b, 0xc9, 0xfb, 0x17, 0x27,
+	0xd0, 0xcb, 0xa2, 0xf7, 0xf4, 0x9b, 0x79, 0xef, 0xf7, 0x7b, 0x4f, 0x6f, 0x66, 0xe1, 0x1e, 0xd2,
+	0x7d, 0xda, 0x6b, 0x91, 0x9e, 0x85, 0x6c, 0x03, 0x19, 0x84, 0xea, 0xc7, 0x96, 0x6b, 0xb6, 0xfa,
+	0x1b, 0x2d, 0x7a, 0xa2, 0x7a, 0x3e, 0xa6, 0x58, 0x56, 0x22, 0x88, 0x9a, 0x83, 0xa8, 0xfd, 0x8d,
+	0xda, 0x2d, 0xdd, 0xb1, 0x5c, 0xdc, 0x8a, 0x7e, 0x19, 0xb8, 0x76, 0xbb, 0x83, 0x89, 0x83, 0x49,
+	0xcb, 0xc4, 0xfd, 0x70, 0x13, 0x13, 0xf7, 0x73, 0x2f, 0x1c, 0x12, 0xed, 0xee, 0x10, 0x93, 0xbf,
+	0x58, 0x61, 0x2f, 0xda, 0x91, 0xd5, 0x62, 0x06, 0x7f, 0xf5, 0x01, 0x4b, 0x4e, 0xb7, 0x6d, 0xdc,
+	0xd1, 0xa9, 0x85, 0xdd, 0x70, 0xe5, 0xc0, 0xe2, 0xa8, 0x46, 0x96, 0x42, 0x88, 0x89, 0x9f, 0x39,
+	0xe2, 0xfe, 0x48, 0x92, 0x9e, 0xee, 0xeb, 0x4e, 0x1c, 0x6e, 0xd9, 0xc4, 0x26, 0x66, 0x69, 0x84,
+	0x4f, 0xcc, 0xdb, 0xfc, 0x45, 0x80, 0x9b, 0xfb, 0xc4, 0x7c, 0xe1, 0x19, 0x3a, 0x45, 0x87, 0x11,
+	0x5e, 0x7e, 0x0c, 0x92, 0x1e, 0xd0, 0x1e, 0xf6, 0x2d, 0x7a, 0xaa, 0x08, 0x0d, 0x61, 0x55, 0xda,
+	0x51, 0x7e, 0xfb, 0x79, 0x7d, 0x99, 0x67, 0xff, 0xd4, 0x30, 0x7c, 0x44, 0xc8, 0x73, 0xea, 0x5b,
+	0xae, 0xa9, 0x0d, 0xa0, 0xf2, 0x2e, 0x94, 0x58, 0x44, 0x65, 0xbe, 0x21, 0xac, 0x56, 0x36, 0x1b,
+	0xea, 0x28, 0x6d, 0x55, 0x16, 0x69, 0x47, 0x7a, 0xf5, 0xe7, 0xdd, 0xb9, 0x97, 0x97, 0x67, 0x6b,
+	0x82, 0xc6, 0x97, 0x6e, 0x6f, 0x7f, 0x77, 0x79, 0xb6, 0x36, 0xd8, 0xf4, 0x87, 0xcb, 0xb3, 0xb5,
+	0x87, 0x8c, 0xe0, 0xc9, 0x15, 0x8a, 0xb9, 0xc4, 0x9b, 0x2b, 0x70, 0x3b, 0xe7, 0xd2, 0x10, 0xf1,
+	0xb0, 0x4b, 0x50, 0xf3, 0x27, 0x01, 0x2a, 0xfb, 0xc4, 0xfc, 0x04, 0xd9, 0xc8, 0xd4, 0x29, 0x92,
+	0x9f, 0x40, 0xe9, 0x28, 0x70, 0x0d, 0x1b, 0x45, 0x04, 0x2b, 0x9b, 0x2b, 0xb9, 0x5c, 0xc3, 0x24,
+	0x77, 0x22, 0xc0, 0x8e, 0x18, 0x26, 0xa9, 0x71, 0xb8, 0x7c, 0x07, 0xa4, 0xbe, 0x6e, 0x5b, 0x86,
+	0x4e, 0xb1, 0x1f, 0xf1, 0x94, 0xb4, 0x81, 0x43, 0x5e, 0x84, 0x79, 0xaf, 0xa3, 0x14, 0x1a, 0xc2,
+	0x6a, 0x55, 0x9b, 0xf7, 0x3a, 0x72, 0x1d, 0xa0, 0x63, 0x79, 0x3d, 0xe4, 0x53, 0x74, 0x42, 0x15,
+	0x31, 0xf2, 0xa7, 0x3c, 0xf2, 0x12, 0x14, 0xba, 0x08, 0x29, 0xc5, 0x86, 0xb0, 0x2a, 0x6a, 0xe1,
+	0x63, 0xf3, 0x33, 0x78, 0x27, 0x95, 0x67, 0x9c, 0xbf, 0xbc, 0x0c, 0x45, 0x03, 0xf9, 0xb4, 0x17,
+	0xa5, 0x2b, 0x6a, 0xcc, 0x90, 0x6b, 0x50, 0xf6, 0x30, 0xb1, 0xc2, 0x76, 0x89, 0x72, 0x11, 0xb5,
+	0xc4, 0x6e, 0xbe, 0x14, 0xe0, 0x46, 0xa8, 0x86, 0x6b, 0xfc, 0xef, 0x39, 0xb7, 0xe1, 0xdd, 0x4c,
+	0xa6, 0x59, 0xd6, 0x2e, 0x76, 0x58, 0x17, 0x6a, 0xcc, 0x08, 0xbd, 0x7d, 0xdd, 0x0e, 0x10, 0xa7,
+	0xcc, 0x8c, 0x8c, 0x16, 0x85, 0x9c, 0x16, 0xff, 0x08, 0x70, 0x6b, 0x9f, 0x98, 0xbb, 0xb6, 0x6e,
+	0x39, 0x2f, 0xdc, 0x23, 0xec, 0x1a, 0x96, 0x6b, 0xbe, 0x2d, 0x3d, 0x96, 0xa1, 0x88, 0x3c, 0xdc,
+	0xe9, 0xf1, 0x2c, 0x98, 0xc1, 0x55, 0x12, 0x47, 0xa8, 0x54, 0xbc, 0xa2, 0xd2, 0x03, 0xb8, 0xd9,
+	0x45, 0xa8, 0xdd, 0xf5, 0xb1, 0xd3, 0xc6, 0x01, 0xf5, 0x02, 0xaa, 0x94, 0xa2, 0xfd, 0x6e, 0x74,
+	0x11, 0xfa, 0xd4, 0xc7, 0xce, 0x41, 0xe4, 0x8c, 0xd5, 0x5c, 0x18, 0xa8, 0x79, 0x00, 0x2b, 0x57,
+	0xb8, 0x26, 0x8a, 0xbe, 0x07, 0x25, 0xdd, 0xc1, 0x81, 0x4b, 0x79, 0x23, 0x71, 0x6b, 0x6c, 0x27,
+	0x7d, 0x5f, 0x80, 0xea, 0x3e, 0x31, 0x9f, 0x53, 0xfd, 0x18, 0x7d, 0x81, 0xaf, 0xd3, 0x48, 0x77,
+	0xa1, 0xe2, 0xf9, 0xd8, 0xc3, 0x44, 0xb7, 0xdb, 0x96, 0xc1, 0x03, 0x41, 0xec, 0x7a, 0x66, 0x64,
+	0x95, 0x2d, 0xe4, 0x95, 0xfd, 0x08, 0x16, 0xb0, 0x17, 0xa6, 0x44, 0x94, 0x85, 0x46, 0x61, 0xb5,
+	0xb2, 0x79, 0x4f, 0xe5, 0x33, 0x29, 0x9c, 0xc4, 0xfd, 0x0d, 0xf5, 0x4b, 0x64, 0x99, 0x3d, 0x8a,
+	0x8c, 0x30, 0xcb, 0x83, 0x08, 0xa9, 0xc5, 0x2b, 0x78, 0x01, 0xa4, 0x11, 0x05, 0x80, 0x2b, 0x05,
+	0xf8, 0x18, 0x20, 0x2c, 0x00, 0x27, 0x5a, 0x99, 0x8e, 0xa8, 0xd4, 0x45, 0x88, 0x39, 0xe2, 0xc2,
+	0x54, 0x93, 0xc2, 0xec, 0x89, 0x65, 0x71, 0xa9, 0xb8, 0x27, 0x96, 0x8b, 0x4b, 0xa5, 0x3d, 0xb1,
+	0x5c, 0x5a, 0x5a, 0xd8, 0x13, 0xcb, 0xe5, 0x25, 0x89, 0x37, 0xb0, 0xb6, 0xd8, 0xc7, 0x14, 0xb5,
+	0xdd, 0xc0, 0xb6, 0xad, 0xae, 0x85, 0x7c, 0x4d, 0x1a, 0x3c, 0x16, 0x3d, 0x1f, 0xe3, 0x6e, 0x73,
+	0x13, 0x96, 0xd3, 0x75, 0x48, 0x8a, 0x9a, 0x2e, 0x9e, 0x90, 0x2b, 0xde, 0xef, 0x6c, 0xc0, 0x7f,
+	0x8e, 0x3b, 0xc7, 0x87, 0xdc, 0xf7, 0xb6, 0x1a, 0x7f, 0x17, 0x4a, 0xc4, 0xb3, 0x2d, 0x4a, 0x94,
+	0x42, 0x54, 0x9d, 0xfb, 0x7c, 0xdb, 0xd4, 0x99, 0xd6, 0xdf, 0x50, 0x9f, 0x26, 0x16, 0xab, 0x56,
+	0x1c, 0x82, 0x2d, 0x0d, 0x1b, 0xd4, 0x0b, 0x8e, 0x8e, 0xd1, 0x29, 0xff, 0x56, 0xb8, 0x35, 0x64,
+	0x6a, 0x6c, 0x47, 0xd3, 0x3e, 0x4d, 0x2c, 0x11, 0x24, 0xec, 0x33, 0xee, 0x0b, 0xfb, 0x4c, 0xe0,
+	0x7d, 0xc6, 0x5d, 0xcf, 0x8c, 0xe6, 0x39, 0x1b, 0x08, 0xfc, 0xa8, 0xb8, 0xb6, 0x2e, 0xb9, 0x78,
+	0xf3, 0xf9, 0x78, 0x6f, 0x46, 0x9a, 0x3b, 0x20, 0x11, 0xcb, 0x74, 0x75, 0x1a, 0xf8, 0x88, 0xab,
+	0x33, 0x70, 0x0c, 0x11, 0xe8, 0xfd, 0x68, 0x10, 0x64, 0x39, 0x26, 0x07, 0xe2, 0xaf, 0x5c, 0x01,
+	0xd7, 0x7e, 0x23, 0x9d, 0x31, 0x51, 0x81, 0x59, 0x4f, 0x89, 0x0c, 0xd9, 0xe2, 0x08, 0xb2, 0xa5,
+	0x01, 0xd9, 0x27, 0x8c, 0x6c, 0x86, 0xce, 0x54, 0x1f, 0xc8, 0xbf, 0xec, 0x03, 0x89, 0xd7, 0x5c,
+	0x7f, 0xc0, 0x8d, 0x95, 0x21, 0x37, 0x01, 0x0b, 0x57, 0x26, 0x60, 0x6a, 0xc6, 0x89, 0x33, 0xcf,
+	0xb8, 0x59, 0x45, 0x63, 0x17, 0xa6, 0x34, 0xf5, 0x58, 0xb2, 0xcd, 0xbf, 0x17, 0xa0, 0xb0, 0x4f,
+	0x4c, 0xd9, 0x86, 0x6a, 0xe6, 0x72, 0xf8, 0xe1, 0xe8, 0x4b, 0x5d, 0xee, 0xee, 0x55, 0xdb, 0x98,
+	0x1a, 0x9a, 0x14, 0xea, 0x6b, 0x28, 0x27, 0x57, 0xb4, 0xfb, 0x63, 0x97, 0xc7, 0xb0, 0xda, 0xfa,
+	0x54, 0xb0, 0x24, 0x42, 0x17, 0x20, 0x75, 0x25, 0x7a, 0x38, 0x3e, 0xc5, 0x04, 0x58, 0x6b, 0x4d,
+	0x09, 0x4c, 0xe2, 0xf8, 0xb0, 0x98, 0xbb, 0x6e, 0x3c, 0x1a, 0xbb, 0x45, 0x16, 0x5c, 0xdb, 0x9a,
+	0x01, 0x9c, 0xc4, 0xec, 0x80, 0x34, 0x38, 0xa4, 0x1f, 0x8c, 0xdd, 0x21, 0xc1, 0xd5, 0xd4, 0xe9,
+	0x70, 0x49, 0x10, 0x1b, 0xaa, 0x99, 0xc3, 0x64, 0x7c, 0x43, 0xa4, 0xa1, 0x13, 0x1a, 0x62, 0xe8,
+	0x24, 0xf7, 0x61, 0x31, 0x37, 0xa4, 0x1f, 0x4d, 0xd3, 0x55, 0x71, 0xc4, 0xad, 0x19, 0xc0, 0x99,
+	0x98, 0xd9, 0xb1, 0x38, 0x21, 0x66, 0x06, 0x3c, 0x29, 0xe6, 0xf0, 0x09, 0x65, 0x43, 0x35, 0x33,
+	0x81, 0xc6, 0xab, 0x9a, 0x86, 0x4e, 0x50, 0x75, 0xd8, 0xc7, 0x5d, 0x2b, 0x7e, 0x1b, 0xfe, 0xe7,
+	0xda, 0x39, 0x7c, 0x75, 0x5e, 0x17, 0x5e, 0x9f, 0xd7, 0x85, 0xbf, 0xce, 0xeb, 0xc2, 0x8f, 0x17,
+	0xf5, 0xb9, 0xd7, 0x17, 0xf5, 0xb9, 0x3f, 0x2e, 0xea, 0x73, 0x5f, 0x3d, 0x36, 0x2d, 0xda, 0x0b,
+	0x8e, 0xd4, 0x0e, 0x76, 0x5a, 0xd1, 0xee, 0xeb, 0x2e, 0xa2, 0xdf, 0x60, 0xff, 0xb8, 0x35, 0xea,
+	0xbf, 0x18, 0x3d, 0xf5, 0x10, 0x39, 0x2a, 0x45, 0xff, 0x2a, 0xb7, 0xfe, 0x0b, 0x00, 0x00, 0xff,
+	0xff, 0x05, 0x5c, 0xbe, 0xe5, 0x79, 0x0f, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -1728,6 +1806,11 @@ func (m *MsgDelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x28
+	}
 	if len(m.Ciphertext) > 0 {
 		i -= len(m.Ciphertext)
 		copy(dAtA[i:], m.Ciphertext)
@@ -1750,7 +1833,7 @@ func (m *MsgDelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		dAtA[i] = 0x12
 	}
 	{
-		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -1815,6 +1898,11 @@ func (m *MsgUndelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x28
+	}
 	if len(m.Ciphertext) > 0 {
 		i -= len(m.Ciphertext)
 		copy(dAtA[i:], m.Ciphertext)
@@ -1837,7 +1925,7 @@ func (m *MsgUndelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		dAtA[i] = 0x12
 	}
 	{
-		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -1909,6 +1997,11 @@ func (m *MsgClaimUnbonding) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x38
+	}
 	if m.FeeFromOutput != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.FeeFromOutput))
 		i--
@@ -1941,7 +2034,7 @@ func (m *MsgClaimUnbonding) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		dAtA[i] = 0x12
 	}
 	{
-		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -2006,8 +2099,13 @@ func (m *MsgStakeVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x60
+	}
 	{
-		size, err := m.FeeTransfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.FeeBundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -2057,7 +2155,7 @@ func (m *MsgStakeVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		dAtA[i] = 0x10
 	}
 	{
-		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -2117,6 +2215,11 @@ func (m *MsgLockPosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x28
+	}
 	if len(m.Pubkey) > 0 {
 		i -= len(m.Pubkey)
 		copy(dAtA[i:], m.Pubkey)
@@ -2146,7 +2249,7 @@ func (m *MsgLockPosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		dAtA[i] = 0x12
 	}
 	{
-		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -2206,6 +2309,11 @@ func (m *MsgUpdatePosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x28
+	}
 	if len(m.Signature) > 0 {
 		i -= len(m.Signature)
 		copy(dAtA[i:], m.Signature)
@@ -2233,7 +2341,7 @@ func (m *MsgUpdatePosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		dAtA[i] = 0x10
 	}
 	{
-		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -2288,6 +2396,11 @@ func (m *MsgUnlockPosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x30
+	}
 	if len(m.Signature) > 0 {
 		i -= len(m.Signature)
 		copy(dAtA[i:], m.Signature)
@@ -2315,7 +2428,7 @@ func (m *MsgUnlockPosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		dAtA[i] = 0x10
 	}
 	{
-		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -2375,6 +2488,11 @@ func (m *MsgPositionVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x30
+	}
 	if len(m.Signature) > 0 {
 		i -= len(m.Signature)
 		copy(dAtA[i:], m.Signature)
@@ -2407,7 +2525,7 @@ func (m *MsgPositionVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		dAtA[i] = 0x10
 	}
 	{
-		size, err := m.Transfer.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -2483,7 +2601,7 @@ func (m *MsgDelegate) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Transfer.Size()
+	l = m.Bundle.Size()
 	n += 1 + l + sovTx(uint64(l))
 	l = len(m.Validator)
 	if l > 0 {
@@ -2496,6 +2614,9 @@ func (m *MsgDelegate) Size() (n int) {
 	l = len(m.Ciphertext)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
 	}
 	return n
 }
@@ -2521,7 +2642,7 @@ func (m *MsgUndelegate) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Transfer.Size()
+	l = m.Bundle.Size()
 	n += 1 + l + sovTx(uint64(l))
 	l = len(m.Validator)
 	if l > 0 {
@@ -2534,6 +2655,9 @@ func (m *MsgUndelegate) Size() (n int) {
 	l = len(m.Ciphertext)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
 	}
 	return n
 }
@@ -2563,7 +2687,7 @@ func (m *MsgClaimUnbonding) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Transfer.Size()
+	l = m.Bundle.Size()
 	n += 1 + l + sovTx(uint64(l))
 	l = len(m.Validator)
 	if l > 0 {
@@ -2582,6 +2706,9 @@ func (m *MsgClaimUnbonding) Size() (n int) {
 	}
 	if m.FeeFromOutput != 0 {
 		n += 1 + sovTx(uint64(m.FeeFromOutput))
+	}
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
 	}
 	return n
 }
@@ -2607,7 +2734,7 @@ func (m *MsgStakeVote) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Transfer.Size()
+	l = m.Bundle.Size()
 	n += 1 + l + sovTx(uint64(l))
 	if m.ProposalId != 0 {
 		n += 1 + sovTx(uint64(m.ProposalId))
@@ -2630,8 +2757,11 @@ func (m *MsgStakeVote) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
-	l = m.FeeTransfer.Size()
+	l = m.FeeBundle.Size()
 	n += 1 + l + sovTx(uint64(l))
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
+	}
 	return n
 }
 
@@ -2653,7 +2783,7 @@ func (m *MsgLockPosition) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Transfer.Size()
+	l = m.Bundle.Size()
 	n += 1 + l + sovTx(uint64(l))
 	l = len(m.Validator)
 	if l > 0 {
@@ -2668,6 +2798,9 @@ func (m *MsgLockPosition) Size() (n int) {
 	l = len(m.Pubkey)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
 	}
 	return n
 }
@@ -2690,7 +2823,7 @@ func (m *MsgUpdatePosition) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Transfer.Size()
+	l = m.Bundle.Size()
 	n += 1 + l + sovTx(uint64(l))
 	if m.PositionId != 0 {
 		n += 1 + sovTx(uint64(m.PositionId))
@@ -2704,6 +2837,9 @@ func (m *MsgUpdatePosition) Size() (n int) {
 	l = len(m.Signature)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
 	}
 	return n
 }
@@ -2723,7 +2859,7 @@ func (m *MsgUnlockPosition) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Transfer.Size()
+	l = m.Bundle.Size()
 	n += 1 + l + sovTx(uint64(l))
 	if m.PositionId != 0 {
 		n += 1 + sovTx(uint64(m.PositionId))
@@ -2739,6 +2875,9 @@ func (m *MsgUnlockPosition) Size() (n int) {
 	l = len(m.Signature)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
 	}
 	return n
 }
@@ -2761,7 +2900,7 @@ func (m *MsgPositionVote) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Transfer.Size()
+	l = m.Bundle.Size()
 	n += 1 + l + sovTx(uint64(l))
 	if m.PositionId != 0 {
 		n += 1 + sovTx(uint64(m.PositionId))
@@ -2778,6 +2917,9 @@ func (m *MsgPositionVote) Size() (n int) {
 	l = len(m.Signature)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
 	}
 	return n
 }
@@ -2993,7 +3135,7 @@ func (m *MsgDelegate) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -3020,7 +3162,7 @@ func (m *MsgDelegate) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -3124,6 +3266,25 @@ func (m *MsgDelegate) Unmarshal(dAtA []byte) error {
 				m.Ciphertext = []byte{}
 			}
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -3264,7 +3425,7 @@ func (m *MsgUndelegate) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -3291,7 +3452,7 @@ func (m *MsgUndelegate) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -3395,6 +3556,25 @@ func (m *MsgUndelegate) Unmarshal(dAtA []byte) error {
 				m.Ciphertext = []byte{}
 			}
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -3567,7 +3747,7 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -3594,7 +3774,7 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -3732,6 +3912,25 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.FeeFromOutput |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -3876,7 +4075,7 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -3903,7 +4102,7 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -4062,7 +4261,7 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 11:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FeeTransfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field FeeBundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -4089,10 +4288,29 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.FeeTransfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.FeeBundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
+		case 12:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4214,7 +4432,7 @@ func (m *MsgLockPosition) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -4241,7 +4459,7 @@ func (m *MsgLockPosition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -4345,6 +4563,25 @@ func (m *MsgLockPosition) Unmarshal(dAtA []byte) error {
 				m.Pubkey = []byte{}
 			}
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4466,7 +4703,7 @@ func (m *MsgUpdatePosition) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -4493,7 +4730,7 @@ func (m *MsgUpdatePosition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -4584,6 +4821,25 @@ func (m *MsgUpdatePosition) Unmarshal(dAtA []byte) error {
 				m.Signature = []byte{}
 			}
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4686,7 +4942,7 @@ func (m *MsgUnlockPosition) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -4713,7 +4969,7 @@ func (m *MsgUnlockPosition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -4838,6 +5094,25 @@ func (m *MsgUnlockPosition) Unmarshal(dAtA []byte) error {
 				m.Signature = []byte{}
 			}
 			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4959,7 +5234,7 @@ func (m *MsgPositionVote) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Transfer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -4986,7 +5261,7 @@ func (m *MsgPositionVote) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Transfer.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -5096,6 +5371,25 @@ func (m *MsgPositionVote) Unmarshal(dAtA []byte) error {
 				m.Signature = []byte{}
 			}
 			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])

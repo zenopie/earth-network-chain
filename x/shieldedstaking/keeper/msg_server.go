@@ -59,8 +59,7 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	if err != nil {
 		return nil, err
 	}
-	paid, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
-		types.ModuleName)
+	paid, err := k.shielded.ReleaseToModule(ctx, m, types.BondDenom, types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +102,7 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	if err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
-		types.ModuleName)
+	derth, err := k.shielded.ReleaseToModule(ctx, m, types.DerthDenom(m.Validator), types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -174,15 +172,14 @@ func (k msgServer) ClaimUnbonding(goCtx context.Context, m *types.MsgClaimUnbond
 // executeClaim: the unbond notes are burned and ERTH = value x payout /
 // requested is paid, so a slash of the unbonding entry reaches every
 // claimant pro rata: fee_from_output to fee_collector, the rest minted as a
-// note. Runs in the private ante, after the transfer was spent; any error
+// note. Runs in the private ante, after the bundle was spent; any error
 // fails the whole tx, spend included.
 func (k Keeper) executeClaim(ctx sdk.Context, m *types.MsgClaimUnbonding) (*types.MsgClaimUnbondingResponse, error) {
 	r, pay, err := k.checkClaim(ctx, m)
 	if err != nil {
 		return nil, err
 	}
-	claim, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
-		types.ModuleName)
+	claim, err := k.shielded.ReleaseToModule(ctx, m, types.UnbondDenom(m.Validator, m.Epoch), types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -240,13 +237,12 @@ func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*typ
 	if err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
-		types.ModuleName)
+	derth, err := k.shielded.ReleaseToModule(ctx, m, types.DerthDenom(m.Validator), types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
 	v := types.StakeVote{
-		ProposalId: m.ProposalId, Key: append([]byte{0}, m.Transfer.Nullifiers[0]...), Validator: m.Validator,
+		ProposalId: m.ProposalId, Key: append([]byte{0}, m.Bundle.Actions[0].Nullifier...), Validator: m.Validator,
 		Derth: d, Options: m.Options,
 	}
 	if err := k.putVote(ctx, v); err != nil {
@@ -268,8 +264,7 @@ func (k msgServer) LockPosition(goCtx context.Context, m *types.MsgLockPosition)
 	if err := k.checkLock(ctx, m); err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
-		types.ModuleName)
+	derth, err := k.shielded.ReleaseToModule(ctx, m, types.DerthDenom(m.Validator), types.ModuleName)
 	if err != nil {
 		return nil, err
 	}

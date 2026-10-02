@@ -19,7 +19,7 @@ import (
 )
 
 // Private actions: what the x/shielded ante runs for this module's msgs
-// before it spends their transfer (see x/shielded/types.PrivateActionHandler).
+// before it spends their bundles (see x/shielded/types.PrivateActionHandler).
 //
 // Check refuses everything the msg's handler would refuse, because the ante's
 // spend stands even when the handler fails: a refused Delegate after the ante
@@ -27,13 +27,13 @@ import (
 // The handler repeats the same checks on the same state (both run inside one
 // DeliverTx), so it cannot disagree.
 //
-// Gas is fixed per msg type and prepaid with the transfer's, and handlers run
-// their effects on an infinite meter, as x/shielded's MsgTransfer does. An
+// Gas is fixed per msg type and prepaid with the bundles', and handlers run
+// their effects on an infinite meter, as x/shielded's MsgSend does. An
 // unsigned tx's gas limit can be rewritten by whoever relays it; with metered
 // effects they could pick a limit that passes the ante and runs out in the
 // handler, after the notes are spent.
 
-// Base gas per action, on top of the transfer's and of one note write per
+// Base gas per action, on top of the bundles' and of one note write per
 // note the action mints. Covers the handler's reads and writes (the rate's
 // reward computation is the heaviest: a distribution period walk).
 const (
@@ -129,7 +129,7 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 }
 
 // VerifyPrivateAction: no msg of this module carries a proof beyond its
-// transfer.
+// bundles.
 func (h ActionHandler) VerifyPrivateAction(context.Context, shieldedtypes.PrivateMsg, any) error {
 	return nil
 }
@@ -167,7 +167,7 @@ func (h ActionHandler) AcceptsPrivateAnchor(ctx context.Context, msg shieldedtyp
 }
 
 // authorized is the handlers' gate: the ante checked this very msg's action
-// and executed its transfer in this tx. Returns ctx on an infinite meter.
+// and executed its bundles in this tx. Returns ctx on an infinite meter.
 func (k Keeper) authorized(ctx context.Context, msg shieldedtypes.PrivateMsg) (sdk.Context, error) {
 	if _, err := shieldedkeeper.AuthorizedAction(ctx, msg); err != nil {
 		return sdk.Context{}, err
@@ -193,7 +193,7 @@ func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) (math.I
 	if err != nil {
 		return math.Int{}, err
 	}
-	d, err := derthFor(math.NewIntFromUint64(m.Transfer.ValueOut), b, s)
+	d, err := derthFor(math.NewIntFromUint64(m.Amount()), b, s)
 	if err != nil {
 		return math.Int{}, err
 	}
@@ -215,7 +215,7 @@ func (k Keeper) checkUndelegate(ctx context.Context, m *types.MsgUndelegate) (ma
 	if err != nil {
 		return math.Int{}, err
 	}
-	d := math.NewIntFromUint64(m.Transfer.ValueOut)
+	d := math.NewIntFromUint64(m.Amount())
 	if d.GT(s) {
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "more derth than exists")
 	}
@@ -240,7 +240,7 @@ func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (typ
 	if r.Status != types.UNBOND_STATUS_MATURED {
 		return r, math.Int{}, types.ErrNotMatured.Wrapf("%s/%d is %s", m.Validator, m.Epoch, r.Status)
 	}
-	v := math.NewIntFromUint64(m.Transfer.ValueOut)
+	v := math.NewIntFromUint64(m.Amount())
 	if v.GT(r.Outstanding) {
 		return r, math.Int{}, errorsmod.Wrap(types.ErrAmount, "claim exceeds the record's outstanding notes")
 	}
@@ -254,20 +254,24 @@ func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (typ
 	return r, pay, nil
 }
 
-// checkStakeVote: the proposal is open to stake votes, the transfer spends
-// against its snapshot root (so every note it spends existed then, and one
-// minted since, including a vote's own re-minted note, cannot vote), its
-// weight fits the validator's snapshot supply, and the note can be minted
-// back. The transfer's nullifiers are checked unspent by the ante.
+// checkStakeVote: the proposal is open to stake votes, every action of the
+// vote bundle (bundle 0, dummies included) spends against its snapshot root
+// (so every note it spends existed then, and one minted since, including a
+// vote's own re-minted note, cannot vote), its weight fits the validator's
+// snapshot supply, and the note can be minted back. The bundles' nullifiers
+// are checked unspent by the ante; the fee bundle's anchors are in the
+// pool's window (the ante accepts no other root for it).
 func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (math.Int, error) {
 	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
 		return math.Int{}, err
 	}
-	if !bytes.Equal(m.Transfer.Root, snap.Root) {
-		return math.Int{}, types.ErrNoVoting.Wrapf("a stake vote on proposal %d spends against its snapshot root", m.ProposalId)
+	for i := range m.Bundle.Actions {
+		if !bytes.Equal(m.Bundle.Actions[i].Anchor, snap.Root) {
+			return math.Int{}, types.ErrNoVoting.Wrapf("a stake vote on proposal %d spends against its snapshot root (action %d)", m.ProposalId, i)
+		}
 	}
-	d := math.NewIntFromUint64(m.Transfer.ValueOut)
+	d := math.NewIntFromUint64(m.Weight())
 	if d.GT(vs.Supply) {
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
 	}
@@ -285,7 +289,7 @@ func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
 	if err != nil {
 		return err
 	}
-	if math.NewIntFromUint64(m.Transfer.ValueOut).LT(params.MinPosition) {
+	if math.NewIntFromUint64(m.Amount()).LT(params.MinPosition) {
 		return types.ErrPosition.Wrapf("a position locks at least %s derth", params.MinPosition)
 	}
 	n, err := k.positionCount(ctx)
@@ -298,7 +302,7 @@ func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
 	if err := k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits); err != nil {
 		return err
 	}
-	if len(m.Splits) > 0 && !k.positionWeight(ctx, m.Validator, math.NewIntFromUint64(m.Transfer.ValueOut)).IsPositive() {
+	if len(m.Splits) > 0 && !k.positionWeight(ctx, m.Validator, math.NewIntFromUint64(m.Amount())).IsPositive() {
 		return allocationtypes.ErrNoWeight
 	}
 	return nil

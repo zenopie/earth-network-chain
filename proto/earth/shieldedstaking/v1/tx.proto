@@ -13,8 +13,11 @@ import "gogoproto/gogo.proto";
 option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
 
 // Msg is private staking. Every msg but UpdateParams is a private msg: no
-// signer, a shielded transfer that pays its fee (and carries any value it
-// moves), and a signal binding every other field. See x/shielded/ante.
+// signer, a shielded bundle that pays its fee (out of its uerth balance) and
+// releases any value it moves (its remainder of the msg's denom), and a
+// sighash, zk/orchard.Sighash(type URL, chain id, K, bundle digests, fields),
+// binding every other field. The fields are listed on each msg; every msg's
+// list ends with its fee. See x/shielded/ante.
 service Msg {
   option (cosmos.msg.v1.service) = true;
 
@@ -54,19 +57,20 @@ message MsgUpdateParams {
 // MsgUpdateParamsResponse is empty.
 message MsgUpdateParamsResponse {}
 
-// MsgDelegate spends transfer.value_out uerth into the module for validator
-// and mints a derth/<validator> note to pc at the live rate. The ERTH is
-// delegated at the epoch's end.
+// MsgDelegate releases bundle's uerth balance less fee into the module for
+// validator and mints a derth/<validator> note to pc at the live rate. The
+// ERTH is delegated at the epoch's end. bundle's balances: uerth only.
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgDelegate", chain_id,
-// ciphertexts, Bytes(validator), pc, Bytes(ciphertext)).
+// sighash fields: Bytes(validator), pc, Bytes(ciphertext), fee.
 message MsgDelegate {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
   // pc owns the derth note.
   bytes pc = 3;
   // ciphertext is the derth note encrypted to its owner (optional).
   bytes ciphertext = 4;
+  // fee is paid out of bundle's uerth balance; the rest is delegated.
+  uint64 fee = 5;
 }
 
 // MsgDelegateResponse returns the derth minted and the note's position.
@@ -75,16 +79,17 @@ message MsgDelegateResponse {
   uint64 position = 2;
 }
 
-// MsgUndelegate spends transfer.value_out of derth/<validator> and mints an
-// unbond/<validator>/<epoch> note of its ERTH value to pc.
+// MsgUndelegate releases bundle's derth/<validator> balance and mints an
+// unbond/<validator>/<epoch> note of its ERTH value to pc. bundle's
+// balances: derth/<validator> and the uerth fee.
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgUndelegate", chain_id,
-// ciphertexts, Bytes(validator), pc, Bytes(ciphertext)).
+// sighash fields: Bytes(validator), pc, Bytes(ciphertext), fee.
 message MsgUndelegate {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
   bytes pc = 3;
   bytes ciphertext = 4;
+  uint64 fee = 5;
 }
 
 // MsgUndelegateResponse returns the unbond note's denom, value and position.
@@ -94,26 +99,28 @@ message MsgUndelegateResponse {
   uint64 position = 3;
 }
 
-// MsgClaimUnbonding spends transfer.value_out of unbond/<validator>/<epoch>
-// once that record has matured and mints ERTH = value x payout / requested to
-// pc (less fee_from_output).
+// MsgClaimUnbonding releases bundle's unbond/<validator>/<epoch> balance once
+// that record has matured and mints ERTH = value x payout / requested to pc
+// (less fee_from_output). bundle's balances: the unbond denom, and the uerth
+// fee unless fee_from_output pays it.
 //
 // The claim runs in the private ante, atomically with the spend (see
 // x/shielded/types.PrivateActionExecutor).
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgClaimUnbonding",
-// chain_id, ciphertexts, Bytes(validator), epoch, pc, Bytes(ciphertext),
-// fee_from_output).
+// sighash fields: Bytes(validator), epoch, pc, Bytes(ciphertext),
+// fee_from_output, fee.
 message MsgClaimUnbonding {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
   uint64 epoch = 3;
   bytes pc = 4;
   bytes ciphertext = 5;
-  // fee_from_output pays the tx fee out of the claimed ERTH instead of from a
-  // fee note: transfer.fee must be 0, and the claim must pay more than it.
-  // The note minted to pc holds the rest. 0: the fee is transfer.fee.
+  // fee_from_output pays the tx fee out of the claimed ERTH instead of from
+  // the bundle: fee must then be 0 (the bundle has no uerth balance), and the
+  // claim must pay more than it. The note minted to pc holds the rest.
   uint64 fee_from_output = 6;
+  // fee is paid out of bundle's uerth balance (0 with fee_from_output).
+  uint64 fee = 7;
 }
 
 // MsgClaimUnbondingResponse returns the ERTH minted to pc (the claim less
@@ -124,34 +131,36 @@ message MsgClaimUnbondingResponse {
 }
 
 // MsgStakeVote votes derth/<validator> on proposal_id by spending it
-// (spend-to-vote). transfer is proven against the proposal's snapshot root
-// (ProposalSnapshot.root; the ante accepts it for this msg even once it has
-// left the pool's root window) and releases value_out of
-// derth/<validator> (asset public) to this module: that value is the vote's
-// weight. Its fee is 0 and its slot 2 a dummy. The handler records the vote
-// and mints the same value back to pc as a new note. The spent nullifier
-// stops the note voting again, and the new note is not in the snapshot root,
-// so it cannot vote on this proposal either. Final: a stake vote is not
-// replaced. Any change the transfer keeps (a wallet should release the whole
-// note) is likewise a new note outside the snapshot, and cannot vote.
+// (spend-to-vote). Two bundles:
 //
-// fee_transfer pays the fee: a transfer of ERTH proven against a current root
-// (the pool's ordinary window), releasing nothing (value_out 0), so the fee
-// note need not predate the snapshot.
+// bundle (the vote, bundle 0): EVERY action's anchor is the proposal's
+// snapshot root (ProposalSnapshot.root; the ante accepts it for this msg
+// even once it has left the pool's root window), dummy spends included, and
+// its only balance is derth/<validator>: the vote's weight, released to this
+// module. The handler records the vote and mints the same value back to pc as
+// a new note. The spent nullifiers stop the notes voting again, and the new
+// note is not in the snapshot root, so it cannot vote on this proposal
+// either. Final: a stake vote is not replaced. Any change the bundle keeps (a
+// wallet should release the whole note) is likewise a new note outside the
+// snapshot, and cannot vote.
 //
-// Both proofs bind one signal = MultiSpendSignal(
-// "/earth.shieldedstaking.v1.MsgStakeVote", chain_id, [transfer.ciphertexts,
-// fee_transfer.ciphertexts], [transfer.nullifiers, fee_transfer.nullifiers],
-// proposal_id, Bytes(validator), Bytes(options), pc, Bytes(ciphertext)).
+// fee_bundle (bundle 1) pays the fee: its only balance is uerth == fee, its
+// anchors in the pool's ordinary window, so the fee note need not predate
+// the snapshot.
+//
+// sighash = Sighash(type URL, chain id, 2, digest(bundle), digest(fee_bundle),
+// proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), pc,
+// Bytes(ciphertext), fee).
 message MsgStakeVote {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 proposal_id = 2;
   string validator = 3;
   repeated cosmos.gov.v1.WeightedVoteOption options = 7;
   // pc receives the re-minted derth note.
   bytes pc = 9;
   bytes ciphertext = 10;
-  earth.shielded.v1.Transfer fee_transfer = 11 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle fee_bundle = 11 [(gogoproto.nullable) = false];
+  uint64 fee = 12;
   // note_vote fields, replaced by spend-to-vote.
   reserved 4, 5, 6, 8;
   reserved "value", "vote_nullifier", "nullifier", "proof";
@@ -162,17 +171,18 @@ message MsgStakeVoteResponse {
   uint64 position = 1;
 }
 
-// MsgLockPosition spends transfer.value_out of derth/<validator> into the
-// module as a new Groundworks position splitting its weight by splits,
-// controlled by pubkey.
+// MsgLockPosition releases bundle's derth/<validator> balance into the module
+// as a new Groundworks position splitting its weight by splits, controlled
+// by pubkey. bundle's balances: derth/<validator> and the uerth fee.
 //
-// signal = SpendSignal("/earth.shieldedstaking.v1.MsgLockPosition", chain_id,
-// ciphertexts, Bytes(validator), Bytes(pubkey), Bytes(splits)).
+// sighash fields: Bytes(validator), Bytes(pubkey), Bytes(SplitsBytes(splits)),
+// fee.
 message MsgLockPosition {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
   repeated earth.allocation.v1.AllocationWeight splits = 3 [(gogoproto.nullable) = false];
   bytes pubkey = 4;
+  uint64 fee = 5;
 }
 
 // MsgLockPositionResponse returns the position id.
@@ -181,24 +191,32 @@ message MsgLockPositionResponse {
 }
 
 // MsgUpdatePosition replaces a position's split. signature is the position
-// key's over PositionSignBytes (see types).
+// key's over PositionSignBytes (see types). bundle pays the fee only.
+//
+// sighash fields: position_id, Bytes(SplitsBytes(splits)), Bytes(signature),
+// fee.
 message MsgUpdatePosition {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 position_id = 2;
   repeated earth.allocation.v1.AllocationWeight splits = 3 [(gogoproto.nullable) = false];
   bytes signature = 4;
+  uint64 fee = 5;
 }
 
 // MsgUpdatePositionResponse is empty.
 message MsgUpdatePositionResponse {}
 
 // MsgUnlockPosition closes a position and mints its derth as a note to pc.
+// bundle pays the fee only.
+//
+// sighash fields: position_id, pc, Bytes(ciphertext), Bytes(signature), fee.
 message MsgUnlockPosition {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 position_id = 2;
   bytes pc = 3;
   bytes ciphertext = 4;
   bytes signature = 5;
+  uint64 fee = 6;
 }
 
 // MsgUnlockPositionResponse returns the note's position.
@@ -207,13 +225,18 @@ message MsgUnlockPositionResponse {
 }
 
 // MsgPositionVote votes a position (created before the proposal entered
-// voting) on an x/gov proposal; a later vote replaces it.
+// voting) on an x/gov proposal; a later vote replaces it. bundle pays the fee
+// only.
+//
+// sighash fields: position_id, proposal_id, Bytes(OptionsBytes(options)),
+// Bytes(signature), fee.
 message MsgPositionVote {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 position_id = 2;
   uint64 proposal_id = 3;
   repeated cosmos.gov.v1.WeightedVoteOption options = 4;
   bytes signature = 5;
+  uint64 fee = 6;
 }
 
 // MsgPositionVoteResponse is empty.
