@@ -28,7 +28,8 @@ func (AppModule) IsOnePerModuleType() {}
 func init() {
 	appconfig.Register(
 		&types.Module{},
-		appconfig.Provide(ProvideModule, types.ProvideNoteSwapGetSigners, types.ProvideAddLiquidityShieldedGetSigners),
+		appconfig.Provide(ProvideModule, types.ProvideNoteSwapGetSigners, types.ProvideAddLiquidityShieldedGetSigners,
+			types.ProvideRemoveLiquidityShieldedGetSigners),
 	)
 }
 
@@ -83,6 +84,8 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.ShieldedKeeper,
 	)
 	keeper.RegisterPrivateActions(in.ShieldedKeeper.RegisterPrivateAction, keeper.NewActionHandler(k))
+	// LP shares held as notes leave the pool only by a private withdrawal.
+	in.ShieldedKeeper.RegisterPoolLockedPrefix(types.LPShareDenomPrefix)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 
 	in.AllocationKeeper.RegisterIntegratedHandler(allocationtypes.STREAM_ID_GROUNDWORKS, allocationtypes.HandlerLPRewards,

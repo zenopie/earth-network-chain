@@ -58,10 +58,13 @@ service Msg {
   rpc BuyAnml(MsgBuyAnml) returns (MsgBuyAnmlResponse);
 
   // AddLiquidityShielded deposits both legs from shielded notes (one bundle
-  // releasing the pool token and ERTH) and mints LP shares to a transparent
-  // provider. Unsigned private msg; the only way to add to the ANML/ERTH
-  // pool.
+  // releasing the pool token and ERTH) and mints the LP shares as a note.
+  // Unsigned private msg; the only way to add to the ANML/ERTH pool.
   rpc AddLiquidityShielded(MsgAddLiquidityShielded) returns (MsgAddLiquidityShieldedResponse);
+
+  // RemoveLiquidityShielded withdraws LP shares held as notes: both legs are
+  // minted as notes when the unbonding matures. Unsigned private msg.
+  rpc RemoveLiquidityShielded(MsgRemoveLiquidityShielded) returns (MsgRemoveLiquidityShieldedResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -281,27 +284,34 @@ message MsgBuyAnmlResponse {
 // balances are the pool's token (ANML) and uerth: the token balance is the
 // token leg, the uerth balance less fee the ERTH leg. The deposit is taken in
 // the pool ratio, as MsgAddLiquidity's is; whatever of each leg the ratio
-// does not take is minted back to refund_pc as a note. The LP shares go to
-// provider, a transparent address.
+// does not take is minted back to refund_pc as a note.
+//
+// LP shares are private: the shares (dexlp/<pool_id>, a shielded-pool asset)
+// are minted as a note to share_pc. No account appears in the msg, its
+// events or state. The note leaves the pool only through
+// MsgRemoveLiquidityShielded (an unshield of dexlp/* is refused).
 //
 // The deposit runs in the private ante, atomically with the spend: below
 // min_shares the whole tx fails and nothing is spent.
 //
-// sighash fields: pool_id, Bytes(provider address bytes), Bytes(min_shares),
-// refund_pc, Bytes(refund_ciphertext), fee.
+// sighash fields: pool_id, Bytes(min_shares), share_pc,
+// Bytes(share_ciphertext), refund_pc, Bytes(refund_ciphertext), fee.
 message MsgAddLiquidityShielded {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 pool_id = 3;
-  string provider = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   // min_shares is the fewest shares accepted, a decimal integer ("" = none).
   string min_shares = 5;
   bytes refund_pc = 6;
   bytes refund_ciphertext = 7;
   // fee is paid from bundle's uerth balance; the rest of it is the ERTH leg.
   uint64 fee = 8;
-  // erth_transfer: the ERTH leg is now part of bundle.
-  reserved 2;
-  reserved "erth_transfer";
+  // share_pc receives the LP shares as a note.
+  bytes share_pc = 9;
+  bytes share_ciphertext = 10;
+  // erth_transfer: the ERTH leg is part of bundle. provider: shares are a
+  // note to share_pc.
+  reserved 2, 4;
+  reserved "erth_transfer", "provider";
 }
 
 // MsgAddLiquidityShieldedResponse returns the shares minted and the refunds.
@@ -309,4 +319,35 @@ message MsgAddLiquidityShieldedResponse {
   cosmos.base.v1beta1.Coin shares = 1 [(gogoproto.nullable) = false];
   cosmos.base.v1beta1.Coin refund_erth = 2 [(gogoproto.nullable) = false];
   cosmos.base.v1beta1.Coin refund_token = 3 [(gogoproto.nullable) = false];
+  // share_position is the share note's position in the note tree.
+  uint64 share_position = 4;
+}
+
+// MsgRemoveLiquidityShielded begins a private withdrawal from pool_id. bundle
+// releases dexlp/<pool_id> (the shares, from notes) and the uerth fee; the
+// release map after the fee must hold exactly the shares of this pool.
+//
+// The shares are escrowed on the dex module for lp_unbonding_seconds, as
+// MsgRemoveLiquidity's are (they keep earning; the payout is priced at
+// maturity), in an LpUnbonding with no account: at maturity the sweep mints
+// the ERTH leg to erth_pc and the token leg to token_pc, both as notes.
+//
+// Runs in the private ante, atomically with the spend.
+//
+// sighash fields: pool_id, erth_pc, Bytes(erth_ciphertext), token_pc,
+// Bytes(token_ciphertext), fee.
+message MsgRemoveLiquidityShielded {
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
+  uint64 pool_id = 2;
+  uint64 fee = 3;
+  bytes erth_pc = 4;
+  bytes erth_ciphertext = 5;
+  bytes token_pc = 6;
+  bytes token_ciphertext = 7;
+}
+
+// MsgRemoveLiquidityShieldedResponse returns when the withdrawal pays out
+// (unix seconds).
+message MsgRemoveLiquidityShieldedResponse {
+  int64 completion_time = 1;
 }

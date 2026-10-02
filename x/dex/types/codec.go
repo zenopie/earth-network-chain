@@ -34,11 +34,12 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 		&MsgNoteSwap{},
 		&MsgBuyAnml{},
 		&MsgAddLiquidityShielded{},
+		&MsgRemoveLiquidityShielded{},
 	)
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)
 }
 
-// The private msgs have no signers (see x/shielded/types.ProvideTransferGetSigners).
+// The private msgs have no signers: their authorization is their bundle.
 // depinject collects signing.CustomGetSigner one provider at a time, hence one
 // function per msg.
 func noSigners(name string) signing.CustomGetSigner {
@@ -51,4 +52,7 @@ func noSigners(name string) signing.CustomGetSigner {
 func ProvideNoteSwapGetSigners() signing.CustomGetSigner { return noSigners("MsgNoteSwap") }
 func ProvideAddLiquidityShieldedGetSigners() signing.CustomGetSigner {
 	return noSigners("MsgAddLiquidityShielded")
+}
+func ProvideRemoveLiquidityShieldedGetSigners() signing.CustomGetSigner {
+	return noSigners("MsgRemoveLiquidityShielded")
 }

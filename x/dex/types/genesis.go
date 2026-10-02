@@ -199,9 +199,10 @@ func (gs GenesisState) Validate() error {
 		if _, ok := poolIndexMap[fmt.Sprint(u.PoolId)]; !ok {
 			return fmt.Errorf("lp unbonding for %s: no pool %d", u.Address, u.PoolId)
 		}
-		// Completion time and pool and address form the store key, so a repeat
-		// would silently overwrite rather than restore both.
-		k := fmt.Sprintf("%d/%d/%s", u.CompletionTime, u.PoolId, u.Address)
+		// Completion time and pool and address (or a private withdrawal's id)
+		// form the store key, so a repeat would silently overwrite rather than
+		// restore both.
+		k := fmt.Sprintf("%d/%d/%s/%x", u.CompletionTime, u.PoolId, u.Address, u.WithdrawalId)
 		if _, ok := unbondSeen[k]; ok {
 			return fmt.Errorf("duplicated lp unbonding for %s in pool %d at %d",
 				u.Address, u.PoolId, u.CompletionTime)
@@ -225,6 +226,21 @@ func (gs GenesisState) Validate() error {
 			if _, err := privacy.FieldFromBytes(u.Pc); err != nil {
 				return fmt.Errorf("lp unbonding for %s in pool %d: pc: %w", u.Address, u.PoolId, err)
 			}
+		}
+		// A private withdrawal: no address, an id (0x00 || a nullifier) as
+		// its key, and both legs paid as notes.
+		if u.Address == "" {
+			if len(u.WithdrawalId) != 33 || u.WithdrawalId[0] != 0 {
+				return fmt.Errorf("private lp unbonding in pool %d: withdrawal_id must be 0x00 || 32 bytes", u.PoolId)
+			}
+			if _, err := privacy.FieldFromBytes(u.ErthPc); err != nil {
+				return fmt.Errorf("private lp unbonding in pool %d: erth_pc: %w", u.PoolId, err)
+			}
+			if len(u.Pc) == 0 {
+				return fmt.Errorf("private lp unbonding in pool %d: no pc for the token leg", u.PoolId)
+			}
+		} else if len(u.WithdrawalId) != 0 || len(u.ErthPc) != 0 || len(u.ErthCiphertext) != 0 {
+			return fmt.Errorf("lp unbonding for %s in pool %d: an account's withdrawal carries no withdrawal_id or erth_pc", u.Address, u.PoolId)
 		}
 	}
 

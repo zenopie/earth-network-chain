@@ -78,6 +78,7 @@ type ShieldedKeeper interface {
 	AssetID(ctx context.Context, denom string) ([]byte, error)
 	CheckMint(ctx context.Context, pc, ciphertext []byte) error
 	MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error)
+	RegisterAsset(ctx context.Context, denom string) ([]byte, error)
 	ReleaseToModule(ctx context.Context, msg shieldedtypes.PrivateMsg, denom, targetModule string) (sdk.Coin, error)
 	PayFeeFromModule(ctx context.Context, fromModule string, fee math.Int) error
 	PrivateGasPrices(ctx context.Context) (proof, note uint64, err error)

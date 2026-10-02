@@ -95,11 +95,10 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	// redeem them, so they are restored under the same completion-time key the
 	// sweep walks.
 	for _, u := range genState.LpUnbondings {
-		addrBz, err := k.addressCodec.StringToBytes(u.Address)
+		key, err := k.LpUnbondingKey(u)
 		if err != nil {
 			return err
 		}
-		key := collections.Join3(u.CompletionTime, u.PoolId, addrBz)
 		if err := k.setLpUnbonding(ctx, key, u); err != nil {
 			return err
 		}

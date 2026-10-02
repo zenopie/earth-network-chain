@@ -82,6 +82,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{RpcMethod: "NoteSwap", Skip: true},
 				{RpcMethod: "BuyAnml", Skip: true},
 				{RpcMethod: "AddLiquidityShielded", Skip: true},
+				{RpcMethod: "RemoveLiquidityShielded", Skip: true},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

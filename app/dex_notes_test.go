@@ -1,22 +1,30 @@
 package app
 
 // x/dex's note paths on the real app, with real proofs: swaps between notes
-// through the launch genesis's ANML/ERTH pool, fees paid from swap and
-// unshield outputs, ANML bought with transparent ERTH, pool-1 liquidity
-// added from notes and withdrawn as a note, and the refusals of every
-// transparent ANML leg and of every route around the private ante.
+// through the launch genesis's ANML/ERTH pool, fees paid from swap outputs,
+// ANML bought with transparent ERTH, pool-1 liquidity added from notes with
+// the shares as a note and withdrawn privately as notes, and the refusals of
+// every transparent ANML leg and of every route around the private ante.
 //
 // Same harness as x/shieldedstaking's (shieldedstaking_env_test.go): a
 // deterministic chain, every proof cached by its public inputs, here under
 // x/dex/testdata/proofs (scripts/dex-fixtures.sh regenerates them).
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	"cosmossdk.io/collections"
+	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 	abci "github.com/cometbft/cometbft/abci/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	dbm "github.com/cosmos/cosmos-db"
+	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -217,7 +225,9 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 	for _, m := range []sdk.Msg{
 		&dextypes.MsgNoteSwap{Bundle: stubBundle("a", bal("uanml", 1), bal("uerth", ssFee)), Fee: ssFee, DenomOut: "uerth", MinAmountOut: 1, Pc: pc},
 		&dextypes.MsgAddLiquidityShielded{Bundle: stubBundle("b", bal("uanml", 1), bal("uerth", ssFee+1)), Fee: ssFee,
-			PoolId: anmlPool, Provider: user, RefundPc: pc},
+			PoolId: anmlPool, SharePc: pc, RefundPc: pc},
+		&dextypes.MsgRemoveLiquidityShielded{Bundle: stubBundle("r", bal(dextypes.LPShareDenom(anmlPool), 1), bal("uerth", ssFee)),
+			Fee: ssFee, PoolId: anmlPool, ErthPc: pc, TokenPc: pc},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
 		require.NotNil(t, h, "%T", m)
@@ -234,13 +244,31 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 	require.NotEqual(t, uint32(0), ct.Code)
 }
 
-// Pool-1 liquidity from notes: ANML and ERTH released by one bundle, shares
-// to a transparent provider, the leftover of the ratio back as notes;
-// then a withdrawal that pays the ERTH leg to the account and mints the ANML
-// leg as a note.
+// requireNoAccount fails if any event attribute names an account other than
+// a module's: the shielded LP path involves no account.
+func requireNoAccount(t *testing.T, events []abci.Event) {
+	t.Helper()
+	modules := map[string]bool{}
+	for name := range GetMaccPerms() {
+		modules[authtypes.NewModuleAddress(name).String()] = true
+	}
+	for _, ev := range events {
+		for _, a := range ev.Attributes {
+			if _, err := sdk.AccAddressFromBech32(a.Value); err == nil {
+				require.True(t, modules[a.Value], "%s.%s names account %s", ev.Type, a.Key, a.Value)
+			}
+		}
+	}
+}
+
+// Pool-1 liquidity, privately: ANML and ERTH released by one bundle, the LP
+// shares minted as a note, the leftover of the ratio back as notes; then a
+// private withdrawal of the share note whose two legs mature as notes. No
+// account appears in any event or state; shares cannot be unshielded or
+// withdrawn from another pool; a pending private withdrawal survives a
+// genesis round trip.
 func TestDexAnmlPoolLiquidity(t *testing.T) {
 	e := initDexEnv(t)
-	user := e.bech(e.userAddr())
 	e.shield(uint64(200_000 * ssErth))
 	e.shield(uint64(100 * ssErth)) // fees
 	erth := e.w.unspent("uerth", uint64(50_000*ssErth))
@@ -254,32 +282,40 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	erthIn := uint64(100_000 * ssErth)
 	erthNote := e.w.unspent("uerth", erthIn+ssFee)
 	pa := e.buildLegs(ssFee, leg{anml, anml.value}, leg{erthNote, erthIn})
+	shareNote := e.w.fresh(lp, 0)
 	refE := e.w.fresh("uerth", 0)
 	refT := &wnote{denom: "uanml", rho: refE.rho, rcm: refE.rcm} // the same pc
 	wantShares := math.NewIntFromUint64(anml.value).Mul(total).Quo(pool.ReserveToken.Amount)
 	m := &dextypes.MsgAddLiquidityShielded{
-		Bundle: pa.b, Fee: pa.fee, PoolId: anmlPool, Provider: user, MinShares: wantShares.String(),
+		Bundle: pa.b, Fee: pa.fee, PoolId: anmlPool, MinShares: wantShares.String(),
+		SharePc: privacy.FieldBytes(e.w.pc(shareNote)), ShareCiphertext: []byte("lp shares"),
 		RefundPc: privacy.FieldBytes(e.w.pc(refE)), RefundCiphertext: []byte("refund"),
 	}
 	e.prove(m, pa)
-	// The sighash binds the provider: it cannot be changed.
+	// The sighash binds where the shares go: they cannot be redirected.
 	other := *m
-	other.Provider = e.bech(e.genesisValidator().Bytes())
+	other.SharePc = privacy.FieldBytes(ssDet("thief", 0))
 	ct := e.checkTx(e.privateTx(&other))
 	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), ct.Code, ct.Log)
 
+	dexAddr := authtypes.NewModuleAddress(dextypes.ModuleName)
+	dexShares := e.app.BankKeeper.GetBalance(e.ctx(), dexAddr, lp).Amount // protocol-owned
 	res := e.run(e.privateTx(m))
 	require.Equal(t, uint32(0), res.Code, res.Log)
 	e.settle(pa)
-	shares := e.app.BankKeeper.GetBalance(e.ctx(), e.userAddr(), lp).Amount
-	require.True(t, shares.Equal(wantShares), "shares %s want %s", shares, wantShares)
-	// The deposit is taken in the pool ratio (POL retirement burns shares and
-	// reserves together, so the ratio read above still holds): all the
-	// ANML but rounding, and the ERTH that matches it. What the ratio did not
-	// take came back as notes to the refund pc.
+	requireNoAccount(t, res.Events)
+	shareNote = e.minted(res, shareNote)
+	require.Equal(t, wantShares.Uint64(), shareNote.value, "the shares, as a note")
+	require.True(t, e.app.BankKeeper.GetBalance(e.ctx(), e.userAddr(), lp).IsZero())
+	require.True(t, e.app.BankKeeper.GetBalance(e.ctx(), dexAddr, lp).Amount.LTE(dexShares),
+		"the dex holds no share of a private deposit (its own retire as POL burns)")
 	adds := eventsOf(res.Events, "add_liquidity")
 	require.Len(t, adds, 1)
 	require.Equal(t, sdk.NewCoin(lp, wantShares).String(), adds[0]["shares"])
+	_, named := adds[0]["provider"]
+	require.False(t, named, "a private deposit names no provider")
+	// The deposit is taken in the pool ratio: what it did not take came back
+	// as notes to the refund pc.
 	refE = e.minted(res, refE)
 	depErth := erthIn - refE.value
 	wantDep := wantShares.Mul(pool.ReserveErth.Amount).Quo(total).Uint64()
@@ -291,15 +327,64 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	}
 	e.dexInvariants()
 
-	// --- withdraw half to a pc: ERTH to the account, ANML as a note.
-	half := shares.QuoRaw(2)
-	back := e.w.fresh("uanml", 0)
-	rm := &dextypes.MsgRemoveLiquidity{Creator: user, PoolId: anmlPool, Shares: sdk.NewCoin(lp, half),
-		Pc: privacy.FieldBytes(e.w.pc(back)), Ciphertext: []byte("lp anml")}
-	r := e.run(e.signedTx(e.user, 600_000, 5_000, rm))
+	// --- refusals: the share note cannot be unshielded, nor withdrawn as
+	// another pool's.
+	ps := e.build(spend{denom: lp, inputs: []*wnote{shareNote}, valueOut: shareNote.value})
+	unshield := &shieldedtypes.MsgSend{Bundle: ps.b, Fee: ps.fee, Receiver: e.bech(e.userAddr())}
+	unproven(unshield)
+	ct = e.checkTx(e.privateTx(unshield))
+	require.Equal(t, shieldedtypes.ErrSendRestricted.ABCICode(), ct.Code, ct.Log)
+	ercPc, tokPc := e.w.fresh("uerth", 0), e.w.fresh("uanml", 0)
+	wrongPool := &dextypes.MsgRemoveLiquidityShielded{Bundle: ps.b, Fee: ps.fee, PoolId: anmlPool + 1,
+		ErthPc: privacy.FieldBytes(e.w.pc(ercPc)), TokenPc: privacy.FieldBytes(e.w.pc(tokPc))}
+	unproven(wrongPool)
+	ct = e.checkTx(e.privateTx(wrongPool))
+	require.Equal(t, dextypes.ErrInvalidDenom.ABCICode(), ct.Code, ct.Log)
+
+	// --- a private withdrawal of half the shares: escrowed with no account,
+	// both legs minted as notes at maturity.
+	half := shareNote.value / 2
+	pr := e.build(spend{denom: lp, inputs: []*wnote{shareNote}, valueOut: half})
+	backE, backT := e.w.fresh("uerth", 0), e.w.fresh("uanml", 0)
+	rm := &dextypes.MsgRemoveLiquidityShielded{Bundle: pr.b, Fee: pr.fee, PoolId: anmlPool,
+		ErthPc: privacy.FieldBytes(e.w.pc(backE)), ErthCiphertext: []byte("lp erth"),
+		TokenPc: privacy.FieldBytes(e.w.pc(backT)), TokenCiphertext: []byte("lp anml")}
+	e.prove(rm, pr)
+	r := e.run(e.privateTx(rm))
 	require.Equal(t, uint32(0), r.Code, r.Log)
+	e.settle(pr)
+	requireNoAccount(t, r.Events)
+	var pending []dextypes.LpUnbonding
+	require.NoError(t, e.app.DexKeeper.LpUnbondings.Walk(e.ctx(), nil,
+		func(_ collections.Triple[int64, uint64, []byte], u dextypes.LpUnbonding) (bool, error) {
+			pending = append(pending, u)
+			return false, nil
+		}))
+	require.Len(t, pending, 1)
+	require.Empty(t, pending[0].Address, "a private withdrawal names no account")
+	require.Equal(t, rm.WithdrawalID(), pending[0].WithdrawalId)
+	require.Equal(t, sdk.NewCoin(lp, math.NewIntFromUint64(half)), pending[0].Shares)
 	e.dexInvariants()
-	erthBefore := e.app.BankKeeper.GetBalance(e.ctx(), e.userAddr(), "uerth").Amount
+
+	// Genesis round trip with the private withdrawal in flight.
+	exported, err := e.app.ExportAppStateAndValidators(false, nil, nil)
+	require.NoError(t, err)
+	var appState map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(exported.AppState, &appState))
+	fresh := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
+		baseapp.SetChainID(ssChainID))
+	fctx := fresh.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: e.height, Time: e.now})
+	_, err = fresh.ModuleManager.InitGenesis(fctx, fresh.AppCodec(), appState)
+	require.NoError(t, err)
+	g1, err := e.app.DexKeeper.ExportGenesis(e.ctx())
+	require.NoError(t, err)
+	g2, err := fresh.DexKeeper.ExportGenesis(fctx)
+	require.NoError(t, err)
+	require.Equal(t, g1.LpUnbondings, g2.LpUnbondings)
+	has, err := fresh.DexKeeper.LpUnbondings.Has(fctx, collections.Join3(pending[0].CompletionTime, anmlPool, rm.WithdrawalID()))
+	require.NoError(t, err)
+	require.True(t, has, "re-keyed by its withdrawal id")
+
 	var paid *abci.ResponseFinalizeBlock
 	for i := 0; i < 9 && paid == nil; i++ {
 		fb := e.next(24 * time.Hour)
@@ -308,19 +393,20 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 		}
 	}
 	require.NotNil(t, paid, "withdrawal never matured")
+	requireNoAccount(t, paid.Events)
 	done := eventsOf(paid.Events, "complete_unbond_liquidity")[0]
+	_, named = done["provider"]
+	require.False(t, named)
 	outErth, err := sdk.ParseCoinNormalized(done["amount_a"])
 	require.NoError(t, err)
 	outTok, err := sdk.ParseCoinNormalized(done["amount_b"])
 	require.NoError(t, err)
-	require.True(t, outTok.IsPositive())
-	gotErth := e.app.BankKeeper.GetBalance(e.ctx(), e.userAddr(), "uerth").Amount.Sub(erthBefore)
-	require.True(t, gotErth.Equal(outErth.Amount), "account got %s, payout %s", gotErth, outErth)
-	require.True(t, e.app.BankKeeper.GetBalance(e.ctx(), e.userAddr(), "uanml").IsZero())
-	back.value = outTok.Amount.Uint64()
-	e.w.track(back)
+	require.True(t, outErth.IsPositive() && outTok.IsPositive())
+	backE.value, backT.value = outErth.Amount.Uint64(), outTok.Amount.Uint64()
+	e.w.track(backE, backT)
 	e.w.scan(e)
-	require.True(t, back.known, "the ANML leg was minted as a note to the withdrawal's pc")
+	require.True(t, backE.known, "the ERTH leg was minted as a note to erth_pc")
+	require.True(t, backT.known, "the ANML leg was minted as a note to token_pc")
 	e.dexInvariants()
 }
 

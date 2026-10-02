@@ -52,7 +52,9 @@ func (k msgServer) AddLiquidity(ctx context.Context, msg *types.MsgAddLiquidity)
 }
 
 // deposit adds up to erthIn and tokenIn to pool poolID, taken in the pool
-// ratio, and mints the LP shares to provider. pull moves the deposit (exactly
+// ratio, and mints the LP shares to provider (nil: onto this module's
+// account, for a private deposit to mint as a note; its event then names no
+// provider). pull moves the deposit (exactly
 // the amounts the ratio takes, which deposit returns) into this module's
 // account; whatever of erthIn and tokenIn it does not take is the caller's to
 // return (MsgAddLiquidity simply never pulls it).
@@ -137,7 +139,11 @@ func (k Keeper) deposit(ctx context.Context, poolID uint64, erthIn, tokenIn sdk.
 	}
 
 	shares := sdk.NewCoin(types.LPShareDenom(poolID), shareAmt)
-	if err := k.mintShares(ctx, provider, shares); err != nil {
+	if provider == nil {
+		if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, sdk.NewCoins(shares)); err != nil {
+			return none, none, none, err
+		}
+	} else if err := k.mintShares(ctx, provider, shares); err != nil {
 		return none, none, none, err
 	}
 
@@ -147,14 +153,12 @@ func (k Keeper) deposit(ctx context.Context, poolID uint64, erthIn, tokenIn sdk.
 		return none, none, none, err
 	}
 
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
-		sdk.NewEvent(
-			"add_liquidity",
-			sdk.NewAttribute("pool_id", strconv.FormatUint(poolID, 10)),
-			sdk.NewAttribute("provider", provider.String()),
-			sdk.NewAttribute("shares", shares.String()),
-		),
-	)
+	attrs := []sdk.Attribute{sdk.NewAttribute("pool_id", strconv.FormatUint(poolID, 10))}
+	if provider != nil {
+		attrs = append(attrs, sdk.NewAttribute("provider", provider.String()))
+	}
+	attrs = append(attrs, sdk.NewAttribute("shares", shares.String()))
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent("add_liquidity", attrs...))
 
 	return shares, depositErt, depositTok, nil
 }

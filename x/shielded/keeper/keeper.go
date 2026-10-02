@@ -37,6 +37,11 @@ type Keeper struct {
 	// allowed recipients (module account address, string bytes). A map so every
 	// copy of the keeper sees a registration made during module wiring.
 	shieldedOnlyPrefixes map[string]map[string]bool
+	// poolLockedPrefixes are families of denoms whose notes leave the pool
+	// only to a module, through a private msg of it (ReleaseToModule), never
+	// by an unshield: x/dex's LP shares, withdrawn by
+	// MsgRemoveLiquidityShielded.
+	poolLockedPrefixes map[string]bool
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -89,6 +94,7 @@ func NewKeeper(
 		shieldedOnly:         map[string]bool{},
 		shieldedOnlyTo:       map[string]bool{},
 		shieldedOnlyPrefixes: map[string]map[string]bool{},
+		poolLockedPrefixes:   map[string]bool{},
 		actions:              map[string]types.PrivateActionHandler{},
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
@@ -143,6 +149,28 @@ func (k Keeper) ShieldedOnlyDenoms() []string {
 		out = append(out, d)
 	}
 	return out
+}
+
+// RegisterPoolLockedPrefix makes the notes of every denom starting with prefix
+// leave the pool only through a module's private msg (ReleaseToModule): an
+// unshield of one (MsgSend to a receiver) is refused before anything is
+// spent. Unlike a shielded-only denom it may still exist outside the pool
+// (x/dex's transparent LP shares). Called once per prefix from module wiring.
+func (k Keeper) RegisterPoolLockedPrefix(prefix string) {
+	if prefix == "" {
+		panic("empty pool-locked prefix")
+	}
+	k.poolLockedPrefixes[prefix] = true
+}
+
+// IsPoolLocked reports whether denom's notes may not be unshielded.
+func (k Keeper) IsPoolLocked(denom string) bool {
+	for p := range k.poolLockedPrefixes {
+		if strings.HasPrefix(denom, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsShieldedOnly reports whether denom exists only in the pool.

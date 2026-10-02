@@ -89,7 +89,7 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 		if err := k.payoutUnbonding(cacheCtx, m.entry); err != nil {
 			sdkCtx.Logger().Error("lp unbonding payout failed — dropping the entry",
 				"pool_id", m.entry.PoolId,
-				"provider", m.entry.Address,
+				"provider", m.entry.Address, // empty for a private withdrawal
 				"shares", m.entry.Shares.String(),
 				"height", sdkCtx.BlockHeight(),
 				"err", err)
@@ -120,13 +120,22 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 }
 
 // payoutUnbonding prices one matured entry against the pool as it stands now,
-// burns the escrowed shares and sends the assets to the provider.
+// burns the escrowed shares and sends the assets to the provider, or, for a
+// private withdrawal (no address), mints both legs as notes.
 func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) error {
-	addrBz, err := k.addressCodec.StringToBytes(entry.Address)
-	if err != nil {
-		// The address was validated when unbonding began, so this only fires on
-		// corrupt state. Failing loudly beats silently keeping someone's liquidity.
-		return err
+	private := entry.Address == ""
+	var addrBz []byte
+	if private {
+		if len(entry.WithdrawalId) == 0 || len(entry.ErthPc) == 0 || len(entry.Pc) == 0 {
+			return types.ErrInvalidUnbonding.Wrapf("pool %d: a private withdrawal needs an id and both pcs", entry.PoolId)
+		}
+	} else {
+		var err error
+		if addrBz, err = k.addressCodec.StringToBytes(entry.Address); err != nil {
+			// The address was validated when unbonding began, so this only fires on
+			// corrupt state. Failing loudly beats silently keeping someone's liquidity.
+			return err
+		}
 	}
 
 	// Nil-checked before anything touches the arithmetic, because a nil math.Int
@@ -195,7 +204,20 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 	// account: it is minted as a note to the pc the withdrawal named. The
 	// ERTH leg goes to the account as for any pool.
 	payout := sdk.NewCoins(outErth, outToken)
-	if k.isShieldedOnly(outToken.Denom) {
+	if private {
+		// A private withdrawal: both legs as notes, no account.
+		for _, leg := range []struct {
+			c      sdk.Coin
+			pc, ct []byte
+		}{{outErth, entry.ErthPc, entry.ErthCiphertext}, {outToken, entry.Pc, entry.Ciphertext}} {
+			if leg.c.IsPositive() {
+				if _, _, err := k.shielded.MintNote(ctx, types.ModuleName, leg.c, leg.pc, leg.ct); err != nil {
+					return err
+				}
+			}
+		}
+		payout = nil
+	} else if k.isShieldedOnly(outToken.Denom) {
 		if outToken.IsPositive() {
 			if len(entry.Pc) == 0 {
 				return types.ErrInvalidUnbonding.Wrapf("pool %d: no pc to pay %s to", entry.PoolId, outToken)
@@ -212,17 +234,30 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 		}
 	}
 
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
-		sdk.NewEvent(
-			"complete_unbond_liquidity",
-			sdk.NewAttribute("pool_id", strconv.FormatUint(entry.PoolId, 10)),
-			sdk.NewAttribute("provider", entry.Address),
-			sdk.NewAttribute("shares", entry.Shares.String()),
-			sdk.NewAttribute("amount_a", outErth.String()),
-			sdk.NewAttribute("amount_b", outToken.String()),
-		),
+	attrs := []sdk.Attribute{sdk.NewAttribute("pool_id", strconv.FormatUint(entry.PoolId, 10))}
+	if !private {
+		attrs = append(attrs, sdk.NewAttribute("provider", entry.Address))
+	}
+	attrs = append(attrs,
+		sdk.NewAttribute("shares", entry.Shares.String()),
+		sdk.NewAttribute("amount_a", outErth.String()),
+		sdk.NewAttribute("amount_b", outToken.String()),
 	)
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent("complete_unbond_liquidity", attrs...))
 	return nil
+}
+
+// LpUnbondingKey is the store key of u: completion time, pool, and the
+// provider's address bytes, or a private withdrawal's id.
+func (k Keeper) LpUnbondingKey(u types.LpUnbonding) (collections.Triple[int64, uint64, []byte], error) {
+	if u.Address == "" {
+		return collections.Join3(u.CompletionTime, u.PoolId, u.WithdrawalId), nil
+	}
+	addrBz, err := k.addressCodec.StringToBytes(u.Address)
+	if err != nil {
+		return collections.Triple[int64, uint64, []byte]{}, err
+	}
+	return collections.Join3(u.CompletionTime, u.PoolId, addrBz), nil
 }
 
 // setLpUnbonding writes a withdrawal and its address index entry.

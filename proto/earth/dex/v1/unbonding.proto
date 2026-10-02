@@ -20,8 +20,13 @@ option go_package = "github.com/earth-network/earth/x/dex/types";
 // pool. The price of leaving is time value alone — the capital is locked and at
 // risk for the unbonding period. The payout is therefore priced at maturity
 // rather than when unbonding began.
+//
+// A private withdrawal (MsgRemoveLiquidityShielded) has no address: it is
+// keyed by withdrawal_id and pays both legs as notes, ERTH to erth_pc and the
+// token to pc.
 message LpUnbonding {
-  // address is the provider the matured liquidity is swept to.
+  // address is the provider the matured liquidity is swept to; empty for a
+  // private withdrawal.
   string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
 
   uint64 pool_id = 2;
@@ -34,7 +39,16 @@ message LpUnbonding {
   int64 completion_time = 4;
 
   // pc receives the token leg as a shielded note, for a pool whose token is
-  // shielded-only (ANML); empty otherwise. See MsgRemoveLiquidity.
+  // shielded-only (ANML) and for every private withdrawal; empty otherwise.
+  // See MsgRemoveLiquidity, MsgRemoveLiquidityShielded.
   bytes pc = 5;
   bytes ciphertext = 6;
+
+  // erth_pc receives the ERTH leg as a note: private withdrawals only.
+  bytes erth_pc = 7;
+  bytes erth_ciphertext = 8;
+  // withdrawal_id keys a private withdrawal in place of an address:
+  // 0x00 || the first nullifier its bundle spent (33 bytes). Empty for an
+  // account's withdrawal.
+  bytes withdrawal_id = 9;
 }

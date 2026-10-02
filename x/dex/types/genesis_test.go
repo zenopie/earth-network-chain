@@ -169,6 +169,43 @@ func TestGenesisRejectsMalformedLpUnbondings(t *testing.T) {
 		gs.LpUnbondings = []types.LpUnbonding{entry(), entry()}
 		require.Error(t, gs.Validate())
 	})
+
+	// A private withdrawal: no address, keyed by 0x00 || a nullifier, both
+	// legs paid as notes.
+	private := func() types.LpUnbonding {
+		e := entry()
+		e.Address = ""
+		e.WithdrawalId = append([]byte{0}, make([]byte, 32)...)
+		e.WithdrawalId[32] = 7
+		e.Pc, e.ErthPc = make([]byte, 32), make([]byte, 32)
+		e.Pc[31], e.ErthPc[31] = 1, 2
+		return e
+	}
+	t.Run("a private withdrawal is accepted", func(t *testing.T) {
+		gs := base()
+		gs.LpUnbondings = []types.LpUnbonding{entry(), private()}
+		require.NoError(t, gs.Validate())
+	})
+	for name, mut := range map[string]func(*types.LpUnbonding){
+		"private, no id":            func(e *types.LpUnbonding) { e.WithdrawalId = nil },
+		"private, id not 0x00||nf":  func(e *types.LpUnbonding) { e.WithdrawalId[0] = 1 },
+		"private, no erth pc":       func(e *types.LpUnbonding) { e.ErthPc = nil },
+		"private, no token pc":      func(e *types.LpUnbonding) { e.Pc = nil },
+		"an account's, with an id":  func(e *types.LpUnbonding) { e.Address = provider },
+		"private, duplicate of key": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			gs := base()
+			e := private()
+			if mut == nil {
+				gs.LpUnbondings = []types.LpUnbonding{e, private()}
+			} else {
+				mut(&e)
+				gs.LpUnbondings = []types.LpUnbonding{e}
+			}
+			require.Error(t, gs.Validate())
+		})
+	}
 }
 
 func TestGenesisRejectsInconsistentPoolsAndBids(t *testing.T) {

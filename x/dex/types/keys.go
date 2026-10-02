@@ -232,12 +232,12 @@ func LPShareDenom(poolID uint64) string {
 	return fmt.Sprintf("dexlp/%d", poolID)
 }
 
-// lpShareDenomPrefix is the shared prefix of every LP share denom.
-const lpShareDenomPrefix = "dexlp/"
+// LPShareDenomPrefix is the shared prefix of every LP share denom.
+const LPShareDenomPrefix = "dexlp/"
 
 // IsLPShareDenom reports whether a denom is an LP share rather than an asset.
 // The balance invariant needs the distinction: LP shares on the module account
 // are claims on reserves already counted, not assets owed to anyone.
 func IsLPShareDenom(denom string) bool {
-	return strings.HasPrefix(denom, lpShareDenomPrefix)
+	return strings.HasPrefix(denom, LPShareDenomPrefix)
 }

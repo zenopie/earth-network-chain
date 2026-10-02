@@ -55,6 +55,9 @@ func (k Keeper) checkSend(ctx context.Context, from, to sdk.AccAddress, amt sdk.
 // checkUnshield refuses, before the ante spends anything, an unshield the
 // bank would refuse afterwards.
 func (k Keeper) checkUnshield(ctx context.Context, coin sdk.Coin, receiver sdk.AccAddress) error {
+	if k.IsPoolLocked(coin.Denom) {
+		return types.ErrSendRestricted.Wrapf("%s leaves the pool only through its module's withdrawal", coin.Denom)
+	}
 	if k.bankKeeper.BlockedAddr(receiver) {
 		return types.ErrSendRestricted.Wrap("receiver may not receive funds")
 	}

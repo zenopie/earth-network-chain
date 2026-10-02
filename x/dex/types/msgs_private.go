@@ -13,17 +13,20 @@ import (
 
 // Private msg type URLs: the kind every sighash binds first.
 const (
-	TypeMsgNoteSwap             = "/earth.dex.v1.MsgNoteSwap"
-	TypeMsgAddLiquidityShielded = "/earth.dex.v1.MsgAddLiquidityShielded"
+	TypeMsgNoteSwap                = "/earth.dex.v1.MsgNoteSwap"
+	TypeMsgAddLiquidityShielded    = "/earth.dex.v1.MsgAddLiquidityShielded"
+	TypeMsgRemoveLiquidityShielded = "/earth.dex.v1.MsgRemoveLiquidityShielded"
 )
 
 var (
 	_ shieldedtypes.PrivateMsg       = (*MsgNoteSwap)(nil)
 	_ shieldedtypes.FeeFromOutputMsg = (*MsgNoteSwap)(nil)
 	_ shieldedtypes.PrivateMsg       = (*MsgAddLiquidityShielded)(nil)
+	_ shieldedtypes.PrivateMsg       = (*MsgRemoveLiquidityShielded)(nil)
 
 	_ sdk.HasValidateBasic = (*MsgNoteSwap)(nil)
 	_ sdk.HasValidateBasic = (*MsgAddLiquidityShielded)(nil)
+	_ sdk.HasValidateBasic = (*MsgRemoveLiquidityShielded)(nil)
 	_ sdk.HasValidateBasic = (*MsgBuyAnml)(nil)
 )
 
@@ -151,28 +154,19 @@ func (m *MsgAddLiquidityShielded) Legs() (erth, token sdk.Coin) {
 	return erth, token
 }
 
-// ProviderBytes is the share recipient's raw address.
-func (m *MsgAddLiquidityShielded) ProviderBytes(ac address.Codec) ([]byte, error) {
-	bz, err := ac.StringToBytes(m.Provider)
-	if err != nil {
-		return nil, errorsmod.Wrapf(ErrInvalidPrivateMsg, "provider: %v", err)
-	}
-	return bz, nil
-}
-
-// SighashFields binds the pool, the provider, the slippage bound, where
+// SighashFields binds the pool, the slippage bound, where the shares and the
 // refunds go and the fee.
-func (m *MsgAddLiquidityShielded) SighashFields(ac address.Codec) ([]fr.Element, error) {
-	pc, err := pcField(m.RefundPc)
+func (m *MsgAddLiquidityShielded) SighashFields(address.Codec) ([]fr.Element, error) {
+	sharePc, err := pcField(m.SharePc)
 	if err != nil {
 		return nil, err
 	}
-	prov, err := m.ProviderBytes(ac)
+	refundPc, err := pcField(m.RefundPc)
 	if err != nil {
 		return nil, err
 	}
-	return []fr.Element{privacy.U64(m.PoolId), privacy.Bytes(prov), privacy.Bytes([]byte(m.MinShares)), pc,
-		privacy.Bytes(m.RefundCiphertext), privacy.U64(m.Fee)}, nil
+	return []fr.Element{privacy.U64(m.PoolId), privacy.Bytes([]byte(m.MinShares)), sharePc,
+		privacy.Bytes(m.ShareCiphertext), refundPc, privacy.Bytes(m.RefundCiphertext), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgAddLiquidityShielded) ValidateBasic() error {
@@ -186,15 +180,69 @@ func (m *MsgAddLiquidityShielded) ValidateBasic() error {
 	if erth, token := m.Legs(); len(rem) != 2 || !erth.IsValid() || !token.IsValid() || erth.IsZero() || token.IsZero() {
 		return errorsmod.Wrapf(ErrInvalidDenom, "the bundle releases %s and the pool's token beyond its fee", shieldedtypes.FeeDenom)
 	}
-	if m.Provider == "" {
-		return errorsmod.Wrap(ErrInvalidPrivateMsg, "provider is required")
-	}
 	if m.MinShares != "" {
 		if v, ok := math.NewIntFromString(m.MinShares); !ok || v.IsNegative() || v.String() != m.MinShares {
 			return errorsmod.Wrap(ErrInvalidAmount, "min_shares must be a canonical non-negative integer")
 		}
 	}
+	if err := checkNote(m.SharePc, m.ShareCiphertext); err != nil {
+		return err
+	}
 	return checkNote(m.RefundPc, m.RefundCiphertext)
+}
+
+// ---- MsgRemoveLiquidityShielded ------------------------------------------------
+
+func (m *MsgRemoveLiquidityShielded) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Bundle}
+}
+
+func (m *MsgRemoveLiquidityShielded) PrivateFee() uint64 { return m.Fee }
+
+// Shares is the LP shares withdrawn: the bundle's dexlp/<pool_id> balance.
+func (m *MsgRemoveLiquidityShielded) Shares() sdk.Coin {
+	denom := LPShareDenom(m.PoolId)
+	return sdk.NewCoin(denom, math.NewIntFromUint64(m.Bundle.Balance(denom)))
+}
+
+// WithdrawalID keys the withdrawal in place of an account: 0x00 || the first
+// nullifier the bundle spends, unique for ever.
+func (m *MsgRemoveLiquidityShielded) WithdrawalID() []byte {
+	if len(m.Bundle.Actions) == 0 {
+		return nil
+	}
+	return append([]byte{0}, m.Bundle.Actions[0].Nullifier...)
+}
+
+// SighashFields binds the pool, where both legs go and the fee.
+func (m *MsgRemoveLiquidityShielded) SighashFields(address.Codec) ([]fr.Element, error) {
+	erthPc, err := pcField(m.ErthPc)
+	if err != nil {
+		return nil, err
+	}
+	tokenPc, err := pcField(m.TokenPc)
+	if err != nil {
+		return nil, err
+	}
+	return []fr.Element{privacy.U64(m.PoolId), erthPc, privacy.Bytes(m.ErthCiphertext), tokenPc,
+		privacy.Bytes(m.TokenCiphertext), privacy.U64(m.Fee)}, nil
+}
+
+func (m *MsgRemoveLiquidityShielded) ValidateBasic() error {
+	rem, err := remainders(m)
+	if err != nil {
+		return err
+	}
+	if m.Fee == 0 {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the bundle pays a positive fee")
+	}
+	if len(rem) != 1 || rem[0].Denom != LPShareDenom(m.PoolId) {
+		return errorsmod.Wrapf(ErrInvalidDenom, "the bundle releases %s and nothing else beyond its fee", LPShareDenom(m.PoolId))
+	}
+	if err := checkNote(m.ErthPc, m.ErthCiphertext); err != nil {
+		return err
+	}
+	return checkNote(m.TokenPc, m.TokenCiphertext)
 }
 
 // ---- MsgBuyAnml -------------------------------------------------------------
