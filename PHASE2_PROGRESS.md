@@ -41,6 +41,11 @@ Added by the user: private LP shares (dex), self-bond auto-compound
   orchard-phase2), make genesis-check, make privacy-vks-check, nargo test
   (stake 19, action 38, membership 11, privacy_core 9).
 
+- Operator withdraw address (post-Phase 2 fix): 21c8f0d + tests
+  (TestOperatorWithdrawAddrRefused, TestGenesisOperatorWithdrawAddr).
+  Verified: go build/vet, go test ./..., make genesis-check,
+  make privacy-vks-check CIRCUITS=../mobile-orch/circuits.
+
 ## Status
 Phase 2 complete (incl. the user's three additions). Plan file updated.
 
@@ -52,5 +57,16 @@ Phase 2 complete (incl. the user's three additions). Plan file updated.
 - Private LP withdrawals are keyed by withdrawal_id = 0x00 || first
   nullifier; payout mints both legs as notes; dexlp/* notes cannot be
   unshielded (x/shielded RegisterPoolLockedPrefix) but may be shielded in.
-- Self-bond compounding skips operators whose withdraw address is another
-  account (rewards go where they asked).
+- Self-bond always compounds (SUPERSEDES "skip operators with a withdraw
+  address elsewhere"): an operator's rewards always land in the operator
+  account. Genesis sets distribution withdraw_addr_enabled=false (refuses
+  every route: tx, authz, group, gov, ICA, wasm; only operators and the
+  module hold delegations). Operator-scoped layers that survive a gov flip:
+  ante WithdrawAddrFilterDecorator (top level + authz MsgExec);
+  AfterValidatorCreated refuses an account with a foreign withdraw address;
+  InitGenesis + `genesis validate` (app.ValidateOperatorWithdrawAddrs:
+  staking validators + gentxs vs delegator_withdraw_infos) refuse one in
+  genesis; compounding resets a foreign address
+  (shieldedstaking_withdraw_addr_reset) instead of skipping. Only jailed
+  validators skip. Open: an operator can still MsgWithdrawDelegatorReward
+  its self-bond rewards mid-epoch (not refused; ask).
