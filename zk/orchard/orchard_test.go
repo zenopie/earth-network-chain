@@ -165,11 +165,12 @@ type action struct {
 }
 
 func bundleOf(t *testing.T, as []action, bals []Balance) (*Bundle, []fr.Element) {
-	b := &Bundle{Anchor: privacy.U64(1), Balances: bals}
+	b := &Bundle{Balances: bals}
 	rcvs := make([]fr.Element, len(as))
 	for i, a := range as {
 		rcvs[i] = a.rcv
 		b.Actions = append(b.Actions, Action{
+			Anchor:     privacy.U64(1),
 			Nullifier:  privacy.U64(uint64(100 + i)),
 			Commitment: privacy.U64(uint64(200 + i)),
 			Cv:         ValueCommit(a.sAsset, a.sValue, a.oAsset, a.oValue, a.rcv),
@@ -260,7 +261,7 @@ func TestNegatedBaseInflation(t *testing.T) {
 	r1, r2 := randField(t), randField(t)
 	cv1 := Add(Neg(Mul(g, ScalarU64(1_000_000))), Mul(R, ScalarFromField(r1)))
 	cv2 := Add(Neg(Mul(Neg(g), ScalarU64(1_000_000))), Mul(R, ScalarFromField(r2)))
-	b := &Bundle{Anchor: privacy.U64(1), Actions: []Action{
+	b := &Bundle{Actions: []Action{
 		{Nullifier: privacy.U64(1), Cv: cv1}, {Nullifier: privacy.U64(2), Cv: cv2},
 	}}
 	sighash := sign(t, b, []fr.Element{r1, r2})
@@ -303,7 +304,8 @@ func TestDigestBindsEverything(t *testing.T) {
 	b, _ := bundleOf(t, []action{{erth, 5, erth, 3, randField(t)}, {erth, 0, erth, 0, randField(t)}}, []Balance{{erth, 2}})
 	d := b.Digest()
 	mut := []func(c *Bundle){
-		func(c *Bundle) { c.Anchor = privacy.U64(2) },
+		func(c *Bundle) { c.Actions[0].Anchor = privacy.U64(2) },
+		func(c *Bundle) { c.Actions[1].Anchor = privacy.U64(2) },
 		func(c *Bundle) { c.Actions[0].Nullifier = privacy.U64(9) },
 		func(c *Bundle) { c.Actions[0].Commitment = privacy.U64(9) },
 		func(c *Bundle) { c.Actions[1].Cv = Add(c.Actions[1].Cv, R) },
@@ -320,5 +322,128 @@ func TestDigestBindsEverything(t *testing.T) {
 		if c.Digest() == d {
 			t.Fatalf("mutation %d not bound", i)
 		}
+	}
+}
+
+func TestSighashBindsBundlesAndFields(t *testing.T) {
+	erth := privacy.AssetID("uerth")
+	b1, _ := bundleOf(t, []action{{erth, 5, erth, 3, randField(t)}}, []Balance{{erth, 2}})
+	b2, _ := bundleOf(t, []action{{erth, 9, erth, 9, randField(t)}}, nil)
+	base := Sighash("/m", "c", []*Bundle{b1, b2}, privacy.U64(7))
+	for name, other := range map[string]fr.Element{
+		"msg type":       Sighash("/n", "c", []*Bundle{b1, b2}, privacy.U64(7)),
+		"chain id":       Sighash("/m", "d", []*Bundle{b1, b2}, privacy.U64(7)),
+		"bundle order":   Sighash("/m", "c", []*Bundle{b2, b1}, privacy.U64(7)),
+		"bundle dropped": Sighash("/m", "c", []*Bundle{b1}, privacy.U64(7)),
+		"field":          Sighash("/m", "c", []*Bundle{b1, b2}, privacy.U64(8)),
+		// A bundle's digest moved into the fields: the count tells them apart.
+		"count": Sighash("/m", "c", []*Bundle{b1}, b2.Digest(), privacy.U64(7)),
+	} {
+		if other == base {
+			t.Fatalf("%s not bound", name)
+		}
+	}
+}
+
+func TestBindingSignatureRefusals(t *testing.T) {
+	bsk := ScalarFromField(randField(t))
+	bvk := Mul(R, bsk)
+	msg := randField(t)
+	sig, err := SignBinding(bsk, msg, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, bad := range map[string][]byte{
+		"empty":  nil,
+		"short":  sig[:95],
+		"long":   append(append([]byte(nil), sig...), 0),
+		"rn off": func() []byte { c := append([]byte(nil), sig...); c[63] ^= 1; return c }(),
+		"rn x >= p": func() []byte {
+			c := append([]byte(nil), sig...)
+			copy(c[:32], fr.Modulus().FillBytes(make([]byte, 32)))
+			return c
+		}(),
+		"s >= n": func() []byte {
+			c := append([]byte(nil), sig...)
+			copy(c[64:], gfr.Modulus().FillBytes(make([]byte, 32)))
+			return c
+		}(),
+		"s flipped": func() []byte { c := append([]byte(nil), sig...); c[95] ^= 1; return c }(),
+	} {
+		if VerifyBinding(bvk, msg, bad) == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+	}
+	// -Rn with the same s: the challenge changes, refused.
+	rn, _ := PointFromBytes(sig[:64])
+	neg := append(PointBytes(Neg(rn)), sig[64:]...)
+	if VerifyBinding(bvk, msg, neg) == nil {
+		t.Fatal("negated nonce point accepted")
+	}
+	// -bvk: a signature under bsk does not verify under -bsk.
+	if VerifyBinding(Neg(bvk), msg, sig) == nil {
+		t.Fatal("negated key accepted")
+	}
+}
+
+func TestVerifyProofsDeterministic(t *testing.T) {
+	erth := privacy.AssetID("uerth")
+	var bundles []*Bundle
+	for range 3 {
+		b, _ := bundleOf(t, []action{{erth, 1, erth, 1, randField(t)}, {erth, 2, erth, 2, randField(t)}, {erth, 3, erth, 3, randField(t)}}, nil)
+		for i := range b.Actions {
+			b.Actions[i].Proof = []byte{byte(len(bundles)), byte(i)}
+		}
+		bundles = append(bundles, b)
+	}
+	if err := VerifyProofs(bundles, privacy.U64(1), func([]byte, [][]byte) (bool, error) { return true, nil }); err != nil {
+		t.Fatal(err)
+	}
+	boom := errors.New("malformed")
+	// Bundle 1 action 2 fails, and so do later ones; whichever goroutine
+	// finishes first, the first in order is reported.
+	for range 50 {
+		err := VerifyProofs(bundles, privacy.U64(1), func(p []byte, _ [][]byte) (bool, error) {
+			switch {
+			case p[0] == 1 && p[1] == 2:
+				return false, nil
+			case p[0] == 2 && p[1] == 0:
+				return false, boom
+			}
+			return true, nil
+		})
+		var ae *ActionError
+		if !errors.As(err, &ae) || ae.Bundle != 1 || ae.Action != 2 || ae.Err != nil {
+			t.Fatalf("got %v", err)
+		}
+	}
+	err := VerifyProofs(bundles, privacy.U64(1), func(p []byte, _ [][]byte) (bool, error) {
+		if p[0] == 2 {
+			return false, boom
+		}
+		return true, nil
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("got %v", err)
+	}
+	// Every proof sees the one sighash and its own action's inputs.
+	sh := privacy.U64(77)
+	_ = VerifyProofs(bundles, sh, func(p []byte, in [][]byte) (bool, error) {
+		want := bundles[p[0]].PublicInputs(int(p[1]), sh)
+		for i := range want {
+			if string(in[i]) != string(want[i]) {
+				t.Errorf("bundle %d action %d input %d", p[0], p[1], i)
+			}
+		}
+		return true, nil
+	})
+}
+
+func TestValueBaseCached(t *testing.T) {
+	a := privacy.AssetID("ibc/ABC")
+	p1 := ValueBase(a)
+	want, _ := HashToPoint(TagGen, a)
+	if p2 := ValueBase(a); !p1.Equal(&p2) || !p1.Equal(&want) {
+		t.Fatal("cached base differs")
 	}
 }

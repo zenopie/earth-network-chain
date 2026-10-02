@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Orchard spike: build N-action bundles in Go, prove every action with
+# Orchard bundles for zk/ultrahonk: build N-action bundles in Go, prove every action with
 # nargo + bb v5.0.0, check each proof's public inputs equal Go's, and drop the
 # proofs into zk/ultrahonk/testdata/orchard/bundle_<n>/ for the Go bundle
 # verifier (TestOrchardBundles, BenchmarkOrchardBundle).
@@ -14,7 +14,7 @@ set -euo pipefail
 CHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOBILE_DIR="${1:-$CHAIN_DIR/../earth-network-mobile}"
 shift || true
-SIZES=("${@:-1 3 10}")
+SIZES=("${@:-1 2 3 10}")
 read -r -a SIZES <<<"${SIZES[*]}"
 CIRCUITS="$(cd "$MOBILE_DIR/circuits" && pwd)"
 NARGO="${NARGO:-nargo}"

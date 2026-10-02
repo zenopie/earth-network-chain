@@ -17,6 +17,7 @@ package orchard
 import (
 	"errors"
 	"math/big"
+	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/grumpkin"
@@ -121,11 +122,21 @@ func HashToPointAt(t, input fr.Element, ctr uint32) (Point, bool) {
 }
 
 // ValueBase is asset's value base G_a = HashToPoint(TagGen, asset_id), with
-// the least counter.
+// the least counter. A pure function of the asset id, memoized: the chain
+// derives the base of every balance it checks rather than storing it.
 func ValueBase(asset fr.Element) Point {
+	if p, ok := baseCache.Load(asset); ok {
+		return p.(Point)
+	}
 	p, _ := HashToPoint(TagGen, asset)
+	baseCache.Store(asset, p)
 	return p
 }
+
+// baseCache maps an asset id to its value base. Unbounded, but keyed by
+// asset ids the caller has admitted (x/shielded only asks for registered
+// denoms) and 96 bytes an entry.
+var baseCache sync.Map
 
 // Canonical reports whether p's y is the canonical root (y <= (p-1)/2).
 func Canonical(p Point) bool {

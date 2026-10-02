@@ -10,6 +10,8 @@
 // The bundle (a private ANML send paying an ERTH fee):
 //
 //	n = 1:  spend ERTH 1_000_000 -> out ERTH 990_000              (fee 10_000)
+//	n = 2:  spend ERTH 1_000_000 -> out ERTH 600_000
+//	        dummy spend          -> out ERTH 390_000
 //	n >= 3: spend ERTH 1_000_000 -> out ANML 500                  (mixed assets)
 //	        spend ANML 700       -> out ERTH 990_000              (mixed assets)
 //	        dummy spend          -> out ANML 200
@@ -65,8 +67,6 @@ type spec struct {
 type BundleJSON struct {
 	MsgType    string        `json:"msg_type"`
 	ChainID    string        `json:"chain_id"`
-	Receiver   string        `json:"receiver"`
-	Anchor     string        `json:"anchor"`
 	Actions    []ActionJSON  `json:"actions"`
 	Balances   []BalanceJSON `json:"balances"`
 	BindingSig string        `json:"binding_sig"`
@@ -74,6 +74,7 @@ type BundleJSON struct {
 }
 
 type ActionJSON struct {
+	Anchor     string `json:"anchor"`
 	Nullifier  string `json:"nf"`
 	Commitment string `json:"cm"`
 	Cv         string `json:"cv"` // x || y
@@ -91,8 +92,8 @@ func specs(n int) []spec {
 	if n == 1 {
 		return []spec{{erth, 1_000_000, erth, 990_000}}
 	}
-	if n < 3 {
-		panic("n must be 1 or >= 3")
+	if n == 2 {
+		return []spec{{erth, 1_000_000, erth, 600_000}, {det("dummyasset", 0), 0, erth, 390_000}}
 	}
 	s := []spec{
 		{erth, 1_000_000, anml, 500},
@@ -147,7 +148,7 @@ func main() {
 	anchor, err := t.Root()
 	must(err)
 
-	b := &orchard.Bundle{Anchor: anchor}
+	b := &orchard.Bundle{}
 	rcvs := make([]fr.Element, n)
 	outPC := make([]fr.Element, n)
 	paths := make([]string, n)
@@ -168,6 +169,7 @@ func main() {
 		paths[i] = "[" + strings.Join(parts, ", ") + "]"
 		ct := bytes.Repeat([]byte{byte(i + 1)}, 217) // stand-in ciphertext
 		b.Actions = append(b.Actions, orchard.Action{
+			Anchor:     anchor, // dummies too: the chain requires a valid anchor for every action
 			Nullifier:  privacy.NF(nk, sp[i].rho, uint32(sp[i].pos)),
 			Commitment: privacy.CM(s.oAsset, s.oValue, outPC[i]),
 			Cv:         orchard.ValueCommit(s.sAsset, s.sValue, s.oAsset, s.oValue, rcvs[i]),
@@ -184,14 +186,14 @@ func main() {
 	}
 	b.Balances = []orchard.Balance{{Asset: erth, Value: uint64(bal[erth])}}
 
-	const msgType, chainID = "/earth.shielded.v1.MsgTransfer", "earth-1"
-	sighash := orchard.Sighash(msgType, chainID, []*orchard.Bundle{b}, privacy.Bytes(nil), privacy.U64(0))
+	const msgType, chainID = "/earth.orchard.fixture", "earth-1"
+	sighash := orchard.Sighash(msgType, chainID, []*orchard.Bundle{b})
 	sig, err := orchard.SignBinding(orchard.BindingSigningKey(rcvs), sighash, bytes.NewReader(make([]byte, 32)))
 	must(err)
 	b.BindingSig = sig
 	must(b.CheckBalance(sighash, orchard.CanonicalBase))
 
-	bj := BundleJSON{MsgType: msgType, ChainID: chainID, Anchor: h(anchor), BindingSig: hex.EncodeToString(sig), Sighash: h(sighash)}
+	bj := BundleJSON{MsgType: msgType, ChainID: chainID, BindingSig: hex.EncodeToString(sig), Sighash: h(sighash)}
 	for i, s := range ss {
 		a := b.Actions[i]
 		dir := filepath.Join(out, fmt.Sprintf("action_%d", i))
@@ -211,6 +213,7 @@ func main() {
 		}
 		must(os.WriteFile(filepath.Join(dir, "public_inputs.expected"), raw, 0o644))
 		bj.Actions = append(bj.Actions, ActionJSON{
+			Anchor:    h(a.Anchor),
 			Nullifier: h(a.Nullifier), Commitment: h(a.Commitment),
 			Cv: hex.EncodeToString(orchard.PointBytes(a.Cv)), Ciphertext: hex.EncodeToString(a.Ciphertext),
 		})

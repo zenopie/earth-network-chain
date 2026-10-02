@@ -15,16 +15,15 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// The Orchard spike's bundles, written by scripts/orchard-bundles.sh: every
-// action proven by bb v5.0.0, the binding signature made in Go.
-var orchardSizes = []int{1, 3, 10}
+// Orchard bundles written by scripts/orchard-bundles.sh: every action proven
+// by bb v5.0.0, the binding signature made in Go.
+var orchardSizes = []int{1, 2, 3, 10}
 
 type orchardFixture struct {
 	MsgType string `json:"msg_type"`
 	ChainID string `json:"chain_id"`
-	Anchor  string `json:"anchor"`
 	Actions []struct {
-		Nf, Cm, Cv, Ct string
+		Anchor, Nf, Cm, Cv, Ct string
 	} `json:"actions"`
 	Balances []struct {
 		Asset string `json:"asset"`
@@ -73,7 +72,7 @@ func loadBundle(t testing.TB, n int) (*orchard.Bundle, fr.Element, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := &orchard.Bundle{Anchor: fhex(t, f.Anchor), BindingSig: bhex(t, f.BindingSig)}
+	b := &orchard.Bundle{BindingSig: bhex(t, f.BindingSig)}
 	for i, a := range f.Actions {
 		cv, err := orchard.PointFromBytes(bhex(t, a.Cv))
 		if err != nil {
@@ -84,14 +83,14 @@ func loadBundle(t testing.TB, n int) (*orchard.Bundle, fr.Element, []byte) {
 			t.Fatal(err)
 		}
 		b.Actions = append(b.Actions, orchard.Action{
-			Nullifier: fhex(t, a.Nf), Commitment: fhex(t, a.Cm), Cv: cv,
+			Anchor: fhex(t, a.Anchor), Nullifier: fhex(t, a.Nf), Commitment: fhex(t, a.Cm), Cv: cv,
 			Ciphertext: bhex(t, a.Ct), Proof: proof,
 		})
 	}
 	for _, x := range f.Balances {
 		b.Balances = append(b.Balances, orchard.Balance{Asset: fhex(t, x.Asset), Value: x.Value})
 	}
-	sighash := orchard.Sighash(f.MsgType, f.ChainID, []*orchard.Bundle{b}, privacy.Bytes(nil), privacy.U64(0))
+	sighash := orchard.Sighash(f.MsgType, f.ChainID, []*orchard.Bundle{b})
 	if sighash != fhex(t, f.Sighash) {
 		t.Fatal("recomputed sighash differs from the fixture's")
 	}
@@ -119,10 +118,20 @@ func TestOrchardBundles(t *testing.T) {
 			}
 			// A proof moved to another tx (a different sighash) fails, even
 			// if its binding signature were somehow re-made.
-			other := orchard.Sighash("/earth.shielded.v1.MsgTransfer", "earth-2", []*orchard.Bundle{b})
+			other := orchard.Sighash("/earth.orchard.fixture", "earth-2", []*orchard.Bundle{b})
 			ok, err := Verify(vk, b.Actions[0].Proof, b.PublicInputs(0, other))
 			if err != nil || ok {
 				t.Fatalf("proof under another sighash: ok=%v err=%v", ok, err)
+			}
+			// Every public input is bound: flip each one of action 0's.
+			for k, in := range b.PublicInputs(0, sighash) {
+				pub := b.PublicInputs(0, sighash)
+				bad := append([]byte(nil), in...)
+				bad[31] ^= 1
+				pub[k] = bad
+				if ok, _ := Verify(vk, b.Actions[0].Proof, pub); ok {
+					t.Fatalf("public input %d tampered but proof valid", k)
+				}
 			}
 			// cv swapped between two actions: proofs bind their own cv.
 			if n > 1 {
@@ -168,7 +177,7 @@ func BenchmarkOrchardBinding(b *testing.B) {
 }
 
 // BenchmarkOrchardBundle is a whole bundle's stateless verification: shape,
-// sighash, binding signature, every proof.
+// sighash, binding signature, every proof (one goroutine per core).
 func BenchmarkOrchardBundle(b *testing.B) {
 	for _, n := range orchardSizes {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
@@ -176,41 +185,9 @@ func BenchmarkOrchardBundle(b *testing.B) {
 			v := verifier(vk)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				sighash := orchard.Sighash("/earth.shielded.v1.MsgTransfer", "earth-1", []*orchard.Bundle{bun}, privacy.Bytes(nil), privacy.U64(0))
+				sighash := orchard.Sighash("/earth.orchard.fixture", "earth-1", []*orchard.Bundle{bun})
 				if err := bun.Verify(sighash, orchard.CanonicalBase, v); err != nil {
 					b.Fatal(err)
-				}
-			}
-		})
-	}
-}
-
-// BenchmarkOrchardBundleParallel verifies a bundle's proofs on one goroutine
-// each: whether the CGo verifier scales across cores (a node could verify a
-// tx's actions concurrently).
-func BenchmarkOrchardBundleParallel(b *testing.B) {
-	for _, n := range orchardSizes {
-		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			bun, sighash, vk := loadBundle(b, n)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if err := bun.CheckBalance(sighash, orchard.CanonicalBase); err != nil {
-					b.Fatal(err)
-				}
-				errs := make(chan error, n)
-				for j := range bun.Actions {
-					go func(j int) {
-						ok, err := Verify(vk, bun.Actions[j].Proof, bun.PublicInputs(j, sighash))
-						if err == nil && !ok {
-							err = fmt.Errorf("action %d invalid", j)
-						}
-						errs <- err
-					}(j)
-				}
-				for range bun.Actions {
-					if err := <-errs; err != nil {
-						b.Fatal(err)
-					}
 				}
 			}
 		})

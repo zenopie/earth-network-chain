@@ -3,22 +3,33 @@ package orchard
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// MaxActions bounds a bundle. It also keeps every per-asset sum far from
-// wrapping the scalar field: MaxActions * 2^64 << n.
+// MaxActions bounds a bundle. It is part of the soundness argument, not only
+// a resource limit: every per-base sum of action values stays below
+// MaxActions * 2^64 << n/2, so a sum that vanishes mod n vanishes over the
+// integers (ORCHARD_DESIGN.md section 5). x/shielded's max_actions_per_bundle
+// may only be lower.
 const MaxActions = 32
 
 // ActionPublicInputs is the action circuit's public input count:
 // anchor, nf, cm_out, cv_x, cv_y, sighash.
 const ActionPublicInputs = 6
 
-// Action is one spend and one output, either of which may be a dummy.
+// Action is one spend and one output, either of which may be a dummy, with
+// the note-tree root its spend is proven against.
 type Action struct {
+	// Anchor is the note-tree root the spend's membership is proven under.
+	// A dummy spend's path is not checked, so the circuit leaves it free; the
+	// chain still requires a valid anchor for every action, so dummies look
+	// like real spends.
+	Anchor     fr.Element
 	Nullifier  fr.Element
 	Commitment fr.Element // the output note's cm
 	Cv         Point
@@ -35,25 +46,28 @@ type Balance struct {
 	Value uint64
 }
 
-// Bundle is a shielded bundle: N actions against one anchor, the public
-// value balance per asset, and the binding signature.
+// Bundle is a shielded bundle: N actions, the public value balance per
+// asset, and the binding signature.
 type Bundle struct {
-	Anchor     fr.Element
 	Actions    []Action
 	Balances   []Balance
 	BindingSig []byte
 }
 
-// Digest is what the sighash binds of a bundle: everything but the proofs
-// and the binding signature (which are made over it).
+// Digest is what the sighash binds of a bundle: every field but the proofs
+// and the binding signature (both are made over the sighash).
 //
-//	H(TAG_BUNDLE, anchor, N, nf_0, cm_0, cvx_0, cvy_0, Bytes(ct_0), ...,
+//	H(TAG_BUNDLE, N,
+//	  anchor_0, nf_0, cm_0, cvx_0, cvy_0, Bytes(ct_0), ...,
 //	  M, asset_0, value_0, ...)
+//
+// N and M are counts; the Poseidon2 sponge also absorbs the input length.
 func (b *Bundle) Digest() fr.Element {
-	in := []fr.Element{TagBundle, b.Anchor, privacy.U64(uint64(len(b.Actions)))}
+	in := make([]fr.Element, 0, 3+6*len(b.Actions)+2*len(b.Balances))
+	in = append(in, TagBundle, privacy.U64(uint64(len(b.Actions))))
 	for _, a := range b.Actions {
 		x, y := XY(a.Cv)
-		in = append(in, a.Nullifier, a.Commitment, x, y, privacy.Bytes(a.Ciphertext))
+		in = append(in, a.Anchor, a.Nullifier, a.Commitment, x, y, privacy.Bytes(a.Ciphertext))
 	}
 	in = append(in, privacy.U64(uint64(len(b.Balances))))
 	for _, bal := range b.Balances {
@@ -62,20 +76,26 @@ func (b *Bundle) Digest() fr.Element {
 	return privacy.H(in...)
 }
 
-// Sighash is what every action proof (and any other proof in the msg, a
-// membership proof) binds as its public `sighash`/`signal`, and what each
-// bundle's binding signature signs: zk/privacy.Signal over the msg type, the
-// chain id, every bundle's digest in order, then the msg's own fields.
-func Sighash(msgType, chainID string, bundles []*Bundle, extra ...fr.Element) fr.Element {
-	f := make([]fr.Element, 0, len(bundles)+len(extra))
+// Sighash is what every action proof of a msg binds as its public
+// `sighash`, what any other proof in the msg (membership, passport) binds as
+// its signal, and what each bundle's binding signature signs:
+//
+//	sighash = zk/privacy.Signal(msg_type_url, chain_id,
+//	                            K, digest(bundle_0), ..., digest(bundle_K-1),
+//	                            msg fields...)
+//	        = H(TAG_SIGNAL, Bytes(msg_type_url), Bytes(chain_id), K, D_0, ..., fields...)
+//
+// The msg type URL fixes how many fields follow and what they mean.
+func Sighash(msgType, chainID string, bundles []*Bundle, fields ...fr.Element) fr.Element {
+	f := make([]fr.Element, 0, 1+len(bundles)+len(fields))
+	f = append(f, privacy.U64(uint64(len(bundles))))
 	for _, b := range bundles {
 		f = append(f, b.Digest())
 	}
-	return privacy.Signal(msgType, chainID, append(f, extra...)...)
+	return privacy.Signal(msgType, chainID, append(f, fields...)...)
 }
 
-// BaseFunc maps an asset id to its value base. The keeper stores the base
-// with the asset at registration; ValueBase recomputes it.
+// BaseFunc maps an asset id to its value base.
 type BaseFunc func(asset fr.Element) (Point, error)
 
 // BindingKey is bvk = sum cv_i - sum_a value_a * G_a. For an honest bundle
@@ -98,14 +118,15 @@ func (b *Bundle) BindingKey(base BaseFunc) (Point, error) {
 // ErrMalformedBundle covers every stateless refusal.
 var ErrMalformedBundle = errors.New("orchard: malformed bundle")
 
-// ValidateBasic is the stateless shape check: 1..MaxActions actions, every
-// cv a curve point, nullifiers distinct, balances positive with distinct
-// assets.
+// ValidateBasic is the stateless shape check: 1..MaxActions actions, every cv
+// a curve point, nullifiers distinct, balances positive with distinct
+// assets, a binding signature of the right length. Callers add their own
+// policy (x/shielded: at least two actions, a param maximum).
 func (b *Bundle) ValidateBasic() error {
 	if len(b.Actions) == 0 || len(b.Actions) > MaxActions {
 		return fmt.Errorf("%w: 1..%d actions", ErrMalformedBundle, MaxActions)
 	}
-	seen := map[fr.Element]bool{}
+	seen := make(map[fr.Element]bool, len(b.Actions))
 	for i, a := range b.Actions {
 		if !a.Cv.IsOnCurve() {
 			return fmt.Errorf("%w: action %d cv", ErrMalformedBundle, i)
@@ -115,7 +136,7 @@ func (b *Bundle) ValidateBasic() error {
 		}
 		seen[a.Nullifier] = true
 	}
-	assets := map[fr.Element]bool{}
+	assets := make(map[fr.Element]bool, len(b.Balances))
 	for _, bal := range b.Balances {
 		if bal.Value == 0 || assets[bal.Asset] {
 			return fmt.Errorf("%w: balances must be positive, one per asset", ErrMalformedBundle)
@@ -123,7 +144,7 @@ func (b *Bundle) ValidateBasic() error {
 		assets[bal.Asset] = true
 	}
 	if len(b.BindingSig) != BindingSigSize {
-		return fmt.Errorf("%w: binding signature", ErrMalformedBundle)
+		return fmt.Errorf("%w: binding signature must be %d bytes", ErrMalformedBundle, BindingSigSize)
 	}
 	return nil
 }
@@ -133,7 +154,7 @@ func (b *Bundle) PublicInputs(i int, sighash fr.Element) [][]byte {
 	a := b.Actions[i]
 	x, y := XY(a.Cv)
 	return [][]byte{
-		privacy.FieldBytes(b.Anchor),
+		privacy.FieldBytes(a.Anchor),
 		privacy.FieldBytes(a.Nullifier),
 		privacy.FieldBytes(a.Commitment),
 		privacy.FieldBytes(x),
@@ -143,34 +164,12 @@ func (b *Bundle) PublicInputs(i int, sighash fr.Element) [][]byte {
 }
 
 // ProofVerifier verifies one action proof (zk/ultrahonk.Verify with the
-// action key).
+// action key). It must be safe for concurrent use.
 type ProofVerifier func(proof []byte, publicInputs [][]byte) (bool, error)
 
-// Verify is the whole stateless verification of a bundle under sighash:
-// shape, the binding signature over the value balance, then every action
-// proof. The anchor's and the nullifiers' state checks are the keeper's.
-func (b *Bundle) Verify(sighash fr.Element, base BaseFunc, verify ProofVerifier) error {
-	if err := b.ValidateBasic(); err != nil {
-		return err
-	}
-	if err := b.CheckBalance(sighash, base); err != nil {
-		return err
-	}
-	for i := range b.Actions {
-		ok, err := verify(b.Actions[i].Proof, b.PublicInputs(i, sighash))
-		if err != nil {
-			return fmt.Errorf("action %d: %w", i, err)
-		}
-		if !ok {
-			return fmt.Errorf("action %d: invalid proof", i)
-		}
-	}
-	return nil
-}
-
 // CheckBalance verifies the binding signature under the bvk the balances
-// imply. Cheap (one MSM-sized sum and two scalar multiplications), so the
-// ante runs it before any proof.
+// imply. Cheap (one point sum and two scalar multiplications), so callers run
+// it before any proof.
 func (b *Bundle) CheckBalance(sighash fr.Element, base BaseFunc) error {
 	bvk, err := b.BindingKey(base)
 	if err != nil {
@@ -179,5 +178,78 @@ func (b *Bundle) CheckBalance(sighash fr.Element, base BaseFunc) error {
 	return VerifyBinding(bvk, sighash, b.BindingSig)
 }
 
-// CanonicalBase is the BaseFunc that recomputes ValueBase.
+// Verify is one bundle's whole stateless verification under sighash: shape,
+// the binding signature over the value balance, then every action proof
+// (VerifyProofs). The anchors' and the nullifiers' state checks are the
+// caller's.
+func (b *Bundle) Verify(sighash fr.Element, base BaseFunc, verify ProofVerifier) error {
+	if err := b.ValidateBasic(); err != nil {
+		return err
+	}
+	if err := b.CheckBalance(sighash, base); err != nil {
+		return err
+	}
+	return VerifyProofs([]*Bundle{b}, sighash, verify)
+}
+
+// ActionError is the first action proof (in bundle order, then action
+// order) that failed to verify.
+type ActionError struct {
+	Bundle, Action int
+	Err            error // nil: the proof is well formed but invalid
+}
+
+func (e *ActionError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("bundle %d action %d: %v", e.Bundle, e.Action, e.Err)
+	}
+	return fmt.Sprintf("bundle %d action %d: invalid proof", e.Bundle, e.Action)
+}
+
+func (e *ActionError) Unwrap() error { return e.Err }
+
+// VerifyProofs verifies every action proof of bundles under sighash, on up to
+// GOMAXPROCS goroutines. The outcome is deterministic: every proof is
+// verified, and the error returned is always the first failing action in
+// order, whatever finished first. nil iff every proof verifies.
+func VerifyProofs(bundles []*Bundle, sighash fr.Element, verify ProofVerifier) error {
+	type job struct{ b, a int }
+	var jobs []job
+	for i, b := range bundles {
+		for j := range b.Actions {
+			jobs = append(jobs, job{i, j})
+		}
+	}
+	errs := make([]*ActionError, len(jobs))
+	workers := min(runtime.GOMAXPROCS(0), len(jobs))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := range next {
+				jb := jobs[k]
+				b := bundles[jb.b]
+				ok, err := verify(b.Actions[jb.a].Proof, b.PublicInputs(jb.a, sighash))
+				if err != nil || !ok {
+					errs[k] = &ActionError{Bundle: jb.b, Action: jb.a, Err: err}
+				}
+			}
+		}()
+	}
+	for k := range jobs {
+		next <- k
+	}
+	close(next)
+	wg.Wait()
+	for _, e := range errs {
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// CanonicalBase is the BaseFunc that derives (and caches) ValueBase.
 func CanonicalBase(asset fr.Element) (Point, error) { return ValueBase(asset), nil }
