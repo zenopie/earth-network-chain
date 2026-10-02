@@ -19,16 +19,11 @@ package app
 // proven with nargo + bb (against the committed verifying keys) and written.
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -54,15 +49,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	earthtypes "github.com/earth-network/earth/x/earth/types"
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/merkle"
+	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
 const (
 	ssChainID = "earth-staking-test"
 	ssErth    = int64(1_000_000)
-	ssGas     = uint64(8_000_000)
+	ssGas     = uint64(16_000_000)
 	ssFee     = uint64(5_000)
 )
 
@@ -81,17 +78,16 @@ type stakeEnv struct {
 	user   *secp256k1.PrivKey
 	val    *secp256k1.PrivKey
 	w      *wallet
-	pr     *prover
 	extra  int
 	// reserved are notes build must not pick as a fee note (one already
-	// committed to another transfer of the msg being built).
+	// committed to another bundle of the msg being built).
 	reserved []*wnote
 	// proofDir is where this suite's proofs are cached.
 	proofDir string
 }
 
 // initStakeEnv boots the launch genesis for ssChainID: one genesis validator
-// (100 ERTH self-bond), a transparent user with 1,000,000 ERTH, the transfer
+// (100 ERTH self-bond), a transparent user with 1,000,000 ERTH, the action
 // verifying key, and genesis time fixed.
 func initStakeEnv(t *testing.T) *stakeEnv {
 	t.Helper()
@@ -139,8 +135,6 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 
 	gs := shieldedtypes.DefaultGenesis()
 	gs.Params.VerifyingKeys = map[string][]byte{
-		// TODO(orchard-phase2): this suite's private msgs still carry legacy
-		// transfers (refused); the action key keeps genesis valid.
 		shieldedtypes.CircuitAction: mustRead(t, "../x/shielded/testdata/action.vk"),
 	}
 	doc.AppState[shieldedtypes.ModuleName], err = app0.AppCodec().MarshalJSON(gs)
@@ -158,7 +152,7 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 	})
 	require.NoError(t, err)
 	e := &stakeEnv{t: t, app: app, now: ssGenesisTime, times: map[int64]time.Time{}, user: user, val: val,
-		w: &wallet{nk: ssDet("nk", 0)}, pr: sharedProver(t), proofDir: stakingProofs}
+		w: &wallet{nk: ssDet("nk", 0)}, proofDir: stakingProofs}
 	e.next(5 * time.Second)
 	return e
 }
@@ -314,7 +308,7 @@ func (e *stakeEnv) signedTx(key *secp256k1.PrivKey, gas uint64, fee int64, msgs 
 	return bz
 }
 
-// privateTx encodes an unsigned private tx whose declared fee is its proof's.
+// privateTx encodes an unsigned private tx whose declared fee is its msg's.
 func (e *stakeEnv) privateTx(msg shieldedtypes.PrivateMsg) []byte {
 	e.t.Helper()
 	b := e.app.TxConfig().NewTxBuilder()
@@ -465,37 +459,40 @@ func (e *stakeEnv) shield(amount uint64) *wnote {
 	return n
 }
 
-// spend describes one transfer: inputs (0-2) of asset denom, the value
-// leaving the pool as denom (valueOut), and the change back to the wallet.
+// spend describes one bundle: inputs (0..n) of asset denom, the value
+// leaving the pool as denom (valueOut), the change back to the wallet, and
+// an ERTH fee note paying fee (unless feeless).
 type spend struct {
 	denom    string
 	inputs   []*wnote
 	valueOut uint64
 	fee      uint64
-	// atSize proves against the root of the first atSize leaves (a stake
-	// vote's snapshot root) instead of the current one; every input must be
-	// among them.
+	// atSize proves every action (dummies too) against the root of the first
+	// atSize leaves (a stake vote's snapshot root) instead of the current
+	// one; every input must be among them.
 	atSize uint64
-	// feeless pays no fee: slot 2 is a dummy (a stake vote's transfer, whose
-	// fee a second transfer pays; a msg paying its fee from its output).
+	// feeless pays no fee: no fee action (a stake vote's vote bundle, whose
+	// fee a second bundle pays; a msg paying its fee from its output).
 	feeless bool
 }
 
-// pendingTransfer is a transfer built but not yet proven.
-type pendingTransfer struct {
-	tr     shieldedtypes.Transfer
-	in     [3]*wnote
-	out    [3]*wnote
-	root   fr.Element
-	size   uint64
-	denomA string
-	// also are transfers spent in the same msg, settled with this one.
-	also []*pendingTransfer
+// pendingBundle is a bundle built but not yet proven.
+type pendingBundle struct {
+	plan *shieldedtest.Plan
+	// b is the unproven bundle, for the msg to carry.
+	b   shieldedtypes.Bundle
+	fee uint64
+	in  []*wnote
+	out []*wnote
+	// also are bundles spent in the same msg, settled with this one.
+	also []*pendingBundle
 }
 
-// build lays out a transfer against the current tree: the inputs, dummies,
-// an ERTH fee note in slot 2 and change outputs.
-func (e *stakeEnv) build(s spend) *pendingTransfer {
+// build lays out a bundle against the current tree (or the first atSize
+// leaves): one action per input (the first returns the change), one
+// spending an ERTH fee note and returning its change, padded with a dummy
+// action to the two-action minimum.
+func (e *stakeEnv) build(s spend) *pendingBundle {
 	e.t.Helper()
 	w := e.w
 	if s.feeless {
@@ -503,111 +500,87 @@ func (e *stakeEnv) build(s spend) *pendingTransfer {
 	} else if s.fee == 0 {
 		s.fee = ssFee
 	}
-	p := &pendingTransfer{denomA: s.denom, size: uint64(len(w.leaves))}
+	size := uint64(len(w.leaves))
 	if s.atSize > 0 {
-		p.size = s.atSize
+		size = s.atSize
+	}
+	w.seq++
+	p := &pendingBundle{fee: s.fee, plan: &shieldedtest.Plan{
+		Seed: fmt.Sprintf("staking/%d", w.seq), Tree: w.tree(e.t, size), DummyNK: w.nk,
+	}}
+	ps := func(n *wnote) *shieldedtest.PlanSpend {
+		return &shieldedtest.PlanSpend{NK: w.nk, Denom: n.denom, Value: n.value, Rho: n.rho, Rcm: n.rcm, Position: n.pos}
+	}
+	output := func(n *wnote) shieldedtest.PlanOutput {
+		p.out = append(p.out, n)
+		return shieldedtest.PlanOutput{Denom: n.denom, Value: n.value, PC: w.pc(n),
+			Ciphertext: []byte(fmt.Sprintf("ct:%s:%d", p.plan.Seed, len(p.out)))}
 	}
 	var inA uint64
-	for i := 0; i < 2; i++ {
-		if i < len(s.inputs) {
-			p.in[i] = s.inputs[i]
-			inA += s.inputs[i].value
-		} else {
-			p.in[i] = w.fresh(s.denom, 0) // dummy: position 0, fresh nullifier
-		}
-	}
-	if s.feeless {
-		p.in[2] = w.fresh("uerth", 0)
-	} else {
-		feeNote := w.unspentBefore("uerth", s.fee, p.size, append(append([]*wnote{}, s.inputs...), e.reserved...)...)
-		require.NotNil(e.t, feeNote, "no ERTH note to pay the fee")
-		p.in[2] = feeNote
+	for _, n := range s.inputs {
+		require.Less(e.t, n.pos, size, "input outside the anchor's tree")
+		inA += n.value
 	}
 	require.GreaterOrEqual(e.t, inA, s.valueOut)
-	p.out[0] = w.fresh(s.denom, inA-s.valueOut)
-	p.out[1] = w.fresh(s.denom, 0)
-	p.out[2] = w.fresh("uerth", p.in[2].value-s.fee)
-	root, err := w.tree(e.t, p.size).Root()
+	for i, n := range s.inputs {
+		v := uint64(0)
+		if i == 0 {
+			v = inA - s.valueOut
+		}
+		p.in = append(p.in, n)
+		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{Spend: ps(n), Out: output(w.fresh(s.denom, v))})
+	}
+	if !s.feeless {
+		feeNote := w.unspentBefore("uerth", s.fee, size, append(append([]*wnote{}, s.inputs...), e.reserved...)...)
+		require.NotNil(e.t, feeNote, "no ERTH note to pay the fee")
+		p.in = append(p.in, feeNote)
+		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{Spend: ps(feeNote), Out: output(w.fresh("uerth", feeNote.value-s.fee))})
+	}
+	for len(p.plan.Actions) < shieldedtypes.MinActionsPerBundle {
+		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{Out: output(w.fresh(s.denom, 0))})
+	}
+	b, err := p.plan.Unproven()
 	require.NoError(e.t, err)
-	p.root = root
-	p.tr = shieldedtypes.Transfer{Root: privacy.FieldBytes(root), Fee: s.fee, ValueOut: s.valueOut}
-	if s.valueOut > 0 {
-		p.tr.DenomOut = s.denom
-	}
-	for i := 0; i < 3; i++ {
-		p.tr.Nullifiers = append(p.tr.Nullifiers, privacy.FieldBytes(w.nf(p.in[i])))
-		p.tr.Commitments = append(p.tr.Commitments, privacy.FieldBytes(w.cm(p.out[i])))
-		ct := []byte(fmt.Sprintf("ct:%d:%d", w.seq, i))
-		p.tr.Ciphertexts = append(p.tr.Ciphertexts, ct)
-	}
+	p.b = b
 	return p
 }
 
-// prove fills in the transfer's proof for msg (whose Signal is computed
-// here, so every other field of msg must be final).
-func (e *stakeEnv) prove(p *pendingTransfer, msg shieldedtypes.PrivateMsg) {
+// prove fills in the proofs and binding signatures of msg's bundles,
+// ps[i] for msg.PrivateBundles()[i], under msg's sighash (computed here, so
+// every other field of msg must be final).
+func (e *stakeEnv) prove(msg shieldedtypes.PrivateMsg, ps ...*pendingBundle) {
 	e.t.Helper()
-	e.proveInto(p, msg, msg.(shieldedtypes.TransferMsg).PrivateTransfer()) // TODO(orchard-phase2): bundles
+	plans := make([]*shieldedtest.Plan, len(ps))
+	for i, p := range ps {
+		plans[i] = p.plan
+	}
+	script := "scripts/staking-fixtures.sh"
+	if e.proofDir == dexProofs {
+		script = "scripts/dex-fixtures.sh"
+	}
+	pr := shieldedtest.ForDir(e.t, e.proofDir, script)
+	require.NoError(e.t, shieldedtest.ProveMsg(msg, ssChainID, e.app.AuthKeeper.AddressCodec(), plans, pr.TryProve))
 }
 
-// proveInto is prove for one of msg's transfers, target (a msg spending
-// several: every proof binds the one signal).
-func (e *stakeEnv) proveInto(p *pendingTransfer, msg shieldedtypes.PrivateMsg, target *shieldedtypes.Transfer) {
-	e.t.Helper()
-	signal, err := msg.(shieldedtypes.TransferMsg).Signal(ssChainID, e.app.AuthKeeper.AddressCodec())
-	require.NoError(e.t, err)
-	var assetPub fr.Element
-	if p.tr.ValueOut > 0 {
-		assetPub = privacy.AssetID(p.denomA)
-	}
-	w := e.w
-	tr := w.tree(e.t, p.size)
-	q := func(x fr.Element) string { b := x.Bytes(); return fmt.Sprintf("\"0x%x\"", b[:]) }
-	arr := func(xs []fr.Element) string {
-		parts := make([]string, len(xs))
-		for i, x := range xs {
-			parts[i] = q(x)
+// unproven fills msg's bundles with placeholder proofs and binding
+// signatures: well formed, for a msg the chain must refuse before verifying
+// anything.
+func unproven(msg shieldedtypes.PrivateMsg) {
+	for _, b := range msg.PrivateBundles() {
+		for i := range b.Actions {
+			b.Actions[i].Proof = make([]byte, 14656)
 		}
-		return "[" + strings.Join(parts, ", ") + "]"
+		b.BindingSig = make([]byte, orchard.BindingSigSize)
 	}
-	var vals, pos, outVals, paths [3]string
-	var rho, rcm, outPC, nf, cm [3]fr.Element
-	for i, n := range p.in {
-		vals[i] = fmt.Sprintf("\"%d\"", n.value)
-		var sib [merkle.Depth]fr.Element
-		if n.value > 0 {
-			sib, err = tr.Path(n.pos)
-			require.NoError(e.t, err)
-			pos[i] = fmt.Sprintf("\"%d\"", n.pos)
-		} else {
-			pos[i] = "\"0\""
-		}
-		paths[i] = arr(sib[:])
-		rho[i], rcm[i], nf[i] = n.rho, n.rcm, w.nf(n)
-		outVals[i] = fmt.Sprintf("\"%d\"", p.out[i].value)
-		outPC[i], cm[i] = w.pc(p.out[i]), w.cm(p.out[i])
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "asset = %s\nnk = %s\n", q(privacy.AssetID(p.denomA)), q(w.nk))
-	fmt.Fprintf(&b, "in_value = [%s]\nin_rho = %s\nin_rcm = %s\nin_pos = [%s]\n", strings.Join(vals[:], ", "), arr(rho[:]), arr(rcm[:]), strings.Join(pos[:], ", "))
-	fmt.Fprintf(&b, "in_path = [%s]\n", strings.Join(paths[:], ", "))
-	fmt.Fprintf(&b, "out_value = [%s]\nout_pc = %s\n", strings.Join(outVals[:], ", "), arr(outPC[:]))
-	fmt.Fprintf(&b, "root = %s\nnf = %s\ncm_out = %s\nfee = \"%d\"\nv_pub_out = \"%d\"\nasset_pub = %s\nsignal = %s\n",
-		q(p.root), arr(nf[:]), arr(cm[:]), p.tr.Fee, p.tr.ValueOut, q(assetPub), q(signal))
-	target.Proof = e.pr.prove(e.t, e.proofDir, shieldedtypes.CircuitTransfer, b.String(), p.tr.PublicInputs(assetPub, signal))
 }
 
-// settle marks a transfer executed: inputs spent, outputs tracked.
-func (e *stakeEnv) settle(p *pendingTransfer) {
-	for _, n := range p.in {
-		n.spent = true
-	}
-	e.w.track(p.out[:]...)
-	for _, q := range p.also {
+// settle marks a bundle executed: inputs spent, outputs tracked.
+func (e *stakeEnv) settle(p *pendingBundle) {
+	for _, q := range append([]*pendingBundle{p}, p.also...) {
 		for _, n := range q.in {
 			n.spent = true
 		}
-		e.w.track(q.out[:]...)
+		e.w.track(q.out...)
 	}
 	e.w.scan(e)
 }
@@ -632,87 +605,8 @@ func (e *stakeEnv) minted(res *abci.ExecTxResult, n *wnote) *wnote {
 	return nil
 }
 
-// ---- prover ---------------------------------------------------------------
-
-type prover struct {
-	mu  sync.Mutex
-	dir string // compiled copy of the circuits, when proving
-}
-
-var (
-	proverOnce sync.Once
-	theProver  = &prover{}
-)
-
-func sharedProver(*testing.T) *prover { return theProver }
-
 // Proof caches, one per suite, each regenerated by its own script.
 var (
 	stakingProofs = filepath.Join("..", "x", "shieldedstaking", "testdata", "proofs") // scripts/staking-fixtures.sh
 	dexProofs     = filepath.Join("..", "x", "dex", "testdata", "proofs")             // scripts/dex-fixtures.sh
 )
-
-func proofFile(dir, circuit string, pub [][]byte) string {
-	h := sha256.New()
-	h.Write([]byte(circuit))
-	for _, x := range pub {
-		h.Write(x)
-	}
-	return filepath.Join(dir, fmt.Sprintf("%s-%x.proof", circuit, h.Sum(nil)[:10]))
-}
-
-var vkFiles = map[string]string{
-	shieldedtypes.CircuitTransfer: "../x/shielded/testdata/transfer.vk",
-}
-
-// prove returns the cached proof for (circuit, pub), proving and caching it
-// when EARTH_CIRCUITS points at the circuits.
-func (p *prover) prove(t *testing.T, dir, circuit, toml string, pub [][]byte) []byte {
-	t.Helper()
-	file := proofFile(dir, circuit, pub)
-	if bz, err := os.ReadFile(file); err == nil {
-		return bz
-	}
-	src := os.Getenv("EARTH_CIRCUITS")
-	if src == "" {
-		script := "scripts/staking-fixtures.sh"
-		if dir == dexProofs {
-			script = "scripts/dex-fixtures.sh"
-		}
-		t.Fatalf("no proof fixture %s for this test's public inputs: run %s", file, script)
-	}
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	run := func(dir string, name string, args ...string) {
-		cmd := exec.Command(name, args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "PATH="+os.Getenv("HOME")+"/.nargo/bin:"+os.Getenv("HOME")+"/.bb:"+os.Getenv("PATH"))
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s %v: %s", name, args, out)
-	}
-	proverOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "staking-circuits")
-		require.NoError(t, err)
-		run(".", "cp", "-R", src, filepath.Join(dir, "circuits"))
-		p.dir = filepath.Join(dir, "circuits")
-		_ = os.RemoveAll(filepath.Join(p.dir, "target"))
-		run(p.dir, "nargo", "compile", "--package", shieldedtypes.CircuitTransfer)
-	})
-	require.NotEmpty(t, p.dir, "circuit compile failed earlier")
-	require.NoError(t, os.WriteFile(filepath.Join(p.dir, circuit, "Prover.toml"), []byte(toml), 0o644))
-	run(p.dir, "nargo", "execute", "--package", circuit)
-	vk, err := filepath.Abs(vkFiles[circuit])
-	require.NoError(t, err)
-	out, err := os.MkdirTemp("", "proof")
-	require.NoError(t, err)
-	defer os.RemoveAll(out)
-	run(p.dir, "bb", "prove", "-b", "target/"+circuit+".json", "-w", "target/"+circuit+".gz", "-k", vk, "-o", out, "-t", "noir-recursive")
-	gotPub, err := os.ReadFile(filepath.Join(out, "public_inputs"))
-	require.NoError(t, err)
-	require.True(t, bytes.Equal(gotPub, bytes.Join(pub, nil)), "%s: bb's public inputs differ from the chain's", circuit)
-	proof, err := os.ReadFile(filepath.Join(out, "proof"))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(file, proof, 0o644))
-	return proof
-}

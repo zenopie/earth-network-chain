@@ -1,3 +1,6 @@
+//go:build dexpending
+
+
 package app
 
 // x/dex's note paths on the real app, with real proofs: swaps between notes

@@ -4,7 +4,7 @@
 #
 # Those tests run a deterministic chain (fixed keys, genesis time and block
 # times) and read each proof they need from
-# x/shieldedstaking/testdata/proofs/<circuit>-<hash of its public inputs>.proof.
+# x/shieldedstaking/testdata/proofs/action-<hash of its public inputs>.proof.
 # A proof's public inputs depend on what the chain computed before it (a derth
 # note's value follows the rate), so they are recorded from a run rather than
 # written down: with EARTH_CIRCUITS set, a missing proof is proven with nargo +
@@ -22,13 +22,13 @@ export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 for bin in nargo bb; do
   command -v "$bin" >/dev/null || { echo "error: $bin not on PATH" >&2; exit 1; }
 done
-[ -d "$CIRCUITS/transfer" ] || { echo "error: no transfer circuit under $CIRCUITS" >&2; exit 1; }
+[ -d "$CIRCUITS/action" ] || { echo "error: no action circuit under $CIRCUITS" >&2; exit 1; }
 CIRCUITS="$(cd "$CIRCUITS" && pwd)"
 
 PROOFS="$CHAIN_DIR/x/shieldedstaking/testdata/proofs"
 rm -rf "$PROOFS"
 mkdir -p "$PROOFS"
 cd "$CHAIN_DIR"
-EARTH_CIRCUITS="$CIRCUITS" go test ./app/ -count=1 \
+EARTH_CIRCUITS="$CIRCUITS" go test ./app/ -count=1 -timeout 60m \
   -run 'TestPrivateStaking|TestTransparentStakingBlocked|TestStakeVote|TestGroundworks'
 echo "done: $(ls "$PROOFS" | wc -l | tr -d ' ') proofs in $PROOFS"

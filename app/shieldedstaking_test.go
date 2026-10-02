@@ -39,11 +39,11 @@ import (
 
 // ---- private msgs, built and proven against the chain as it stands --------
 
-func (e *stakeEnv) delegateMsg(val sdk.ValAddress, in *wnote, amount uint64) (*sstypes.MsgDelegate, *pendingTransfer, *wnote) {
+func (e *stakeEnv) delegateMsg(val sdk.ValAddress, in *wnote, amount uint64) (*sstypes.MsgDelegate, *pendingBundle, *wnote) {
 	p := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: amount})
 	dn := e.w.fresh(sstypes.DerthDenom(e.valoper(val)), 0)
-	m := &sstypes.MsgDelegate{Transfer: p.tr, Validator: e.valoper(val), Pc: privacy.FieldBytes(e.w.pc(dn)), Ciphertext: []byte("derth note")}
-	e.prove(p, m)
+	m := &sstypes.MsgDelegate{Bundle: p.b, Fee: p.fee, Validator: e.valoper(val), Pc: privacy.FieldBytes(e.w.pc(dn)), Ciphertext: []byte("derth note")}
+	e.prove(m, p)
 	return m, p, dn
 }
 
@@ -59,13 +59,13 @@ func (e *stakeEnv) delegate(val sdk.ValAddress, amount uint64) *wnote {
 	return e.minted(res, dn)
 }
 
-func (e *stakeEnv) undelegateMsg(val sdk.ValAddress, in *wnote, amount uint64) (*sstypes.MsgUndelegate, *pendingTransfer, *wnote) {
+func (e *stakeEnv) undelegateMsg(val sdk.ValAddress, in *wnote, amount uint64) (*sstypes.MsgUndelegate, *pendingBundle, *wnote) {
 	epoch, err := e.app.ShieldedStakingKeeper.Epoch.Get(e.ctx())
 	require.NoError(e.t, err)
 	p := e.build(spend{denom: in.denom, inputs: []*wnote{in}, valueOut: amount})
 	un := e.w.fresh(sstypes.UnbondDenom(e.valoper(val), epoch.Number), 0)
-	m := &sstypes.MsgUndelegate{Transfer: p.tr, Validator: e.valoper(val), Pc: privacy.FieldBytes(e.w.pc(un))}
-	e.prove(p, m)
+	m := &sstypes.MsgUndelegate{Bundle: p.b, Fee: p.fee, Validator: e.valoper(val), Pc: privacy.FieldBytes(e.w.pc(un))}
+	e.prove(m, p)
 	return m, p, un
 }
 
@@ -79,23 +79,23 @@ func (e *stakeEnv) undelegate(val sdk.ValAddress, in *wnote, amount uint64) *wno
 	return e.minted(res, un)
 }
 
-func (e *stakeEnv) claimMsg(in *wnote) (*sstypes.MsgClaimUnbonding, *pendingTransfer, *wnote) {
+func (e *stakeEnv) claimMsg(in *wnote) (*sstypes.MsgClaimUnbonding, *pendingBundle, *wnote) {
 	return e.claimMsgFee(in, 0, true)
 }
 
 // claimMsgFee is a claim paying feeFromOutput out of what it claims (no fee
 // note), or a fee note when it is 0.
-func (e *stakeEnv) claimMsgFee(in *wnote, feeFromOutput uint64, prove bool) (*sstypes.MsgClaimUnbonding, *pendingTransfer, *wnote) {
+func (e *stakeEnv) claimMsgFee(in *wnote, feeFromOutput uint64, prove bool) (*sstypes.MsgClaimUnbonding, *pendingBundle, *wnote) {
 	v, epoch, ok := sstypes.ParseUnbondDenom(in.denom)
 	require.True(e.t, ok)
 	p := e.build(spend{denom: in.denom, inputs: []*wnote{in}, valueOut: in.value, feeless: feeFromOutput > 0})
 	out := e.w.fresh("uerth", 0)
-	m := &sstypes.MsgClaimUnbonding{Transfer: p.tr, Validator: v, Epoch: epoch, Pc: privacy.FieldBytes(e.w.pc(out)), FeeFromOutput: feeFromOutput}
+	m := &sstypes.MsgClaimUnbonding{Bundle: p.b, Fee: p.fee, Validator: v, Epoch: epoch, Pc: privacy.FieldBytes(e.w.pc(out)), FeeFromOutput: feeFromOutput}
 	if !prove {
-		m.Transfer.Proof = make([]byte, 14656)
+		unproven(m)
 		return m, p, out
 	}
-	e.prove(p, m)
+	e.prove(m, p)
 	return m, p, out
 }
 
@@ -114,7 +114,7 @@ func (e *stakeEnv) claim(in *wnote) *wnote {
 	return e.minted(res, out)
 }
 
-func (e *stakeEnv) feeOnly() *pendingTransfer { return e.build(spend{denom: "uerth"}) }
+func (e *stakeEnv) feeOnly() *pendingBundle { return e.build(spend{denom: "uerth"}) }
 
 func (e *stakeEnv) state(val sdk.ValAddress) sstypes.ValidatorState {
 	vs, err := e.app.ShieldedStakingKeeper.ValidatorState(e.ctx(), e.valoper(val))
@@ -162,7 +162,6 @@ func epochOf(t *testing.T, denom string) uint64 {
 // Delegate -> epoch -> rewards raise the rate -> undelegate -> epoch ->
 // 21 days -> claim, on the real genesis path, with real proofs.
 func TestPrivateStakingLifecycle(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
@@ -278,7 +277,6 @@ func TestPrivateStakingLifecycle(t *testing.T) {
 // before the infraction is untouched. The slashed validator then refuses new
 // delegations.
 func TestPrivateStakingSlashPassThrough(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
@@ -367,12 +365,12 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 	// Jailed and tombstoned: a delegation is refused before anything is spent.
 	in := e.w.unspent("uerth", uint64(100*ssErth))
 	p := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: uint64(100 * ssErth)})
-	m := &sstypes.MsgDelegate{Transfer: p.tr, Validator: e.valoper(vB), Pc: privacy.FieldBytes(ssDet("pc", 1))}
-	m.Transfer.Proof = make([]byte, 14656) // refused before the proof is read
+	m := &sstypes.MsgDelegate{Bundle: p.b, Fee: p.fee, Validator: e.valoper(vB), Pc: privacy.FieldBytes(ssDet("pc", 1))}
+	unproven(m) // refused before any proof is read
 	ct := e.checkTx(e.privateTx(m))
 	require.Equal(t, sstypes.ErrValidator.ABCICode(), ct.Code, ct.Log)
 	require.Contains(t, ct.Log, "jailed")
-	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(e.ctx(), m.Transfer.Nullifiers[0])
+	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(e.ctx(), m.Bundle.Actions[0].Nullifier)
 	require.NoError(t, err)
 	require.False(t, spent)
 
@@ -413,7 +411,6 @@ func (e *stakeEnv) fakeAuthorized(m shieldedtypes.PrivateMsg) sdk.Context {
 // epoch end never halts: a validator whose work fails is skipped and
 // retried, the others proceed, the block commits.
 func TestPrivateStakingEpochBatchingAndHaltSafety(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initStakeEnv(t)
 	params, err := e.app.StakingKeeper.GetParams(e.ctx())
 	require.NoError(t, err)
@@ -447,10 +444,9 @@ func TestPrivateStakingEpochBatchingAndHaltSafety(t *testing.T) {
 	maxLive := 0
 	for d := 0; d < 30; d++ {
 		m := &sstypes.MsgUndelegate{
-			Transfer: shieldedtypes.Transfer{
-				Nullifiers: [][]byte{privacy.FieldBytes(ssDet("fake", uint64(d)))}, ValueOut: uint64(ssErth),
-				DenomOut: sstypes.DerthDenom(e.valoper(vB)),
-			},
+			Bundle: shieldedtypes.Bundle{Balances: []shieldedtypes.ValueBalance{
+				{Denom: sstypes.DerthDenom(e.valoper(vB)), Amount: uint64(ssErth)},
+			}},
 			Validator: e.valoper(vB), Pc: privacy.FieldBytes(ssDet("fakepc", uint64(d))),
 		}
 		_, err := srv.Undelegate(e.fakeAuthorized(m), m)
@@ -543,36 +539,36 @@ func TestTransparentStakingBlocked(t *testing.T) {
 
 	// Private msgs: a handler reached by any route but the private ante
 	// refuses. The router, as wasm and the ICA host call it:
-	tr := func(denom string, v uint64) shieldedtypes.Transfer {
-		x := shieldedtypes.Transfer{Proof: []byte{1}, Root: make([]byte, 32), Fee: ssFee, ValueOut: v}
+	// tr is a well-formed (unproven) bundle releasing v of denom beside the
+	// fee (fee-only for denom "").
+	tr := func(label, denom string, v, fee uint64) shieldedtypes.Bundle {
+		b := stubFeeBundle(1)
+		b.Balances = nil
+		if fee > 0 {
+			b.Balances = append(b.Balances, shieldedtypes.ValueBalance{Denom: "uerth", Amount: fee})
+		}
 		if v > 0 {
-			x.DenomOut = denom
+			b.Balances = append(b.Balances, shieldedtypes.ValueBalance{Denom: denom, Amount: v})
 		}
-		for i := uint64(0); i < 3; i++ {
-			x.Nullifiers = append(x.Nullifiers, privacy.FieldBytes(ssDet("bypass-nf", i)))
-			x.Commitments = append(x.Commitments, privacy.FieldBytes(ssDet("bypass-cm", i)))
-			x.Ciphertexts = append(x.Ciphertexts, nil)
+		for i := range b.Actions {
+			b.Actions[i].Nullifier = privacy.FieldBytes(ssDet("bypass-nf/"+label, uint64(i)))
 		}
-		return x
+		return b
 	}
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
-	voteTr, feeTr := tr(sstypes.DerthDenom(valoper), 1), tr("", 0)
-	voteTr.Fee = 0
-	for i := range feeTr.Nullifiers {
-		feeTr.Nullifiers[i] = privacy.FieldBytes(ssDet("bypass-fee-nf", uint64(i)))
-	}
 	opts := []*v1.WeightedVoteOption{{Option: v1.OptionYes, Weight: "1"}}
 	sig := make([]byte, 64)
 	pk := secp256k1.GenPrivKeyFromSecret([]byte("bypass")).PubKey().Bytes()
 	for _, m := range []sdk.Msg{
-		&sstypes.MsgDelegate{Transfer: tr("uerth", 1), Validator: valoper, Pc: pc},
-		&sstypes.MsgUndelegate{Transfer: tr(sstypes.DerthDenom(valoper), 1), Validator: valoper, Pc: pc},
-		&sstypes.MsgClaimUnbonding{Transfer: tr(sstypes.UnbondDenom(valoper, 1), 1), Validator: valoper, Epoch: 1, Pc: pc},
-		&sstypes.MsgStakeVote{Transfer: voteTr, FeeTransfer: feeTr, ProposalId: 1, Validator: valoper, Options: opts, Pc: pc},
-		&sstypes.MsgLockPosition{Transfer: tr(sstypes.DerthDenom(valoper), 1), Validator: valoper, Pubkey: pk},
-		&sstypes.MsgUpdatePosition{Transfer: tr("", 0), Signature: sig},
-		&sstypes.MsgUnlockPosition{Transfer: tr("", 0), Pc: pc, Signature: sig},
-		&sstypes.MsgPositionVote{Transfer: tr("", 0), Options: opts, Signature: sig},
+		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Fee: ssFee, Validator: valoper, Pc: pc},
+		&sstypes.MsgUndelegate{Bundle: tr("u", sstypes.DerthDenom(valoper), 1, ssFee), Fee: ssFee, Validator: valoper, Pc: pc},
+		&sstypes.MsgClaimUnbonding{Bundle: tr("c", sstypes.UnbondDenom(valoper, 1), 1, ssFee), Fee: ssFee, Validator: valoper, Epoch: 1, Pc: pc},
+		&sstypes.MsgStakeVote{Bundle: tr("v", sstypes.DerthDenom(valoper), 1, 0), FeeBundle: tr("vf", "", 0, ssFee), Fee: ssFee,
+			ProposalId: 1, Validator: valoper, Options: opts, Pc: pc},
+		&sstypes.MsgLockPosition{Bundle: tr("l", sstypes.DerthDenom(valoper), 1, ssFee), Fee: ssFee, Validator: valoper, Pubkey: pk},
+		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Fee: ssFee, Signature: sig},
+		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Fee: ssFee, Pc: pc, Signature: sig},
+		&sstypes.MsgPositionVote{Bundle: tr("pv", "", 0, ssFee), Fee: ssFee, Options: opts, Signature: sig},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
 		require.NotNil(t, h, "%T", m)
@@ -609,8 +605,8 @@ func (e *stakeEnv) lock(in *wnote, amount uint64, key *secp256k1.PrivKey, splits
 	v, ok := sstypes.ParseDerthDenom(in.denom)
 	require.True(e.t, ok)
 	p := e.build(spend{denom: in.denom, inputs: []*wnote{in}, valueOut: amount})
-	m := &sstypes.MsgLockPosition{Transfer: p.tr, Validator: v, Splits: splits, Pubkey: key.PubKey().Bytes()}
-	e.prove(p, m)
+	m := &sstypes.MsgLockPosition{Bundle: p.b, Fee: p.fee, Validator: v, Splits: splits, Pubkey: key.PubKey().Bytes()}
+	e.prove(m, p)
 	res := e.run(e.privateTx(m))
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.settle(p)
@@ -635,11 +631,12 @@ func (e *stakeEnv) submitProposal() uint64 {
 	return id
 }
 
-// stakeVoteMsg is a note's vote: a feeless transfer spending all of n
-// against the proposal's snapshot root (or, current, against the current
-// root, which the chain refuses), a second transfer paying the fee from any
-// current ERTH note, and the derth minted back to a fresh note.
-func (e *stakeEnv) stakeVoteMsg(n *wnote, proposalID uint64, opts []*v1.WeightedVoteOption, prove, current bool) (*sstypes.MsgStakeVote, *pendingTransfer, *wnote) {
+// stakeVoteMsg is a note's vote: a feeless vote bundle spending all of n
+// with every action against the proposal's snapshot root (or, current,
+// against the current root, which the chain refuses), a fee bundle paying
+// the fee from any current ERTH note, and the derth minted back to a fresh
+// note.
+func (e *stakeEnv) stakeVoteMsg(n *wnote, proposalID uint64, opts []*v1.WeightedVoteOption, prove, current bool) (*sstypes.MsgStakeVote, *pendingBundle, *wnote) {
 	e.t.Helper()
 	snap, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), proposalID)
 	require.NoError(e.t, err)
@@ -659,16 +656,14 @@ func (e *stakeEnv) stakeVoteMsg(n *wnote, proposalID uint64, opts []*v1.Weighted
 	p.also = append(p.also, fee)
 	back := e.w.fresh(n.denom, 0)
 	m := &sstypes.MsgStakeVote{
-		Transfer: p.tr, FeeTransfer: fee.tr, ProposalId: proposalID, Validator: v, Options: opts,
+		Bundle: p.b, FeeBundle: fee.b, Fee: fee.fee, ProposalId: proposalID, Validator: v, Options: opts,
 		Pc: privacy.FieldBytes(e.w.pc(back)), Ciphertext: []byte("voted derth"),
 	}
 	if !prove {
-		m.Transfer.Proof = make([]byte, 14656)
-		m.FeeTransfer.Proof = make([]byte, 14656)
+		unproven(m)
 		return m, p, back
 	}
-	e.proveInto(p, m, &m.Transfer)
-	e.proveInto(fee, m, &m.FeeTransfer)
+	e.prove(m, p, fee)
 	return m, p, back
 }
 
@@ -682,9 +677,9 @@ func (e *stakeEnv) stakeVote(n *wnote, proposalID uint64, opt v1.VoteOption) *wn
 	return e.minted(res, back)
 }
 
-func (e *stakeEnv) positionVoteMsg(id uint64, key *secp256k1.PrivKey, proposalID uint64, opt v1.VoteOption) (*sstypes.MsgPositionVote, *pendingTransfer) {
+func (e *stakeEnv) positionVoteMsg(id uint64, key *secp256k1.PrivKey, proposalID uint64, opt v1.VoteOption) (*sstypes.MsgPositionVote, *pendingBundle) {
 	p := e.feeOnly()
-	m := &sstypes.MsgPositionVote{Transfer: p.tr, PositionId: id, ProposalId: proposalID, Options: v1.NewNonSplitVoteOption(opt)}
+	m := &sstypes.MsgPositionVote{Bundle: p.b, Fee: p.fee, PositionId: id, ProposalId: proposalID, Options: v1.NewNonSplitVoteOption(opt)}
 	m.Signature = e.sign(key, "vote", id, e.position(id).Nonce, m.SignPayload())
 	return m, p
 }
@@ -696,7 +691,6 @@ type tallyNums struct{ yes, abstain, no, veto math.LegacyDec }
 // the un-voted derth, a residual third-party delegation — and the refusals
 // that keep one unit of stake from voting twice.
 func TestStakeVoteTally(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initStakeEnv(t)
 	vA := e.genesisValidator()
 	vB, vBKey := e.createValidator(1000 * ssErth)
@@ -754,7 +748,7 @@ func TestStakeVoteTally(t *testing.T) {
 	p2Key := positionKey(2)
 	p2 := e.lock(n5, n5.value, p2Key, nil)
 	m, _ := e.positionVoteMsg(p2, p2Key, prop, v1.OptionYes)
-	m.Transfer.Proof = make([]byte, 14656)
+	unproven(m)
 	res := e.checkTx(e.privateTx(m))
 	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)
 	for _, spent := range []*wnote{n5, n4} {
@@ -781,7 +775,7 @@ func TestStakeVoteTally(t *testing.T) {
 	// new note, which cannot vote again (final), nor can n1 (spent).
 	supplyB := e.app.BankKeeper.GetSupply(e.ctx(), n1.denom).Amount
 	// Its fee comes from an ERTH note made after the snapshot: the fee
-	// transfer spends against a current root, so it need not be in the
+	// bundle spends against a current root, so it need not be in the
 	// snapshot tree.
 	late := e.shield(uint64(ssErth))
 	require.GreaterOrEqual(t, late.pos, snap.TreeSize)
@@ -813,39 +807,49 @@ func TestStakeVoteTally(t *testing.T) {
 	e.next(5 * time.Second)
 	e.reserved = nil
 	old := e.build(spend{denom: "uerth", atSize: snap.TreeSize})
-	old.tr.Proof = make([]byte, 14656)
-	// TODO(orchard-phase2): was a MsgTransfer of old.tr (the snapshot root
-	// outside the window); redo as a MsgSend bundle.
-	res = e.checkTx(e.privateTx(&shieldedtypes.MsgSend{}))
+	oldSend := &shieldedtypes.MsgSend{Bundle: old.b, Fee: old.fee}
+	unproven(oldSend)
+	res = e.checkTx(e.privateTx(oldSend))
 	require.Equal(t, shieldedtypes.ErrUnknownRoot.ABCICode(), res.Code, res.Log)
 	// n3 Yes; position P Yes; n2 does not vote (vB inherits it).
-	// Both proofs bind both transfers' nullifiers: n3's vote with another
-	// vote's (valid) fee transfer verifies neither.
+	// One sighash binds both bundles: n3's vote with another vote's (valid)
+	// fee bundle verifies neither binding signature.
 	sa, pa, ba := e.stakeVoteMsg(n3, prop, v1.NewNonSplitVoteOption(v1.OptionYes), true, false)
 	sb, _, _ := e.stakeVoteMsg(n2, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, false)
 	spliced := *sa
-	spliced.FeeTransfer = sb.FeeTransfer
+	spliced.FeeBundle = sb.FeeBundle
 	res = e.checkTx(e.privateTx(&spliced))
-	require.Equal(t, shieldedtypes.ErrInvalidProof.ABCICode(), res.Code, res.Log)
-	// And the vote transfer must not pay a fee itself.
+	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), res.Code, res.Log)
+	// The vote bundle releases the weight and nothing else: not even the fee.
 	feeing := *sa
-	feeing.Transfer.Fee = ssFee
+	feeing.Bundle.Balances = append([]shieldedtypes.ValueBalance{}, sa.Bundle.Balances...)
+	feeing.Bundle.Balances = append(feeing.Bundle.Balances, shieldedtypes.ValueBalance{Denom: "uerth", Amount: ssFee})
+	feeing.Fee = 2 * ssFee
 	res = e.checkTx(e.privateTx(&feeing))
 	require.NotEqual(t, uint32(0), res.Code)
-	require.Contains(t, res.Log, "the vote transfer pays no fee")
+	require.Contains(t, res.Log, "the vote bundle's only balance")
+	// Every action of the vote bundle, dummies included, spends against the
+	// snapshot root: one action against a current root is refused.
+	mixed := *sa
+	mixed.Bundle.Actions = append([]shieldedtypes.Action{}, sa.Bundle.Actions...)
+	cur, err := e.w.tree(t, uint64(len(e.w.leaves))).Root()
+	require.NoError(t, err)
+	mixed.Bundle.Actions[len(mixed.Bundle.Actions)-1].Anchor = privacy.FieldBytes(cur)
+	res = e.checkTx(e.privateTx(&mixed))
+	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)
 	fb0 := e.run(e.privateTx(sa))
 	require.Equal(t, uint32(0), fb0.Code, fb0.Log)
 	e.settle(pa)
 	e.minted(fb0, ba)
 	pv, pp := e.positionVoteMsg(pid, pKey, prop, v1.OptionYes)
-	e.prove(pp, pv)
+	e.prove(pv, pp)
 	fb := e.run(e.privateTx(pv))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
 	e.settle(pp)
 	// The position's signature is spent with its nonce.
 	pv2, pp2 := e.positionVoteMsg(pid, pKey, prop, v1.OptionYes)
 	pv2.Signature = pv.Signature
-	pv2.Transfer.Proof = make([]byte, 14656)
+	unproven(pv2)
 	_ = pp2
 	res = e.checkTx(e.privateTx(pv2))
 	require.Equal(t, sstypes.ErrSignature.ABCICode(), res.Code, res.Log)
@@ -956,7 +960,6 @@ func countVotes(t *testing.T, e *stakeEnv, prop uint64) int {
 // votes; a position votes derth x epoch rate, re-weighed every epoch, and is
 // driven by its own key inside unsigned txs.
 func TestGroundworksPositions(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
@@ -1015,34 +1018,34 @@ func TestGroundworksPositions(t *testing.T) {
 
 	// Update: clear the split (signed by the position key); a replay of that
 	// signature is refused (the nonce moved on); a wrong key is refused.
-	up := func(splits []allocationtypes.AllocationWeight, signer *secp256k1.PrivKey, nonce uint64) (*sstypes.MsgUpdatePosition, *pendingTransfer) {
+	up := func(splits []allocationtypes.AllocationWeight, signer *secp256k1.PrivKey, nonce uint64) (*sstypes.MsgUpdatePosition, *pendingBundle) {
 		pt := e.feeOnly()
-		m := &sstypes.MsgUpdatePosition{Transfer: pt.tr, PositionId: id, Splits: splits}
+		m := &sstypes.MsgUpdatePosition{Bundle: pt.b, Fee: pt.fee, PositionId: id, Splits: splits}
 		m.Signature = e.sign(signer, "update", id, nonce, m.SignPayload())
 		return m, pt
 	}
 	m, pt := up(nil, key, p.Nonce)
-	e.prove(pt, m)
+	e.prove(m, pt)
 	fb := e.run(e.privateTx(m))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
 	e.settle(pt)
 	_, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), sstypes.PositionVoterKey(id)))
 	require.ErrorIs(t, err, collections.ErrNotFound)
 	replay, _ := up(nil, key, p.Nonce)
-	replay.Transfer.Proof = make([]byte, 14656)
+	unproven(replay)
 	res := e.checkTx(e.privateTx(replay))
 	require.Equal(t, sstypes.ErrSignature.ABCICode(), res.Code, res.Log)
 	wrong, _ := up(opt, positionKey(9), p.Nonce+1)
-	wrong.Transfer.Proof = make([]byte, 14656)
+	unproven(wrong)
 	res = e.checkTx(e.privateTx(wrong))
 	require.Equal(t, sstypes.ErrSignature.ABCICode(), res.Code, res.Log)
 
 	// Unlock: the derth comes back as a note to the pc the key signed for.
 	pt = e.feeOnly()
 	back := e.w.fresh(dn.denom, 0)
-	um := &sstypes.MsgUnlockPosition{Transfer: pt.tr, PositionId: id, Pc: privacy.FieldBytes(e.w.pc(back))}
+	um := &sstypes.MsgUnlockPosition{Bundle: pt.b, Fee: pt.fee, PositionId: id, Pc: privacy.FieldBytes(e.w.pc(back))}
 	um.Signature = e.sign(key, "unlock", id, p.Nonce+1, um.SignPayload())
-	e.prove(pt, um)
+	e.prove(um, pt)
 	fb = e.run(e.privateTx(um))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
 	e.settle(pt)
@@ -1090,7 +1093,6 @@ func TestStakeVoteSnapshotFollowsExpeditedConversion(t *testing.T) {
 // the private staking module's own delegations never are; positions carry
 // their own weight beside it.
 func TestGroundworksSelfBondWeight(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
