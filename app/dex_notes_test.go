@@ -1,4 +1,3 @@
-
 package app
 
 // x/dex's note paths on the real app, with real proofs: swaps between notes
@@ -211,7 +210,9 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 
 	// --- bypass: the private msgs' handlers, reached by the router as a
 	// contract or an ICA host would reach them, refuse.
-	bal := func(denom string, v uint64) shieldedtypes.ValueBalance { return shieldedtypes.ValueBalance{Denom: denom, Amount: v} }
+	bal := func(denom string, v uint64) shieldedtypes.ValueBalance {
+		return shieldedtypes.ValueBalance{Denom: denom, Amount: v}
+	}
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
 	for _, m := range []sdk.Msg{
 		&dextypes.MsgNoteSwap{Bundle: stubBundle("a", bal("uanml", 1), bal("uerth", ssFee)), Fee: ssFee, DenomOut: "uerth", MinAmountOut: 1, Pc: pc},
