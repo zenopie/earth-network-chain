@@ -16,7 +16,7 @@ import (
 // nothing. It answers "would this registration be accepted, and for which
 // passport?" for the gas-grant backend (`earthd gas-check registration`),
 // which funds the fee note a registrant pays MsgRegister's fee from, and so
-// sees the msg before its fee transfer exists: the fee is not checked here.
+// sees the msg before its fee bundle exists: the fee is not checked here.
 //
 // Not a consensus path. Nothing in the state machine calls this.
 func (k Keeper) CheckRegistration(ctx context.Context, msg *types.MsgRegister) (nullifier []byte, switched bool, err error) {

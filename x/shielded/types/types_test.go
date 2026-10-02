@@ -170,7 +170,7 @@ func TestParamsValidate(t *testing.T) {
 			p.MaxPrivateActionsPerBlock = 2*p.MaxActionsPerBundle - 1
 		},
 		"unknown vk": func(p *types.Params) { p.VerifyingKeys = map[string][]byte{"passport": {1}} },
-		"retired vk": func(p *types.Params) { p.VerifyingKeys = map[string][]byte{types.CircuitTransfer: {1}} },
+		"retired vk": func(p *types.Params) { p.VerifyingKeys = map[string][]byte{"transfer": {1}} },
 		"empty vk":   func(p *types.Params) { p.VerifyingKeys = map[string][]byte{types.CircuitAction: nil} },
 	} {
 		p := types.DefaultParams()

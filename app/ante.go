@@ -134,7 +134,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	normal := sdk.ChainAnteDecorators(anteDecorators...)
 
 	// Unsigned private txs: one PrivateMsg, no signatures, fee paid from the
-	// shielded pool by the msg's transfer proof. See x/shielded/ante for why
+	// shielded pool by the msg's bundles. See x/shielded/ante for why
 	// each SDK decorator missing here cannot run on a tx with no account.
 	//
 	// NOTE: nodes must run the no-op app mempool (app.toml mempool.max-txs =

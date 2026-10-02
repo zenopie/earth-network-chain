@@ -24,7 +24,7 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)
 }
 
-// Every private msg has no signers (see x/shielded/types.ProvideTransferGetSigners).
+// Every private msg has no signers (see x/shielded/types.ProvideSendGetSigners).
 // depinject collects signing.CustomGetSigner one provider at a time, hence one
 // function per msg.
 func noSigners(name string) signing.CustomGetSigner {

@@ -51,38 +51,6 @@ message Bundle {
   bytes binding_sig = 3;
 }
 
-// Transfer is the retired 3-in/3-out transfer (circuits/transfer, removed).
-// TODO(orchard-phase2): still embedded by personhood, assembly,
-// shieldedstaking and dex msgs until they carry bundles; the private ante
-// refuses every msg that has no bundle, so none of them executes. Public input
-// order: root, nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal. The chain
-// computes asset_pub from denom_out (0 when value_out is 0) and signal from
-// the enclosing msg (see zk/privacy.SpendSignal); neither is carried.
-message Transfer {
-  // proof is the bb v5.0.0 UltraHonk proof.
-  bytes proof = 1;
-  // root is the note-tree root the inputs are proven against: 32 bytes, a
-  // root recorded within root_window_seconds.
-  bytes root = 2;
-  // nullifiers of the three inputs, 32 bytes each, pairwise distinct. A
-  // value-0 dummy input still publishes (and spends) a fresh nullifier.
-  repeated bytes nullifiers = 3;
-  // commitments of the three outputs, 32 bytes each, appended to the tree in
-  // order. Slots 0-1 hold the hidden asset, slot 2 ERTH change.
-  repeated bytes commitments = 4;
-  // ciphertexts are the three output notes encrypted to their owners, one per
-  // commitment, emitted for wallets to trial-decrypt. Bound by the signal.
-  repeated bytes ciphertexts = 5;
-  // fee is the uerth the transfer releases to fee_collector. It must equal
-  // the tx fee.
-  uint64 fee = 6;
-  // value_out is the amount of the hidden asset leaving the pool (v_pub_out).
-  uint64 value_out = 7;
-  // denom_out names the asset leaving the pool: required when value_out > 0,
-  // empty otherwise. The chain maps it to asset_pub through the registry.
-  string denom_out = 8;
-}
-
 // Asset is a denom admitted to the pool and its in-circuit id,
 // asset_id = zk/privacy.AssetID(denom).
 message Asset {

@@ -6,8 +6,8 @@ import (
 
 // x/shielded module sentinel errors
 var (
-	ErrInvalidSigner       = errors.Register(ModuleName, 1100, "expected gov account as only signer for proposal message")
-	ErrInvalidTransfer     = errors.Register(ModuleName, 1101, "invalid transfer") // TODO(orchard-phase2): legacy transfers
+	ErrInvalidSigner = errors.Register(ModuleName, 1100, "expected gov account as only signer for proposal message")
+	// 1101 was the retired transfer's ErrInvalidTransfer; not reused.
 	ErrInvalidProof        = errors.Register(ModuleName, 1102, "invalid proof")
 	ErrUnknownRoot         = errors.Register(ModuleName, 1103, "root is not a recent note-tree root")
 	ErrNullifierSpent      = errors.Register(ModuleName, 1104, "nullifier already spent")

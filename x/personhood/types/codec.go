@@ -27,7 +27,7 @@ func noSigners(name protoreflect.FullName) signing.CustomGetSigner {
 	}
 }
 
-// The private msgs have no signers; see x/shielded ProvideTransferGetSigners
+// The private msgs have no signers; see x/shielded ProvideSendGetSigners
 // for why each needs a custom getter to exist at all. One provider per msg:
 // depinject collects CustomGetSigner values one per provider.
 

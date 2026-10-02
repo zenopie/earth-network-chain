@@ -26,7 +26,7 @@ func noSigners(name protoreflect.FullName) signing.CustomGetSigner {
 }
 
 // Every msg of the chamber is private and has no signers; see x/shielded
-// ProvideTransferGetSigners. One provider per msg type.
+// ProvideSendGetSigners. One provider per msg type.
 
 func ProvideVoteProposalGetSigners() signing.CustomGetSigner {
 	return noSigners("earth.assembly.v1.MsgVoteProposal")

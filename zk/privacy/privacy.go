@@ -41,15 +41,6 @@ var (
 	TagScope = tag("earth.scope")
 )
 
-// TODO(orchard-phase2): MsgTransferType, SpendSignal, TransferSignal,
-// MultiSpendSignal and ActionSignal are the retired transfer's signals, kept
-// only for the Phase 2 modules' legacy msgs; bundles bind
-// zk/orchard.Sighash.
-//
-// MsgTransferType is earth.shielded.v1.MsgTransfer's type URL, the kind
-// TransferSignal binds.
-const MsgTransferType = "/earth.shielded.v1.MsgTransfer"
-
 func tag(s string) fr.Element {
 	var e fr.Element
 	e.SetBigInt(new(big.Int).SetBytes([]byte(s)))
@@ -143,7 +134,11 @@ func Bytes(b []byte) fr.Element {
 //
 //	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id), fields...)
 //
-// msg_type is the enclosing msg's type URL ("/earth.shielded.v1.MsgTransfer"),
+// A private msg's sighash (zk/orchard.Sighash) is Signal over its type URL,
+// chain id, bundle count, bundle digests and own fields: the value its action
+// proofs and binding signatures bind, and its membership proof's signal.
+//
+// msg_type is the enclosing msg's type URL ("/earth.shielded.v1.MsgSend"),
 // so one proof can never be replayed as a different kind of msg; chain_id
 // stops a proof crossing between networks that share a tree prefix. fields are
 // the msg's own values the proof must not be separable from (receiver,
@@ -155,61 +150,6 @@ func Signal(msgType, chainID string, fields ...fr.Element) fr.Element {
 	in := make([]fr.Element, 0, 3+len(fields))
 	in = append(in, TagSignal, Bytes([]byte(msgType)), Bytes([]byte(chainID)))
 	return H(append(in, fields...)...)
-}
-
-// SpendSignal is Signal for a msg carrying a transfer proof: the three output
-// ciphertexts are always bound first, so whoever relays an unsigned private tx
-// cannot swap a recipient's ciphertext for garbage (the note would still land,
-// but its owner could never find or open it). extra are the msg's own fields.
-//
-//	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id),
-//	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), extra...)
-func SpendSignal(msgType, chainID string, ciphertexts [3][]byte, extra ...fr.Element) fr.Element {
-	f := []fr.Element{Bytes(ciphertexts[0]), Bytes(ciphertexts[1]), Bytes(ciphertexts[2])}
-	return Signal(msgType, chainID, append(f, extra...)...)
-}
-
-// TransferSignal is MsgTransfer's signal. receiver is the unshield recipient's
-// raw address bytes, empty when nothing leaves the pool; feeFromOutput is the
-// msg's fee_from_output (0 unless the fee is paid out of the unshield):
-//
-//	signal = H(TAG_SIGNAL, Bytes("/earth.shielded.v1.MsgTransfer"), Bytes(chain_id),
-//	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), Bytes(receiver), fee_from_output)
-func TransferSignal(chainID string, receiver []byte, ciphertexts [3][]byte, feeFromOutput uint64) fr.Element {
-	return SpendSignal(MsgTransferType, chainID, ciphertexts, Bytes(receiver), U64(feeFromOutput))
-}
-
-// MultiSpendSignal is Signal for a private msg spending several transfers
-// (x/shielded's MultiTransferMsg). Every transfer's proof binds this one
-// value, which binds every transfer's ciphertexts and then every transfer's
-// nullifiers, in the msg's order, before the msg's own fields: a transfer can
-// be spent once, so none of them can be paired with any other transfer or
-// lifted into another msg.
-//
-//	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id),
-//	           Bytes(ct_00), Bytes(ct_01), Bytes(ct_02), Bytes(ct_10), ...,
-//	           nf_00, nf_01, nf_02, nf_10, ..., extra...)
-func MultiSpendSignal(msgType, chainID string, ciphertexts [][3][]byte, nullifiers [][3]fr.Element, extra ...fr.Element) fr.Element {
-	f := make([]fr.Element, 0, 6*len(ciphertexts)+len(extra))
-	for _, cts := range ciphertexts {
-		f = append(f, Bytes(cts[0]), Bytes(cts[1]), Bytes(cts[2]))
-	}
-	for _, nfs := range nullifiers {
-		f = append(f, nfs[:]...)
-	}
-	return Signal(msgType, chainID, append(f, extra...)...)
-}
-
-// ActionSignal is Signal for a private msg that pays its fee with a transfer
-// and acts with a second proof (a membership proof, a passport proof). Both
-// proofs bind this one value. The transfer's three nullifiers are bound
-// before the msg's own fields, so the second proof cannot be lifted onto some
-// other fee payment: those nullifiers can be spent once, by this tx.
-//
-//	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id),
-//	           Bytes(ct_0), Bytes(ct_1), Bytes(ct_2), nf_0, nf_1, nf_2, extra...)
-func ActionSignal(msgType, chainID string, ciphertexts [3][]byte, nullifiers [3]fr.Element, extra ...fr.Element) fr.Element {
-	return SpendSignal(msgType, chainID, ciphertexts, append(nullifiers[:], extra...)...)
 }
 
 // Scope is a membership proof's public scope: H(TAG_SCOPE, Bytes(kind),
