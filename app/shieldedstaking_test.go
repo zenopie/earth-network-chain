@@ -585,17 +585,20 @@ func TestTransparentStakingBlocked(t *testing.T) {
 	st := sstypes.StakeProof{Proof: []byte{1}, Anchor: z, Nullifiers: [][]byte{privacy.FieldBytes(ssDet("bypass-snf", 0)), z},
 		Commitments: [][]byte{z, z}, SpcMint: pc, OwnerTag: pc}
 	claimFee := tr("c", "", 0, ssFee)
+	none := sstypes.StakeProof{Proof: []byte{1}, Anchor: z, Nullifiers: [][]byte{z, z}, Commitments: [][]byte{z, z}, SpcMint: pc, OwnerTag: pc}
+	restake := st
+	restake.Commitments = [][]byte{pc, z}
 	for _, m := range []sdk.Msg{
-		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Fee: ssFee, Validator: valoper, Stake: st},
-		&sstypes.MsgRestake{Bundle: tr("r", "", 0, ssFee), Fee: ssFee, Validator: valoper, Stake: st},
+		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Fee: ssFee, Validator: valoper, Stake: none},
+		&sstypes.MsgRestake{Bundle: tr("r", "", 0, ssFee), Fee: ssFee, Validator: valoper, Stake: restake},
 		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Fee: ssFee, Validator: valoper, Amount: 1, Stake: st},
 		&sstypes.MsgClaimUnbonding{Bundle: &claimFee, Fee: ssFee, Validator: valoper, Epoch: 1, Amount: 1, Pc: pc, Stake: st},
 		&sstypes.MsgStakeVote{Bundle: tr("v", "", 0, ssFee), Fee: ssFee, ProposalId: 1, Validator: valoper, Options: opts,
 			Weight: 1, Stake: st},
 		&sstypes.MsgLockPosition{Bundle: tr("l", "", 0, ssFee), Fee: ssFee, Validator: valoper, Amount: 1, Stake: st},
-		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Fee: ssFee, Stake: st},
-		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Fee: ssFee, Stake: st},
-		&sstypes.MsgPositionVote{Bundle: tr("pv", "", 0, ssFee), Fee: ssFee, Options: opts, Stake: st},
+		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Fee: ssFee, Stake: none},
+		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Fee: ssFee, Stake: none},
+		&sstypes.MsgPositionVote{Bundle: tr("pv", "", 0, ssFee), Fee: ssFee, Options: opts, Stake: none},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
 		require.NotNil(t, h, "%T", m)
