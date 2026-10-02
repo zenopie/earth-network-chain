@@ -14,11 +14,13 @@
     app tests on bundles; Phase-2 app suites skip with TODO(orchard-phase2).
   - 8f31e06 transfer fixtures dropped from tools/privacyfixtures and zk/ultrahonk.
 
-## Next
-- full `go test ./...`; `make privacy-vks-check`; grep leftovers (MsgTransfer,
-  max_private_txs, CircuitTransfer docs).
-- ORCHARD_DESIGN.md: production deltas section.
-- Final report (design deltas, Phase 2 checklist).
+  - 9cb7422 ORCHARD_DESIGN.md section 12 (production deltas); zk/privacy legacy
+    signals marked TODO(orchard-phase2).
+- Verified: `go build ./...`, `go test ./...` (all ok), `make privacy-vks-check`,
+  `make genesis-check`, `nargo test` (action 38, privacy_core 9, membership 11).
+
+## Status
+Phase 1 complete. Next is Phase 2 (see the report / ORCHARD_DESIGN.md section 12).
 
 ## Decisions
 - Anchor per action (not per bundle); bundle 0's actions may use the
