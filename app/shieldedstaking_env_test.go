@@ -94,6 +94,16 @@ type stakeEnv struct {
 // verifying key, and genesis time fixed.
 func initStakeEnv(t *testing.T) *stakeEnv {
 	t.Helper()
+	e, err := initStakeEnvWith(t, nil)
+	require.NoError(t, err)
+	return e
+}
+
+// initStakeEnvWith is initStakeEnv with mutate applied to the app state
+// (given the genesis validator's operator account) before InitChain, whose
+// error it returns.
+func initStakeEnvWith(t *testing.T, mutate func(appState map[string]json.RawMessage, op sdk.AccAddress)) (*stakeEnv, error) {
+	t.Helper()
 	raw, err := os.ReadFile("../networks/genesis.json")
 	require.NoError(t, err)
 	var doc struct {
@@ -144,6 +154,9 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 	doc.AppState[shieldedtypes.ModuleName], err = app0.AppCodec().MarshalJSON(gs)
 	require.NoError(t, err)
 
+	if mutate != nil {
+		mutate(doc.AppState, sdk.AccAddress(val.PubKey().Address()))
+	}
 	appState, err := json.Marshal(doc.AppState)
 	require.NoError(t, err)
 	app := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
@@ -154,11 +167,13 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 	_, err = app.InitChain(&abci.RequestInitChain{
 		ChainId: ssChainID, Time: ssGenesisTime, InitialHeight: 1, ConsensusParams: &cp, AppStateBytes: appState,
 	})
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	e := &stakeEnv{t: t, app: app, now: ssGenesisTime, times: map[int64]time.Time{}, user: user, val: val,
 		w: &wallet{nk: ssDet("nk", 0)}, sw: &stakeWallet{}, proofDir: stakingProofs}
 	e.next(5 * time.Second)
-	return e
+	return e, nil
 }
 
 func mustRead(t *testing.T, path string) []byte {
