@@ -139,9 +139,10 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 
 	gs := shieldedtypes.DefaultGenesis()
 	gs.Params.VerifyingKeys = map[string][]byte{
-		shieldedtypes.CircuitTransfer: mustRead(t, "../x/shielded/testdata/transfer.vk"),
+		// TODO(orchard-phase2): this suite's private msgs still carry legacy
+		// transfers (refused); the action key keeps genesis valid.
+		shieldedtypes.CircuitAction: mustRead(t, "../x/shielded/testdata/action.vk"),
 	}
-	gs.Params.MaxPrivateTxsPerBlock = 8
 	doc.AppState[shieldedtypes.ModuleName], err = app0.AppCodec().MarshalJSON(gs)
 	require.NoError(t, err)
 
@@ -546,14 +547,14 @@ func (e *stakeEnv) build(s spend) *pendingTransfer {
 // here, so every other field of msg must be final).
 func (e *stakeEnv) prove(p *pendingTransfer, msg shieldedtypes.PrivateMsg) {
 	e.t.Helper()
-	e.proveInto(p, msg, msg.PrivateTransfer())
+	e.proveInto(p, msg, msg.(shieldedtypes.TransferMsg).PrivateTransfer()) // TODO(orchard-phase2): bundles
 }
 
 // proveInto is prove for one of msg's transfers, target (a msg spending
 // several: every proof binds the one signal).
 func (e *stakeEnv) proveInto(p *pendingTransfer, msg shieldedtypes.PrivateMsg, target *shieldedtypes.Transfer) {
 	e.t.Helper()
-	signal, err := msg.Signal(ssChainID, e.app.AuthKeeper.AddressCodec())
+	signal, err := msg.(shieldedtypes.TransferMsg).Signal(ssChainID, e.app.AuthKeeper.AddressCodec())
 	require.NoError(e.t, err)
 	var assetPub fr.Element
 	if p.tr.ValueOut > 0 {

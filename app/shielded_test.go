@@ -1,9 +1,9 @@
 package app
 
 // x/shielded on the real app: the pinned launch genesis, the real TxConfig,
-// encoder, ante router, CheckTx and FinalizeBlock, and real UltraHonk proofs
-// (x/shielded/testdata, made by scripts/shielded-fixtures.sh for
-// x/shielded/testutil's scenario).
+// encoder, ante router, CheckTx and FinalizeBlock, and real UltraHonk action
+// proofs (x/shielded/testdata/proofs, made by scripts/shielded-fixtures.sh
+// for x/shielded/testutil's scenario of Orchard-style bundles).
 
 import (
 	"context"
@@ -47,9 +47,14 @@ const (
 	shValErth  = 200_000_000
 	shUserErth = 1_000_000_000
 	shUserAnml = 5_000_000
-	// Private gas is fixed: 2,000,000 proof + 6 x 150,000 notes + tx size.
-	shPrivateGas = 3_200_000
 )
+
+// shGas is the gas limit a scenario send declares: its fixed private charge
+// (bundle_gas + 2.3M per action) plus room for the tx's size. The scenario's
+// fees cover it at the node's 0.005uerth min gas price.
+func shGas(actions int) uint64 {
+	return shieldedtypes.DefaultBundleGas + uint64(actions)*(shieldedtypes.DefaultProofVerificationGas+2*shieldedtypes.DefaultNoteGas) + 200_000*uint64(actions)
+}
 
 type shieldedEnv struct {
 	t      *testing.T
@@ -57,12 +62,13 @@ type shieldedEnv struct {
 	height int64
 	now    time.Time
 	user   *secp256k1.PrivKey
+	prover *shieldedtest.Prover
 }
 
 // initShieldedEnv boots the launch genesis re-keyed to the scenario's chain
-// id, with the transfer verifying key set, one private tx per block, a user
-// funded in uerth and (straight into genesis balances) uanml, and a node
-// min-gas-price of 0.005uerth (the SDL's MIN_GAS_PRICES).
+// id, with the action verifying key set, a user funded in uerth and
+// (straight into genesis balances) uanml, and a node min-gas-price of
+// 0.005uerth (the SDL's MIN_GAS_PRICES).
 func initShieldedEnv(t *testing.T) *shieldedEnv {
 	t.Helper()
 	return initShieldedEnvWith(t, shieldedEnvOpts{})
@@ -136,13 +142,12 @@ func initShieldedEnvWith(t *testing.T, opts shieldedEnvOpts) *shieldedEnv {
 	doc.AppState["auth"], err = json.Marshal(auth)
 	require.NoError(t, err)
 
-	vk, err := os.ReadFile("../x/shielded/testdata/transfer.vk")
+	vk, err := os.ReadFile("../x/shielded/testdata/action.vk")
 	require.NoError(t, err)
 	gs := shieldedtypes.DefaultGenesis()
-	gs.Params.VerifyingKeys = map[string][]byte{shieldedtypes.CircuitTransfer: vk}
-	gs.Params.MaxPrivateTxsPerBlock = 1
+	gs.Params.VerifyingKeys = map[string][]byte{shieldedtypes.CircuitAction: vk}
 	if opts.maxPrivate > 0 {
-		gs.Params.MaxPrivateTxsPerBlock = opts.maxPrivate
+		gs.Params.MaxPrivateActionsPerBlock = opts.maxPrivate
 	}
 	doc.AppState[shieldedtypes.ModuleName], err = app0.AppCodec().MarshalJSON(gs)
 	require.NoError(t, err)
@@ -165,7 +170,7 @@ func initShieldedEnvWith(t *testing.T, opts shieldedEnvOpts) *shieldedEnv {
 		ChainId: shieldedtest.ChainID, Time: now, InitialHeight: 1, ConsensusParams: &cp, AppStateBytes: appState,
 	})
 	require.NoError(t, err)
-	e := &shieldedEnv{t: t, app: app, now: now, user: user}
+	e := &shieldedEnv{t: t, app: app, now: now, user: user, prover: shieldedtest.DefaultProver(t)}
 	e.finalize()
 	return e
 }
@@ -235,7 +240,7 @@ func (e *shieldedEnv) bech(a sdk.AccAddress) string {
 	return s
 }
 
-// privateTx encodes an unsigned tx. The fee is the transfer's unless fee is set.
+// privateTx encodes an unsigned tx. The fee is the msg's unless fee is set.
 func (e *shieldedEnv) privateTx(gas uint64, fee *sdk.Coins, msgs ...sdk.Msg) []byte {
 	e.t.Helper()
 	b := e.app.TxConfig().NewTxBuilder()
@@ -245,7 +250,7 @@ func (e *shieldedEnv) privateTx(gas uint64, fee *sdk.Coins, msgs ...sdk.Msg) []b
 		b.SetFeeAmount(*fee)
 	} else {
 		pm := msgs[0].(shieldedtypes.PrivateMsg)
-		b.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("uerth", pm.PrivateTransfer().FeeInt())))
+		b.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("uerth", shieldedtypes.TotalFee(pm))))
 	}
 	bz, err := e.app.TxConfig().TxEncoder()(b.GetTx())
 	require.NoError(e.t, err)
@@ -279,18 +284,19 @@ func (e *shieldedEnv) signedTx(gas uint64, fee sdk.Coins, msgs ...sdk.Msg) []byt
 
 func (e *shieldedEnv) fee(amt int64) sdk.Coins { return sdk.NewCoins(sdk.NewInt64Coin("uerth", amt)) }
 
-func (e *shieldedEnv) transferMsg(s shieldedtest.Scenario, i int) *shieldedtypes.MsgTransfer {
+// sendMsg is the scenario's send i, proven (from the proof cache).
+func (e *shieldedEnv) sendMsg(s shieldedtest.Scenario, i int) *shieldedtypes.MsgSend {
 	e.t.Helper()
-	sp := s.Transfers[i]
-	proof, err := os.ReadFile("../x/shielded/testdata/" + sp.Name + "/proof")
+	m, err := s.Msg(i, e.bech(shieldedtest.Receiver), func(toml string, pub [][]byte) []byte {
+		return e.prover.Prove(e.t, toml, pub)
+	})
 	require.NoError(e.t, err)
-	tr, err := s.Transfer(i, proof)
-	require.NoError(e.t, err)
-	m := &shieldedtypes.MsgTransfer{Transfer: tr}
-	if sp.Receiver != nil {
-		m.Receiver = e.bech(sp.Receiver)
-	}
 	return m
+}
+
+// sendTx is send i as an unsigned tx with its declared gas.
+func (e *shieldedEnv) sendTx(s shieldedtest.Scenario, i int) []byte {
+	return e.privateTx(shGas(len(s.Sends[i].Actions)), nil, e.sendMsg(s, i))
 }
 
 func eventsOf(evs []abci.Event, typ string) []map[string]string {
@@ -313,6 +319,29 @@ func requireOK(t *testing.T, r *abci.ExecTxResult) {
 	require.Equal(t, uint32(0), r.Code, r.Log)
 }
 
+// shieldAll shields the scenario's notes in one signed tx (positions 0..10).
+func (e *shieldedEnv) shieldAll(s shieldedtest.Scenario) *abci.ResponseFinalizeBlock {
+	e.t.Helper()
+	var shields []sdk.Msg
+	for _, n := range s.Shields {
+		shields = append(shields, &shieldedtypes.MsgShield{
+			Sender: e.bech(e.userAddr()), Amount: sdk.NewCoin(n.Denom, math.NewIntFromUint64(n.Value)), Pc: privacy.FieldBytes(n.PC()),
+		})
+	}
+	fb := e.finalize(e.signedTx(4_000_000, e.fee(20_000), shields...))
+	requireOK(e.t, fb.TxResults[0])
+	return fb
+}
+
+// fixedGas is a private msg's fixed charge for bundles of these sizes.
+func fixedGas(actions ...int) int64 {
+	var g int64
+	for _, n := range actions {
+		g += int64(shieldedtypes.DefaultBundleGas) + int64(n)*int64(shieldedtypes.DefaultProofVerificationGas+2*shieldedtypes.DefaultNoteGas)
+	}
+	return g
+}
+
 func TestShieldedPoolEndToEnd(t *testing.T) {
 	e := initShieldedEnv(t)
 	k := e.app.ShieldedKeeper
@@ -324,90 +353,114 @@ func TestShieldedPoolEndToEnd(t *testing.T) {
 	// The pool account is a module account and deliberately not blocked.
 	require.False(t, e.app.BankKeeper.BlockedAddr(pool))
 
-	// --- shield: the scenario's two notes, one signed tx, positions 0 and 1.
-	var shields []sdk.Msg
-	for _, n := range s.Shields {
-		shields = append(shields, &shieldedtypes.MsgShield{
-			Sender: e.bech(e.userAddr()), Amount: sdk.NewCoin(n.Denom, math.NewIntFromUint64(n.Value)), Pc: privacy.FieldBytes(n.PC()),
-		})
-	}
-	fb := e.finalize(e.signedTx(1_000_000, e.fee(5_000), shields...))
-	requireOK(t, fb.TxResults[0])
+	// --- shield: the scenario's eleven notes (ERTH and ANML), one signed tx.
+	fb := e.shieldAll(s)
 	notes := eventsOf(fb.TxResults[0].Events, shieldedtypes.EventTypeNote)
-	require.Len(t, notes, 2)
-	require.Equal(t, "0", notes[0]["position"])
-	require.Equal(t, "1", notes[1]["position"])
+	require.Len(t, notes, 11)
+	require.Equal(t, "10", notes[10]["position"])
 	require.Len(t, eventsOf(fb.Events, shieldedtypes.EventTypeRoot), 1, "EndBlock recorded the anchor")
-	require.Equal(t, int64(1_100_000), erth(pool))
+	require.Equal(t, int64(1_116_000), erth(pool))
 
-	// --- transfer 0: a private send. CheckTx, then a block where a second
-	// private tx hits the cap of one.
-	t0 := e.transferMsg(s, 0)
-	good0 := e.privateTx(shPrivateGas, nil, t0)
-	res := e.checkTx(good0)
+	// --- send2: a two-action bundle. CheckTx, then a block.
+	good := e.sendTx(s, shieldedtest.Send2)
+	res := e.checkTx(good)
 	require.Equal(t, uint32(0), res.Code, res.Log)
 	// Gas is the fixed private charge plus the tx's size, and little else.
-	fixed := int64(shieldedtypes.DefaultProofVerificationGas + 6*shieldedtypes.DefaultNoteGas)
-	require.GreaterOrEqual(t, res.GasUsed, fixed+sizeGas(e, good0))
-	require.Less(t, res.GasUsed, fixed+sizeGas(e, good0)+20_000, "pool writes run unmetered")
+	require.GreaterOrEqual(t, res.GasUsed, fixedGas(2)+sizeGas(e, good))
+	require.Less(t, res.GasUsed, fixedGas(2)+sizeGas(e, good)+20_000, "pool writes run unmetered")
 	// Same nullifiers again: CheckTx has already spent them in check state.
-	res = e.checkTx(e.privateTx(shPrivateGas+1, nil, t0))
+	again := e.privateTx(shGas(2)+1, nil, e.sendMsg(s, shieldedtest.Send2))
+	res = e.checkTx(again)
 	require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), res.Code, res.Log)
 
 	supplyBefore := e.app.BankKeeper.GetSupply(e.ctx(), "uerth").Amount
-	fb = e.finalize(good0, e.privateTx(shPrivateGas+1, nil, t0))
+	fb = e.finalize(good, again)
 	requireOK(t, fb.TxResults[0])
-	require.Equal(t, shieldedtypes.ErrBlockCap.ABCICode(), fb.TxResults[1].Code, fb.TxResults[1].Log)
+	require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), fb.TxResults[1].Code, fb.TxResults[1].Log)
 	r0 := fb.TxResults[0]
 	notes = eventsOf(r0.Events, shieldedtypes.EventTypeNote)
-	require.Len(t, notes, 3)
+	require.Len(t, notes, 2)
 	for i, n := range notes {
-		require.Equal(t, fmt.Sprint(2+i), n["position"])
+		require.Equal(t, fmt.Sprint(11+i), n["position"])
 		require.NotEmpty(t, n["ciphertext"])
 	}
-	require.Len(t, eventsOf(r0.Events, shieldedtypes.EventTypeNullifier), 3)
+	require.Len(t, eventsOf(r0.Events, shieldedtypes.EventTypeNullifier), 2)
 	// The fee left the pool into fee_collector, and x/earth burned half.
-	require.Equal(t, int64(1_100_000-20_000), erth(pool))
-	require.Equal(t, "10000uerth", burned(fb))
-	require.True(t, supplyBefore.Sub(e.app.BankKeeper.GetSupply(e.ctx(), "uerth").Amount).GTE(math.NewInt(10_000)))
-	require.Equal(t, int64(10_000), erth(feeCollector), "the other half waits for distribution")
+	require.Equal(t, int64(1_116_000-30_000), erth(pool))
+	require.Equal(t, "15000uerth", burned(fb))
+	require.True(t, supplyBefore.Sub(e.app.BankKeeper.GetSupply(e.ctx(), "uerth").Amount).GTE(math.NewInt(15_000)))
+	require.Equal(t, int64(15_000), erth(feeCollector), "the other half waits for distribution")
 
 	// CometBFT's recheck after the commit drops the included tx.
-	rc, err := e.app.CheckTx(&abci.RequestCheckTx{Tx: good0, Type: abci.CheckTxType_Recheck})
+	rc, err := e.app.CheckTx(&abci.RequestCheckTx{Tx: good, Type: abci.CheckTxType_Recheck})
 	require.NoError(t, err)
 	require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), rc.Code, rc.Log)
 
 	// --- double spend in a later block: refused, and nothing moves.
-	fb = e.finalize(e.privateTx(shPrivateGas+2, nil, t0))
+	fb = e.finalize(e.privateTx(shGas(2)+2, nil, e.sendMsg(s, shieldedtest.Send2)))
 	require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), fb.TxResults[0].Code, fb.TxResults[0].Log)
-	require.Equal(t, int64(1_100_000-20_000), erth(pool))
+	require.Equal(t, int64(1_116_000-30_000), erth(pool))
 
-	// --- simulate transfer 1 with a placeholder proof of the real length:
-	// same gas as the real tx, no proof demanded.
-	t1 := e.transferMsg(s, 1)
-	sim := e.transferMsg(s, 1)
-	sim.Transfer.Proof = make([]byte, len(t1.Transfer.Proof))
-	gi, _, err := e.app.Simulate(e.privateTx(shPrivateGas, nil, sim))
+	// --- multi3: an ANML send paying its fee in ERTH, one bundle of three
+	// actions, one of them mixed (spends ERTH, outputs ANML).
+	tx := e.sendTx(s, shieldedtest.Multi3)
+	res = e.checkTx(tx)
+	require.Equal(t, uint32(0), res.Code, res.Log)
+	require.GreaterOrEqual(t, res.GasUsed, fixedGas(3)+sizeGas(e, tx))
+	require.Less(t, res.GasUsed, fixedGas(3)+sizeGas(e, tx)+20_000)
+	fb = e.finalize(tx)
+	requireOK(t, fb.TxResults[0])
+	require.Equal(t, int64(1_116_000-70_000), erth(pool))
+	require.Equal(t, int64(5_000_000), e.app.BankKeeper.GetBalance(e.ctx(), pool, "uanml").Amount.Int64(), "no ANML left the pool")
+
+	// --- simulate unshield2 with placeholder proofs of the real length and
+	// no binding signature check: same gas as the real tx.
+	u := e.sendMsg(s, shieldedtest.Unshield2)
+	sim := e.sendMsg(s, shieldedtest.Unshield2)
+	for i := range sim.Bundle.Actions {
+		sim.Bundle.Actions[i].Proof = make([]byte, len(u.Bundle.Actions[i].Proof))
+	}
+	gi, _, err := e.app.Simulate(e.privateTx(shGas(2), nil, sim))
 	require.NoError(t, err)
 
-	// --- transfer 1: unshield 500,000 to the receiver.
-	good1 := e.privateTx(shPrivateGas, nil, t1)
-	res = e.checkTx(good1)
+	// --- unshield2: 500,000 to the receiver, the fee paid out of the same
+	// uerth balance (no fee note).
+	good = e.privateTx(shGas(2), nil, u)
+	res = e.checkTx(good)
 	require.Equal(t, uint32(0), res.Code, res.Log)
-	fb = e.finalize(good1)
+	fb = e.finalize(good)
 	requireOK(t, fb.TxResults[0])
 	require.Equal(t, gi.GasUsed, uint64(fb.TxResults[0].GasUsed), "simulate gas == DeliverTx gas")
 	require.Equal(t, int64(500_000), erth(shieldedtest.Receiver))
 	require.Len(t, eventsOf(fb.TxResults[0].Events, shieldedtypes.EventTypeUnshield), 1)
-	require.Equal(t, int64(1_100_000-540_000), erth(pool))
+	require.Equal(t, int64(1_116_000-600_000), erth(pool))
+
+	// --- consolidate: ten actions in one bundle.
+	tx = e.sendTx(s, shieldedtest.Consolidate)
+	res = e.checkTx(tx)
+	require.Equal(t, uint32(0), res.Code, res.Log)
+	require.GreaterOrEqual(t, res.GasUsed, fixedGas(10)+sizeGas(e, tx))
+	require.Less(t, res.GasUsed, fixedGas(10)+sizeGas(e, tx)+20_000)
+	fb = e.finalize(tx)
+	requireOK(t, fb.TxResults[0])
+	require.Len(t, eventsOf(fb.TxResults[0].Events, shieldedtypes.EventTypeNullifier), 10)
+
 	ts, err := k.Turnstile(e.ctx(), "uerth")
 	require.NoError(t, err)
-	require.Equal(t, int64(1_100_000), ts.In.Int64())
-	require.Equal(t, int64(540_000), ts.Out.Int64())
+	require.Equal(t, int64(1_116_000), ts.In.Int64())
+	require.Equal(t, int64(730_000), ts.Out.Int64())
+	require.Equal(t, int64(1_116_000-730_000), erth(pool))
 	require.NoError(t, k.AssertInvariants(e.ctx()))
 
+	// --- a fresh bundle spending send2's note again, and a one-action bundle.
+	fb = e.finalize(e.sendTx(s, shieldedtest.DoubleSpend))
+	require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), fb.TxResults[0].Code, fb.TxResults[0].Log)
+	fb = e.finalize(e.sendTx(s, shieldedtest.SingleAction))
+	require.Equal(t, shieldedtypes.ErrInvalidBundle.ABCICode(), fb.TxResults[0].Code, fb.TxResults[0].Log)
+	require.Contains(t, fb.TxResults[0].Log, "pad with dummies")
+
 	// The chain's tree is the scenario's.
-	want, err := s.TreeBefore(2)
+	want, err := s.TreeBefore(shieldedtest.DoubleSpend)
 	require.NoError(t, err)
 	wantRoot, err := want.Root()
 	require.NoError(t, err)
@@ -415,13 +468,13 @@ func TestShieldedPoolEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, privacy.FieldBytes(wantRoot), got)
 
-	// --- stale root: a newer anchor exists and two weeks pass; transfer 1's
-	// root is no longer accepted (checked before its spent nullifiers).
+	// --- stale anchors: a newer anchor exists and two weeks pass; send2's
+	// anchors are no longer accepted (checked before its spent nullifiers).
 	pc := privacy.FieldBytes(shieldedtest.Det("late", 0))
 	fb = e.finalize(e.signedTx(600_000, e.fee(3_000), &shieldedtypes.MsgShield{
 		Sender: e.bech(e.userAddr()), Amount: sdk.NewInt64Coin("uerth", 7), Pc: pc}))
 	requireOK(t, fb.TxResults[0])
-	fb = e.finalizeAfter(15*24*time.Hour, e.privateTx(shPrivateGas+3, nil, t1))
+	fb = e.finalizeAfter(15*24*time.Hour, e.privateTx(shGas(2)+3, nil, e.sendMsg(s, shieldedtest.Send2)))
 	require.Equal(t, shieldedtypes.ErrUnknownRoot.ABCICode(), fb.TxResults[0].Code, fb.TxResults[0].Log)
 
 	// --- genesis round trip through a full app export.
@@ -432,8 +485,8 @@ func TestShieldedPoolEndToEnd(t *testing.T) {
 	var gs shieldedtypes.GenesisState
 	require.NoError(t, e.app.AppCodec().UnmarshalJSON(appState[shieldedtypes.ModuleName], &gs))
 	require.NoError(t, gs.Validate())
-	require.Len(t, gs.Commitments, 9)
-	require.Len(t, gs.Nullifiers, 6)
+	require.Len(t, gs.Commitments, 29)
+	require.Len(t, gs.Nullifiers, 17)
 	fresh := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
 		baseapp.SetChainID(shieldedtest.ChainID))
 	fctx := fresh.NewUncachedContext(false, cmtproto.Header{ChainID: shieldedtest.ChainID, Height: e.height, Time: e.now})
@@ -446,6 +499,12 @@ func TestShieldedPoolEndToEnd(t *testing.T) {
 	r2, _ := fresh.ShieldedKeeper.CurrentRoot(fctx)
 	require.Equal(t, r1, r2)
 	require.NoError(t, fresh.ShieldedKeeper.AssertInvariants(fctx))
+	// The spent set came across.
+	for _, nf := range e.sendMsg(s, shieldedtest.Consolidate).Bundle.Nullifiers() {
+		spent, err := fresh.ShieldedKeeper.Nullifiers.Has(fctx, nf)
+		require.NoError(t, err)
+		require.True(t, spent)
+	}
 }
 
 // sizeGas is what ConsumeGasForTxSize charged for bz.
@@ -461,78 +520,123 @@ func burned(res *abci.ResponseFinalizeBlock) string {
 	return ""
 }
 
+// The block cap counts actions: a tx whose actions would take the block over
+// max_private_actions_per_block is refused before anything else is checked,
+// and a block's actions under it are admitted; max_actions_per_bundle
+// refuses a bundle above it outright.
+func TestShieldedBlockCapCountsActions(t *testing.T) {
+	e := initShieldedEnv(t)
+	s := shieldedtest.Default()
+	e.shieldAll(s)
+	setParams := func(f func(p *shieldedtypes.Params)) {
+		p, err := e.app.ShieldedKeeper.Params.Get(e.ctx())
+		require.NoError(t, err)
+		f(&p)
+		require.NoError(t, e.app.ShieldedKeeper.Params.Set(e.ctx(), p))
+	}
+	send2 := e.sendTx(s, shieldedtest.Send2)
+	dup := e.privateTx(shGas(2)+1, nil, e.sendMsg(s, shieldedtest.Send2))
+
+	// Cap 3: the second two-action tx would make 4. (Below governance's own
+	// floor of 2 x max_actions_per_bundle; set directly to isolate the cap.)
+	setParams(func(p *shieldedtypes.Params) { p.MaxPrivateActionsPerBlock = 3 })
+	fb := e.finalize(send2, dup)
+	requireOK(t, fb.TxResults[0])
+	require.Equal(t, shieldedtypes.ErrBlockCap.ABCICode(), fb.TxResults[1].Code, fb.TxResults[1].Log)
+
+	// Cap 5: the same pair fits the cap; the duplicate then fails on its
+	// spent nullifiers, not the cap.
+	setParams(func(p *shieldedtypes.Params) { p.MaxPrivateActionsPerBlock = 5 })
+	fb = e.finalize(e.sendTx(s, shieldedtest.Multi3), dup)
+	requireOK(t, fb.TxResults[0])
+	require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), fb.TxResults[1].Code, fb.TxResults[1].Log)
+
+	// max_actions_per_bundle 2: the ten-action consolidation is refused in
+	// CheckTx and in a block.
+	setParams(func(p *shieldedtypes.Params) { p.MaxActionsPerBundle = 2; p.MaxPrivateActionsPerBlock = 4 })
+	requireOK(t, e.finalize(e.sendTx(s, shieldedtest.Unshield2)).TxResults[0])
+	tx := e.sendTx(s, shieldedtest.Consolidate)
+	res := e.checkTx(tx)
+	require.Equal(t, shieldedtypes.ErrInvalidBundle.ABCICode(), res.Code, res.Log)
+	require.Contains(t, res.Log, "max_actions_per_bundle")
+	fb = e.finalize(tx)
+	require.Equal(t, shieldedtypes.ErrInvalidBundle.ABCICode(), fb.TxResults[0].Code)
+}
+
 func TestShieldedPrivateTxShape(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
-	var shields []sdk.Msg
-	for _, n := range s.Shields {
-		shields = append(shields, &shieldedtypes.MsgShield{
-			Sender: e.bech(e.userAddr()), Amount: sdk.NewCoin(n.Denom, math.NewIntFromUint64(n.Value)), Pc: privacy.FieldBytes(n.PC()),
-		})
-	}
-	requireOK(t, e.finalize(e.signedTx(1_000_000, e.fee(5_000), shields...)).TxResults[0])
-	t0 := e.transferMsg(s, 0)
+	e.shieldAll(s)
+	m := e.sendMsg(s, shieldedtest.Send2)
+	gas := shGas(2)
 
-	// Declared fee differs from the proof's.
+	// Declared fee differs from the msg's.
 	lie := e.fee(25_000)
-	res := e.checkTx(e.privateTx(shPrivateGas, &lie, t0))
+	res := e.checkTx(e.privateTx(gas, &lie, m))
 	require.Contains(t, res.Log, "must equal the msg's fee")
 
-	// Below the node's min gas price: refused in CheckTx (gas 5M x 0.005 =
-	// 25,000 > 20,000). The node price is local; only min_fee is consensus.
-	res = e.checkTx(e.privateTx(5_000_000, nil, t0))
+	// Below the node's min gas price: refused in CheckTx (gas 10M x 0.005 =
+	// 50,000 > 30,000). The node price is local; only min_fee is consensus.
+	res = e.checkTx(e.privateTx(10_000_000, nil, m))
 	require.Equal(t, sdkerrors.ErrInsufficientFee.ABCICode(), res.Code, res.Log)
 
 	// Too little gas for the fixed private charge: out of gas in the ante,
 	// before anything is spent.
-	fb := e.finalize(e.privateTx(1_000_000, nil, t0))
+	fb := e.finalize(e.privateTx(3_000_000, nil, m))
 	require.Equal(t, sdkerrors.ErrOutOfGas.ABCICode(), fb.TxResults[0].Code, fb.TxResults[0].Log)
-	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(e.ctx(), t0.Transfer.Nullifiers[0])
+	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(e.ctx(), m.Bundle.Actions[0].Nullifier)
 	require.NoError(t, err)
 	require.False(t, spent)
 
 	// Two private msgs, or a private msg with a normal one: refused.
 	send := banktypes.NewMsgSend(e.userAddr(), e.userAddr(), e.fee(1))
-	res = e.checkTx(e.privateTx(shPrivateGas, nil, t0, e.transferMsg(s, 1)))
+	res = e.checkTx(e.privateTx(gas, nil, m, e.sendMsg(s, shieldedtest.Multi3)))
 	require.Contains(t, res.Log, "exactly one private msg")
-	res = e.checkTx(e.privateTx(shPrivateGas, nil, t0, send))
+	res = e.checkTx(e.privateTx(gas, nil, m, send))
 	require.Contains(t, res.Log, "exactly one private msg")
-	mixed := e.signedTx(shPrivateGas, e.fee(40_000), t0, send)
+	mixed := e.signedTx(gas, e.fee(40_000), m, send)
 	require.Contains(t, e.checkTx(mixed).Log, "exactly one private msg")
 	require.Contains(t, e.finalize(mixed).TxResults[0].Log, "exactly one private msg")
 
 	// A private msg carrying a signature.
-	res = e.checkTx(e.signedTx(shPrivateGas, e.fee(20_000), t0))
+	res = e.checkTx(e.signedTx(gas, e.fee(30_000), m))
 	require.Contains(t, res.Log, "must be unsigned")
 
 	// Unordered private txs.
 	ub := e.app.TxConfig().NewTxBuilder()
-	require.NoError(t, ub.SetMsgs(t0))
-	ub.SetGasLimit(shPrivateGas)
-	ub.SetFeeAmount(e.fee(20_000))
+	require.NoError(t, ub.SetMsgs(m))
+	ub.SetGasLimit(gas)
+	ub.SetFeeAmount(e.fee(30_000))
 	ub.SetUnordered(true)
 	ub.SetTimeoutTimestamp(e.now.Add(time.Minute))
 	ubz, err := e.app.TxConfig().TxEncoder()(ub.GetTx())
 	require.NoError(t, err)
 	require.Contains(t, e.checkTx(ubz).Log, "unordered")
 
-	// A bad proof (the receiver swapped) fails in CheckTx and in a block.
-	bad := e.transferMsg(s, 0)
-	bad.Transfer.Ciphertexts[0] = []byte("swapped by a relay")
-	res = e.checkTx(e.privateTx(shPrivateGas, nil, bad))
-	require.Equal(t, shieldedtypes.ErrInvalidProof.ABCICode(), res.Code, res.Log)
-	fb = e.finalize(e.privateTx(shPrivateGas, nil, bad))
-	require.Equal(t, shieldedtypes.ErrInvalidProof.ABCICode(), fb.TxResults[0].Code)
+	// A relay swapping a ciphertext: the binding signature fails in CheckTx
+	// and in a block.
+	bad := e.sendMsg(s, shieldedtest.Send2)
+	bad.Bundle.Actions[0].Ciphertext = []byte("swapped by a relay")
+	res = e.checkTx(e.privateTx(gas, nil, bad))
+	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), res.Code, res.Log)
+	fb = e.finalize(e.privateTx(gas, nil, bad))
+	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), fb.TxResults[0].Code)
 
-	// asset_pub is pinned to 0 when nothing leaves: ValidateBasic refuses a
-	// named asset with no value.
-	pinned := e.transferMsg(s, 0)
-	pinned.Transfer.DenomOut = "uerth"
-	res = e.checkTx(e.privateTx(shPrivateGas, nil, pinned))
-	require.NotEqual(t, uint32(0), res.Code)
+	// A tampered proof: the action proof fails.
+	tampered := e.sendMsg(s, shieldedtest.Send2)
+	tampered.Bundle.Actions[1].Proof = append([]byte(nil), tampered.Bundle.Actions[1].Proof...)
+	tampered.Bundle.Actions[1].Proof[100] ^= 1
+	res = e.checkTx(e.privateTx(gas, nil, tampered))
+	require.Equal(t, shieldedtypes.ErrInvalidProof.ABCICode(), res.Code, res.Log)
+
+	// Padding: a one-action bundle is refused before anything else.
+	pad := e.sendMsg(s, shieldedtest.Send2)
+	pad.Bundle.Actions = pad.Bundle.Actions[:1]
+	res = e.checkTx(e.privateTx(gas, nil, pad))
+	require.Equal(t, shieldedtypes.ErrInvalidBundle.ABCICode(), res.Code, res.Log)
 
 	// And the real one still goes through after all that.
-	requireOK(t, e.finalize(e.privateTx(shPrivateGas, nil, t0)).TxResults[0])
+	requireOK(t, e.finalize(e.privateTx(gas, nil, m)).TxResults[0])
 }
 
 // A zero-signer msg reaching its handler by any route other than the private
@@ -540,20 +644,20 @@ func TestShieldedPrivateTxShape(t *testing.T) {
 func TestShieldedHandlerBypassRefused(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
-	t0 := e.transferMsg(s, 0)
+	m := e.sendMsg(s, shieldedtest.Send2)
 
 	// The router directly, as wasm's message dispatcher and the ICA host call it.
-	h := e.app.MsgServiceRouter().Handler(t0)
+	h := e.app.MsgServiceRouter().Handler(m)
 	require.NotNil(t, h)
-	_, err := h(e.ctx(), t0)
+	_, err := h(e.ctx(), m)
 	require.ErrorIs(t, err, shieldedtypes.ErrUnauthorized)
-	require.False(t, shieldedkeeper.AuthorizedNullifiers(e.ctx(), t0.Transfer.Nullifiers...))
+	require.False(t, shieldedkeeper.AuthorizedNullifiers(e.ctx(), m.Bundle.Nullifiers()...))
 
 	// authz: MsgExec wrapping a private msg is refused (zero signers).
-	exec := authz.NewMsgExec(e.userAddr(), []sdk.Msg{t0})
+	exec := authz.NewMsgExec(e.userAddr(), []sdk.Msg{m})
 	fb := e.finalize(e.signedTx(400_000, e.fee(2_000), &exec))
 	require.Contains(t, fb.TxResults[0].Log, "only one signer")
-	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(e.ctx(), t0.Transfer.Nullifiers[0])
+	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(e.ctx(), m.Bundle.Actions[0].Nullifier)
 	require.NoError(t, err)
 	require.False(t, spent)
 }
