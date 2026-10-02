@@ -42,6 +42,10 @@ type Keeper struct {
 	// by an unshield: x/dex's LP shares, withdrawn by
 	// MsgRemoveLiquidityShielded.
 	poolLockedPrefixes map[string]bool
+	// excludedAssetPrefixes are families of denoms the pool never admits as
+	// assets: x/shieldedstaking's derth/ and unbond/, which live in its own
+	// owner-locked stake note tree.
+	excludedAssetPrefixes map[string]bool
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -84,18 +88,19 @@ func NewKeeper(
 	}
 	sb := collections.NewSchemaBuilder(storeService)
 	k := Keeper{
-		storeService:         storeService,
-		cdc:                  cdc,
-		addressCodec:         addressCodec,
-		authority:            authority,
-		authKeeper:           authKeeper,
-		bankKeeper:           bankKeeper,
-		poolAddr:             authtypes.NewModuleAddress(types.ModuleName),
-		shieldedOnly:         map[string]bool{},
-		shieldedOnlyTo:       map[string]bool{},
-		shieldedOnlyPrefixes: map[string]map[string]bool{},
-		poolLockedPrefixes:   map[string]bool{},
-		actions:              map[string]types.PrivateActionHandler{},
+		storeService:          storeService,
+		cdc:                   cdc,
+		addressCodec:          addressCodec,
+		authority:             authority,
+		authKeeper:            authKeeper,
+		bankKeeper:            bankKeeper,
+		poolAddr:              authtypes.NewModuleAddress(types.ModuleName),
+		shieldedOnly:          map[string]bool{},
+		shieldedOnlyTo:        map[string]bool{},
+		shieldedOnlyPrefixes:  map[string]map[string]bool{},
+		poolLockedPrefixes:    map[string]bool{},
+		excludedAssetPrefixes: map[string]bool{},
+		actions:               map[string]types.PrivateActionHandler{},
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 
@@ -161,6 +166,26 @@ func (k Keeper) RegisterPoolLockedPrefix(prefix string) {
 		panic("empty pool-locked prefix")
 	}
 	k.poolLockedPrefixes[prefix] = true
+}
+
+// ExcludeAssetPrefix keeps every denom starting with prefix out of the pool's
+// asset registry for good (RegisterAsset refuses it), so no note of it can
+// ever exist in the pool. Called from module wiring.
+func (k Keeper) ExcludeAssetPrefix(prefix string) {
+	if prefix == "" {
+		panic("empty excluded asset prefix")
+	}
+	k.excludedAssetPrefixes[prefix] = true
+}
+
+// IsExcludedAsset reports whether denom may never be a pool asset.
+func (k Keeper) IsExcludedAsset(denom string) bool {
+	for p := range k.excludedAssetPrefixes {
+		if strings.HasPrefix(denom, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsPoolLocked reports whether denom's notes may not be unshielded.

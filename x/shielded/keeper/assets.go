@@ -20,6 +20,9 @@ func (k Keeper) RegisterAsset(ctx context.Context, denom string) ([]byte, error)
 	if err := sdk.ValidateDenom(denom); err != nil {
 		return nil, err
 	}
+	if k.IsExcludedAsset(denom) {
+		return nil, errorsmod.Wrapf(types.ErrAssetNotRegistered, "%s is never a shielded-pool asset", denom)
+	}
 	if id, err := k.Assets.Get(ctx, denom); err == nil {
 		return id, nil
 	} else if !errors.Is(err, collections.ErrNotFound) {

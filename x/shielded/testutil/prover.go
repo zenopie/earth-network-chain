@@ -31,6 +31,15 @@ type Prover struct {
 	// Script names what re-records Dir, for the error a missing proof
 	// reports (default scripts/shielded-fixtures.sh).
 	Script string
+	// Circuit is the circuit proven (default "action"); VK must be its key.
+	Circuit string
+}
+
+func (p *Prover) circuit() string {
+	if p.Circuit == "" {
+		return "action"
+	}
+	return p.Circuit
 }
 
 // ForDir is a prover caching under dir (relative to the test's package)
@@ -66,11 +75,11 @@ func (p *Prover) VerifyingKey(tb testing.TB) []byte {
 // File is the cache path of the action proof with public inputs pub.
 func (p *Prover) File(pub [][]byte) string {
 	h := sha256.New()
-	h.Write([]byte("action"))
+	h.Write([]byte(p.circuit()))
 	for _, x := range pub {
 		h.Write(x)
 	}
-	return filepath.Join(p.Dir, fmt.Sprintf("action-%x.proof", h.Sum(nil)[:10]))
+	return filepath.Join(p.Dir, fmt.Sprintf("%s-%x.proof", p.circuit(), h.Sum(nil)[:10]))
 }
 
 // Prove returns the action proof for (toml, pub), failing the test when it
@@ -90,13 +99,15 @@ var ErrNoCircuits = errors.New("proof not cached and EARTH_CIRCUITS unset")
 
 // ErrWitnessRefused is TryProve's error when the circuit refuses the witness
 // (nargo execute fails): no proof of it exists.
-var ErrWitnessRefused = errors.New("the action circuit refuses this witness")
+var ErrWitnessRefused = errors.New("the circuit refuses this witness")
 
 var (
-	compileOnce sync.Once
-	compiled    string
-	compileErr  error
-	proveMu     sync.Mutex
+	copyOnce  sync.Once
+	compiled  string
+	copyErr   error
+	proveMu   sync.Mutex
+	built     = map[string]error{}
+	builtDone = map[string]bool{}
 )
 
 // Circuits is EARTH_CIRCUITS, "" when unset.
@@ -119,27 +130,34 @@ func (p *Prover) TryProve(toml string, pub [][]byte) ([]byte, error) {
 	}
 	proveMu.Lock()
 	defer proveMu.Unlock()
-	compileOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "action-circuits")
+	copyOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "privacy-circuits")
 		if err != nil {
-			compileErr = err
+			copyErr = err
 			return
 		}
 		if _, err := run(".", "cp", "-R", src, filepath.Join(dir, "circuits")); err != nil {
-			compileErr = err
+			copyErr = err
 			return
 		}
 		compiled = filepath.Join(dir, "circuits")
 		_ = os.RemoveAll(filepath.Join(compiled, "target"))
-		_, compileErr = run(compiled, "nargo", "compile", "--package", "action", "--silence-warnings")
 	})
-	if compileErr != nil {
-		return nil, compileErr
+	if copyErr != nil {
+		return nil, copyErr
 	}
-	if err := os.WriteFile(filepath.Join(compiled, "action", "Prover.toml"), []byte(toml), 0o644); err != nil {
+	c := p.circuit()
+	if !builtDone[c] {
+		_, built[c] = run(compiled, "nargo", "compile", "--package", c, "--silence-warnings")
+		builtDone[c] = true
+	}
+	if built[c] != nil {
+		return nil, built[c]
+	}
+	if err := os.WriteFile(filepath.Join(compiled, c, "Prover.toml"), []byte(toml), 0o644); err != nil {
 		return nil, err
 	}
-	if out, err := run(compiled, "nargo", "execute", "--package", "action", "--silence-warnings"); err != nil {
+	if out, err := run(compiled, "nargo", "execute", "--package", c, "--silence-warnings"); err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrWitnessRefused, out)
 	}
 	vk, err := filepath.Abs(p.VK)
@@ -151,7 +169,7 @@ func (p *Prover) TryProve(toml string, pub [][]byte) ([]byte, error) {
 		return nil, err
 	}
 	defer os.RemoveAll(out)
-	if _, err := run(compiled, "bb", "prove", "-b", "target/action.json", "-w", "target/action.gz", "-k", vk, "-o", out, "-t", "noir-recursive"); err != nil {
+	if _, err := run(compiled, "bb", "prove", "-b", "target/"+c+".json", "-w", "target/"+c+".gz", "-k", vk, "-o", out, "-t", "noir-recursive"); err != nil {
 		return nil, err
 	}
 	gotPub, err := os.ReadFile(filepath.Join(out, "public_inputs"))

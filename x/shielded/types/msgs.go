@@ -89,12 +89,18 @@ func Sighash(msg PrivateMsg, chainID string, ac address.Codec) (fr.Element, erro
 }
 
 // ValidateBundles checks a private msg's bundles together: 1..MaxBundlesPerMsg
-// of them, each one's ValidateBasic, nullifiers distinct across all of them,
-// and the release map (Remainders) well formed.
+// of them (0 for a msg paying its whole fee from its output, whose action
+// carries its own proof and nullifiers: an unbonding claim), each one's
+// ValidateBasic, nullifiers distinct across all of them, and the release map
+// (Remainders) well formed.
 func ValidateBundles(msg PrivateMsg) error {
 	bs := msg.PrivateBundles()
-	if len(bs) == 0 || len(bs) > MaxBundlesPerMsg {
-		return errorsmod.Wrapf(ErrInvalidBundle, "a private msg spends 1..%d bundles", MaxBundlesPerMsg)
+	min := 1
+	if FeeFromOutputOf(msg) > 0 {
+		min = 0
+	}
+	if len(bs) < min || len(bs) > MaxBundlesPerMsg {
+		return errorsmod.Wrapf(ErrInvalidBundle, "a private msg spends %d..%d bundles", min, MaxBundlesPerMsg)
 	}
 	seen := map[string]bool{}
 	for i, b := range bs {
