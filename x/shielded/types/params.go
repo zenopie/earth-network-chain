@@ -71,7 +71,7 @@ func DefaultParams() Params {
 }
 
 // knownCircuits are the verifying-key names this module reads.
-var knownCircuits = map[string]bool{CircuitAction: true, CircuitMembership: true}
+var knownCircuits = map[string]bool{CircuitAction: true, CircuitMembership: true, CircuitStake: true}
 
 // Validate validates the set of params. Every field fails closed: a zero here
 // would admit a zero-fee tx, unpriced proofs, no usable anchors, or no

@@ -32,6 +32,11 @@ var (
 	TagVote  = tag("earth.vote") // retired (note_vote); never reuse
 	TagReg   = tag("earth.reg")
 	TagAsset = tag("earth.asset")
+	// The stake note tree (x/shieldedstaking, circuits/stake).
+	TagStake = tag("earth.stake")
+	TagSPC   = tag("earth.spc")
+	TagSNF   = tag("earth.snf")
+	TagOTag  = tag("earth.otag")
 
 	// Chain-side only: no circuit computes these. They define the public
 	// `signal` input the circuits bind (see Signal).
@@ -87,6 +92,28 @@ func ScopeNullifier(idSecret, scope fr.Element) fr.Element { return H(TagSN, idS
 
 // PC is the hidden-owner commitment H(TAG_PC, owner_pk, rho, rcm).
 func PC(ownerPK, rho, rcm fr.Element) fr.Element { return H(TagPC, ownerPK, rho, rcm) }
+
+// StakePC is a stake note's hidden owner: H(TAG_SPC, owner_pk, rho, rcm).
+// Stake notes are owner-locked: circuits/stake outputs, and lets the chain
+// mint to, only stake pcs of the spender's own owner_pk.
+func StakePC(ownerPK, rho, rcm fr.Element) fr.Element { return H(TagSPC, ownerPK, rho, rcm) }
+
+// StakeCM is a stake note: H(TAG_STAKE, asset, amount, spc), asset =
+// AssetID("derth/<valoper>") (delegated stake) or
+// AssetID("unbond/<valoper>/<epoch>") (an unbonding claim).
+func StakeCM(asset fr.Element, amount uint64, spc fr.Element) fr.Element {
+	return H(TagStake, asset, U64(amount), spc)
+}
+
+// StakeNF is a stake note's nullifier: H(TAG_SNF, nk, rho, position).
+func StakeNF(nk, rho fr.Element, position uint32) fr.Element {
+	return H(TagSNF, nk, rho, U64(uint64(position)))
+}
+
+// OwnerTag commits to an owner: H(TAG_OTAG, owner_pk, salt). x/shieldedstaking
+// stores one per Groundworks position; its owner proves it again (stake
+// circuit) to update, unlock or vote the position.
+func OwnerTag(ownerPK, salt fr.Element) fr.Element { return H(TagOTag, ownerPK, salt) }
 
 // CM is the note commitment H(TAG_CM, asset, value, pc).
 func CM(asset fr.Element, value uint64, pc fr.Element) fr.Element {

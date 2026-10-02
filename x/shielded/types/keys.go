@@ -26,6 +26,8 @@ const (
 	// CircuitAction and CircuitMembership name the verifying keys in Params.
 	CircuitAction     = "action"
 	CircuitMembership = "membership"
+	// CircuitStake is x/shieldedstaking's owner-locked stake note circuit.
+	CircuitStake = "stake"
 
 	// MinActionsPerBundle is the padding rule: every bundle carries at least
 	// two actions, so a one-note spend (the commonest shape) is not told
