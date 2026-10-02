@@ -21,9 +21,10 @@ import (
 )
 
 // Keeper is private staking. Its module account is the only delegator x/staking
-// has besides validators' own self-bonds: it holds ERTH queued for delegation,
-// matured unbondings not yet claimed, and the derth locked in Groundworks
-// positions. Everything a person owns here is a note in x/shielded's pool.
+// has besides validators' own self-bonds: it holds ERTH queued for delegation
+// and matured unbondings not yet claimed. What a person owns here (derth,
+// unbonding claims) is an owner-locked note in this module's stake note tree;
+// positions hold derth on the books; nothing here is a coin but ERTH.
 type Keeper struct {
 	storeService corestore.KVStoreService
 	cdc          codec.Codec
@@ -75,6 +76,14 @@ type Keeper struct {
 	Votes collections.Map[collections.Pair[uint64, []byte], types.StakeVote]
 	// Tallies aggregate Votes per (proposal, validator).
 	Tallies collections.Map[collections.Pair[uint64, string], types.VoteTally]
+
+	// The stake note tree (stake_tree.go).
+	StakeTreeNodes   collections.Map[collections.Pair[uint32, uint64], []byte]
+	StakeTreeSize    collections.Item[uint64]
+	StakeNullifiers  collections.KeySet[[]byte]
+	StakeRoots       collections.Map[[]byte, types.StakeRoot]
+	StakeRootsByTime collections.KeySet[collections.Pair[int64, []byte]]
+	StakeLatestRoot  collections.Item[[]byte]
 }
 
 type govRef struct{ k *govkeeper.Keeper }
@@ -138,6 +147,15 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), codec.CollValue[types.StakeVote](cdc)),
 		Tallies: collections.NewMap(sb, types.TalliesKey, "tallies",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey), codec.CollValue[types.VoteTally](cdc)),
+		StakeTreeNodes: collections.NewMap(sb, types.StakeTreeNodesKey, "stake_tree_nodes",
+			collections.PairKeyCodec(collections.Uint32Key, collections.Uint64Key), collections.BytesValue),
+		StakeTreeSize:   collections.NewItem(sb, types.StakeTreeSizeKey, "stake_tree_size", collections.Uint64Value),
+		StakeNullifiers: collections.NewKeySet(sb, types.StakeNullifiersKey, "stake_nullifiers", collections.BytesKey),
+		StakeRoots: collections.NewMap(sb, types.StakeRootsKey, "stake_roots", collections.BytesKey,
+			codec.CollValue[types.StakeRoot](cdc)),
+		StakeRootsByTime: collections.NewKeySet(sb, types.StakeRootsByTimeKey, "stake_roots_by_time",
+			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
+		StakeLatestRoot: collections.NewItem(sb, types.StakeLatestRootKey, "stake_latest_root", collections.BytesValue),
 	}
 	schema, err := sb.Build()
 	if err != nil {

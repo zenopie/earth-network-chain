@@ -9,7 +9,7 @@ import (
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
@@ -20,6 +20,10 @@ import (
 
 // Private actions: what the x/shielded ante runs for this module's msgs
 // before it spends their bundles (see x/shielded/types.PrivateActionHandler).
+// Every msg carries a stake proof (circuits/stake) over this module's stake
+// note tree; the ante runs Check (state: the proof's shape for the msg, its
+// nullifiers unspent, its anchor, the msg's own checks) and Verify (the
+// proof, against the msg's sighash) before it spends the fee bundle.
 //
 // Check refuses everything the msg's handler would refuse, because the ante's
 // spend stands even when the handler fails: a refused Delegate after the ante
@@ -33,11 +37,13 @@ import (
 // effects they could pick a limit that passes the ante and runs out in the
 // handler, after the notes are spent.
 
-// Base gas per action, on top of the bundles' and of one note write per
-// note the action mints. Covers the handler's reads and writes (the rate's
-// reward computation is the heaviest: a distribution period walk).
+// Base gas per action, on top of the bundles', the stake proof's verification
+// and one note write per stake note or nullifier the action writes. Covers
+// the handler's reads and writes (the rate's reward computation is the
+// heaviest: a distribution period walk).
 const (
 	gasDelegate   uint64 = 400_000
+	gasRestake    uint64 = 100_000
 	gasUndelegate uint64 = 400_000
 	gasClaim      uint64 = 250_000
 	gasVote       uint64 = 250_000
@@ -47,9 +53,13 @@ const (
 	gasPosVote    uint64 = 250_000
 )
 
-// prepared marks a msg whose action the ante checked. Handlers recompute
-// what they need.
-type prepared struct{ kind string }
+// prepared is what Check derived: the sighash the stake proof binds, its
+// public asset and v_out. Handlers recompute what else they need.
+type prepared struct {
+	sighash fr.Element
+	asset   fr.Element
+	vOut    uint64
+}
 
 // ActionHandler implements x/shielded's PrivateActionHandler for every
 // private msg of this module.
@@ -61,45 +71,64 @@ func NewActionHandler(k Keeper) ActionHandler { return ActionHandler{k: k} }
 // RegisterPrivateActions registers h for each of this module's private msgs.
 func RegisterPrivateActions(register func(string, shieldedtypes.PrivateActionHandler), h ActionHandler) {
 	for _, t := range []string{
-		types.TypeMsgDelegate, types.TypeMsgUndelegate, types.TypeMsgClaimUnbonding, types.TypeMsgStakeVote,
-		types.TypeMsgLockPosition, types.TypeMsgUpdatePosition, types.TypeMsgUnlockPosition, types.TypeMsgPositionVote,
+		types.TypeMsgDelegate, types.TypeMsgRestake, types.TypeMsgUndelegate, types.TypeMsgClaimUnbonding,
+		types.TypeMsgStakeVote, types.TypeMsgLockPosition, types.TypeMsgUpdatePosition, types.TypeMsgUnlockPosition,
+		types.TypeMsgPositionVote,
 	} {
 		register(t, h)
 	}
 }
 
 func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.PrivateMsg) (uint64, error) {
-	_, note, err := h.k.shielded.PrivateGasPrices(ctx)
+	proof, note, err := h.k.shielded.PrivateGasPrices(ctx)
 	if err != nil {
 		return 0, err
 	}
+	sm, ok := msg.(types.StakeMsg)
+	if !ok {
+		return 0, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
+	}
+	// The proof, and a write per nullifier and output it carries, plus one
+	// for a note the chain mints.
+	writes := uint64(len(sm.StakeProofOf().Nullifiers)+len(sm.StakeProofOf().Commitments)) + 1
+	var base uint64
 	switch msg.(type) {
 	case *types.MsgDelegate:
-		return gasDelegate + note, nil
+		base = gasDelegate
+	case *types.MsgRestake:
+		base = gasRestake
 	case *types.MsgUndelegate:
-		return gasUndelegate + note, nil
+		base = gasUndelegate
 	case *types.MsgClaimUnbonding:
-		return gasClaim + note, nil
+		base = gasClaim
 	case *types.MsgStakeVote:
-		return gasVote + note, nil
+		base = gasVote
 	case *types.MsgLockPosition:
-		return gasLock, nil
+		base = gasLock
 	case *types.MsgUpdatePosition:
-		return gasUpdate, nil
+		base = gasUpdate
 	case *types.MsgUnlockPosition:
-		return gasUnlock + note, nil
+		base = gasUnlock
 	case *types.MsgPositionVote:
-		return gasPosVote, nil
+		base = gasPosVote
+	default:
+		return 0, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
-	return 0, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
+	return base + proof + writes*note, nil
 }
 
 func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg) (any, error) {
 	k := h.k
+	sm, ok := msg.(types.StakeMsg)
+	if !ok {
+		return nil, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
+	}
 	var err error
 	switch m := msg.(type) {
 	case *types.MsgDelegate:
 		_, err = k.checkDelegate(ctx, m)
+	case *types.MsgRestake:
+		_, err = k.valAddr(m.Validator)
 	case *types.MsgUndelegate:
 		_, err = k.checkUndelegate(ctx, m)
 	case *types.MsgClaimUnbonding:
@@ -109,28 +138,49 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	case *types.MsgLockPosition:
 		err = k.checkLock(ctx, m)
 	case *types.MsgUpdatePosition:
-		_, err = k.checkPositionSig(ctx, m.PositionId, "update", m.SignPayload(), m.Signature)
+		_, err = k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
 		if err == nil {
 			err = k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits)
 		}
 	case *types.MsgUnlockPosition:
-		if _, err = k.checkPositionSig(ctx, m.PositionId, "unlock", m.SignPayload(), m.Signature); err == nil {
-			err = k.shielded.CheckMint(ctx, m.Pc, m.Ciphertext)
-		}
+		_, err = k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
 	case *types.MsgPositionVote:
 		_, _, err = k.checkPositionVote(ctx, m)
-	default:
-		err = errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return prepared{kind: sdk.MsgTypeURL(msg)}, nil
+	p := sm.StakeProofOf()
+	if err := k.checkStakeNullifiers(ctx, p.SpentNullifiers()); err != nil {
+		return nil, err
+	}
+	// A stake vote's anchor is its proposal's snapshot root (checked in
+	// checkStakeVote); every other proof that spends proves against the
+	// window. A proof that spends nothing proves no membership.
+	if _, vote := msg.(*types.MsgStakeVote); !vote && len(p.SpentNullifiers()) > 0 {
+		if err := k.checkStakeAnchor(ctx, p.Anchor); err != nil {
+			return nil, err
+		}
+	}
+	cms, _ := p.Outputs()
+	if err := k.checkStakeCapacity(ctx, uint64(len(cms))+1); err != nil {
+		return nil, err
+	}
+	sighash, err := shieldedtypes.Sighash(msg, sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
+	if err != nil {
+		return nil, err
+	}
+	return prepared{sighash: sighash, asset: types.StakeAsset(sm.StakeDenom()), vOut: sm.VOut()}, nil
 }
 
-// VerifyPrivateAction: no msg of this module carries a proof beyond its
-// bundles.
-func (h ActionHandler) VerifyPrivateAction(context.Context, shieldedtypes.PrivateMsg, any) error {
+// VerifyPrivateAction verifies the stake proof against the msg's sighash.
+func (h ActionHandler) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, pr any) error {
+	sm := msg.(types.StakeMsg)
+	p := pr.(prepared)
+	sp := sm.StakeProofOf()
+	if err := h.k.shielded.VerifyCircuit(ctx, shieldedtypes.CircuitStake, sp.Proof, sp.PublicInputs(p.asset, p.vOut, p.sighash)); err != nil {
+		return errorsmod.Wrap(types.ErrInvalidStakeProof, err.Error())
+	}
 	return nil
 }
 
@@ -149,21 +199,6 @@ func (h ActionHandler) ExecutePrivateAction(ctx sdk.Context, msg shieldedtypes.P
 		return nil, errorsmod.Wrapf(types.ErrInvalidMsg, "%T does not run in the ante", msg)
 	}
 	return h.k.executeClaim(ctx, m)
-}
-
-// AcceptsPrivateAnchor lets a stake vote spend against its proposal's
-// snapshot root after that root has left the pool's anchor window (a voting
-// period can outlast it). Nothing else is accepted outside the window.
-func (h ActionHandler) AcceptsPrivateAnchor(ctx context.Context, msg shieldedtypes.PrivateMsg, root []byte) (bool, error) {
-	m, ok := msg.(*types.MsgStakeVote)
-	if !ok {
-		return false, nil
-	}
-	snap, _, err := h.k.openSnapshot(ctx, m.ProposalId, m.Validator)
-	if err != nil {
-		return false, nil
-	}
-	return bytes.Equal(snap.Root, root), nil
 }
 
 // authorized is the handlers' gate: the ante checked this very msg's action
@@ -193,20 +228,17 @@ func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) (math.I
 	if err != nil {
 		return math.Int{}, err
 	}
-	d, err := derthFor(math.NewIntFromUint64(m.Amount()), b, s)
+	d, err := derthFor(math.NewIntFromUint64(m.Delegated()), b, s)
 	if err != nil {
 		return math.Int{}, err
 	}
 	if err := fitsNote(d); err != nil {
 		return math.Int{}, err
 	}
-	if err := k.shielded.CheckMint(ctx, m.Pc, m.Ciphertext); err != nil {
-		return math.Int{}, err
-	}
 	return d, nil
 }
 
-// checkUndelegate returns the unbond note's value.
+// checkUndelegate returns the claim's value.
 func (k Keeper) checkUndelegate(ctx context.Context, m *types.MsgUndelegate) (math.Int, error) {
 	if _, err := k.valAddr(m.Validator); err != nil {
 		return math.Int{}, err
@@ -215,15 +247,12 @@ func (k Keeper) checkUndelegate(ctx context.Context, m *types.MsgUndelegate) (ma
 	if err != nil {
 		return math.Int{}, err
 	}
-	d := math.NewIntFromUint64(m.Amount())
+	d := math.NewIntFromUint64(m.Amount)
 	if d.GT(s) {
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "more derth than exists")
 	}
 	u := valueOf(d, b, s)
 	if err := fitsNote(u); err != nil {
-		return math.Int{}, err
-	}
-	if err := k.shielded.CheckMint(ctx, m.Pc, m.Ciphertext); err != nil {
 		return math.Int{}, err
 	}
 	return u, nil
@@ -240,7 +269,7 @@ func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (typ
 	if r.Status != types.UNBOND_STATUS_MATURED {
 		return r, math.Int{}, types.ErrNotMatured.Wrapf("%s/%d is %s", m.Validator, m.Epoch, r.Status)
 	}
-	v := math.NewIntFromUint64(m.Amount())
+	v := math.NewIntFromUint64(m.Amount)
 	if v.GT(r.Outstanding) {
 		return r, math.Int{}, errorsmod.Wrap(types.ErrAmount, "claim exceeds the record's outstanding notes")
 	}
@@ -254,29 +283,21 @@ func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (typ
 	return r, pay, nil
 }
 
-// checkStakeVote: the proposal is open to stake votes, every action of the
-// vote bundle (bundle 0, dummies included) spends against its snapshot root
-// (so every note it spends existed then, and one minted since, including a
-// vote's own re-minted note, cannot vote), its weight fits the validator's
-// snapshot supply, and the note can be minted back. The bundles' nullifiers
-// are checked unspent by the ante; the fee bundle's anchors are in the
-// pool's window (the ante accepts no other root for it).
+// checkStakeVote: the proposal is open to stake votes and the stake proof
+// spends against its snapshot stake root (so every note it spends existed
+// then, and one minted since, including a vote's own re-mint, cannot vote),
+// and the weight fits the validator's snapshot supply.
 func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (math.Int, error) {
 	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
 		return math.Int{}, err
 	}
-	for i := range m.Bundle.Actions {
-		if !bytes.Equal(m.Bundle.Actions[i].Anchor, snap.Root) {
-			return math.Int{}, types.ErrNoVoting.Wrapf("a stake vote on proposal %d spends against its snapshot root (action %d)", m.ProposalId, i)
-		}
+	if !bytes.Equal(m.Stake.Anchor, snap.Root) {
+		return math.Int{}, types.ErrNoVoting.Wrapf("a stake vote on proposal %d spends against its snapshot root", m.ProposalId)
 	}
-	d := math.NewIntFromUint64(m.Weight())
+	d := math.NewIntFromUint64(m.Weight)
 	if d.GT(vs.Supply) {
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
-	}
-	if err := k.shielded.CheckMint(ctx, m.Pc, m.Ciphertext); err != nil {
-		return math.Int{}, err
 	}
 	return d, nil
 }
@@ -289,7 +310,7 @@ func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
 	if err != nil {
 		return err
 	}
-	if math.NewIntFromUint64(m.Amount()).LT(params.MinPosition) {
+	if math.NewIntFromUint64(m.Amount).LT(params.MinPosition) {
 		return types.ErrPosition.Wrapf("a position locks at least %s derth", params.MinPosition)
 	}
 	n, err := k.positionCount(ctx)
@@ -302,31 +323,30 @@ func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
 	if err := k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits); err != nil {
 		return err
 	}
-	if len(m.Splits) > 0 && !k.positionWeight(ctx, m.Validator, math.NewIntFromUint64(m.Amount())).IsPositive() {
+	if len(m.Splits) > 0 && !k.positionWeight(ctx, m.Validator, math.NewIntFromUint64(m.Amount)).IsPositive() {
 		return allocationtypes.ErrNoWeight
 	}
 	return nil
 }
 
-// checkPositionSig returns the position once its key's signature over
-// action, the position's current nonce and payload verifies.
-func (k Keeper) checkPositionSig(ctx context.Context, id uint64, action string, payload, sig []byte) (types.Position, error) {
+// checkPositionOwner returns the position if the stake proof's owner tag is
+// the one it stores: the proof (verified by the ante) shows its prover owns
+// that tag.
+func (k Keeper) checkPositionOwner(ctx context.Context, id uint64, sp *types.StakeProof) (types.Position, error) {
 	p, err := k.Positions.Get(ctx, id)
 	if errors.Is(err, collections.ErrNotFound) {
 		return p, types.ErrPosition.Wrapf("no position %d", id)
 	} else if err != nil {
 		return p, err
 	}
-	pk := secp256k1.PubKey{Key: p.Pubkey}
-	msg := types.PositionSignBytes(sdk.UnwrapSDKContext(ctx).ChainID(), action, id, p.Nonce, payload)
-	if !pk.VerifySignature(msg, sig) {
-		return p, types.ErrSignature
+	if !bytes.Equal(p.OwnerTag, sp.OwnerTag) {
+		return p, types.ErrSignature.Wrapf("position %d", id)
 	}
 	return p, nil
 }
 
 func (k Keeper) checkPositionVote(ctx context.Context, m *types.MsgPositionVote) (types.Position, types.ValidatorSnapshot, error) {
-	p, err := k.checkPositionSig(ctx, m.PositionId, "vote", m.SignPayload(), m.Signature)
+	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
 	if err != nil {
 		return p, types.ValidatorSnapshot{}, err
 	}
@@ -335,7 +355,7 @@ func (k Keeper) checkPositionVote(ctx context.Context, m *types.MsgPositionVote)
 		return p, vs, err
 	}
 	// A position locked at or after the snapshot's block holds derth whose
-	// note could still vote from the snapshot root; it may not vote too.
+	// notes could still vote from the snapshot root; it may not vote too.
 	if p.CreatedHeight >= snap.Height {
 		return p, vs, types.ErrNoVoting.Wrapf("position %d was created after proposal %d entered voting", p.Id, m.ProposalId)
 	}

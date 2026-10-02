@@ -18,6 +18,7 @@ import (
 // Msg type URLs: the kind every sighash binds first.
 const (
 	TypeMsgDelegate       = "/earth.shieldedstaking.v1.MsgDelegate"
+	TypeMsgRestake        = "/earth.shieldedstaking.v1.MsgRestake"
 	TypeMsgUndelegate     = "/earth.shieldedstaking.v1.MsgUndelegate"
 	TypeMsgClaimUnbonding = "/earth.shieldedstaking.v1.MsgClaimUnbonding"
 	TypeMsgStakeVote      = "/earth.shieldedstaking.v1.MsgStakeVote"
@@ -29,6 +30,7 @@ const (
 
 var (
 	_ shieldedtypes.PrivateMsg = (*MsgDelegate)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgRestake)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgUndelegate)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgClaimUnbonding)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgStakeVote)(nil)
@@ -169,30 +171,192 @@ func checkValidator(v string) error {
 	return nil
 }
 
-func checkSig(sig []byte) error {
-	if len(sig) != 64 {
-		return errorsmod.Wrap(ErrSignature, "signature must be 64 bytes (r || s)")
+func bundle(b *shieldedtypes.Bundle) []*shieldedtypes.Bundle { return []*shieldedtypes.Bundle{b} }
+
+// ---- the stake proof -------------------------------------------------------
+
+// StakeProofInputs is the stake circuit's public input count.
+const StakeProofInputs = 11
+
+var zero32 = make([]byte, 32)
+
+func isZero(b []byte) bool { return bytes.Equal(b, zero32) }
+
+// StakeAsset is a stake denom's asset id (zk/privacy.AssetID): the stake
+// circuit's public asset. 0 for a msg naming no stake denom (a position's
+// update, unlock or vote, whose proof spends and creates nothing).
+func StakeAsset(denom string) fr.Element {
+	if denom == "" {
+		return fr.Element{}
+	}
+	return privacy.AssetID(denom)
+}
+
+// ValidateBasic checks a stake proof's shape: a proof, canonical 32-byte
+// fields, exactly two nullifiers and two commitments (zero for none), the
+// spent ones distinct, at most a ciphertext per commitment.
+func (p *StakeProof) ValidateBasic() error {
+	if len(p.Proof) == 0 || len(p.Proof) > shieldedtypes.MaxProofBytes {
+		return errorsmod.Wrapf(ErrInvalidMsg, "stake proof must be 1..%d bytes", shieldedtypes.MaxProofBytes)
+	}
+	if _, err := field("stake anchor", p.Anchor); err != nil {
+		return err
+	}
+	if _, err := field("stake spc_mint", p.SpcMint); err != nil {
+		return err
+	}
+	if _, err := field("stake owner_tag", p.OwnerTag); err != nil {
+		return err
+	}
+	if len(p.Nullifiers) != 2 || len(p.Commitments) != 2 {
+		return errorsmod.Wrap(ErrInvalidMsg, "a stake proof carries exactly two nullifiers and two commitments")
+	}
+	for i := range 2 {
+		if _, err := field("stake nullifier", p.Nullifiers[i]); err != nil {
+			return err
+		}
+		if _, err := field("stake commitment", p.Commitments[i]); err != nil {
+			return err
+		}
+	}
+	if !isZero(p.Nullifiers[0]) && bytes.Equal(p.Nullifiers[0], p.Nullifiers[1]) {
+		return errorsmod.Wrap(ErrInvalidMsg, "duplicate stake nullifier")
+	}
+	if len(p.Ciphertexts) > 2 {
+		return errorsmod.Wrap(ErrInvalidMsg, "at most one ciphertext per commitment")
+	}
+	for _, ct := range p.Ciphertexts {
+		if len(ct) > shieldedtypes.MaxCiphertextBytes {
+			return errorsmod.Wrapf(ErrInvalidMsg, "ciphertext exceeds %d bytes", shieldedtypes.MaxCiphertextBytes)
+		}
 	}
 	return nil
 }
 
-func bundle(b *shieldedtypes.Bundle) []*shieldedtypes.Bundle { return []*shieldedtypes.Bundle{b} }
+// SpentNullifiers is the proof's non-zero nullifiers, in order.
+func (p *StakeProof) SpentNullifiers() [][]byte {
+	var out [][]byte
+	for _, nf := range p.Nullifiers {
+		if !isZero(nf) {
+			out = append(out, nf)
+		}
+	}
+	return out
+}
+
+// Outputs is the proof's non-zero commitments, in order, each with its
+// ciphertext (nil when none).
+func (p *StakeProof) Outputs() (cms, cts [][]byte) {
+	for i, cm := range p.Commitments {
+		if isZero(cm) {
+			continue
+		}
+		var ct []byte
+		if i < len(p.Ciphertexts) {
+			ct = p.Ciphertexts[i]
+		}
+		cms, cts = append(cms, cm), append(cts, ct)
+	}
+	return cms, cts
+}
+
+// shape checks how many notes the proof spends (at least minSpends, none
+// when minSpends is 0) and whether it may create any.
+func (p *StakeProof) shape(minSpends int, creates bool) error {
+	if err := p.ValidateBasic(); err != nil {
+		return err
+	}
+	if n := len(p.SpentNullifiers()); n < minSpends {
+		return errorsmod.Wrapf(ErrInvalidMsg, "the stake proof must spend at least %d note(s)", minSpends)
+	} else if minSpends == 0 && n != 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "the stake proof spends nothing for this msg")
+	}
+	if cms, _ := p.Outputs(); !creates && len(cms) != 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "the stake proof creates no note for this msg")
+	}
+	return nil
+}
+
+func fieldOrZero(b []byte) fr.Element {
+	e, _ := privacy.FieldFromBytes(b)
+	return e
+}
+
+// StakeFields are the stake proof's values every staking msg's sighash binds
+// first: anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0), Bytes(ct_1), spc_mint,
+// owner_tag (an absent ciphertext is Bytes of nothing).
+func (p *StakeProof) StakeFields() []fr.Element {
+	at := func(xs [][]byte, i int) []byte {
+		if i < len(xs) {
+			return xs[i]
+		}
+		return nil
+	}
+	return []fr.Element{
+		fieldOrZero(p.Anchor), fieldOrZero(at(p.Nullifiers, 0)), fieldOrZero(at(p.Nullifiers, 1)),
+		fieldOrZero(at(p.Commitments, 0)), fieldOrZero(at(p.Commitments, 1)),
+		privacy.Bytes(at(p.Ciphertexts, 0)), privacy.Bytes(at(p.Ciphertexts, 1)),
+		fieldOrZero(p.SpcMint), fieldOrZero(p.OwnerTag),
+	}
+}
+
+// PublicInputs lays out the stake circuit's public inputs: anchor, asset,
+// nf_0, nf_1, cm_out_0, cm_out_1, v_in (always 0), v_out, spc_mint,
+// owner_tag, sighash. Call after ValidateBasic.
+func (p *StakeProof) PublicInputs(asset fr.Element, vOut uint64, sighash fr.Element) [][]byte {
+	return [][]byte{
+		p.Anchor, privacy.FieldBytes(asset), p.Nullifiers[0], p.Nullifiers[1], p.Commitments[0], p.Commitments[1],
+		privacy.FieldBytes(privacy.U64(0)), privacy.FieldBytes(privacy.U64(vOut)), p.SpcMint, p.OwnerTag,
+		privacy.FieldBytes(sighash),
+	}
+}
+
+// StakeMsg is a staking msg with a stake proof: the proof, the stake denom
+// its notes are ("" for none) and what leaves them (v_out).
+type StakeMsg interface {
+	shieldedtypes.PrivateMsg
+	StakeProofOf() *StakeProof
+	StakeDenom() string
+	VOut() uint64
+}
+
+var (
+	_ StakeMsg = (*MsgDelegate)(nil)
+	_ StakeMsg = (*MsgRestake)(nil)
+	_ StakeMsg = (*MsgUndelegate)(nil)
+	_ StakeMsg = (*MsgClaimUnbonding)(nil)
+	_ StakeMsg = (*MsgStakeVote)(nil)
+	_ StakeMsg = (*MsgLockPosition)(nil)
+	_ StakeMsg = (*MsgUpdatePosition)(nil)
+	_ StakeMsg = (*MsgUnlockPosition)(nil)
+	_ StakeMsg = (*MsgPositionVote)(nil)
+)
+
+func withStake(p *StakeProof, fields ...fr.Element) []fr.Element {
+	return append(p.StakeFields(), fields...)
+}
+
+func positive(what string, v uint64) error {
+	if v == 0 {
+		return errorsmod.Wrapf(ErrInvalidMsg, "%s must be positive", what)
+	}
+	return nil
+}
 
 // ---- MsgDelegate ----------------------------------------------------------
 
 func (m *MsgDelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgDelegate) PrivateFee() uint64                      { return m.Fee }
+func (m *MsgDelegate) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgDelegate) StakeDenom() string                      { return DerthDenom(m.Validator) }
+func (m *MsgDelegate) VOut() uint64                            { return 0 }
 
-// Amount is the uerth delegated: the bundle's uerth balance less the fee.
-func (m *MsgDelegate) Amount() uint64 { return released(m, BondDenom) }
+// Delegated is the uerth delegated: the bundle's uerth balance less the fee.
+func (m *MsgDelegate) Delegated() uint64 { return released(m, BondDenom) }
 
-// SighashFields: Bytes(validator), pc, Bytes(ciphertext), fee.
+// SighashFields: StakeFields, Bytes(validator), fee.
 func (m *MsgDelegate) SighashFields(address.Codec) ([]fr.Element, error) {
-	pc, err := field("pc", m.Pc)
-	if err != nil {
-		return nil, err
-	}
-	return []fr.Element{privacy.Bytes([]byte(m.Validator)), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.Fee)}, nil
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Fee)), nil
 }
 
 func (m *MsgDelegate) ValidateBasic() error {
@@ -202,63 +366,107 @@ func (m *MsgDelegate) ValidateBasic() error {
 	if err := checkMoves(m, BondDenom, 0); err != nil {
 		return err
 	}
-	return checkNoteOut(m.Pc, m.Ciphertext)
+	return m.Stake.shape(0, false)
+}
+
+// ---- MsgRestake -----------------------------------------------------------
+
+func (m *MsgRestake) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgRestake) PrivateFee() uint64                      { return m.Fee }
+func (m *MsgRestake) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgRestake) StakeDenom() string                      { return DerthDenom(m.Validator) }
+func (m *MsgRestake) VOut() uint64                            { return 0 }
+
+// SighashFields: StakeFields, Bytes(validator), fee.
+func (m *MsgRestake) SighashFields(address.Codec) ([]fr.Element, error) {
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Fee)), nil
+}
+
+func (m *MsgRestake) ValidateBasic() error {
+	if err := checkValidator(m.Validator); err != nil {
+		return err
+	}
+	if err := checkMoves(m, "", 0); err != nil {
+		return err
+	}
+	if err := m.Stake.shape(1, true); err != nil {
+		return err
+	}
+	if cms, _ := m.Stake.Outputs(); len(cms) == 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "a restake creates at least one note")
+	}
+	return nil
 }
 
 // ---- MsgUndelegate --------------------------------------------------------
 
 func (m *MsgUndelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgUndelegate) PrivateFee() uint64                      { return m.Fee }
+func (m *MsgUndelegate) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgUndelegate) StakeDenom() string                      { return DerthDenom(m.Validator) }
+func (m *MsgUndelegate) VOut() uint64                            { return m.Amount }
 
-// Amount is the derth undelegated.
-func (m *MsgUndelegate) Amount() uint64 { return released(m, DerthDenom(m.Validator)) }
-
-// SighashFields: Bytes(validator), pc, Bytes(ciphertext), fee.
+// SighashFields: StakeFields, Bytes(validator), amount, fee.
 func (m *MsgUndelegate) SighashFields(address.Codec) ([]fr.Element, error) {
-	pc, err := field("pc", m.Pc)
-	if err != nil {
-		return nil, err
-	}
-	return []fr.Element{privacy.Bytes([]byte(m.Validator)), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.Fee)}, nil
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount), privacy.U64(m.Fee)), nil
 }
 
 func (m *MsgUndelegate) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(m, DerthDenom(m.Validator), 0); err != nil {
+	if err := positive("amount", m.Amount); err != nil {
 		return err
 	}
-	return checkNoteOut(m.Pc, m.Ciphertext)
+	if err := checkMoves(m, "", 0); err != nil {
+		return err
+	}
+	return m.Stake.shape(1, true)
 }
 
 // ---- MsgClaimUnbonding ----------------------------------------------------
 
-func (m *MsgClaimUnbonding) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
-func (m *MsgClaimUnbonding) PrivateFee() uint64                      { return m.Fee }
+// PrivateBundles is the fee bundle, none with fee_from_output.
+func (m *MsgClaimUnbonding) PrivateBundles() []*shieldedtypes.Bundle {
+	if m.Bundle == nil {
+		return nil
+	}
+	return bundle(m.Bundle)
+}
 
-// Amount is the unbond denom claimed.
-func (m *MsgClaimUnbonding) Amount() uint64 { return released(m, UnbondDenom(m.Validator, m.Epoch)) }
+func (m *MsgClaimUnbonding) PrivateFee() uint64        { return m.Fee }
+func (m *MsgClaimUnbonding) StakeProofOf() *StakeProof { return &m.Stake }
+func (m *MsgClaimUnbonding) StakeDenom() string        { return UnbondDenom(m.Validator, m.Epoch) }
+func (m *MsgClaimUnbonding) VOut() uint64              { return m.Amount }
 
-// SighashFields: Bytes(validator), epoch, pc, Bytes(ciphertext),
-// fee_from_output, fee.
+// OutputFee implements x/shielded's FeeFromOutputMsg.
+func (m *MsgClaimUnbonding) OutputFee() uint64 { return m.FeeFromOutput }
+
+// SighashFields: StakeFields, Bytes(validator), epoch, amount, pc,
+// Bytes(ciphertext), fee_from_output, fee.
 func (m *MsgClaimUnbonding) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := field("pc", m.Pc)
 	if err != nil {
 		return nil, err
 	}
-	return []fr.Element{privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Epoch), pc, privacy.Bytes(m.Ciphertext),
-		privacy.U64(m.FeeFromOutput), privacy.U64(m.Fee)}, nil
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Epoch), privacy.U64(m.Amount), pc,
+		privacy.Bytes(m.Ciphertext), privacy.U64(m.FeeFromOutput), privacy.U64(m.Fee)), nil
 }
-
-// OutputFee implements x/shielded's FeeFromOutputMsg.
-func (m *MsgClaimUnbonding) OutputFee() uint64 { return m.FeeFromOutput }
 
 func (m *MsgClaimUnbonding) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(m, UnbondDenom(m.Validator, m.Epoch), m.FeeFromOutput); err != nil {
+	if err := positive("amount", m.Amount); err != nil {
+		return err
+	}
+	if (m.Bundle == nil) != (m.FeeFromOutput > 0) {
+		return errorsmod.Wrap(ErrInvalidMsg, "a claim carries a fee bundle exactly when it pays no fee from its output")
+	}
+	if err := checkMoves(m, "", m.FeeFromOutput); err != nil {
+		return err
+	}
+	if err := m.Stake.shape(1, true); err != nil {
 		return err
 	}
 	return checkNoteOut(m.Pc, m.Ciphertext)
@@ -266,48 +474,30 @@ func (m *MsgClaimUnbonding) ValidateBasic() error {
 
 // ---- MsgStakeVote ---------------------------------------------------------
 
-// PrivateBundles is the vote bundle, then the fee bundle.
-func (m *MsgStakeVote) PrivateBundles() []*shieldedtypes.Bundle {
-	return []*shieldedtypes.Bundle{&m.Bundle, &m.FeeBundle}
-}
+func (m *MsgStakeVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgStakeVote) PrivateFee() uint64                      { return m.Fee }
+func (m *MsgStakeVote) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgStakeVote) StakeDenom() string                      { return DerthDenom(m.Validator) }
+func (m *MsgStakeVote) VOut() uint64                            { return m.Weight }
 
-func (m *MsgStakeVote) PrivateFee() uint64 { return m.Fee }
-
-// Weight is the derth the vote bundle releases: the vote's weight.
-func (m *MsgStakeVote) Weight() uint64 { return m.Bundle.Balance(DerthDenom(m.Validator)) }
-
-// SighashFields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
-// pc, Bytes(ciphertext), fee. Both bundles' digests precede them, so neither
-// bundle can be paired with another.
+// SighashFields: StakeFields, proposal_id, Bytes(validator),
+// Bytes(OptionsBytes(options)), weight, fee.
 func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
-	pc, err := field("pc", m.Pc)
-	if err != nil {
-		return nil, err
-	}
-	return []fr.Element{privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
-		privacy.Bytes(OptionsBytes(m.Options)), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.Fee)}, nil
-}
-
-func onlyBalance(b *shieldedtypes.Bundle, denom string) bool {
-	return len(b.Balances) == 1 && b.Balances[0].Denom == denom && b.Balances[0].Amount > 0
+	return withStake(&m.Stake, privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
+		privacy.Bytes(OptionsBytes(m.Options)), privacy.U64(m.Weight), privacy.U64(m.Fee)), nil
 }
 
 func (m *MsgStakeVote) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(m, DerthDenom(m.Validator), 0); err != nil {
+	if err := positive("weight", m.Weight); err != nil {
 		return err
 	}
-	// The vote bundle, proven against the snapshot root, releases only the
-	// weight; the fee bundle, against current roots, pays exactly the fee.
-	if !onlyBalance(&m.Bundle, DerthDenom(m.Validator)) {
-		return errorsmod.Wrapf(ErrInvalidMsg, "the vote bundle's only balance is %s, the weight", DerthDenom(m.Validator))
+	if err := checkMoves(m, "", 0); err != nil {
+		return err
 	}
-	if !onlyBalance(&m.FeeBundle, shieldedtypes.FeeDenom) || m.FeeBundle.Balances[0].Amount != m.Fee {
-		return errorsmod.Wrap(ErrInvalidMsg, "fee_bundle's only balance is the uerth fee")
-	}
-	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
+	if err := m.Stake.shape(1, false); err != nil {
 		return err
 	}
 	return ValidateOptions(m.Options)
@@ -317,41 +507,42 @@ func (m *MsgStakeVote) ValidateBasic() error {
 
 func (m *MsgLockPosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgLockPosition) PrivateFee() uint64                      { return m.Fee }
+func (m *MsgLockPosition) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgLockPosition) StakeDenom() string                      { return DerthDenom(m.Validator) }
+func (m *MsgLockPosition) VOut() uint64                            { return m.Amount }
 
-// Amount is the derth locked.
-func (m *MsgLockPosition) Amount() uint64 { return released(m, DerthDenom(m.Validator)) }
-
-// SighashFields: Bytes(validator), Bytes(pubkey), Bytes(SplitsBytes(splits)),
-// fee.
+// SighashFields: StakeFields, Bytes(validator), amount,
+// Bytes(SplitsBytes(splits)), fee.
 func (m *MsgLockPosition) SighashFields(address.Codec) ([]fr.Element, error) {
-	return []fr.Element{privacy.Bytes([]byte(m.Validator)), privacy.Bytes(m.Pubkey),
-		privacy.Bytes(SplitsBytes(m.Splits)), privacy.U64(m.Fee)}, nil
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount),
+		privacy.Bytes(SplitsBytes(m.Splits)), privacy.U64(m.Fee)), nil
 }
 
 func (m *MsgLockPosition) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(m, DerthDenom(m.Validator), 0); err != nil {
+	if err := positive("amount", m.Amount); err != nil {
 		return err
 	}
-	if len(m.Pubkey) != 33 || (m.Pubkey[0] != 2 && m.Pubkey[0] != 3) {
-		return errorsmod.Wrap(ErrInvalidMsg, "pubkey must be a 33-byte compressed secp256k1 key")
+	if err := checkMoves(m, "", 0); err != nil {
+		return err
 	}
 	if len(m.Splits) > allocationtypes.MaxVoterOptions {
 		return errorsmod.Wrap(ErrInvalidMsg, "too many splits")
 	}
-	return nil
+	return m.Stake.shape(1, true)
 }
 
 func (m *MsgUpdatePosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgUpdatePosition) PrivateFee() uint64                      { return m.Fee }
+func (m *MsgUpdatePosition) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgUpdatePosition) StakeDenom() string                      { return "" }
+func (m *MsgUpdatePosition) VOut() uint64                            { return 0 }
 
-// SighashFields: position_id, Bytes(SplitsBytes(splits)), Bytes(signature),
-// fee.
+// SighashFields: StakeFields, position_id, Bytes(SplitsBytes(splits)), fee.
 func (m *MsgUpdatePosition) SighashFields(address.Codec) ([]fr.Element, error) {
-	return []fr.Element{privacy.U64(m.PositionId), privacy.Bytes(SplitsBytes(m.Splits)),
-		privacy.Bytes(m.Signature), privacy.U64(m.Fee)}, nil
+	return withStake(&m.Stake, privacy.U64(m.PositionId), privacy.Bytes(SplitsBytes(m.Splits)), privacy.U64(m.Fee)), nil
 }
 
 func (m *MsgUpdatePosition) ValidateBasic() error {
@@ -361,50 +552,38 @@ func (m *MsgUpdatePosition) ValidateBasic() error {
 	if len(m.Splits) > allocationtypes.MaxVoterOptions {
 		return errorsmod.Wrap(ErrInvalidMsg, "too many splits")
 	}
-	return checkSig(m.Signature)
+	return m.Stake.shape(0, false)
 }
-
-// SignPayload is what the position key signs (with the nonce and chain id,
-// see PositionSignBytes).
-func (m *MsgUpdatePosition) SignPayload() []byte { return SplitsBytes(m.Splits) }
 
 func (m *MsgUnlockPosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgUnlockPosition) PrivateFee() uint64                      { return m.Fee }
+func (m *MsgUnlockPosition) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgUnlockPosition) StakeDenom() string                      { return "" }
+func (m *MsgUnlockPosition) VOut() uint64                            { return 0 }
 
-// SighashFields: position_id, pc, Bytes(ciphertext), Bytes(signature), fee.
+// SighashFields: StakeFields, position_id, fee.
 func (m *MsgUnlockPosition) SighashFields(address.Codec) ([]fr.Element, error) {
-	pc, err := field("pc", m.Pc)
-	if err != nil {
-		return nil, err
-	}
-	return []fr.Element{privacy.U64(m.PositionId), pc, privacy.Bytes(m.Ciphertext),
-		privacy.Bytes(m.Signature), privacy.U64(m.Fee)}, nil
+	return withStake(&m.Stake, privacy.U64(m.PositionId), privacy.U64(m.Fee)), nil
 }
 
 func (m *MsgUnlockPosition) ValidateBasic() error {
 	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
-	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
-		return err
-	}
-	return checkSig(m.Signature)
-}
-
-// SignPayload is pc || ciphertext: whoever relays the unlock cannot redirect
-// the note.
-func (m *MsgUnlockPosition) SignPayload() []byte {
-	return append(append([]byte{}, m.Pc...), m.Ciphertext...)
+	return m.Stake.shape(0, false)
 }
 
 func (m *MsgPositionVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgPositionVote) PrivateFee() uint64                      { return m.Fee }
+func (m *MsgPositionVote) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgPositionVote) StakeDenom() string                      { return "" }
+func (m *MsgPositionVote) VOut() uint64                            { return 0 }
 
-// SighashFields: position_id, proposal_id, Bytes(OptionsBytes(options)),
-// Bytes(signature), fee.
+// SighashFields: StakeFields, position_id, proposal_id,
+// Bytes(OptionsBytes(options)), fee.
 func (m *MsgPositionVote) SighashFields(address.Codec) ([]fr.Element, error) {
-	return []fr.Element{privacy.U64(m.PositionId), privacy.U64(m.ProposalId),
-		privacy.Bytes(OptionsBytes(m.Options)), privacy.Bytes(m.Signature), privacy.U64(m.Fee)}, nil
+	return withStake(&m.Stake, privacy.U64(m.PositionId), privacy.U64(m.ProposalId),
+		privacy.Bytes(OptionsBytes(m.Options)), privacy.U64(m.Fee)), nil
 }
 
 func (m *MsgPositionVote) ValidateBasic() error {
@@ -414,32 +593,7 @@ func (m *MsgPositionVote) ValidateBasic() error {
 	if err := ValidateOptions(m.Options); err != nil {
 		return err
 	}
-	return checkSig(m.Signature)
-}
-
-// SignPayload is proposal_id (big-endian u64) || OptionsBytes.
-func (m *MsgPositionVote) SignPayload() []byte {
-	return append(binary.BigEndian.AppendUint64(nil, m.ProposalId), OptionsBytes(m.Options)...)
-}
-
-// PositionSignBytes is the message a position key signs (secp256k1 over its
-// sha256, low-S, 64-byte r||s):
-//
-//	"earth.shieldedstaking.position" 0x00 action 0x00 chain_id 0x00
-//	position_id (u64 BE) nonce (u64 BE) payload
-//
-// action is "update", "unlock" or "vote"; nonce is the position's current
-// nonce, bumped by every accepted signature.
-func PositionSignBytes(chainID, action string, positionID, nonce uint64, payload []byte) []byte {
-	b := []byte("earth.shieldedstaking.position")
-	b = append(b, 0)
-	b = append(b, action...)
-	b = append(b, 0)
-	b = append(b, chainID...)
-	b = append(b, 0)
-	b = binary.BigEndian.AppendUint64(b, positionID)
-	b = binary.BigEndian.AppendUint64(b, nonce)
-	return append(b, payload...)
+	return m.Stake.shape(0, false)
 }
 
 // ---- MsgUpdateParams ------------------------------------------------------

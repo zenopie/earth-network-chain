@@ -21,16 +21,15 @@ import (
 //  1. ERTH: the module's uerth balance == sum of queued delegations + the
 //     matured, unclaimed payouts. Exact: every uerth the module receives is
 //     booked in the same call (rewards are booked from balance deltas).
-//  2. derth: supply(derth/v) == the pool's derth/v + the module's, and the
-//     module's derth/v == the derth locked in v's positions. unbond:
-//     supply(unbond/v/e) == the record's outstanding notes, and the module
-//     holds none.
+//  2. derth and unbond claims are never coins (the module holds none), and
+//     the derth locked in v's positions is at most derth_supply_v (the rest
+//     is in stake notes, whose amounts are hidden).
 //  3. Unbonding: per validator, the UNBONDING records' undelegated sum ==
 //     the module's SDK entries' initial balances, and each record's creation
 //     height has an entry.
 //  4. Rate: per validator, pending_undelegation == its PENDING records'
 //     targets, D + W + P >= U (the notes minted this epoch can be paid), and
-//     supply(derth/v) x rate_v == D + W + P - U. Tolerance: rate_v is an
+//     derth_supply_v x rate_v == D + W + P - U. Tolerance: rate_v is an
 //     18-decimal LegacyDec, so the product may fall short of the backing by
 //     at most ceil(supply x 1e-18) + 1 uerth; it never exceeds it.
 //     Conversions themselves are exact integer floors that favour the pool.
@@ -118,6 +117,13 @@ func sortedKeys(m map[string]bool) []string {
 }
 
 func (k Keeper) assertDenoms(ctx context.Context) error {
+	// derth and unbond claims are stake notes and book entries, never coins:
+	// no account may hold one (none can be minted).
+	for _, c := range k.bank.GetAllBalances(ctx, k.modAddr) {
+		if strings.HasPrefix(c.Denom, types.UnbondPrefix) || strings.HasPrefix(c.Denom, types.DerthPrefix) {
+			return types.ErrInvariant.Wrapf("module holds %s", c)
+		}
+	}
 	locked := map[string]math.Int{}
 	if err := k.Positions.Walk(ctx, nil, func(_ uint64, p types.Position) (bool, error) {
 		if cur, ok := locked[p.Validator]; ok {
@@ -129,42 +135,12 @@ func (k Keeper) assertDenoms(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	for _, c := range k.bank.GetAllBalances(ctx, k.modAddr) {
-		if strings.HasPrefix(c.Denom, types.UnbondPrefix) {
-			return types.ErrInvariant.Wrapf("module holds %s", c)
-		}
-		if v, ok := types.ParseDerthDenom(c.Denom); ok {
-			if l, ok := locked[v]; !ok || !l.Equal(c.Amount) {
-				return types.ErrInvariant.Wrapf("module holds %s, positions lock %s", c, l)
-			}
-			delete(locked, v)
-		}
-	}
 	for v, l := range locked {
-		if l.IsPositive() {
-			return types.ErrInvariant.Wrapf("positions lock %s derth/%s the module does not hold", l, v)
+		if s := k.Supply(ctx, v); l.GT(s) {
+			return types.ErrInvariant.Wrapf("positions lock %s derth/%s, more than its supply %s", l, v, s)
 		}
 	}
-	vals := map[string]bool{}
-	_ = k.Validators.Walk(ctx, nil, func(v string, _ types.ValidatorState) (bool, error) {
-		vals[v] = true
-		return false, nil
-	})
-	for v := range vals {
-		d := types.DerthDenom(v)
-		supply := k.bank.GetSupply(ctx, d).Amount
-		held := k.bank.GetBalance(ctx, k.poolAddr, d).Amount.Add(k.bank.GetBalance(ctx, k.modAddr, d).Amount)
-		if !supply.Equal(held) {
-			return types.ErrInvariant.Wrapf("%s: supply %s, pool + positions hold %s", d, supply, held)
-		}
-	}
-	return k.UnbondRecords.Walk(ctx, nil, func(_ collections.Pair[string, uint64], r types.UnbondRecord) (bool, error) {
-		supply := k.bank.GetSupply(ctx, types.UnbondDenom(r.Validator, r.Epoch)).Amount
-		if !supply.Equal(r.Outstanding) {
-			return true, types.ErrInvariant.Wrapf("unbond/%s/%d: supply %s, outstanding %s", r.Validator, r.Epoch, supply, r.Outstanding)
-		}
-		return false, nil
-	})
+	return nil
 }
 
 func (k Keeper) assertUnbonding(ctx context.Context) error {

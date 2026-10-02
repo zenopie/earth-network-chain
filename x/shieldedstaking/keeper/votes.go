@@ -19,14 +19,15 @@ import (
 
 // Stake votes.
 //
-// When a proposal enters voting this module snapshots the note-tree anchor and,
-// per validator, the derth supply and rate. A derth/v note that was in the tree
-// then (and is unspent when it votes) votes by being spent: MsgStakeVote's
-// vote bundle proves every action against the snapshot root and releases the
-// note's derth to this module, which records the vote and mints the derth
-// straight back to a new note. The spent nullifier stops a second vote, and the new note is not
-// in the snapshot root. A position created before the snapshot votes with its
-// key. The weight is public; the voter is not.
+// When a proposal enters voting this module snapshots the stake tree's latest
+// root and, per validator, the derth supply and rate. A derth/v stake note
+// that was in the tree then (and is unspent when it votes) votes by being
+// spent: MsgStakeVote's stake proof spends it against the snapshot root,
+// publishing its amount as the weight, and the chain records the vote and
+// mints the derth straight back to a new stake note of the same owner. The
+// spent nullifier stops a second vote, and the new note is not in the snapshot
+// root. A position created before the snapshot votes by its owner's proof.
+// The weight is public; the voter is not.
 //
 // The tally (StakeTally, x/gov's custom tally function) turns each validator's
 // privately voted derth into a fraction of the module's CURRENT shares at v:
@@ -54,8 +55,8 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	snap := types.ProposalSnapshot{ProposalId: proposalID, Height: sdkCtx.BlockHeight(), VotingEnd: prop.VotingEndTime.UnixNano()}
-	if root, err := k.shielded.LatestRoot.Get(ctx); err == nil {
-		rec, err := k.shielded.Roots.Get(ctx, root)
+	if root, err := k.StakeLatestRoot.Get(ctx); err == nil {
+		rec, err := k.StakeRoots.Get(ctx, root)
 		if err != nil {
 			return err
 		}
@@ -102,7 +103,7 @@ func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper str
 		return snap, types.ValidatorSnapshot{}, types.ErrNoVoting.Wrapf("voting on proposal %d has ended", proposalID)
 	}
 	if len(snap.Root) == 0 {
-		return snap, types.ValidatorSnapshot{}, types.ErrNoVoting.Wrap("the note tree was empty when voting began")
+		return snap, types.ValidatorSnapshot{}, types.ErrNoVoting.Wrap("the stake tree was empty when voting began")
 	}
 	for _, vs := range snap.Validators {
 		if vs.Validator == valoper {

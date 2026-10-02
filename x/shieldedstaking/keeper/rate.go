@@ -24,7 +24,8 @@ import (
 //	P_v  ERTH queued to delegate to v (ValidatorState.pending_delegation)
 //	U_v  unbond notes minted against v and not yet undelegated
 //	     (ValidatorState.pending_undelegation)
-//	S_v  the bank supply of derth/v (notes in the pool + positions)
+//	S_v  the derth/v outstanding (ValidatorState.derth_supply: stake notes
+//	     and positions; derth is never a coin)
 //
 // Every conversion uses the live B_v and S_v, in integers, rounding toward the
 // pool: a delegation of a mints floor(a * S / B) derth; an undelegation of d
@@ -48,14 +49,22 @@ func (k Keeper) ValidatorState(ctx context.Context, valoper string) (types.Valid
 			PendingDelegation:   math.ZeroInt(),
 			PendingUndelegation: math.ZeroInt(),
 			EpochRate:           math.LegacyOneDec(),
+			DerthSupply:         math.ZeroInt(),
 		}, nil
+	}
+	if err == nil && vs.DerthSupply.IsNil() {
+		vs.DerthSupply = math.ZeroInt()
 	}
 	return vs, err
 }
 
-// Supply is the bank supply of derth/v.
+// Supply is S_v, the derth/v outstanding.
 func (k Keeper) Supply(ctx context.Context, valoper string) math.Int {
-	return k.bank.GetSupply(ctx, types.DerthDenom(valoper)).Amount
+	vs, err := k.ValidatorState(ctx, valoper)
+	if err != nil {
+		return math.ZeroInt()
+	}
+	return vs.DerthSupply
 }
 
 // delegation is the module's delegation to v: its tokens (truncated), its

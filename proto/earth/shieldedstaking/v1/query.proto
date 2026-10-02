@@ -42,6 +42,14 @@ service Query {
   rpc Snapshot(QuerySnapshotRequest) returns (QuerySnapshotResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/snapshots/{proposal_id}";
   }
+  // StakeTree is the stake note tree's size and latest recorded root.
+  rpc StakeTree(QueryStakeTreeRequest) returns (QueryStakeTreeResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/stake_tree";
+  }
+  // StakeNullifier reports whether a stake nullifier (hex) is spent.
+  rpc StakeNullifier(QueryStakeNullifierRequest) returns (QueryStakeNullifierResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/stake_nullifiers/{nullifier}";
+  }
 }
 
 // QueryParamsRequest is the request type for Query/Params.
@@ -135,4 +143,25 @@ message QuerySnapshotRequest {
 // QuerySnapshotResponse is the response type for Query/Snapshot.
 message QuerySnapshotResponse {
   ProposalSnapshot snapshot = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryStakeTreeRequest is the request type for Query/StakeTree.
+message QueryStakeTreeRequest {}
+
+// QueryStakeTreeResponse is the stake tree's leaf count and its latest
+// recorded root (empty before the first note).
+message QueryStakeTreeResponse {
+  uint64 size = 1;
+  bytes root = 2;
+}
+
+// QueryStakeNullifierRequest is the request type for Query/StakeNullifier.
+message QueryStakeNullifierRequest {
+  // nullifier is 32 bytes, hex.
+  string nullifier = 1;
+}
+
+// QueryStakeNullifierResponse says whether it is spent.
+message QueryStakeNullifierResponse {
+  bool spent = 1;
 }

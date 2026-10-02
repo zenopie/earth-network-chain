@@ -1,6 +1,7 @@
-// Package types defines private staking: the shielded module as the sole
-// non-self delegator, derth/<valoper> and unbond/<valoper>/<epoch> notes,
-// epochs, stake votes and Groundworks positions.
+// Package types defines private staking: the module as the sole non-self
+// delegator, derth/<valoper> and unbond/<valoper>/<epoch> owner-locked stake
+// notes in the module's own stake note tree, epochs, stake votes and
+// Groundworks positions.
 package types
 
 import (
@@ -24,7 +25,9 @@ const (
 	// BondDenom is the staking coin; the module accepts nothing else.
 	BondDenom = "uerth"
 
-	// DerthPrefix and UnbondPrefix start this module's shielded-only denoms.
+	// DerthPrefix and UnbondPrefix start this module's stake denoms. They name
+	// stake note assets (zk/privacy.AssetID of the denom) and are never coins,
+	// shielded-pool assets or dex tokens.
 	DerthPrefix  = "derth/"
 	UnbondPrefix = "unbond/"
 
@@ -68,6 +71,14 @@ var (
 	// whose epoch rate and positions EndBlock re-weighs. Emptied every
 	// EndBlock; never exported.
 	SlashedValidatorsKey = collections.NewPrefix(13)
+	// The stake note tree: its nodes and size, its nullifier set, and its
+	// recorded roots (by root, and by time for pruning).
+	StakeTreeNodesKey   = collections.NewPrefix(14)
+	StakeTreeSizeKey    = collections.NewPrefix(15)
+	StakeNullifiersKey  = collections.NewPrefix(16)
+	StakeRootsKey       = collections.NewPrefix(17)
+	StakeRootsByTimeKey = collections.NewPrefix(18)
+	StakeLatestRootKey  = collections.NewPrefix(19)
 )
 
 // DerthDenom is validator's delegation token.

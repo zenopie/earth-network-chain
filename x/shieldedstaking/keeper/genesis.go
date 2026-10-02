@@ -1,13 +1,16 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // InitGenesis loads the books. It runs after bank, staking and shielded, and
@@ -69,7 +72,57 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			return err
 		}
 	}
+	if err := k.initStakeTree(ctx, gs); err != nil {
+		return err
+	}
 	return k.AssertInvariants(ctx)
+}
+
+// initStakeTree rebuilds the stake note tree from its leaves, its nullifier
+// set and its roots, the last of which is the latest and must be the
+// rebuilt tree's root.
+func (k Keeper) initStakeTree(ctx context.Context, gs types.GenesisState) error {
+	t, err := k.stakeTree(ctx)
+	if err != nil {
+		return err
+	}
+	for i, cm := range gs.StakeCommitments {
+		leaf, err := privacy.FieldFromBytes(cm)
+		if err != nil {
+			return fmt.Errorf("stake commitment %d: %w", i, err)
+		}
+		if _, err := t.Append(leaf); err != nil {
+			return err
+		}
+	}
+	if err := k.StakeTreeSize.Set(ctx, t.Size()); err != nil {
+		return err
+	}
+	for _, nf := range gs.StakeNullifiers {
+		if err := k.StakeNullifiers.Set(ctx, nf); err != nil {
+			return err
+		}
+	}
+	for i, r := range gs.StakeRoots {
+		if err := k.putStakeRoot(ctx, r, i == len(gs.StakeRoots)-1); err != nil {
+			return err
+		}
+	}
+	if t.Size() == 0 {
+		return nil
+	}
+	root, err := t.Root()
+	if err != nil {
+		return err
+	}
+	latest, err := k.StakeLatestRoot.Get(ctx)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(latest, privacy.FieldBytes(root)) {
+		return fmt.Errorf("the stake tree's root %X is not its latest recorded root %X", privacy.FieldBytes(root), latest)
+	}
+	return nil
 }
 
 // ExportGenesis exports the books.
@@ -116,6 +169,47 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return false, nil
 	}); err != nil {
 		return nil, err
+	}
+	t, err := k.stakeTree(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := uint64(0); i < t.Size(); i++ {
+		l, err := t.Leaf(i)
+		if err != nil {
+			return nil, err
+		}
+		gs.StakeCommitments = append(gs.StakeCommitments, privacy.FieldBytes(l))
+	}
+	if err := k.StakeNullifiers.Walk(ctx, nil, func(nf []byte) (bool, error) {
+		gs.StakeNullifiers = append(gs.StakeNullifiers, nf)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	// Roots oldest first, the latest last (InitGenesis makes the last one
+	// the latest).
+	latest, err := k.StakeLatestRoot.Get(ctx)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
+	var last *types.StakeRoot
+	if err := k.StakeRootsByTime.Walk(ctx, nil, func(key collections.Pair[int64, []byte]) (bool, error) {
+		r, err := k.StakeRoots.Get(ctx, key.K2())
+		if err != nil {
+			return true, err
+		}
+		if bytes.Equal(r.Root, latest) {
+			last = &r
+			return false, nil
+		}
+		gs.StakeRoots = append(gs.StakeRoots, r)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if last != nil {
+		gs.StakeRoots = append(gs.StakeRoots, *last)
 	}
 	return gs, nil
 }

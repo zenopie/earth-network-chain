@@ -27,4 +27,9 @@ message Params {
 
   // max_positions caps how many positions exist at once, for the same reason.
   uint64 max_positions = 3;
+
+  // stake_root_window_seconds is how long a superseded stake-tree root stays
+  // an anchor (the latest never expires; a vote's snapshot root is accepted
+  // for its proposal).
+  uint64 stake_root_window_seconds = 4;
 }

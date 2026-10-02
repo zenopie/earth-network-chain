@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/hex"
 
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"google.golang.org/grpc/codes"
@@ -94,4 +95,27 @@ func (q queryServer) Snapshot(ctx context.Context, req *types.QuerySnapshotReque
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return &types.QuerySnapshotResponse{Snapshot: s}, nil
+}
+
+func (q queryServer) StakeTree(ctx context.Context, _ *types.QueryStakeTreeRequest) (*types.QueryStakeTreeResponse, error) {
+	size, root, err := q.k.StakeTreeState(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QueryStakeTreeResponse{Size_: size, Root: root}, nil
+}
+
+func (q queryServer) StakeNullifier(ctx context.Context, req *types.QueryStakeNullifierRequest) (*types.QueryStakeNullifierResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "nullifier required")
+	}
+	nf, err := hex.DecodeString(req.Nullifier)
+	if err != nil || len(nf) != 32 {
+		return nil, status.Error(codes.InvalidArgument, "nullifier must be 32 bytes, hex")
+	}
+	spent, err := q.k.StakeNullifiers.Has(ctx, nf)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QueryStakeNullifierResponse{Spent: spent}, nil
 }

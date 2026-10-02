@@ -13,6 +13,7 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 	registrar.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgUpdateParams{},
 		&MsgDelegate{},
+		&MsgRestake{},
 		&MsgUndelegate{},
 		&MsgClaimUnbonding{},
 		&MsgStakeVote{},
@@ -35,6 +36,7 @@ func noSigners(name string) signing.CustomGetSigner {
 }
 
 func ProvideDelegateGetSigners() signing.CustomGetSigner       { return noSigners("MsgDelegate") }
+func ProvideRestakeGetSigners() signing.CustomGetSigner        { return noSigners("MsgRestake") }
 func ProvideUndelegateGetSigners() signing.CustomGetSigner     { return noSigners("MsgUndelegate") }
 func ProvideClaimGetSigners() signing.CustomGetSigner          { return noSigners("MsgClaimUnbonding") }
 func ProvideStakeVoteGetSigners() signing.CustomGetSigner      { return noSigners("MsgStakeVote") }

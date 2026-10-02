@@ -39,17 +39,8 @@ func (k msgServer) UpdateParams(ctx context.Context, req *types.MsgUpdateParams)
 	return &types.MsgUpdateParamsResponse{}, k.Params.Set(ctx, req.Params)
 }
 
-// mintTo mints coin into this module and appends it as a note to pc.
-func (k Keeper) mintTo(ctx context.Context, coin sdk.Coin, pc, ct []byte) (uint64, error) {
-	if err := k.bank.MintCoins(ctx, types.ModuleName, sdk.NewCoins(coin)); err != nil {
-		return 0, err
-	}
-	pos, _, err := k.shielded.MintNote(ctx, types.ModuleName, coin, pc, ct)
-	return pos, err
-}
-
 // Delegate: the ERTH joins the validator's queue, and derth/v is minted at the
-// live rate to pc.
+// live rate as a stake note to the proof's spc_mint (the delegator's own).
 func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types.MsgDelegateResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -68,14 +59,11 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 		return nil, err
 	}
 	vs.PendingDelegation = vs.PendingDelegation.Add(paid.Amount)
+	vs.DerthSupply = vs.DerthSupply.Add(d)
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
-	denom := types.DerthDenom(m.Validator)
-	if _, err := k.shielded.RegisterAsset(ctx, denom); err != nil {
-		return nil, err
-	}
-	pos, err := k.mintTo(ctx, sdk.NewCoin(denom, d), m.Pc, m.Ciphertext)
+	pos, err := k.mintStake(ctx, types.DerthDenom(m.Validator), d, m.Stake.SpcMint)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +75,23 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	return &types.MsgDelegateResponse{Derth: d.Uint64(), Position: pos}, nil
 }
 
-// Undelegate: derth/v is burned and an unbond/v/e note of its live value is
-// minted; the value joins this epoch's undelegation for v.
+// Restake merges or splits the owner's stake notes: the proof's outputs are
+// appended, its inputs spent. Nothing else changes.
+func (k msgServer) Restake(goCtx context.Context, m *types.MsgRestake) (*types.MsgRestakeResponse, error) {
+	ctx, err := k.authorized(goCtx, m)
+	if err != nil {
+		return nil, err
+	}
+	pos, err := k.applyStakeProof(ctx, &m.Stake)
+	if err != nil {
+		return nil, err
+	}
+	return &types.MsgRestakeResponse{Positions: pos}, nil
+}
+
+// Undelegate: amount of derth/v leaves the owner's notes (any change back to
+// them) and an owner-locked unbond/v/e claim of its live value is minted to
+// the proof's spc_mint; the value joins this epoch's undelegation for v.
 func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*types.MsgUndelegateResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -102,13 +105,10 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	if err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.ReleaseToModule(ctx, m, types.DerthDenom(m.Validator), types.ModuleName)
-	if err != nil {
+	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
 		return nil, err
 	}
-	if err := k.bank.BurnCoins(ctx, types.ModuleName, sdk.NewCoins(derth)); err != nil {
-		return nil, err
-	}
+	d := math.NewIntFromUint64(m.Amount)
 	key := collections.Join(m.Validator, epoch.Number)
 	r, err := k.UnbondRecords.Get(ctx, key)
 	if errors.Is(err, collections.ErrNotFound) {
@@ -134,20 +134,18 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 		return nil, err
 	}
 	vs.PendingUndelegation = vs.PendingUndelegation.Add(u)
+	vs.DerthSupply = vs.DerthSupply.Sub(d)
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
 	denom := types.UnbondDenom(m.Validator, epoch.Number)
-	if _, err := k.shielded.RegisterAsset(ctx, denom); err != nil {
-		return nil, err
-	}
-	pos, err := k.mintTo(ctx, sdk.NewCoin(denom, u), m.Pc, m.Ciphertext)
+	pos, err := k.mintStake(ctx, denom, u, m.Stake.SpcMint)
 	if err != nil {
 		return nil, err
 	}
 	ctx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeUndelegate,
 		sdk.NewAttribute(types.AttributeKeyValidator, m.Validator),
-		sdk.NewAttribute(types.AttributeKeyDerth, derth.Amount.String()),
+		sdk.NewAttribute(types.AttributeKeyDerth, d.String()),
 		sdk.NewAttribute(types.AttributeKeyValue, u.String()),
 		sdk.NewAttribute(types.AttributeKeyDenom, denom),
 	))
@@ -169,24 +167,22 @@ func (k msgServer) ClaimUnbonding(goCtx context.Context, m *types.MsgClaimUnbond
 	return r, nil
 }
 
-// executeClaim: the unbond notes are burned and ERTH = value x payout /
-// requested is paid, so a slash of the unbonding entry reaches every
-// claimant pro rata: fee_from_output to fee_collector, the rest minted as a
-// note. Runs in the private ante, after the bundle was spent; any error
-// fails the whole tx, spend included.
+// executeClaim: amount of the owner's unbond/v/e claim notes is spent (any
+// change back to them) and ERTH = amount x payout / requested is paid, so a
+// slash of the unbonding entry reaches every claimant pro rata:
+// fee_from_output to fee_collector, the rest minted as an ordinary note to pc
+// in the shielded pool. Runs in the private ante; any error fails the whole
+// tx.
 func (k Keeper) executeClaim(ctx sdk.Context, m *types.MsgClaimUnbonding) (*types.MsgClaimUnbondingResponse, error) {
 	r, pay, err := k.checkClaim(ctx, m)
 	if err != nil {
 		return nil, err
 	}
-	claim, err := k.shielded.ReleaseToModule(ctx, m, types.UnbondDenom(m.Validator, m.Epoch), types.ModuleName)
-	if err != nil {
+	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
 		return nil, err
 	}
-	if err := k.bank.BurnCoins(ctx, types.ModuleName, sdk.NewCoins(claim)); err != nil {
-		return nil, err
-	}
-	r.Outstanding = r.Outstanding.Sub(claim.Amount)
+	claimed := math.NewIntFromUint64(m.Amount)
+	r.Outstanding = r.Outstanding.Sub(claimed)
 	r.Paid = r.Paid.Add(pay)
 	note := pay
 	if m.FeeFromOutput > 0 {
@@ -204,7 +200,7 @@ func (k Keeper) executeClaim(ctx sdk.Context, m *types.MsgClaimUnbonding) (*type
 	}
 	key := collections.Join(m.Validator, m.Epoch)
 	if r.Outstanding.IsZero() {
-		// Every note is in: the floor division's dust goes to the community
+		// Every claim is in: the floor division's dust goes to the community
 		// pool, and the record is done.
 		if dust := r.Payout.Sub(r.Paid); dust.IsPositive() {
 			if err := k.distr.FundCommunityPool(ctx, sdk.NewCoins(sdk.NewCoin(types.BondDenom, dust)), k.modAddr); err != nil {
@@ -218,16 +214,16 @@ func (k Keeper) executeClaim(ctx sdk.Context, m *types.MsgClaimUnbonding) (*type
 		return nil, err
 	}
 	ctx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeClaim,
-		sdk.NewAttribute(types.AttributeKeyDenom, claim.Denom),
-		sdk.NewAttribute(types.AttributeKeyValue, claim.Amount.String()),
+		sdk.NewAttribute(types.AttributeKeyDenom, m.StakeDenom()),
+		sdk.NewAttribute(types.AttributeKeyValue, claimed.String()),
 		sdk.NewAttribute(types.AttributeKeyAmount, pay.String()),
 	))
 	return &types.MsgClaimUnbondingResponse{Amount: note.Uint64(), Position: pos}, nil
 }
 
-// StakeVote records a spent note's vote and mints its derth straight back to
-// a new note. Final: the spent nullifier is the vote's key, and cannot be
-// spent again.
+// StakeVote records the spent notes' vote and mints their derth straight back
+// to a new stake note of the same owner. Final: the spent nullifiers are
+// spent, and the new note is not in the snapshot root.
 func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*types.MsgStakeVoteResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -237,25 +233,25 @@ func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*typ
 	if err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.ReleaseToModule(ctx, m, types.DerthDenom(m.Validator), types.ModuleName)
-	if err != nil {
+	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
 		return nil, err
 	}
 	v := types.StakeVote{
-		ProposalId: m.ProposalId, Key: append([]byte{0}, m.Bundle.Actions[0].Nullifier...), Validator: m.Validator,
+		ProposalId: m.ProposalId, Key: append([]byte{0}, m.Stake.SpentNullifiers()[0]...), Validator: m.Validator,
 		Derth: d, Options: m.Options,
 	}
 	if err := k.putVote(ctx, v); err != nil {
 		return nil, err
 	}
-	pos, _, err := k.shielded.MintNote(ctx, types.ModuleName, derth, m.Pc, m.Ciphertext)
+	pos, err := k.mintStake(ctx, types.DerthDenom(m.Validator), d, m.Stake.SpcMint)
 	if err != nil {
 		return nil, err
 	}
 	return &types.MsgStakeVoteResponse{Position: pos}, nil
 }
 
-// LockPosition moves derth from a note into a new position.
+// LockPosition moves amount of the owner's derth from notes into a new
+// position owned by the proof's owner tag.
 func (k msgServer) LockPosition(goCtx context.Context, m *types.MsgLockPosition) (*types.MsgLockPositionResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -264,8 +260,7 @@ func (k msgServer) LockPosition(goCtx context.Context, m *types.MsgLockPosition)
 	if err := k.checkLock(ctx, m); err != nil {
 		return nil, err
 	}
-	derth, err := k.shielded.ReleaseToModule(ctx, m, types.DerthDenom(m.Validator), types.ModuleName)
-	if err != nil {
+	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
 		return nil, err
 	}
 	id, err := k.PositionSeq.Next(ctx)
@@ -273,8 +268,8 @@ func (k msgServer) LockPosition(goCtx context.Context, m *types.MsgLockPosition)
 		return nil, err
 	}
 	p := types.Position{
-		Id: id, Validator: m.Validator, Derth: derth.Amount, Splits: m.Splits, Pubkey: m.Pubkey,
-		CreatedHeight: ctx.BlockHeight(), Weight: math.ZeroInt(),
+		Id: id, Validator: m.Validator, Derth: math.NewIntFromUint64(m.Amount), Splits: m.Splits,
+		OwnerTag: m.Stake.OwnerTag, CreatedHeight: ctx.BlockHeight(), Weight: math.ZeroInt(),
 	}
 	if err := k.setPosition(ctx, p); err != nil {
 		return nil, err
@@ -302,7 +297,7 @@ func (k msgServer) UpdatePosition(goCtx context.Context, m *types.MsgUpdatePosit
 	if err != nil {
 		return nil, err
 	}
-	p, err := k.checkPositionSig(ctx, m.PositionId, "update", m.SignPayload(), m.Signature)
+	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +305,7 @@ func (k msgServer) UpdatePosition(goCtx context.Context, m *types.MsgUpdatePosit
 	if err != nil {
 		return nil, err
 	}
-	p.Splits, p.Weight, p.Nonce = m.Splits, w, p.Nonce+1
+	p.Splits, p.Weight = m.Splits, w
 	if len(m.Splits) == 0 {
 		p.Weight = math.ZeroInt()
 	}
@@ -321,20 +316,21 @@ func (k msgServer) UpdatePosition(goCtx context.Context, m *types.MsgUpdatePosit
 	return &types.MsgUpdatePositionResponse{}, nil
 }
 
-// UnlockPosition closes a position; its derth goes back to a note.
+// UnlockPosition closes a position; its derth goes back to a stake note of
+// its owner.
 func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosition) (*types.MsgUnlockPositionResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
 		return nil, err
 	}
-	p, err := k.checkPositionSig(ctx, m.PositionId, "unlock", m.SignPayload(), m.Signature)
+	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
 	if err != nil {
 		return nil, err
 	}
 	if err := k.allocation.RemoveVoter(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.PositionVoterKey(p.Id)); err != nil {
 		return nil, err
 	}
-	pos, _, err := k.shielded.MintNote(ctx, types.ModuleName, sdk.NewCoin(types.DerthDenom(p.Validator), p.Derth), m.Pc, m.Ciphertext)
+	pos, err := k.mintStake(ctx, types.DerthDenom(p.Validator), p.Derth, m.Stake.SpcMint)
 	if err != nil {
 		return nil, err
 	}
@@ -363,10 +359,6 @@ func (k msgServer) PositionVote(goCtx context.Context, m *types.MsgPositionVote)
 		Validator: p.Validator, Derth: p.Derth, Options: m.Options,
 	}
 	if err := k.putVote(ctx, v); err != nil {
-		return nil, err
-	}
-	p.Nonce++
-	if err := k.setPosition(ctx, p); err != nil {
 		return nil, err
 	}
 	return &types.MsgPositionVoteResponse{}, nil

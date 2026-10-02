@@ -32,7 +32,13 @@ import (
 //     notes; compound every active validator operator's self-bond rewards;
 //     re-weigh positions; sweep non-ERTH rewards to the community pool.
 //  3. forget proposals whose voting has ended (x/gov has tallied them).
+//
+// First of all it records the stake tree's root, if the block moved it (a
+// root is an anchor from the end of the block that made it).
 func (k Keeper) EndBlocker(ctx context.Context) error {
+	if err := k.guarded(ctx, k.recordStakeRoot); err != nil {
+		k.failure(ctx, "stake_root", "", err)
+	}
 	k.reweighSlashed(ctx)
 	k.matureRecords(ctx)
 	epoch, err := k.Epoch.Get(ctx)

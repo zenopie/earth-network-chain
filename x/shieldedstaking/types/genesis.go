@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"cosmossdk.io/math"
+
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // DefaultGenesis is the launch state: default params, no epoch (the first
@@ -37,6 +39,9 @@ func (gs GenesisState) Validate() error {
 		if err := nonNeg("pending_undelegation", v.PendingUndelegation); err != nil {
 			return err
 		}
+		if err := nonNeg("derth_supply", v.DerthSupply); err != nil {
+			return err
+		}
 		if v.EpochRate.IsNil() || v.EpochRate.IsNegative() {
 			return fmt.Errorf("%s: invalid epoch rate", v.Validator)
 		}
@@ -66,8 +71,11 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("position %d duplicated or not below next_position_id", p.Id)
 		}
 		ids[p.Id] = true
-		if p.Derth.IsNil() || !p.Derth.IsPositive() || len(p.Pubkey) != 33 {
+		if p.Derth.IsNil() || !p.Derth.IsPositive() {
 			return fmt.Errorf("position %d is invalid", p.Id)
+		}
+		if _, err := privacy.FieldFromBytes(p.OwnerTag); err != nil {
+			return fmt.Errorf("position %d owner_tag: %w", p.Id, err)
 		}
 	}
 	snaps := map[uint64]bool{}
@@ -84,6 +92,31 @@ func (gs GenesisState) Validate() error {
 		if err := ValidateOptions(v.Options); err != nil {
 			return err
 		}
+	}
+	for i, cm := range gs.StakeCommitments {
+		if _, err := privacy.FieldFromBytes(cm); err != nil {
+			return fmt.Errorf("stake commitment %d: %w", i, err)
+		}
+	}
+	nfs := map[string]bool{}
+	for i, nf := range gs.StakeNullifiers {
+		if _, err := privacy.FieldFromBytes(nf); err != nil || nfs[string(nf)] {
+			return fmt.Errorf("stake nullifier %d is malformed or repeated", i)
+		}
+		nfs[string(nf)] = true
+	}
+	roots := map[string]bool{}
+	for _, r := range gs.StakeRoots {
+		if _, err := privacy.FieldFromBytes(r.Root); err != nil || roots[string(r.Root)] {
+			return fmt.Errorf("stake root %x is malformed or repeated", r.Root)
+		}
+		if r.TreeSize > uint64(len(gs.StakeCommitments)) {
+			return fmt.Errorf("stake root %x claims %d leaves, the tree has %d", r.Root, r.TreeSize, len(gs.StakeCommitments))
+		}
+		roots[string(r.Root)] = true
+	}
+	if len(gs.StakeCommitments) > 0 && len(gs.StakeRoots) == 0 {
+		return fmt.Errorf("a stake tree with no recorded root")
 	}
 	return nil
 }

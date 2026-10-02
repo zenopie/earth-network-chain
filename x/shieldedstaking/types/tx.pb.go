@@ -124,27 +124,135 @@ func (m *MsgUpdateParamsResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
-// MsgDelegate releases bundle's uerth balance less fee into the module for
-// validator and mints a derth/<validator> note to pc at the live rate. The
-// ERTH is delegated at the epoch's end. bundle's balances: uerth only.
+// StakeProof is a stake circuit proof and its public values. The chain
+// supplies the rest of its public inputs: asset (the msg's derth or unbond
+// asset id), v_in (0), v_out (the msg's amount, or 0) and the sighash. Public
+// input order: anchor, asset, nf_0, nf_1, cm_out_0, cm_out_1, v_in, v_out,
+// spc_mint, owner_tag, sighash.
+type StakeProof struct {
+	// proof is the bb v5.0.0 UltraHonk proof of circuits/stake.
+	Proof []byte `protobuf:"bytes,1,opt,name=proof,proto3" json:"proof,omitempty"`
+	// anchor is a stake-tree root (32 bytes): one recorded within
+	// stake_root_window_seconds, or a vote's proposal snapshot root. Not
+	// checked when the proof spends nothing.
+	Anchor []byte `protobuf:"bytes,2,opt,name=anchor,proto3" json:"anchor,omitempty"`
+	// nullifiers: exactly two, 32 bytes each; all zero for an input not used.
+	Nullifiers [][]byte `protobuf:"bytes,3,rep,name=nullifiers,proto3" json:"nullifiers,omitempty"`
+	// commitments: exactly two output stake notes, 32 bytes each; all zero for
+	// an output not made. Appended to the stake tree in order.
+	Commitments [][]byte `protobuf:"bytes,4,rep,name=commitments,proto3" json:"commitments,omitempty"`
+	// ciphertexts: one per commitment (empty for none), emitted for the owner's
+	// other devices.
+	Ciphertexts [][]byte `protobuf:"bytes,5,rep,name=ciphertexts,proto3" json:"ciphertexts,omitempty"`
+	// spc_mint is a stake pc of the same owner (32 bytes) the chain mints to
+	// when the msg mints a stake note.
+	SpcMint []byte `protobuf:"bytes,6,opt,name=spc_mint,json=spcMint,proto3" json:"spc_mint,omitempty"`
+	// owner_tag is H(TAG_OTAG, owner_pk, salt) (32 bytes): stored by
+	// LockPosition, compared by a position's later msgs.
+	OwnerTag []byte `protobuf:"bytes,7,opt,name=owner_tag,json=ownerTag,proto3" json:"owner_tag,omitempty"`
+}
+
+func (m *StakeProof) Reset()         { *m = StakeProof{} }
+func (m *StakeProof) String() string { return proto.CompactTextString(m) }
+func (*StakeProof) ProtoMessage()    {}
+func (*StakeProof) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ebf40c3361e45611, []int{2}
+}
+func (m *StakeProof) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *StakeProof) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_StakeProof.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *StakeProof) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_StakeProof.Merge(m, src)
+}
+func (m *StakeProof) XXX_Size() int {
+	return m.Size()
+}
+func (m *StakeProof) XXX_DiscardUnknown() {
+	xxx_messageInfo_StakeProof.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_StakeProof proto.InternalMessageInfo
+
+func (m *StakeProof) GetProof() []byte {
+	if m != nil {
+		return m.Proof
+	}
+	return nil
+}
+
+func (m *StakeProof) GetAnchor() []byte {
+	if m != nil {
+		return m.Anchor
+	}
+	return nil
+}
+
+func (m *StakeProof) GetNullifiers() [][]byte {
+	if m != nil {
+		return m.Nullifiers
+	}
+	return nil
+}
+
+func (m *StakeProof) GetCommitments() [][]byte {
+	if m != nil {
+		return m.Commitments
+	}
+	return nil
+}
+
+func (m *StakeProof) GetCiphertexts() [][]byte {
+	if m != nil {
+		return m.Ciphertexts
+	}
+	return nil
+}
+
+func (m *StakeProof) GetSpcMint() []byte {
+	if m != nil {
+		return m.SpcMint
+	}
+	return nil
+}
+
+func (m *StakeProof) GetOwnerTag() []byte {
+	if m != nil {
+		return m.OwnerTag
+	}
+	return nil
+}
+
+// MsgDelegate: bundle releases its uerth balance less fee into the module for
+// validator; the chain mints derth/<validator> at the live rate as a stake
+// note to stake.spc_mint, whose owner the stake proof knows nk for (one
+// delegates only to oneself). The proof spends and creates nothing. The ERTH
+// is delegated at the epoch's end.
 //
-// sighash fields: Bytes(validator), pc, Bytes(ciphertext), fee.
+// sighash fields: StakeFields(stake), Bytes(validator), fee.
 type MsgDelegate struct {
 	Bundle    types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	Validator string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
-	// pc owns the derth note.
-	Pc []byte `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
-	// ciphertext is the derth note encrypted to its owner (optional).
-	Ciphertext []byte `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	// fee is paid out of bundle's uerth balance; the rest is delegated.
-	Fee uint64 `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
+	Fee       uint64       `protobuf:"varint,3,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake     StakeProof   `protobuf:"bytes,4,opt,name=stake,proto3" json:"stake"`
 }
 
 func (m *MsgDelegate) Reset()         { *m = MsgDelegate{} }
 func (m *MsgDelegate) String() string { return proto.CompactTextString(m) }
 func (*MsgDelegate) ProtoMessage()    {}
 func (*MsgDelegate) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{2}
+	return fileDescriptor_ebf40c3361e45611, []int{3}
 }
 func (m *MsgDelegate) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -187,20 +295,6 @@ func (m *MsgDelegate) GetValidator() string {
 	return ""
 }
 
-func (m *MsgDelegate) GetPc() []byte {
-	if m != nil {
-		return m.Pc
-	}
-	return nil
-}
-
-func (m *MsgDelegate) GetCiphertext() []byte {
-	if m != nil {
-		return m.Ciphertext
-	}
-	return nil
-}
-
 func (m *MsgDelegate) GetFee() uint64 {
 	if m != nil {
 		return m.Fee
@@ -208,7 +302,14 @@ func (m *MsgDelegate) GetFee() uint64 {
 	return 0
 }
 
-// MsgDelegateResponse returns the derth minted and the note's position.
+func (m *MsgDelegate) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
+}
+
+// MsgDelegateResponse returns the derth minted and the stake note's position.
 type MsgDelegateResponse struct {
 	Derth    uint64 `protobuf:"varint,1,opt,name=derth,proto3" json:"derth,omitempty"`
 	Position uint64 `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
@@ -218,7 +319,7 @@ func (m *MsgDelegateResponse) Reset()         { *m = MsgDelegateResponse{} }
 func (m *MsgDelegateResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgDelegateResponse) ProtoMessage()    {}
 func (*MsgDelegateResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{3}
+	return fileDescriptor_ebf40c3361e45611, []int{4}
 }
 func (m *MsgDelegateResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -261,24 +362,143 @@ func (m *MsgDelegateResponse) GetPosition() uint64 {
 	return 0
 }
 
-// MsgUndelegate releases bundle's derth/<validator> balance and mints an
-// unbond/<validator>/<epoch> note of its ERTH value to pc. bundle's
-// balances: derth/<validator> and the uerth fee.
+// MsgRestake merges or splits stake notes: the proof spends one or two of
+// the owner's derth/<validator> notes and creates one or two of the same
+// owner, the amounts balancing (hidden). bundle pays the fee only.
 //
-// sighash fields: Bytes(validator), pc, Bytes(ciphertext), fee.
+// sighash fields: StakeFields(stake), Bytes(validator), fee.
+type MsgRestake struct {
+	Bundle    types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
+	Validator string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
+	Fee       uint64       `protobuf:"varint,3,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake     StakeProof   `protobuf:"bytes,4,opt,name=stake,proto3" json:"stake"`
+}
+
+func (m *MsgRestake) Reset()         { *m = MsgRestake{} }
+func (m *MsgRestake) String() string { return proto.CompactTextString(m) }
+func (*MsgRestake) ProtoMessage()    {}
+func (*MsgRestake) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ebf40c3361e45611, []int{5}
+}
+func (m *MsgRestake) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgRestake) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgRestake.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgRestake) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgRestake.Merge(m, src)
+}
+func (m *MsgRestake) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgRestake) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgRestake.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgRestake proto.InternalMessageInfo
+
+func (m *MsgRestake) GetBundle() types.Bundle {
+	if m != nil {
+		return m.Bundle
+	}
+	return types.Bundle{}
+}
+
+func (m *MsgRestake) GetValidator() string {
+	if m != nil {
+		return m.Validator
+	}
+	return ""
+}
+
+func (m *MsgRestake) GetFee() uint64 {
+	if m != nil {
+		return m.Fee
+	}
+	return 0
+}
+
+func (m *MsgRestake) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
+}
+
+// MsgRestakeResponse returns the new notes' positions.
+type MsgRestakeResponse struct {
+	Positions []uint64 `protobuf:"varint,1,rep,packed,name=positions,proto3" json:"positions,omitempty"`
+}
+
+func (m *MsgRestakeResponse) Reset()         { *m = MsgRestakeResponse{} }
+func (m *MsgRestakeResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgRestakeResponse) ProtoMessage()    {}
+func (*MsgRestakeResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ebf40c3361e45611, []int{6}
+}
+func (m *MsgRestakeResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgRestakeResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgRestakeResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgRestakeResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgRestakeResponse.Merge(m, src)
+}
+func (m *MsgRestakeResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgRestakeResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgRestakeResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgRestakeResponse proto.InternalMessageInfo
+
+func (m *MsgRestakeResponse) GetPositions() []uint64 {
+	if m != nil {
+		return m.Positions
+	}
+	return nil
+}
+
+// MsgUndelegate: the proof spends derth/<validator> notes, amount of them
+// leaving (v_out), any change back to the owner; the chain mints an
+// owner-locked unbond/<validator>/<epoch> claim of the derth's live ERTH value
+// to stake.spc_mint. bundle pays the fee only.
+//
+// sighash fields: StakeFields(stake), Bytes(validator), amount, fee.
 type MsgUndelegate struct {
-	Bundle     types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
-	Validator  string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
-	Pc         []byte       `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext []byte       `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	Fee        uint64       `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
+	Bundle    types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
+	Validator string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
+	Amount    uint64       `protobuf:"varint,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	Fee       uint64       `protobuf:"varint,4,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake     StakeProof   `protobuf:"bytes,5,opt,name=stake,proto3" json:"stake"`
 }
 
 func (m *MsgUndelegate) Reset()         { *m = MsgUndelegate{} }
 func (m *MsgUndelegate) String() string { return proto.CompactTextString(m) }
 func (*MsgUndelegate) ProtoMessage()    {}
 func (*MsgUndelegate) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{4}
+	return fileDescriptor_ebf40c3361e45611, []int{7}
 }
 func (m *MsgUndelegate) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -321,18 +541,11 @@ func (m *MsgUndelegate) GetValidator() string {
 	return ""
 }
 
-func (m *MsgUndelegate) GetPc() []byte {
+func (m *MsgUndelegate) GetAmount() uint64 {
 	if m != nil {
-		return m.Pc
+		return m.Amount
 	}
-	return nil
-}
-
-func (m *MsgUndelegate) GetCiphertext() []byte {
-	if m != nil {
-		return m.Ciphertext
-	}
-	return nil
+	return 0
 }
 
 func (m *MsgUndelegate) GetFee() uint64 {
@@ -342,7 +555,14 @@ func (m *MsgUndelegate) GetFee() uint64 {
 	return 0
 }
 
-// MsgUndelegateResponse returns the unbond note's denom, value and position.
+func (m *MsgUndelegate) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
+}
+
+// MsgUndelegateResponse returns the claim's denom, value and position.
 type MsgUndelegateResponse struct {
 	Denom    string `protobuf:"bytes,1,opt,name=denom,proto3" json:"denom,omitempty"`
 	Value    uint64 `protobuf:"varint,2,opt,name=value,proto3" json:"value,omitempty"`
@@ -353,7 +573,7 @@ func (m *MsgUndelegateResponse) Reset()         { *m = MsgUndelegateResponse{} }
 func (m *MsgUndelegateResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgUndelegateResponse) ProtoMessage()    {}
 func (*MsgUndelegateResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{5}
+	return fileDescriptor_ebf40c3361e45611, []int{8}
 }
 func (m *MsgUndelegateResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -403,35 +623,35 @@ func (m *MsgUndelegateResponse) GetPosition() uint64 {
 	return 0
 }
 
-// MsgClaimUnbonding releases bundle's unbond/<validator>/<epoch> balance once
-// that record has matured and mints ERTH = value x payout / requested to pc
-// (less fee_from_output). bundle's balances: the unbond denom, and the uerth
-// fee unless fee_from_output pays it.
+// MsgClaimUnbonding: once unbond/<validator>/<epoch> has matured, the proof
+// spends the owner's claim notes, amount of them leaving (v_out), any change
+// back; the chain mints ERTH = amount x payout / requested to pc in the
+// shielded pool (an ordinary, transferable note), less fee_from_output.
 //
-// The claim runs in the private ante, atomically with the spend (see
-// x/shielded/types.PrivateActionExecutor).
+// With fee_from_output the msg carries no bundle (bundle empty, fee 0): the
+// fee comes out of the claimed ERTH and the claim runs in the private ante,
+// atomically with the spend. Otherwise bundle pays fee.
 //
-// sighash fields: Bytes(validator), epoch, pc, Bytes(ciphertext),
-// fee_from_output, fee.
+// sighash fields: StakeFields(stake), Bytes(validator), epoch, amount, pc,
+// Bytes(ciphertext), fee_from_output, fee.
 type MsgClaimUnbonding struct {
-	Bundle     types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
-	Validator  string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
-	Epoch      uint64       `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	Pc         []byte       `protobuf:"bytes,4,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext []byte       `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	// fee_from_output pays the tx fee out of the claimed ERTH instead of from
-	// the bundle: fee must then be 0 (the bundle has no uerth balance), and the
-	// claim must pay more than it. The note minted to pc holds the rest.
-	FeeFromOutput uint64 `protobuf:"varint,6,opt,name=fee_from_output,json=feeFromOutput,proto3" json:"fee_from_output,omitempty"`
-	// fee is paid out of bundle's uerth balance (0 with fee_from_output).
-	Fee uint64 `protobuf:"varint,7,opt,name=fee,proto3" json:"fee,omitempty"`
+	// bundle is absent (no actions) when fee_from_output pays the fee.
+	Bundle        *types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle,omitempty"`
+	Validator     string        `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
+	Epoch         uint64        `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	Amount        uint64        `protobuf:"varint,4,opt,name=amount,proto3" json:"amount,omitempty"`
+	Pc            []byte        `protobuf:"bytes,5,opt,name=pc,proto3" json:"pc,omitempty"`
+	Ciphertext    []byte        `protobuf:"bytes,6,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	FeeFromOutput uint64        `protobuf:"varint,7,opt,name=fee_from_output,json=feeFromOutput,proto3" json:"fee_from_output,omitempty"`
+	Fee           uint64        `protobuf:"varint,8,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake         StakeProof    `protobuf:"bytes,9,opt,name=stake,proto3" json:"stake"`
 }
 
 func (m *MsgClaimUnbonding) Reset()         { *m = MsgClaimUnbonding{} }
 func (m *MsgClaimUnbonding) String() string { return proto.CompactTextString(m) }
 func (*MsgClaimUnbonding) ProtoMessage()    {}
 func (*MsgClaimUnbonding) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{6}
+	return fileDescriptor_ebf40c3361e45611, []int{9}
 }
 func (m *MsgClaimUnbonding) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -460,11 +680,11 @@ func (m *MsgClaimUnbonding) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgClaimUnbonding proto.InternalMessageInfo
 
-func (m *MsgClaimUnbonding) GetBundle() types.Bundle {
+func (m *MsgClaimUnbonding) GetBundle() *types.Bundle {
 	if m != nil {
 		return m.Bundle
 	}
-	return types.Bundle{}
+	return nil
 }
 
 func (m *MsgClaimUnbonding) GetValidator() string {
@@ -477,6 +697,13 @@ func (m *MsgClaimUnbonding) GetValidator() string {
 func (m *MsgClaimUnbonding) GetEpoch() uint64 {
 	if m != nil {
 		return m.Epoch
+	}
+	return 0
+}
+
+func (m *MsgClaimUnbonding) GetAmount() uint64 {
+	if m != nil {
+		return m.Amount
 	}
 	return 0
 }
@@ -509,6 +736,13 @@ func (m *MsgClaimUnbonding) GetFee() uint64 {
 	return 0
 }
 
+func (m *MsgClaimUnbonding) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
+}
+
 // MsgClaimUnbondingResponse returns the ERTH minted to pc (the claim less
 // fee_from_output; 0 if slashed away) and the note's position.
 type MsgClaimUnbondingResponse struct {
@@ -520,7 +754,7 @@ func (m *MsgClaimUnbondingResponse) Reset()         { *m = MsgClaimUnbondingResp
 func (m *MsgClaimUnbondingResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgClaimUnbondingResponse) ProtoMessage()    {}
 func (*MsgClaimUnbondingResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{7}
+	return fileDescriptor_ebf40c3361e45611, []int{10}
 }
 func (m *MsgClaimUnbondingResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -563,44 +797,33 @@ func (m *MsgClaimUnbondingResponse) GetPosition() uint64 {
 	return 0
 }
 
-// MsgStakeVote votes derth/<validator> on proposal_id by spending it
-// (spend-to-vote). Two bundles:
+// MsgStakeVote votes stake on proposal_id by spending it (spend-to-vote): the
+// proof spends the owner's derth/<validator> notes against the proposal's
+// snapshot stake root (anchor == ProposalSnapshot.root; accepted after it
+// leaves the window), creates nothing, and weight of them leaves (v_out): the
+// vote's weight, public with the validator. The chain records the vote and
+// re-mints weight as a new stake note of the same owner to stake.spc_mint.
+// The spent nullifiers stop the notes voting again, and the new note is not
+// in the snapshot root, so it cannot vote on this proposal either. Final.
+// bundle pays the fee against the shielded pool's current roots.
 //
-// bundle (the vote, bundle 0): EVERY action's anchor is the proposal's
-// snapshot root (ProposalSnapshot.root; the ante accepts it for this msg
-// even once it has left the pool's root window), dummy spends included, and
-// its only balance is derth/<validator>: the vote's weight, released to this
-// module. The handler records the vote and mints the same value back to pc as
-// a new note. The spent nullifiers stop the notes voting again, and the new
-// note is not in the snapshot root, so it cannot vote on this proposal
-// either. Final: a stake vote is not replaced. Any change the bundle keeps (a
-// wallet should release the whole note) is likewise a new note outside the
-// snapshot, and cannot vote.
-//
-// fee_bundle (bundle 1) pays the fee: its only balance is uerth == fee, its
-// anchors in the pool's ordinary window, so the fee note need not predate
-// the snapshot.
-//
-// sighash = Sighash(type URL, chain id, 2, digest(bundle), digest(fee_bundle),
-// proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), pc,
-// Bytes(ciphertext), fee).
+// sighash fields: StakeFields(stake), proposal_id, Bytes(validator),
+// Bytes(OptionsBytes(options)), weight, fee.
 type MsgStakeVote struct {
 	Bundle     types.Bundle             `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	ProposalId uint64                   `protobuf:"varint,2,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
 	Validator  string                   `protobuf:"bytes,3,opt,name=validator,proto3" json:"validator,omitempty"`
-	Options    []*v1.WeightedVoteOption `protobuf:"bytes,7,rep,name=options,proto3" json:"options,omitempty"`
-	// pc receives the re-minted derth note.
-	Pc         []byte       `protobuf:"bytes,9,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext []byte       `protobuf:"bytes,10,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	FeeBundle  types.Bundle `protobuf:"bytes,11,opt,name=fee_bundle,json=feeBundle,proto3" json:"fee_bundle"`
-	Fee        uint64       `protobuf:"varint,12,opt,name=fee,proto3" json:"fee,omitempty"`
+	Options    []*v1.WeightedVoteOption `protobuf:"bytes,4,rep,name=options,proto3" json:"options,omitempty"`
+	Weight     uint64                   `protobuf:"varint,5,opt,name=weight,proto3" json:"weight,omitempty"`
+	Fee        uint64                   `protobuf:"varint,6,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake      StakeProof               `protobuf:"bytes,7,opt,name=stake,proto3" json:"stake"`
 }
 
 func (m *MsgStakeVote) Reset()         { *m = MsgStakeVote{} }
 func (m *MsgStakeVote) String() string { return proto.CompactTextString(m) }
 func (*MsgStakeVote) ProtoMessage()    {}
 func (*MsgStakeVote) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{8}
+	return fileDescriptor_ebf40c3361e45611, []int{11}
 }
 func (m *MsgStakeVote) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -657,25 +880,11 @@ func (m *MsgStakeVote) GetOptions() []*v1.WeightedVoteOption {
 	return nil
 }
 
-func (m *MsgStakeVote) GetPc() []byte {
+func (m *MsgStakeVote) GetWeight() uint64 {
 	if m != nil {
-		return m.Pc
+		return m.Weight
 	}
-	return nil
-}
-
-func (m *MsgStakeVote) GetCiphertext() []byte {
-	if m != nil {
-		return m.Ciphertext
-	}
-	return nil
-}
-
-func (m *MsgStakeVote) GetFeeBundle() types.Bundle {
-	if m != nil {
-		return m.FeeBundle
-	}
-	return types.Bundle{}
+	return 0
 }
 
 func (m *MsgStakeVote) GetFee() uint64 {
@@ -683,6 +892,13 @@ func (m *MsgStakeVote) GetFee() uint64 {
 		return m.Fee
 	}
 	return 0
+}
+
+func (m *MsgStakeVote) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
 }
 
 // MsgStakeVoteResponse returns the re-minted note's position.
@@ -694,7 +910,7 @@ func (m *MsgStakeVoteResponse) Reset()         { *m = MsgStakeVoteResponse{} }
 func (m *MsgStakeVoteResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgStakeVoteResponse) ProtoMessage()    {}
 func (*MsgStakeVoteResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{9}
+	return fileDescriptor_ebf40c3361e45611, []int{12}
 }
 func (m *MsgStakeVoteResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -730,25 +946,28 @@ func (m *MsgStakeVoteResponse) GetPosition() uint64 {
 	return 0
 }
 
-// MsgLockPosition releases bundle's derth/<validator> balance into the module
-// as a new Groundworks position splitting its weight by splits, controlled
-// by pubkey. bundle's balances: derth/<validator> and the uerth fee.
+// MsgLockPosition: the proof spends the owner's derth/<validator> notes,
+// amount of them leaving (v_out) into a new Groundworks position splitting
+// its weight by splits, any change back to the owner. The position stores
+// stake.owner_tag: only its owner can update, unlock or vote it. bundle pays
+// the fee only.
 //
-// sighash fields: Bytes(validator), Bytes(pubkey), Bytes(SplitsBytes(splits)),
-// fee.
+// sighash fields: StakeFields(stake), Bytes(validator), amount,
+// Bytes(SplitsBytes(splits)), fee.
 type MsgLockPosition struct {
 	Bundle    types.Bundle              `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	Validator string                    `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
-	Splits    []types1.AllocationWeight `protobuf:"bytes,3,rep,name=splits,proto3" json:"splits"`
-	Pubkey    []byte                    `protobuf:"bytes,4,opt,name=pubkey,proto3" json:"pubkey,omitempty"`
+	Amount    uint64                    `protobuf:"varint,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	Splits    []types1.AllocationWeight `protobuf:"bytes,4,rep,name=splits,proto3" json:"splits"`
 	Fee       uint64                    `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake     StakeProof                `protobuf:"bytes,6,opt,name=stake,proto3" json:"stake"`
 }
 
 func (m *MsgLockPosition) Reset()         { *m = MsgLockPosition{} }
 func (m *MsgLockPosition) String() string { return proto.CompactTextString(m) }
 func (*MsgLockPosition) ProtoMessage()    {}
 func (*MsgLockPosition) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{10}
+	return fileDescriptor_ebf40c3361e45611, []int{13}
 }
 func (m *MsgLockPosition) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -791,16 +1010,16 @@ func (m *MsgLockPosition) GetValidator() string {
 	return ""
 }
 
+func (m *MsgLockPosition) GetAmount() uint64 {
+	if m != nil {
+		return m.Amount
+	}
+	return 0
+}
+
 func (m *MsgLockPosition) GetSplits() []types1.AllocationWeight {
 	if m != nil {
 		return m.Splits
-	}
-	return nil
-}
-
-func (m *MsgLockPosition) GetPubkey() []byte {
-	if m != nil {
-		return m.Pubkey
 	}
 	return nil
 }
@@ -812,6 +1031,13 @@ func (m *MsgLockPosition) GetFee() uint64 {
 	return 0
 }
 
+func (m *MsgLockPosition) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
+}
+
 // MsgLockPositionResponse returns the position id.
 type MsgLockPositionResponse struct {
 	PositionId uint64 `protobuf:"varint,1,opt,name=position_id,json=positionId,proto3" json:"position_id,omitempty"`
@@ -821,7 +1047,7 @@ func (m *MsgLockPositionResponse) Reset()         { *m = MsgLockPositionResponse
 func (m *MsgLockPositionResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgLockPositionResponse) ProtoMessage()    {}
 func (*MsgLockPositionResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{11}
+	return fileDescriptor_ebf40c3361e45611, []int{14}
 }
 func (m *MsgLockPositionResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -857,24 +1083,24 @@ func (m *MsgLockPositionResponse) GetPositionId() uint64 {
 	return 0
 }
 
-// MsgUpdatePosition replaces a position's split. signature is the position
-// key's over PositionSignBytes (see types). bundle pays the fee only.
+// MsgUpdatePosition replaces a position's split. The proof spends and creates
+// nothing; its owner_tag must be the position's. bundle pays the fee only.
 //
-// sighash fields: position_id, Bytes(SplitsBytes(splits)), Bytes(signature),
+// sighash fields: StakeFields(stake), position_id, Bytes(SplitsBytes(splits)),
 // fee.
 type MsgUpdatePosition struct {
 	Bundle     types.Bundle              `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	PositionId uint64                    `protobuf:"varint,2,opt,name=position_id,json=positionId,proto3" json:"position_id,omitempty"`
 	Splits     []types1.AllocationWeight `protobuf:"bytes,3,rep,name=splits,proto3" json:"splits"`
-	Signature  []byte                    `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
-	Fee        uint64                    `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
+	Fee        uint64                    `protobuf:"varint,4,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake      StakeProof                `protobuf:"bytes,5,opt,name=stake,proto3" json:"stake"`
 }
 
 func (m *MsgUpdatePosition) Reset()         { *m = MsgUpdatePosition{} }
 func (m *MsgUpdatePosition) String() string { return proto.CompactTextString(m) }
 func (*MsgUpdatePosition) ProtoMessage()    {}
 func (*MsgUpdatePosition) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{12}
+	return fileDescriptor_ebf40c3361e45611, []int{15}
 }
 func (m *MsgUpdatePosition) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -924,18 +1150,18 @@ func (m *MsgUpdatePosition) GetSplits() []types1.AllocationWeight {
 	return nil
 }
 
-func (m *MsgUpdatePosition) GetSignature() []byte {
-	if m != nil {
-		return m.Signature
-	}
-	return nil
-}
-
 func (m *MsgUpdatePosition) GetFee() uint64 {
 	if m != nil {
 		return m.Fee
 	}
 	return 0
+}
+
+func (m *MsgUpdatePosition) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
 }
 
 // MsgUpdatePositionResponse is empty.
@@ -946,7 +1172,7 @@ func (m *MsgUpdatePositionResponse) Reset()         { *m = MsgUpdatePositionResp
 func (m *MsgUpdatePositionResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgUpdatePositionResponse) ProtoMessage()    {}
 func (*MsgUpdatePositionResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{13}
+	return fileDescriptor_ebf40c3361e45611, []int{16}
 }
 func (m *MsgUpdatePositionResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -975,24 +1201,23 @@ func (m *MsgUpdatePositionResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdatePositionResponse proto.InternalMessageInfo
 
-// MsgUnlockPosition closes a position and mints its derth as a note to pc.
-// bundle pays the fee only.
+// MsgUnlockPosition closes a position and mints its derth as a stake note of
+// its owner to stake.spc_mint. The proof spends and creates nothing; its
+// owner_tag must be the position's. bundle pays the fee only.
 //
-// sighash fields: position_id, pc, Bytes(ciphertext), Bytes(signature), fee.
+// sighash fields: StakeFields(stake), position_id, fee.
 type MsgUnlockPosition struct {
 	Bundle     types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	PositionId uint64       `protobuf:"varint,2,opt,name=position_id,json=positionId,proto3" json:"position_id,omitempty"`
-	Pc         []byte       `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext []byte       `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	Signature  []byte       `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
-	Fee        uint64       `protobuf:"varint,6,opt,name=fee,proto3" json:"fee,omitempty"`
+	Fee        uint64       `protobuf:"varint,3,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake      StakeProof   `protobuf:"bytes,4,opt,name=stake,proto3" json:"stake"`
 }
 
 func (m *MsgUnlockPosition) Reset()         { *m = MsgUnlockPosition{} }
 func (m *MsgUnlockPosition) String() string { return proto.CompactTextString(m) }
 func (*MsgUnlockPosition) ProtoMessage()    {}
 func (*MsgUnlockPosition) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{14}
+	return fileDescriptor_ebf40c3361e45611, []int{17}
 }
 func (m *MsgUnlockPosition) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1035,27 +1260,6 @@ func (m *MsgUnlockPosition) GetPositionId() uint64 {
 	return 0
 }
 
-func (m *MsgUnlockPosition) GetPc() []byte {
-	if m != nil {
-		return m.Pc
-	}
-	return nil
-}
-
-func (m *MsgUnlockPosition) GetCiphertext() []byte {
-	if m != nil {
-		return m.Ciphertext
-	}
-	return nil
-}
-
-func (m *MsgUnlockPosition) GetSignature() []byte {
-	if m != nil {
-		return m.Signature
-	}
-	return nil
-}
-
 func (m *MsgUnlockPosition) GetFee() uint64 {
 	if m != nil {
 		return m.Fee
@@ -1063,7 +1267,14 @@ func (m *MsgUnlockPosition) GetFee() uint64 {
 	return 0
 }
 
-// MsgUnlockPositionResponse returns the note's position.
+func (m *MsgUnlockPosition) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
+}
+
+// MsgUnlockPositionResponse returns the stake note's position.
 type MsgUnlockPositionResponse struct {
 	Position uint64 `protobuf:"varint,1,opt,name=position,proto3" json:"position,omitempty"`
 }
@@ -1072,7 +1283,7 @@ func (m *MsgUnlockPositionResponse) Reset()         { *m = MsgUnlockPositionResp
 func (m *MsgUnlockPositionResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgUnlockPositionResponse) ProtoMessage()    {}
 func (*MsgUnlockPositionResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{15}
+	return fileDescriptor_ebf40c3361e45611, []int{18}
 }
 func (m *MsgUnlockPositionResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1109,25 +1320,26 @@ func (m *MsgUnlockPositionResponse) GetPosition() uint64 {
 }
 
 // MsgPositionVote votes a position (created before the proposal entered
-// voting) on an x/gov proposal; a later vote replaces it. bundle pays the fee
+// voting) on an x/gov proposal; a later vote replaces it. The proof spends and
+// creates nothing; its owner_tag must be the position's. bundle pays the fee
 // only.
 //
-// sighash fields: position_id, proposal_id, Bytes(OptionsBytes(options)),
-// Bytes(signature), fee.
+// sighash fields: StakeFields(stake), position_id, proposal_id,
+// Bytes(OptionsBytes(options)), fee.
 type MsgPositionVote struct {
 	Bundle     types.Bundle             `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	PositionId uint64                   `protobuf:"varint,2,opt,name=position_id,json=positionId,proto3" json:"position_id,omitempty"`
 	ProposalId uint64                   `protobuf:"varint,3,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
 	Options    []*v1.WeightedVoteOption `protobuf:"bytes,4,rep,name=options,proto3" json:"options,omitempty"`
-	Signature  []byte                   `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
-	Fee        uint64                   `protobuf:"varint,6,opt,name=fee,proto3" json:"fee,omitempty"`
+	Fee        uint64                   `protobuf:"varint,5,opt,name=fee,proto3" json:"fee,omitempty"`
+	Stake      StakeProof               `protobuf:"bytes,6,opt,name=stake,proto3" json:"stake"`
 }
 
 func (m *MsgPositionVote) Reset()         { *m = MsgPositionVote{} }
 func (m *MsgPositionVote) String() string { return proto.CompactTextString(m) }
 func (*MsgPositionVote) ProtoMessage()    {}
 func (*MsgPositionVote) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{16}
+	return fileDescriptor_ebf40c3361e45611, []int{19}
 }
 func (m *MsgPositionVote) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1184,18 +1396,18 @@ func (m *MsgPositionVote) GetOptions() []*v1.WeightedVoteOption {
 	return nil
 }
 
-func (m *MsgPositionVote) GetSignature() []byte {
-	if m != nil {
-		return m.Signature
-	}
-	return nil
-}
-
 func (m *MsgPositionVote) GetFee() uint64 {
 	if m != nil {
 		return m.Fee
 	}
 	return 0
+}
+
+func (m *MsgPositionVote) GetStake() StakeProof {
+	if m != nil {
+		return m.Stake
+	}
+	return StakeProof{}
 }
 
 // MsgPositionVoteResponse is empty.
@@ -1206,7 +1418,7 @@ func (m *MsgPositionVoteResponse) Reset()         { *m = MsgPositionVoteResponse
 func (m *MsgPositionVoteResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgPositionVoteResponse) ProtoMessage()    {}
 func (*MsgPositionVoteResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{17}
+	return fileDescriptor_ebf40c3361e45611, []int{20}
 }
 func (m *MsgPositionVoteResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1238,8 +1450,11 @@ var xxx_messageInfo_MsgPositionVoteResponse proto.InternalMessageInfo
 func init() {
 	proto.RegisterType((*MsgUpdateParams)(nil), "earth.shieldedstaking.v1.MsgUpdateParams")
 	proto.RegisterType((*MsgUpdateParamsResponse)(nil), "earth.shieldedstaking.v1.MsgUpdateParamsResponse")
+	proto.RegisterType((*StakeProof)(nil), "earth.shieldedstaking.v1.StakeProof")
 	proto.RegisterType((*MsgDelegate)(nil), "earth.shieldedstaking.v1.MsgDelegate")
 	proto.RegisterType((*MsgDelegateResponse)(nil), "earth.shieldedstaking.v1.MsgDelegateResponse")
+	proto.RegisterType((*MsgRestake)(nil), "earth.shieldedstaking.v1.MsgRestake")
+	proto.RegisterType((*MsgRestakeResponse)(nil), "earth.shieldedstaking.v1.MsgRestakeResponse")
 	proto.RegisterType((*MsgUndelegate)(nil), "earth.shieldedstaking.v1.MsgUndelegate")
 	proto.RegisterType((*MsgUndelegateResponse)(nil), "earth.shieldedstaking.v1.MsgUndelegateResponse")
 	proto.RegisterType((*MsgClaimUnbonding)(nil), "earth.shieldedstaking.v1.MsgClaimUnbonding")
@@ -1259,79 +1474,86 @@ func init() {
 func init() { proto.RegisterFile("earth/shieldedstaking/v1/tx.proto", fileDescriptor_ebf40c3361e45611) }
 
 var fileDescriptor_ebf40c3361e45611 = []byte{
-	// 1145 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x57, 0x4f, 0x6b, 0xdc, 0x46,
-	0x14, 0xb7, 0xbc, 0xda, 0xf5, 0xea, 0xed, 0xc6, 0x71, 0x54, 0xb7, 0x91, 0xb7, 0x61, 0xb3, 0x59,
-	0x9a, 0xc4, 0x75, 0xb0, 0x16, 0xdb, 0x90, 0x80, 0x0b, 0x85, 0xd8, 0xa5, 0x25, 0xa6, 0xc6, 0x46,
-	0x21, 0x2d, 0xf4, 0xb2, 0x95, 0x57, 0xb3, 0x5a, 0x61, 0x49, 0x23, 0x34, 0xa3, 0xad, 0x7d, 0x2b,
-	0x3d, 0xf4, 0xd0, 0x53, 0x3f, 0x45, 0xc9, 0xd1, 0x87, 0x7e, 0x88, 0x50, 0x28, 0x84, 0x5e, 0xda,
-	0x53, 0x69, 0xed, 0x83, 0xa1, 0xdf, 0xa0, 0xb7, 0x22, 0xcd, 0x48, 0x2b, 0xc9, 0xfb, 0x17, 0x27,
-	0xd0, 0xcb, 0xa2, 0xf7, 0xf4, 0x9b, 0x79, 0xef, 0xf7, 0x7b, 0x4f, 0x6f, 0x66, 0xe1, 0x1e, 0xd2,
-	0x7d, 0xda, 0x6b, 0x91, 0x9e, 0x85, 0x6c, 0x03, 0x19, 0x84, 0xea, 0xc7, 0x96, 0x6b, 0xb6, 0xfa,
-	0x1b, 0x2d, 0x7a, 0xa2, 0x7a, 0x3e, 0xa6, 0x58, 0x56, 0x22, 0x88, 0x9a, 0x83, 0xa8, 0xfd, 0x8d,
-	0xda, 0x2d, 0xdd, 0xb1, 0x5c, 0xdc, 0x8a, 0x7e, 0x19, 0xb8, 0x76, 0xbb, 0x83, 0x89, 0x83, 0x49,
-	0xcb, 0xc4, 0xfd, 0x70, 0x13, 0x13, 0xf7, 0x73, 0x2f, 0x1c, 0x12, 0xed, 0xee, 0x10, 0x93, 0xbf,
-	0x58, 0x61, 0x2f, 0xda, 0x91, 0xd5, 0x62, 0x06, 0x7f, 0xf5, 0x01, 0x4b, 0x4e, 0xb7, 0x6d, 0xdc,
-	0xd1, 0xa9, 0x85, 0xdd, 0x70, 0xe5, 0xc0, 0xe2, 0xa8, 0x46, 0x96, 0x42, 0x88, 0x89, 0x9f, 0x39,
-	0xe2, 0xfe, 0x48, 0x92, 0x9e, 0xee, 0xeb, 0x4e, 0x1c, 0x6e, 0xd9, 0xc4, 0x26, 0x66, 0x69, 0x84,
-	0x4f, 0xcc, 0xdb, 0xfc, 0x45, 0x80, 0x9b, 0xfb, 0xc4, 0x7c, 0xe1, 0x19, 0x3a, 0x45, 0x87, 0x11,
-	0x5e, 0x7e, 0x0c, 0x92, 0x1e, 0xd0, 0x1e, 0xf6, 0x2d, 0x7a, 0xaa, 0x08, 0x0d, 0x61, 0x55, 0xda,
-	0x51, 0x7e, 0xfb, 0x79, 0x7d, 0x99, 0x67, 0xff, 0xd4, 0x30, 0x7c, 0x44, 0xc8, 0x73, 0xea, 0x5b,
-	0xae, 0xa9, 0x0d, 0xa0, 0xf2, 0x2e, 0x94, 0x58, 0x44, 0x65, 0xbe, 0x21, 0xac, 0x56, 0x36, 0x1b,
-	0xea, 0x28, 0x6d, 0x55, 0x16, 0x69, 0x47, 0x7a, 0xf5, 0xe7, 0xdd, 0xb9, 0x97, 0x97, 0x67, 0x6b,
-	0x82, 0xc6, 0x97, 0x6e, 0x6f, 0x7f, 0x77, 0x79, 0xb6, 0x36, 0xd8, 0xf4, 0x87, 0xcb, 0xb3, 0xb5,
-	0x87, 0x8c, 0xe0, 0xc9, 0x15, 0x8a, 0xb9, 0xc4, 0x9b, 0x2b, 0x70, 0x3b, 0xe7, 0xd2, 0x10, 0xf1,
-	0xb0, 0x4b, 0x50, 0xf3, 0x27, 0x01, 0x2a, 0xfb, 0xc4, 0xfc, 0x04, 0xd9, 0xc8, 0xd4, 0x29, 0x92,
-	0x9f, 0x40, 0xe9, 0x28, 0x70, 0x0d, 0x1b, 0x45, 0x04, 0x2b, 0x9b, 0x2b, 0xb9, 0x5c, 0xc3, 0x24,
-	0x77, 0x22, 0xc0, 0x8e, 0x18, 0x26, 0xa9, 0x71, 0xb8, 0x7c, 0x07, 0xa4, 0xbe, 0x6e, 0x5b, 0x86,
-	0x4e, 0xb1, 0x1f, 0xf1, 0x94, 0xb4, 0x81, 0x43, 0x5e, 0x84, 0x79, 0xaf, 0xa3, 0x14, 0x1a, 0xc2,
-	0x6a, 0x55, 0x9b, 0xf7, 0x3a, 0x72, 0x1d, 0xa0, 0x63, 0x79, 0x3d, 0xe4, 0x53, 0x74, 0x42, 0x15,
-	0x31, 0xf2, 0xa7, 0x3c, 0xf2, 0x12, 0x14, 0xba, 0x08, 0x29, 0xc5, 0x86, 0xb0, 0x2a, 0x6a, 0xe1,
-	0x63, 0xf3, 0x33, 0x78, 0x27, 0x95, 0x67, 0x9c, 0xbf, 0xbc, 0x0c, 0x45, 0x03, 0xf9, 0xb4, 0x17,
-	0xa5, 0x2b, 0x6a, 0xcc, 0x90, 0x6b, 0x50, 0xf6, 0x30, 0xb1, 0xc2, 0x76, 0x89, 0x72, 0x11, 0xb5,
-	0xc4, 0x6e, 0xbe, 0x14, 0xe0, 0x46, 0xa8, 0x86, 0x6b, 0xfc, 0xef, 0x39, 0xb7, 0xe1, 0xdd, 0x4c,
-	0xa6, 0x59, 0xd6, 0x2e, 0x76, 0x58, 0x17, 0x6a, 0xcc, 0x08, 0xbd, 0x7d, 0xdd, 0x0e, 0x10, 0xa7,
-	0xcc, 0x8c, 0x8c, 0x16, 0x85, 0x9c, 0x16, 0xff, 0x08, 0x70, 0x6b, 0x9f, 0x98, 0xbb, 0xb6, 0x6e,
-	0x39, 0x2f, 0xdc, 0x23, 0xec, 0x1a, 0x96, 0x6b, 0xbe, 0x2d, 0x3d, 0x96, 0xa1, 0x88, 0x3c, 0xdc,
-	0xe9, 0xf1, 0x2c, 0x98, 0xc1, 0x55, 0x12, 0x47, 0xa8, 0x54, 0xbc, 0xa2, 0xd2, 0x03, 0xb8, 0xd9,
-	0x45, 0xa8, 0xdd, 0xf5, 0xb1, 0xd3, 0xc6, 0x01, 0xf5, 0x02, 0xaa, 0x94, 0xa2, 0xfd, 0x6e, 0x74,
-	0x11, 0xfa, 0xd4, 0xc7, 0xce, 0x41, 0xe4, 0x8c, 0xd5, 0x5c, 0x18, 0xa8, 0x79, 0x00, 0x2b, 0x57,
-	0xb8, 0x26, 0x8a, 0xbe, 0x07, 0x25, 0xdd, 0xc1, 0x81, 0x4b, 0x79, 0x23, 0x71, 0x6b, 0x6c, 0x27,
-	0x7d, 0x5f, 0x80, 0xea, 0x3e, 0x31, 0x9f, 0x53, 0xfd, 0x18, 0x7d, 0x81, 0xaf, 0xd3, 0x48, 0x77,
-	0xa1, 0xe2, 0xf9, 0xd8, 0xc3, 0x44, 0xb7, 0xdb, 0x96, 0xc1, 0x03, 0x41, 0xec, 0x7a, 0x66, 0x64,
-	0x95, 0x2d, 0xe4, 0x95, 0xfd, 0x08, 0x16, 0xb0, 0x17, 0xa6, 0x44, 0x94, 0x85, 0x46, 0x61, 0xb5,
-	0xb2, 0x79, 0x4f, 0xe5, 0x33, 0x29, 0x9c, 0xc4, 0xfd, 0x0d, 0xf5, 0x4b, 0x64, 0x99, 0x3d, 0x8a,
-	0x8c, 0x30, 0xcb, 0x83, 0x08, 0xa9, 0xc5, 0x2b, 0x78, 0x01, 0xa4, 0x11, 0x05, 0x80, 0x2b, 0x05,
-	0xf8, 0x18, 0x20, 0x2c, 0x00, 0x27, 0x5a, 0x99, 0x8e, 0xa8, 0xd4, 0x45, 0x88, 0x39, 0xe2, 0xc2,
-	0x54, 0x93, 0xc2, 0xec, 0x89, 0x65, 0x71, 0xa9, 0xb8, 0x27, 0x96, 0x8b, 0x4b, 0xa5, 0x3d, 0xb1,
-	0x5c, 0x5a, 0x5a, 0xd8, 0x13, 0xcb, 0xe5, 0x25, 0x89, 0x37, 0xb0, 0xb6, 0xd8, 0xc7, 0x14, 0xb5,
-	0xdd, 0xc0, 0xb6, 0xad, 0xae, 0x85, 0x7c, 0x4d, 0x1a, 0x3c, 0x16, 0x3d, 0x1f, 0xe3, 0x6e, 0x73,
-	0x13, 0x96, 0xd3, 0x75, 0x48, 0x8a, 0x9a, 0x2e, 0x9e, 0x90, 0x2b, 0xde, 0xef, 0x6c, 0xc0, 0x7f,
-	0x8e, 0x3b, 0xc7, 0x87, 0xdc, 0xf7, 0xb6, 0x1a, 0x7f, 0x17, 0x4a, 0xc4, 0xb3, 0x2d, 0x4a, 0x94,
-	0x42, 0x54, 0x9d, 0xfb, 0x7c, 0xdb, 0xd4, 0x99, 0xd6, 0xdf, 0x50, 0x9f, 0x26, 0x16, 0xab, 0x56,
-	0x1c, 0x82, 0x2d, 0x0d, 0x1b, 0xd4, 0x0b, 0x8e, 0x8e, 0xd1, 0x29, 0xff, 0x56, 0xb8, 0x35, 0x64,
-	0x6a, 0x6c, 0x47, 0xd3, 0x3e, 0x4d, 0x2c, 0x11, 0x24, 0xec, 0x33, 0xee, 0x0b, 0xfb, 0x4c, 0xe0,
-	0x7d, 0xc6, 0x5d, 0xcf, 0x8c, 0xe6, 0x39, 0x1b, 0x08, 0xfc, 0xa8, 0xb8, 0xb6, 0x2e, 0xb9, 0x78,
-	0xf3, 0xf9, 0x78, 0x6f, 0x46, 0x9a, 0x3b, 0x20, 0x11, 0xcb, 0x74, 0x75, 0x1a, 0xf8, 0x88, 0xab,
-	0x33, 0x70, 0x0c, 0x11, 0xe8, 0xfd, 0x68, 0x10, 0x64, 0x39, 0x26, 0x07, 0xe2, 0xaf, 0x5c, 0x01,
-	0xd7, 0x7e, 0x23, 0x9d, 0x31, 0x51, 0x81, 0x59, 0x4f, 0x89, 0x0c, 0xd9, 0xe2, 0x08, 0xb2, 0xa5,
-	0x01, 0xd9, 0x27, 0x8c, 0x6c, 0x86, 0xce, 0x54, 0x1f, 0xc8, 0xbf, 0xec, 0x03, 0x89, 0xd7, 0x5c,
-	0x7f, 0xc0, 0x8d, 0x95, 0x21, 0x37, 0x01, 0x0b, 0x57, 0x26, 0x60, 0x6a, 0xc6, 0x89, 0x33, 0xcf,
-	0xb8, 0x59, 0x45, 0x63, 0x17, 0xa6, 0x34, 0xf5, 0x58, 0xb2, 0xcd, 0xbf, 0x17, 0xa0, 0xb0, 0x4f,
-	0x4c, 0xd9, 0x86, 0x6a, 0xe6, 0x72, 0xf8, 0xe1, 0xe8, 0x4b, 0x5d, 0xee, 0xee, 0x55, 0xdb, 0x98,
-	0x1a, 0x9a, 0x14, 0xea, 0x6b, 0x28, 0x27, 0x57, 0xb4, 0xfb, 0x63, 0x97, 0xc7, 0xb0, 0xda, 0xfa,
-	0x54, 0xb0, 0x24, 0x42, 0x17, 0x20, 0x75, 0x25, 0x7a, 0x38, 0x3e, 0xc5, 0x04, 0x58, 0x6b, 0x4d,
-	0x09, 0x4c, 0xe2, 0xf8, 0xb0, 0x98, 0xbb, 0x6e, 0x3c, 0x1a, 0xbb, 0x45, 0x16, 0x5c, 0xdb, 0x9a,
-	0x01, 0x9c, 0xc4, 0xec, 0x80, 0x34, 0x38, 0xa4, 0x1f, 0x8c, 0xdd, 0x21, 0xc1, 0xd5, 0xd4, 0xe9,
-	0x70, 0x49, 0x10, 0x1b, 0xaa, 0x99, 0xc3, 0x64, 0x7c, 0x43, 0xa4, 0xa1, 0x13, 0x1a, 0x62, 0xe8,
-	0x24, 0xf7, 0x61, 0x31, 0x37, 0xa4, 0x1f, 0x4d, 0xd3, 0x55, 0x71, 0xc4, 0xad, 0x19, 0xc0, 0x99,
-	0x98, 0xd9, 0xb1, 0x38, 0x21, 0x66, 0x06, 0x3c, 0x29, 0xe6, 0xf0, 0x09, 0x65, 0x43, 0x35, 0x33,
-	0x81, 0xc6, 0xab, 0x9a, 0x86, 0x4e, 0x50, 0x75, 0xd8, 0xc7, 0x5d, 0x2b, 0x7e, 0x1b, 0xfe, 0xe7,
-	0xda, 0x39, 0x7c, 0x75, 0x5e, 0x17, 0x5e, 0x9f, 0xd7, 0x85, 0xbf, 0xce, 0xeb, 0xc2, 0x8f, 0x17,
-	0xf5, 0xb9, 0xd7, 0x17, 0xf5, 0xb9, 0x3f, 0x2e, 0xea, 0x73, 0x5f, 0x3d, 0x36, 0x2d, 0xda, 0x0b,
-	0x8e, 0xd4, 0x0e, 0x76, 0x5a, 0xd1, 0xee, 0xeb, 0x2e, 0xa2, 0xdf, 0x60, 0xff, 0xb8, 0x35, 0xea,
-	0xbf, 0x18, 0x3d, 0xf5, 0x10, 0x39, 0x2a, 0x45, 0xff, 0x2a, 0xb7, 0xfe, 0x0b, 0x00, 0x00, 0xff,
-	0xff, 0x05, 0x5c, 0xbe, 0xe5, 0x79, 0x0f, 0x00, 0x00,
+	// 1261 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xd4, 0x58, 0xcf, 0x6f, 0x1b, 0xc5,
+	0x17, 0xcf, 0xfa, 0x57, 0xec, 0x67, 0xb7, 0xfd, 0x76, 0xbf, 0x81, 0x6e, 0xdc, 0xca, 0x75, 0xad,
+	0xa4, 0x0d, 0x29, 0xb1, 0xe5, 0x44, 0x6a, 0xa5, 0x70, 0xa1, 0x09, 0x02, 0x55, 0xc2, 0x4a, 0xb4,
+	0xa5, 0x20, 0x21, 0x21, 0xb3, 0xd9, 0x1d, 0xaf, 0x57, 0xd9, 0xdd, 0x59, 0xed, 0x8c, 0x9d, 0xf4,
+	0x86, 0x38, 0x70, 0xe0, 0xc4, 0x95, 0x03, 0x77, 0x6e, 0xe4, 0x80, 0x04, 0x27, 0x04, 0xb7, 0x8a,
+	0x53, 0xd5, 0x03, 0xe2, 0x84, 0x50, 0x72, 0xc8, 0xbf, 0x81, 0x76, 0x66, 0x76, 0xbd, 0xbb, 0x71,
+	0x1c, 0x37, 0x69, 0x90, 0xb8, 0x44, 0xfb, 0xde, 0x7c, 0x66, 0x3e, 0xf3, 0x3e, 0xef, 0xcd, 0x9b,
+	0x89, 0xe1, 0x0e, 0xd2, 0x7c, 0xda, 0x6f, 0x91, 0xbe, 0x85, 0x6c, 0x03, 0x19, 0x84, 0x6a, 0xbb,
+	0x96, 0x6b, 0xb6, 0x86, 0xed, 0x16, 0xdd, 0x6f, 0x7a, 0x3e, 0xa6, 0x58, 0x56, 0x18, 0xa4, 0x99,
+	0x82, 0x34, 0x87, 0xed, 0xea, 0x75, 0xcd, 0xb1, 0x5c, 0xdc, 0x62, 0x7f, 0x39, 0xb8, 0x7a, 0x43,
+	0xc7, 0xc4, 0xc1, 0xa4, 0x65, 0xe2, 0x61, 0xb0, 0x88, 0x89, 0x87, 0xa9, 0x01, 0x87, 0xb0, 0xd5,
+	0x1d, 0x62, 0x8a, 0x81, 0x79, 0x3e, 0xd0, 0x65, 0x56, 0x8b, 0x1b, 0x62, 0x68, 0x81, 0x6f, 0x4e,
+	0xb3, 0x6d, 0xac, 0x6b, 0xd4, 0xc2, 0x6e, 0x30, 0x73, 0x64, 0x09, 0x54, 0x3d, 0x19, 0x42, 0x80,
+	0x09, 0xbf, 0x05, 0x62, 0xf1, 0xd4, 0x20, 0x3d, 0xcd, 0xd7, 0x9c, 0x90, 0x6e, 0xce, 0xc4, 0x26,
+	0xe6, 0xdb, 0x08, 0xbe, 0xb8, 0xb7, 0xf1, 0xbb, 0x04, 0xd7, 0x3a, 0xc4, 0x7c, 0xea, 0x19, 0x1a,
+	0x45, 0xdb, 0x0c, 0x2f, 0x3f, 0x80, 0x92, 0x36, 0xa0, 0x7d, 0xec, 0x5b, 0xf4, 0x99, 0x22, 0xd5,
+	0xa5, 0xa5, 0xd2, 0x86, 0xf2, 0xf2, 0xc7, 0x95, 0x39, 0xb1, 0xfb, 0x47, 0x86, 0xe1, 0x23, 0x42,
+	0x9e, 0x50, 0xdf, 0x72, 0x4d, 0x75, 0x04, 0x95, 0x37, 0xa1, 0xc0, 0x19, 0x95, 0x4c, 0x5d, 0x5a,
+	0x2a, 0xaf, 0xd6, 0x9b, 0xa7, 0x69, 0xdb, 0xe4, 0x4c, 0x1b, 0xa5, 0xe7, 0x7f, 0xdd, 0x9e, 0xf9,
+	0xfe, 0xf8, 0x60, 0x59, 0x52, 0xc5, 0xd4, 0xf5, 0xf5, 0x2f, 0x8f, 0x0f, 0x96, 0x47, 0x8b, 0x7e,
+	0x7d, 0x7c, 0xb0, 0x7c, 0x8f, 0x07, 0xb8, 0x7f, 0x22, 0xc4, 0xd4, 0xc6, 0x1b, 0xf3, 0x70, 0x23,
+	0xe5, 0x52, 0x11, 0xf1, 0xb0, 0x4b, 0x50, 0xe3, 0x0f, 0x09, 0xe0, 0x09, 0xd5, 0x76, 0xd1, 0xb6,
+	0x8f, 0x71, 0x4f, 0x9e, 0x83, 0xbc, 0x17, 0x7c, 0xb0, 0xf0, 0x2a, 0x2a, 0x37, 0xe4, 0x37, 0xa1,
+	0xa0, 0xb9, 0x7a, 0x1f, 0xfb, 0x2c, 0x80, 0x8a, 0x2a, 0x2c, 0xb9, 0x06, 0xe0, 0x0e, 0x6c, 0xdb,
+	0xea, 0x59, 0xc8, 0x27, 0x4a, 0xb6, 0x9e, 0x5d, 0xaa, 0xa8, 0x31, 0x8f, 0x5c, 0x87, 0xb2, 0x8e,
+	0x1d, 0xc7, 0xa2, 0x0e, 0x72, 0x29, 0x51, 0x72, 0x0c, 0x10, 0x77, 0x31, 0x84, 0xe5, 0xf5, 0x91,
+	0x4f, 0xd1, 0x3e, 0x25, 0x4a, 0x5e, 0x20, 0x46, 0x2e, 0x79, 0x1e, 0x8a, 0xc4, 0xd3, 0xbb, 0x8e,
+	0xe5, 0x52, 0xa5, 0xc0, 0xd8, 0x67, 0x89, 0xa7, 0x77, 0x2c, 0x97, 0xca, 0x37, 0xa1, 0x84, 0xf7,
+	0x5c, 0xe4, 0x77, 0xa9, 0x66, 0x2a, 0xb3, 0x6c, 0xac, 0xc8, 0x1c, 0x1f, 0x69, 0x66, 0xe3, 0x67,
+	0x09, 0xca, 0x1d, 0x62, 0xbe, 0x87, 0x6c, 0x64, 0x6a, 0x14, 0xc9, 0x0f, 0xa1, 0xb0, 0x33, 0x70,
+	0x0d, 0x1b, 0xb1, 0xd0, 0xca, 0xab, 0xf3, 0xa9, 0x24, 0x04, 0xea, 0x6f, 0x30, 0xc0, 0x46, 0x2e,
+	0x50, 0x5f, 0x15, 0x70, 0xf9, 0x16, 0x94, 0x86, 0x9a, 0x6d, 0x19, 0x1a, 0x15, 0xf1, 0x97, 0xd4,
+	0x91, 0x43, 0xfe, 0x1f, 0x64, 0x7b, 0x08, 0x29, 0xd9, 0xba, 0xb4, 0x94, 0x53, 0x83, 0x4f, 0xf9,
+	0x5d, 0xc8, 0x07, 0x79, 0x40, 0x4a, 0x8e, 0xf1, 0x2c, 0x9c, 0x9e, 0xec, 0x91, 0xee, 0x82, 0x92,
+	0x4f, 0x6c, 0x7c, 0x00, 0xff, 0x8f, 0xed, 0x3c, 0x4c, 0x55, 0x90, 0x1b, 0x03, 0xf9, 0xb4, 0xcf,
+	0x02, 0xc8, 0xa9, 0xdc, 0x90, 0xab, 0x50, 0xf4, 0x30, 0xb1, 0x82, 0x93, 0xc1, 0x76, 0x97, 0x53,
+	0x23, 0xbb, 0xf1, 0x93, 0x04, 0xd0, 0x21, 0xa6, 0x8a, 0xd8, 0xba, 0xff, 0x25, 0x09, 0x56, 0x41,
+	0x1e, 0x6d, 0x3c, 0x52, 0xe0, 0x16, 0x94, 0xc2, 0xd8, 0x88, 0x22, 0xd5, 0xb3, 0x4b, 0x39, 0x75,
+	0xe4, 0x68, 0xbc, 0x94, 0xe0, 0x4a, 0x50, 0xe6, 0xae, 0x71, 0xc9, 0x39, 0x0f, 0x8e, 0x83, 0x83,
+	0x07, 0x2e, 0x15, 0x31, 0x0b, 0x2b, 0x14, 0x22, 0x37, 0x46, 0x88, 0xfc, 0x79, 0x85, 0xe8, 0xc2,
+	0x1b, 0x89, 0x98, 0x92, 0xd5, 0xe0, 0x62, 0x87, 0x37, 0x22, 0x95, 0x1b, 0x81, 0x77, 0xa8, 0xd9,
+	0x03, 0x24, 0x4a, 0x81, 0x1b, 0x89, 0x1a, 0xc9, 0xa6, 0x6a, 0xe4, 0x97, 0x0c, 0x5c, 0xef, 0x10,
+	0x73, 0xd3, 0xd6, 0x2c, 0xe7, 0xa9, 0xbb, 0x83, 0x5d, 0xc3, 0x72, 0x4d, 0xb9, 0x3d, 0xb5, 0x72,
+	0x53, 0x6a, 0x36, 0x07, 0x79, 0xe4, 0x61, 0xbd, 0x2f, 0xf8, 0xb9, 0x11, 0x53, 0x32, 0x97, 0x50,
+	0xf2, 0x2a, 0x64, 0x3c, 0x9d, 0x89, 0x56, 0x51, 0x33, 0x9e, 0x1e, 0x34, 0x9a, 0x51, 0x4f, 0x10,
+	0x6d, 0x20, 0xe6, 0x91, 0xef, 0xc2, 0xb5, 0x1e, 0x42, 0xdd, 0x9e, 0x8f, 0x9d, 0x2e, 0x1e, 0x50,
+	0x6f, 0x40, 0x59, 0x3f, 0xc8, 0xa9, 0x57, 0x7a, 0x08, 0xbd, 0xef, 0x63, 0x67, 0x8b, 0x39, 0xc3,
+	0x0c, 0x15, 0xc7, 0x64, 0xa8, 0x74, 0xde, 0x0c, 0x6d, 0xc1, 0xfc, 0x09, 0xfd, 0xa2, 0x2c, 0x8d,
+	0x02, 0x94, 0x12, 0x01, 0x4e, 0x3a, 0xb5, 0x3f, 0x64, 0xa0, 0xd2, 0x21, 0x26, 0xe3, 0xfb, 0x18,
+	0x5f, 0xa4, 0x8c, 0x6f, 0x43, 0xd9, 0xf3, 0xb1, 0x87, 0x89, 0x66, 0x77, 0x2d, 0x43, 0x10, 0x41,
+	0xe8, 0x7a, 0x6c, 0x24, 0x73, 0x96, 0x4d, 0xe7, 0xec, 0x1d, 0x98, 0xc5, 0x1e, 0x3f, 0x6c, 0x41,
+	0xeb, 0x2e, 0xaf, 0xde, 0x69, 0x8a, 0xab, 0x2e, 0xb8, 0xe0, 0x87, 0xed, 0xe6, 0x27, 0xc8, 0x32,
+	0xfb, 0x14, 0x19, 0xc1, 0x2e, 0xb7, 0x18, 0x52, 0x0d, 0x67, 0x04, 0x91, 0xef, 0xb1, 0x61, 0x96,
+	0xc6, 0x9c, 0x2a, 0xac, 0x30, 0x05, 0x85, 0x31, 0x29, 0x98, 0x3d, 0x7f, 0xb7, 0x98, 0x8b, 0x0b,
+	0x16, 0xa9, 0x1f, 0x57, 0x59, 0x4a, 0xa9, 0xfc, 0x6d, 0x86, 0x5d, 0xf0, 0x1f, 0x62, 0x7d, 0x77,
+	0x5b, 0xf8, 0xfe, 0xed, 0x7e, 0xb1, 0x09, 0x05, 0xe2, 0xd9, 0x16, 0x0d, 0xe5, 0x5d, 0x14, 0x74,
+	0xb1, 0xb7, 0xce, 0xb0, 0xdd, 0x7c, 0x14, 0x59, 0x5c, 0xee, 0x90, 0x9a, 0x4f, 0x0d, 0xf5, 0xcc,
+	0x8f, 0xd1, 0xb3, 0x70, 0x5e, 0x3d, 0xd7, 0xd9, 0x7b, 0x21, 0x2e, 0x4d, 0x24, 0x69, 0x50, 0x52,
+	0xc2, 0x17, 0x94, 0x94, 0x24, 0x4a, 0x4a, 0xb8, 0x1e, 0x1b, 0x8d, 0xaf, 0x78, 0x3f, 0x11, 0x8f,
+	0x8d, 0x0b, 0x2b, 0x9b, 0xe2, 0xcb, 0xa4, 0xf9, 0x62, 0x22, 0x66, 0x2f, 0x2c, 0xe2, 0x6b, 0xed,
+	0xdc, 0x37, 0x59, 0x5f, 0x48, 0xea, 0x10, 0x3d, 0xbb, 0x7e, 0x93, 0xb8, 0x4a, 0xae, 0xfd, 0x5a,
+	0xea, 0xef, 0x4c, 0x95, 0x2e, 0xe3, 0x8e, 0x7e, 0xc8, 0x03, 0x4c, 0x84, 0x30, 0xd5, 0xd1, 0xfb,
+	0x8e, 0x1f, 0xbd, 0x70, 0xce, 0xc5, 0x7b, 0xdc, 0xc4, 0xd0, 0x53, 0x4d, 0x30, 0x7b, 0xa2, 0x09,
+	0x5e, 0xa8, 0xcd, 0x5d, 0xc6, 0xf1, 0xe3, 0xcf, 0xf5, 0xb8, 0x3c, 0xa1, 0xac, 0xab, 0xbf, 0x16,
+	0x21, 0xdb, 0x21, 0xa6, 0x6c, 0x43, 0x25, 0xf1, 0xaf, 0xc9, 0x5b, 0xa7, 0xb3, 0xa4, 0x5e, 0xfe,
+	0xd5, 0xf6, 0xd4, 0xd0, 0x28, 0x99, 0x9f, 0x43, 0x31, 0x7a, 0x47, 0x2f, 0x4e, 0x9c, 0x1e, 0xc2,
+	0xaa, 0x2b, 0x53, 0xc1, 0x22, 0x86, 0xcf, 0x60, 0x36, 0x7c, 0xa5, 0x2e, 0x4c, 0x9c, 0x29, 0x50,
+	0xd5, 0xb7, 0xa7, 0x41, 0x45, 0xcb, 0xf7, 0x00, 0x62, 0xcf, 0xc2, 0x7b, 0x93, 0x15, 0x88, 0x80,
+	0xd5, 0xd6, 0x94, 0xc0, 0x88, 0xc7, 0x87, 0xab, 0xa9, 0x87, 0xd4, 0xfd, 0x89, 0x4b, 0x24, 0xc1,
+	0xd5, 0xb5, 0x57, 0x00, 0x47, 0x9c, 0x3a, 0x94, 0x46, 0x4f, 0x85, 0xbb, 0x13, 0x57, 0x88, 0x70,
+	0xd5, 0xe6, 0x74, 0xb8, 0x88, 0xc4, 0x86, 0x4a, 0xe2, 0xa6, 0x9c, 0x5c, 0x6f, 0x71, 0xe8, 0x19,
+	0xf5, 0x36, 0xf6, 0x92, 0xf1, 0xe1, 0x6a, 0xea, 0xfe, 0xb8, 0x3f, 0x4d, 0xd1, 0x86, 0x8c, 0x6b,
+	0xaf, 0x00, 0x4e, 0x70, 0x26, 0xbb, 0xf1, 0x19, 0x9c, 0x09, 0xf0, 0x59, 0x9c, 0xe3, 0x9b, 0xa4,
+	0x0d, 0x95, 0x44, 0x13, 0x9c, 0xac, 0x6a, 0x1c, 0x7a, 0x86, 0xaa, 0xe3, 0x7a, 0x47, 0x35, 0xff,
+	0xc5, 0xf1, 0xc1, 0xb2, 0xb4, 0xb1, 0xfd, 0xfc, 0xb0, 0x26, 0xbd, 0x38, 0xac, 0x49, 0x7f, 0x1f,
+	0xd6, 0xa4, 0x6f, 0x8e, 0x6a, 0x33, 0x2f, 0x8e, 0x6a, 0x33, 0x7f, 0x1e, 0xd5, 0x66, 0x3e, 0x7d,
+	0x60, 0x5a, 0xb4, 0x3f, 0xd8, 0x69, 0xea, 0xd8, 0x69, 0xb1, 0xd5, 0x57, 0x5c, 0x44, 0xf7, 0xb0,
+	0xbf, 0xdb, 0x3a, 0xed, 0x87, 0x06, 0xfa, 0xcc, 0x43, 0x64, 0xa7, 0xc0, 0x7e, 0x32, 0x59, 0xfb,
+	0x27, 0x00, 0x00, 0xff, 0xff, 0xe0, 0xf2, 0xa3, 0xe3, 0x56, 0x12, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -1348,22 +1570,24 @@ const _ = grpc.SupportPackageIsVersion4
 type MsgClient interface {
 	// UpdateParams updates the module parameters (governance).
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
-	// Delegate stakes ERTH privately.
+	// Delegate stakes ERTH privately: a derth stake note to its owner.
 	Delegate(ctx context.Context, in *MsgDelegate, opts ...grpc.CallOption) (*MsgDelegateResponse, error)
-	// Undelegate turns derth into an unbonding claim.
+	// Restake merges or splits stake notes of one owner.
+	Restake(ctx context.Context, in *MsgRestake, opts ...grpc.CallOption) (*MsgRestakeResponse, error)
+	// Undelegate turns derth into an owner-locked unbonding claim.
 	Undelegate(ctx context.Context, in *MsgUndelegate, opts ...grpc.CallOption) (*MsgUndelegateResponse, error)
-	// ClaimUnbonding turns a matured unbonding claim into ERTH.
+	// ClaimUnbonding turns a matured unbonding claim into an ERTH note.
 	ClaimUnbonding(ctx context.Context, in *MsgClaimUnbonding, opts ...grpc.CallOption) (*MsgClaimUnbondingResponse, error)
-	// StakeVote votes a derth note on an x/gov proposal.
+	// StakeVote votes stake notes on an x/gov proposal.
 	StakeVote(ctx context.Context, in *MsgStakeVote, opts ...grpc.CallOption) (*MsgStakeVoteResponse, error)
 	// LockPosition locks derth into a Groundworks position.
 	LockPosition(ctx context.Context, in *MsgLockPosition, opts ...grpc.CallOption) (*MsgLockPositionResponse, error)
-	// UpdatePosition changes a position's split (signed by its key).
+	// UpdatePosition changes a position's split (its owner proves it).
 	UpdatePosition(ctx context.Context, in *MsgUpdatePosition, opts ...grpc.CallOption) (*MsgUpdatePositionResponse, error)
-	// UnlockPosition returns a position's derth as a note (signed by its key).
+	// UnlockPosition returns a position's derth as a stake note of its owner.
 	UnlockPosition(ctx context.Context, in *MsgUnlockPosition, opts ...grpc.CallOption) (*MsgUnlockPositionResponse, error)
-	// PositionVote votes a position's derth on an x/gov proposal (signed by its
-	// key).
+	// PositionVote votes a position's derth on an x/gov proposal (its owner
+	// proves it).
 	PositionVote(ctx context.Context, in *MsgPositionVote, opts ...grpc.CallOption) (*MsgPositionVoteResponse, error)
 }
 
@@ -1387,6 +1611,15 @@ func (c *msgClient) UpdateParams(ctx context.Context, in *MsgUpdateParams, opts 
 func (c *msgClient) Delegate(ctx context.Context, in *MsgDelegate, opts ...grpc.CallOption) (*MsgDelegateResponse, error) {
 	out := new(MsgDelegateResponse)
 	err := c.cc.Invoke(ctx, "/earth.shieldedstaking.v1.Msg/Delegate", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) Restake(ctx context.Context, in *MsgRestake, opts ...grpc.CallOption) (*MsgRestakeResponse, error) {
+	out := new(MsgRestakeResponse)
+	err := c.cc.Invoke(ctx, "/earth.shieldedstaking.v1.Msg/Restake", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1460,22 +1693,24 @@ func (c *msgClient) PositionVote(ctx context.Context, in *MsgPositionVote, opts 
 type MsgServer interface {
 	// UpdateParams updates the module parameters (governance).
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
-	// Delegate stakes ERTH privately.
+	// Delegate stakes ERTH privately: a derth stake note to its owner.
 	Delegate(context.Context, *MsgDelegate) (*MsgDelegateResponse, error)
-	// Undelegate turns derth into an unbonding claim.
+	// Restake merges or splits stake notes of one owner.
+	Restake(context.Context, *MsgRestake) (*MsgRestakeResponse, error)
+	// Undelegate turns derth into an owner-locked unbonding claim.
 	Undelegate(context.Context, *MsgUndelegate) (*MsgUndelegateResponse, error)
-	// ClaimUnbonding turns a matured unbonding claim into ERTH.
+	// ClaimUnbonding turns a matured unbonding claim into an ERTH note.
 	ClaimUnbonding(context.Context, *MsgClaimUnbonding) (*MsgClaimUnbondingResponse, error)
-	// StakeVote votes a derth note on an x/gov proposal.
+	// StakeVote votes stake notes on an x/gov proposal.
 	StakeVote(context.Context, *MsgStakeVote) (*MsgStakeVoteResponse, error)
 	// LockPosition locks derth into a Groundworks position.
 	LockPosition(context.Context, *MsgLockPosition) (*MsgLockPositionResponse, error)
-	// UpdatePosition changes a position's split (signed by its key).
+	// UpdatePosition changes a position's split (its owner proves it).
 	UpdatePosition(context.Context, *MsgUpdatePosition) (*MsgUpdatePositionResponse, error)
-	// UnlockPosition returns a position's derth as a note (signed by its key).
+	// UnlockPosition returns a position's derth as a stake note of its owner.
 	UnlockPosition(context.Context, *MsgUnlockPosition) (*MsgUnlockPositionResponse, error)
-	// PositionVote votes a position's derth on an x/gov proposal (signed by its
-	// key).
+	// PositionVote votes a position's derth on an x/gov proposal (its owner
+	// proves it).
 	PositionVote(context.Context, *MsgPositionVote) (*MsgPositionVoteResponse, error)
 }
 
@@ -1488,6 +1723,9 @@ func (*UnimplementedMsgServer) UpdateParams(ctx context.Context, req *MsgUpdateP
 }
 func (*UnimplementedMsgServer) Delegate(ctx context.Context, req *MsgDelegate) (*MsgDelegateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delegate not implemented")
+}
+func (*UnimplementedMsgServer) Restake(ctx context.Context, req *MsgRestake) (*MsgRestakeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Restake not implemented")
 }
 func (*UnimplementedMsgServer) Undelegate(ctx context.Context, req *MsgUndelegate) (*MsgUndelegateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Undelegate not implemented")
@@ -1547,6 +1785,24 @@ func _Msg_Delegate_Handler(srv interface{}, ctx context.Context, dec func(interf
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).Delegate(ctx, req.(*MsgDelegate))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_Restake_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRestake)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).Restake(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/earth.shieldedstaking.v1.Msg/Restake",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).Restake(ctx, req.(*MsgRestake))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1691,6 +1947,10 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_Delegate_Handler,
 		},
 		{
+			MethodName: "Restake",
+			Handler:    _Msg_Restake_Handler,
+		},
+		{
 			MethodName: "Undelegate",
 			Handler:    _Msg_Undelegate_Handler,
 		},
@@ -1786,6 +2046,84 @@ func (m *MsgUpdateParamsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error)
 	return len(dAtA) - i, nil
 }
 
+func (m *StakeProof) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *StakeProof) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *StakeProof) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.OwnerTag) > 0 {
+		i -= len(m.OwnerTag)
+		copy(dAtA[i:], m.OwnerTag)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.OwnerTag)))
+		i--
+		dAtA[i] = 0x3a
+	}
+	if len(m.SpcMint) > 0 {
+		i -= len(m.SpcMint)
+		copy(dAtA[i:], m.SpcMint)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.SpcMint)))
+		i--
+		dAtA[i] = 0x32
+	}
+	if len(m.Ciphertexts) > 0 {
+		for iNdEx := len(m.Ciphertexts) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.Ciphertexts[iNdEx])
+			copy(dAtA[i:], m.Ciphertexts[iNdEx])
+			i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertexts[iNdEx])))
+			i--
+			dAtA[i] = 0x2a
+		}
+	}
+	if len(m.Commitments) > 0 {
+		for iNdEx := len(m.Commitments) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.Commitments[iNdEx])
+			copy(dAtA[i:], m.Commitments[iNdEx])
+			i = encodeVarintTx(dAtA, i, uint64(len(m.Commitments[iNdEx])))
+			i--
+			dAtA[i] = 0x22
+		}
+	}
+	if len(m.Nullifiers) > 0 {
+		for iNdEx := len(m.Nullifiers) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.Nullifiers[iNdEx])
+			copy(dAtA[i:], m.Nullifiers[iNdEx])
+			i = encodeVarintTx(dAtA, i, uint64(len(m.Nullifiers[iNdEx])))
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
+	if len(m.Anchor) > 0 {
+		i -= len(m.Anchor)
+		copy(dAtA[i:], m.Anchor)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Anchor)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.Proof) > 0 {
+		i -= len(m.Proof)
+		copy(dAtA[i:], m.Proof)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Proof)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
 func (m *MsgDelegate) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -1806,24 +2144,20 @@ func (m *MsgDelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	{
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x22
 	if m.Fee != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
 		i--
-		dAtA[i] = 0x28
-	}
-	if len(m.Ciphertext) > 0 {
-		i -= len(m.Ciphertext)
-		copy(dAtA[i:], m.Ciphertext)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
-		i--
-		dAtA[i] = 0x22
-	}
-	if len(m.Pc) > 0 {
-		i -= len(m.Pc)
-		copy(dAtA[i:], m.Pc)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
-		i--
-		dAtA[i] = 0x1a
+		dAtA[i] = 0x18
 	}
 	if len(m.Validator) > 0 {
 		i -= len(m.Validator)
@@ -1878,6 +2212,102 @@ func (m *MsgDelegateResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *MsgRestake) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgRestake) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgRestake) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x22
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
+		i--
+		dAtA[i] = 0x18
+	}
+	if len(m.Validator) > 0 {
+		i -= len(m.Validator)
+		copy(dAtA[i:], m.Validator)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Validator)))
+		i--
+		dAtA[i] = 0x12
+	}
+	{
+		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgRestakeResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgRestakeResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgRestakeResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Positions) > 0 {
+		dAtA7 := make([]byte, len(m.Positions)*10)
+		var j6 int
+		for _, num := range m.Positions {
+			for num >= 1<<7 {
+				dAtA7[j6] = uint8(uint64(num)&0x7f | 0x80)
+				num >>= 7
+				j6++
+			}
+			dAtA7[j6] = uint8(num)
+			j6++
+		}
+		i -= j6
+		copy(dAtA[i:], dAtA7[:j6])
+		i = encodeVarintTx(dAtA, i, uint64(j6))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
 func (m *MsgUndelegate) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -1898,24 +2328,25 @@ func (m *MsgUndelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	{
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x2a
 	if m.Fee != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
 		i--
-		dAtA[i] = 0x28
+		dAtA[i] = 0x20
 	}
-	if len(m.Ciphertext) > 0 {
-		i -= len(m.Ciphertext)
-		copy(dAtA[i:], m.Ciphertext)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
+	if m.Amount != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Amount))
 		i--
-		dAtA[i] = 0x22
-	}
-	if len(m.Pc) > 0 {
-		i -= len(m.Pc)
-		copy(dAtA[i:], m.Pc)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
-		i--
-		dAtA[i] = 0x1a
+		dAtA[i] = 0x18
 	}
 	if len(m.Validator) > 0 {
 		i -= len(m.Validator)
@@ -1997,29 +2428,44 @@ func (m *MsgClaimUnbonding) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	{
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x4a
 	if m.Fee != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
 		i--
-		dAtA[i] = 0x38
+		dAtA[i] = 0x40
 	}
 	if m.FeeFromOutput != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.FeeFromOutput))
 		i--
-		dAtA[i] = 0x30
+		dAtA[i] = 0x38
 	}
 	if len(m.Ciphertext) > 0 {
 		i -= len(m.Ciphertext)
 		copy(dAtA[i:], m.Ciphertext)
 		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
 		i--
-		dAtA[i] = 0x2a
+		dAtA[i] = 0x32
 	}
 	if len(m.Pc) > 0 {
 		i -= len(m.Pc)
 		copy(dAtA[i:], m.Pc)
 		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
 		i--
-		dAtA[i] = 0x22
+		dAtA[i] = 0x2a
+	}
+	if m.Amount != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Amount))
+		i--
+		dAtA[i] = 0x20
 	}
 	if m.Epoch != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Epoch))
@@ -2033,16 +2479,18 @@ func (m *MsgClaimUnbonding) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x12
 	}
-	{
-		size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
-		if err != nil {
-			return 0, err
+	if m.Bundle != nil {
+		{
+			size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintTx(dAtA, i, uint64(size))
 		}
-		i -= size
-		i = encodeVarintTx(dAtA, i, uint64(size))
+		i--
+		dAtA[i] = 0xa
 	}
-	i--
-	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
 }
 
@@ -2099,13 +2547,8 @@ func (m *MsgStakeVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if m.Fee != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
-		i--
-		dAtA[i] = 0x60
-	}
 	{
-		size, err := m.FeeBundle.MarshalToSizedBuffer(dAtA[:i])
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -2113,20 +2556,16 @@ func (m *MsgStakeVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i = encodeVarintTx(dAtA, i, uint64(size))
 	}
 	i--
-	dAtA[i] = 0x5a
-	if len(m.Ciphertext) > 0 {
-		i -= len(m.Ciphertext)
-		copy(dAtA[i:], m.Ciphertext)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
+	dAtA[i] = 0x3a
+	if m.Fee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
 		i--
-		dAtA[i] = 0x52
+		dAtA[i] = 0x30
 	}
-	if len(m.Pc) > 0 {
-		i -= len(m.Pc)
-		copy(dAtA[i:], m.Pc)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
+	if m.Weight != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Weight))
 		i--
-		dAtA[i] = 0x4a
+		dAtA[i] = 0x28
 	}
 	if len(m.Options) > 0 {
 		for iNdEx := len(m.Options) - 1; iNdEx >= 0; iNdEx-- {
@@ -2139,7 +2578,7 @@ func (m *MsgStakeVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 				i = encodeVarintTx(dAtA, i, uint64(size))
 			}
 			i--
-			dAtA[i] = 0x3a
+			dAtA[i] = 0x22
 		}
 	}
 	if len(m.Validator) > 0 {
@@ -2215,17 +2654,20 @@ func (m *MsgLockPosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	{
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x32
 	if m.Fee != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
 		i--
 		dAtA[i] = 0x28
-	}
-	if len(m.Pubkey) > 0 {
-		i -= len(m.Pubkey)
-		copy(dAtA[i:], m.Pubkey)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Pubkey)))
-		i--
-		dAtA[i] = 0x22
 	}
 	if len(m.Splits) > 0 {
 		for iNdEx := len(m.Splits) - 1; iNdEx >= 0; iNdEx-- {
@@ -2238,8 +2680,13 @@ func (m *MsgLockPosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 				i = encodeVarintTx(dAtA, i, uint64(size))
 			}
 			i--
-			dAtA[i] = 0x1a
+			dAtA[i] = 0x22
 		}
+	}
+	if m.Amount != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Amount))
+		i--
+		dAtA[i] = 0x18
 	}
 	if len(m.Validator) > 0 {
 		i -= len(m.Validator)
@@ -2309,17 +2756,20 @@ func (m *MsgUpdatePosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	{
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x2a
 	if m.Fee != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
 		i--
-		dAtA[i] = 0x28
-	}
-	if len(m.Signature) > 0 {
-		i -= len(m.Signature)
-		copy(dAtA[i:], m.Signature)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Signature)))
-		i--
-		dAtA[i] = 0x22
+		dAtA[i] = 0x20
 	}
 	if len(m.Splits) > 0 {
 		for iNdEx := len(m.Splits) - 1; iNdEx >= 0; iNdEx-- {
@@ -2396,31 +2846,20 @@ func (m *MsgUnlockPosition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	{
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x22
 	if m.Fee != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
 		i--
-		dAtA[i] = 0x30
-	}
-	if len(m.Signature) > 0 {
-		i -= len(m.Signature)
-		copy(dAtA[i:], m.Signature)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Signature)))
-		i--
-		dAtA[i] = 0x2a
-	}
-	if len(m.Ciphertext) > 0 {
-		i -= len(m.Ciphertext)
-		copy(dAtA[i:], m.Ciphertext)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
-		i--
-		dAtA[i] = 0x22
-	}
-	if len(m.Pc) > 0 {
-		i -= len(m.Pc)
-		copy(dAtA[i:], m.Pc)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
-		i--
-		dAtA[i] = 0x1a
+		dAtA[i] = 0x18
 	}
 	if m.PositionId != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.PositionId))
@@ -2488,17 +2927,20 @@ func (m *MsgPositionVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	{
+		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x32
 	if m.Fee != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Fee))
 		i--
-		dAtA[i] = 0x30
-	}
-	if len(m.Signature) > 0 {
-		i -= len(m.Signature)
-		copy(dAtA[i:], m.Signature)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Signature)))
-		i--
-		dAtA[i] = 0x2a
+		dAtA[i] = 0x28
 	}
 	if len(m.Options) > 0 {
 		for iNdEx := len(m.Options) - 1; iNdEx >= 0; iNdEx-- {
@@ -2595,6 +3037,49 @@ func (m *MsgUpdateParamsResponse) Size() (n int) {
 	return n
 }
 
+func (m *StakeProof) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Proof)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Anchor)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if len(m.Nullifiers) > 0 {
+		for _, b := range m.Nullifiers {
+			l = len(b)
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	if len(m.Commitments) > 0 {
+		for _, b := range m.Commitments {
+			l = len(b)
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	if len(m.Ciphertexts) > 0 {
+		for _, b := range m.Ciphertexts {
+			l = len(b)
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	l = len(m.SpcMint)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.OwnerTag)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	return n
+}
+
 func (m *MsgDelegate) Size() (n int) {
 	if m == nil {
 		return 0
@@ -2607,17 +3092,11 @@ func (m *MsgDelegate) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
-	l = len(m.Pc)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	l = len(m.Ciphertext)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	if m.Fee != 0 {
 		n += 1 + sovTx(uint64(m.Fee))
 	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
 	return n
 }
 
@@ -2636,6 +3115,42 @@ func (m *MsgDelegateResponse) Size() (n int) {
 	return n
 }
 
+func (m *MsgRestake) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.Bundle.Size()
+	n += 1 + l + sovTx(uint64(l))
+	l = len(m.Validator)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.Fee != 0 {
+		n += 1 + sovTx(uint64(m.Fee))
+	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
+	return n
+}
+
+func (m *MsgRestakeResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if len(m.Positions) > 0 {
+		l = 0
+		for _, e := range m.Positions {
+			l += sovTx(uint64(e))
+		}
+		n += 1 + sovTx(uint64(l)) + l
+	}
+	return n
+}
+
 func (m *MsgUndelegate) Size() (n int) {
 	if m == nil {
 		return 0
@@ -2648,17 +3163,14 @@ func (m *MsgUndelegate) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
-	l = len(m.Pc)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	l = len(m.Ciphertext)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
+	if m.Amount != 0 {
+		n += 1 + sovTx(uint64(m.Amount))
 	}
 	if m.Fee != 0 {
 		n += 1 + sovTx(uint64(m.Fee))
 	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
 	return n
 }
 
@@ -2687,14 +3199,19 @@ func (m *MsgClaimUnbonding) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = m.Bundle.Size()
-	n += 1 + l + sovTx(uint64(l))
+	if m.Bundle != nil {
+		l = m.Bundle.Size()
+		n += 1 + l + sovTx(uint64(l))
+	}
 	l = len(m.Validator)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
 	if m.Epoch != 0 {
 		n += 1 + sovTx(uint64(m.Epoch))
+	}
+	if m.Amount != 0 {
+		n += 1 + sovTx(uint64(m.Amount))
 	}
 	l = len(m.Pc)
 	if l > 0 {
@@ -2710,6 +3227,8 @@ func (m *MsgClaimUnbonding) Size() (n int) {
 	if m.Fee != 0 {
 		n += 1 + sovTx(uint64(m.Fee))
 	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
 	return n
 }
 
@@ -2749,19 +3268,14 @@ func (m *MsgStakeVote) Size() (n int) {
 			n += 1 + l + sovTx(uint64(l))
 		}
 	}
-	l = len(m.Pc)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
+	if m.Weight != 0 {
+		n += 1 + sovTx(uint64(m.Weight))
 	}
-	l = len(m.Ciphertext)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	l = m.FeeBundle.Size()
-	n += 1 + l + sovTx(uint64(l))
 	if m.Fee != 0 {
 		n += 1 + sovTx(uint64(m.Fee))
 	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
 	return n
 }
 
@@ -2789,19 +3303,20 @@ func (m *MsgLockPosition) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
+	if m.Amount != 0 {
+		n += 1 + sovTx(uint64(m.Amount))
+	}
 	if len(m.Splits) > 0 {
 		for _, e := range m.Splits {
 			l = e.Size()
 			n += 1 + l + sovTx(uint64(l))
 		}
 	}
-	l = len(m.Pubkey)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	if m.Fee != 0 {
 		n += 1 + sovTx(uint64(m.Fee))
 	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
 	return n
 }
 
@@ -2834,13 +3349,11 @@ func (m *MsgUpdatePosition) Size() (n int) {
 			n += 1 + l + sovTx(uint64(l))
 		}
 	}
-	l = len(m.Signature)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	if m.Fee != 0 {
 		n += 1 + sovTx(uint64(m.Fee))
 	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
 	return n
 }
 
@@ -2864,21 +3377,11 @@ func (m *MsgUnlockPosition) Size() (n int) {
 	if m.PositionId != 0 {
 		n += 1 + sovTx(uint64(m.PositionId))
 	}
-	l = len(m.Pc)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	l = len(m.Ciphertext)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	l = len(m.Signature)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	if m.Fee != 0 {
 		n += 1 + sovTx(uint64(m.Fee))
 	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
 	return n
 }
 
@@ -2914,13 +3417,11 @@ func (m *MsgPositionVote) Size() (n int) {
 			n += 1 + l + sovTx(uint64(l))
 		}
 	}
-	l = len(m.Signature)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	if m.Fee != 0 {
 		n += 1 + sovTx(uint64(m.Fee))
 	}
+	l = m.Stake.Size()
+	n += 1 + l + sovTx(uint64(l))
 	return n
 }
 
@@ -3104,6 +3605,288 @@ func (m *MsgUpdateParamsResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *StakeProof) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: StakeProof: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: StakeProof: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Proof", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Proof = append(m.Proof[:0], dAtA[iNdEx:postIndex]...)
+			if m.Proof == nil {
+				m.Proof = []byte{}
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Anchor", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Anchor = append(m.Anchor[:0], dAtA[iNdEx:postIndex]...)
+			if m.Anchor == nil {
+				m.Anchor = []byte{}
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Nullifiers", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Nullifiers = append(m.Nullifiers, make([]byte, postIndex-iNdEx))
+			copy(m.Nullifiers[len(m.Nullifiers)-1], dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Commitments", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Commitments = append(m.Commitments, make([]byte, postIndex-iNdEx))
+			copy(m.Commitments[len(m.Commitments)-1], dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertexts", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Ciphertexts = append(m.Ciphertexts, make([]byte, postIndex-iNdEx))
+			copy(m.Ciphertexts[len(m.Ciphertexts)-1], dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SpcMint", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.SpcMint = append(m.SpcMint[:0], dAtA[iNdEx:postIndex]...)
+			if m.SpcMint == nil {
+				m.SpcMint = []byte{}
+			}
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OwnerTag", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.OwnerTag = append(m.OwnerTag[:0], dAtA[iNdEx:postIndex]...)
+			if m.OwnerTag == nil {
+				m.OwnerTag = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *MsgDelegate) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -3199,74 +3982,6 @@ func (m *MsgDelegate) Unmarshal(dAtA []byte) error {
 			m.Validator = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
-			if m.Pc == nil {
-				m.Pc = []byte{}
-			}
-			iNdEx = postIndex
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
-			if m.Ciphertext == nil {
-				m.Ciphertext = []byte{}
-			}
-			iNdEx = postIndex
-		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
@@ -3285,6 +4000,39 @@ func (m *MsgDelegate) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -3372,6 +4120,299 @@ func (m *MsgDelegateResponse) Unmarshal(dAtA []byte) error {
 				if b < 0x80 {
 					break
 				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgRestake) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgRestake: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgRestake: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Validator", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Validator = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
+			}
+			m.Fee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Fee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgRestakeResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgRestakeResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgRestakeResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType == 0 {
+				var v uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowTx
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				m.Positions = append(m.Positions, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowTx
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthTx
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex < 0 {
+					return ErrInvalidLengthTx
+				}
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				var count int
+				for _, integer := range dAtA[iNdEx:postIndex] {
+					if integer < 128 {
+						count++
+					}
+				}
+				elementCount = count
+				if elementCount != 0 && len(m.Positions) == 0 {
+					m.Positions = make([]uint64, 0, elementCount)
+				}
+				for iNdEx < postIndex {
+					var v uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowTx
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= uint64(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.Positions = append(m.Positions, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field Positions", wireType)
 			}
 		default:
 			iNdEx = preIndex
@@ -3489,10 +4530,10 @@ func (m *MsgUndelegate) Unmarshal(dAtA []byte) error {
 			m.Validator = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
 			}
-			var byteLen int
+			m.Amount = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -3502,61 +4543,12 @@ func (m *MsgUndelegate) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				byteLen |= int(b&0x7F) << shift
+				m.Amount |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
-			if m.Pc == nil {
-				m.Pc = []byte{}
-			}
-			iNdEx = postIndex
 		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
-			if m.Ciphertext == nil {
-				m.Ciphertext = []byte{}
-			}
-			iNdEx = postIndex
-		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
@@ -3575,6 +4567,39 @@ func (m *MsgUndelegate) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -3774,6 +4799,9 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
+			if m.Bundle == nil {
+				m.Bundle = &types.Bundle{}
+			}
 			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -3830,6 +4858,25 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 				}
 			}
 		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+			}
+			m.Amount = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Amount |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
 			}
@@ -3863,7 +4910,7 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 				m.Pc = []byte{}
 			}
 			iNdEx = postIndex
-		case 5:
+		case 6:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
 			}
@@ -3897,7 +4944,7 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 				m.Ciphertext = []byte{}
 			}
 			iNdEx = postIndex
-		case 6:
+		case 7:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field FeeFromOutput", wireType)
 			}
@@ -3916,7 +4963,7 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 7:
+		case 8:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
@@ -3935,6 +4982,39 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 9:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4157,7 +5237,7 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 			}
 			m.Validator = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 7:
+		case 4:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Options", wireType)
 			}
@@ -4191,11 +5271,11 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
-		case 9:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Weight", wireType)
 			}
-			var byteLen int
+			m.Weight = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -4205,31 +5285,16 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				byteLen |= int(b&0x7F) << shift
+				m.Weight |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
-			if m.Pc == nil {
-				m.Pc = []byte{}
-			}
-			iNdEx = postIndex
-		case 10:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
-			}
-			var byteLen int
+			m.Fee = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -4239,29 +5304,14 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				byteLen |= int(b&0x7F) << shift
+				m.Fee |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
-			if m.Ciphertext == nil {
-				m.Ciphertext = []byte{}
-			}
-			iNdEx = postIndex
-		case 11:
+		case 7:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FeeBundle", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -4288,29 +5338,10 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.FeeBundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
-		case 12:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
-			}
-			m.Fee = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Fee |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4496,6 +5527,25 @@ func (m *MsgLockPosition) Unmarshal(dAtA []byte) error {
 			m.Validator = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+			}
+			m.Amount = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Amount |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Splits", wireType)
 			}
@@ -4529,40 +5579,6 @@ func (m *MsgLockPosition) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Pubkey", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Pubkey = append(m.Pubkey[:0], dAtA[iNdEx:postIndex]...)
-			if m.Pubkey == nil {
-				m.Pubkey = []byte{}
-			}
-			iNdEx = postIndex
 		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
@@ -4582,6 +5598,39 @@ func (m *MsgLockPosition) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4788,40 +5837,6 @@ func (m *MsgUpdatePosition) Unmarshal(dAtA []byte) error {
 			}
 			iNdEx = postIndex
 		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Signature", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Signature = append(m.Signature[:0], dAtA[iNdEx:postIndex]...)
-			if m.Signature == nil {
-				m.Signature = []byte{}
-			}
-			iNdEx = postIndex
-		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
@@ -4840,6 +5855,39 @@ func (m *MsgUpdatePosition) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4993,108 +6041,6 @@ func (m *MsgUnlockPosition) Unmarshal(dAtA []byte) error {
 				}
 			}
 		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
-			if m.Pc == nil {
-				m.Pc = []byte{}
-			}
-			iNdEx = postIndex
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
-			if m.Ciphertext == nil {
-				m.Ciphertext = []byte{}
-			}
-			iNdEx = postIndex
-		case 5:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Signature", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Signature = append(m.Signature[:0], dAtA[iNdEx:postIndex]...)
-			if m.Signature == nil {
-				m.Signature = []byte{}
-			}
-			iNdEx = postIndex
-		case 6:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
@@ -5113,6 +6059,39 @@ func (m *MsgUnlockPosition) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -5338,40 +6317,6 @@ func (m *MsgPositionVote) Unmarshal(dAtA []byte) error {
 			}
 			iNdEx = postIndex
 		case 5:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Signature", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Signature = append(m.Signature[:0], dAtA[iNdEx:postIndex]...)
-			if m.Signature == nil {
-				m.Signature = []byte{}
-			}
-			iNdEx = postIndex
-		case 6:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Fee", wireType)
 			}
@@ -5390,6 +6335,39 @@ func (m *MsgPositionVote) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
