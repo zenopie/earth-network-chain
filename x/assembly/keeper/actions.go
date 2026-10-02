@@ -18,7 +18,7 @@ import (
 )
 
 // The chamber's msgs are x/shielded private actions: the private ante checks
-// and verifies each (its fee transfer and its membership proof) before it
+// and verifies each (its fee bundle and its membership proof) before it
 // spends the fee, and the handlers apply what was checked. See
 // x/shielded/types.PrivateActionHandler.
 

@@ -21,7 +21,8 @@ type PersonhoodKeeper interface {
 	// MembershipActionGas prices a membership proof and `writes` note-sized
 	// writes.
 	MembershipActionGas(ctx context.Context, writes uint64) (uint64, error)
-	// SignalOf is a private msg's signal on this chain.
+	// SignalOf is a private msg's sighash on this chain, which its membership
+	// proof binds as its signal.
 	SignalOf(ctx context.Context, msg shieldedtypes.PrivateMsg) (fr.Element, error)
 	// IdentityRootWindow is how long a superseded identity root stays an
 	// anchor, which every activation bound subtracts.

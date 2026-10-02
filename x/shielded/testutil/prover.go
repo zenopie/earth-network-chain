@@ -28,6 +28,17 @@ type Prover struct {
 	Dir string
 	// VK is the action verifying key file the proofs are made against.
 	VK string
+	// Script names what re-records Dir, for the error a missing proof
+	// reports (default scripts/shielded-fixtures.sh).
+	Script string
+}
+
+// ForDir is a prover caching under dir (relative to the test's package)
+// against this module's action key, re-recorded by script.
+func ForDir(tb testing.TB, dir, script string) *Prover {
+	p := DefaultProver(tb)
+	p.Dir, p.Script = dir, script
+	return p
 }
 
 // DefaultProver is the cache under this module's testdata, for a test
@@ -67,9 +78,6 @@ func (p *Prover) File(pub [][]byte) string {
 func (p *Prover) Prove(tb testing.TB, toml string, pub [][]byte) []byte {
 	tb.Helper()
 	proof, err := p.TryProve(toml, pub)
-	if errors.Is(err, ErrNoCircuits) {
-		tb.Fatalf("no proof fixture %s for this action: run scripts/shielded-fixtures.sh", p.File(pub))
-	}
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -103,7 +111,11 @@ func (p *Prover) TryProve(toml string, pub [][]byte) ([]byte, error) {
 	}
 	src := Circuits()
 	if src == "" {
-		return nil, ErrNoCircuits
+		script := p.Script
+		if script == "" {
+			script = "scripts/shielded-fixtures.sh"
+		}
+		return nil, fmt.Errorf("%w: no proof fixture %s for this action: run %s", ErrNoCircuits, file, script)
 	}
 	proveMu.Lock()
 	defer proveMu.Unlock()

@@ -82,7 +82,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.PkiKeeper,
 	)
 	in.AllocationKeeper.RegisterChamber(chamberAddr)
-	// Every msg of the chamber is private: its fee transfer and membership
+	// Every msg of the chamber is private: its fee bundle and membership
 	// proof are checked in the private ante.
 	k.RegisterPrivateActions(in.ShieldedKeeper)
 

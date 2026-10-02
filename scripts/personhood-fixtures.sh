@@ -8,10 +8,12 @@
 #   Registration, bound (address input) to its RegistrationBinding, for its
 #   document number and current_date; each with its own fresh CSCA and DSC.
 #   -> x/personhood/testdata/passports/<name>/
-# app: reruns the app tests in proving mode (EARTH_PROVE_CIRCUITS): they drive
-#   a deterministic chain and prove every membership and fee-transfer witness
-#   against its real trees as they go.
-#   -> x/personhood/testdata/app/
+# app: reruns the app tests in proving mode (EARTH_PROVE_CIRCUITS for the
+#   membership proofs, EARTH_CIRCUITS for the fee bundles' action proofs):
+#   they drive a deterministic chain and prove every membership and action
+#   witness against its real trees as they go.
+#   -> x/personhood/testdata/app/ (membership, by name),
+#      x/personhood/testdata/app/actions/ (actions, by public inputs)
 # gas: the transparent gas grant's membership proof (GasScope, bound to an
 #   address), for x/personhood/keeper's CheckGasMembership test.
 #   -> x/personhood/testdata/gas/
@@ -30,7 +32,7 @@ export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 for bin in nargo bb; do
   command -v "$bin" >/dev/null || { echo "error: $bin not on PATH" >&2; exit 1; }
 done
-for c in lean_poa membership transfer; do
+for c in lean_poa membership action; do
   [ -d "$CIRCUITS_SRC/$c" ] || { echo "error: no $c circuit under $CIRCUITS_SRC" >&2; exit 1; }
 done
 
@@ -66,7 +68,8 @@ fi
 if [ "$WHAT" = all ] || [ "$WHAT" = app ]; then
   echo "==> app tests, proving"
   rm -f "$CHAIN_DIR"/x/personhood/testdata/app/*.proof
-  ( cd "$CHAIN_DIR" && EARTH_PROVE_CIRCUITS="$CIRCUITS_SRC" \
+  rm -rf "$CHAIN_DIR"/x/personhood/testdata/app/actions
+  ( cd "$CHAIN_DIR" && EARTH_PROVE_CIRCUITS="$CIRCUITS_SRC" EARTH_CIRCUITS="$CIRCUITS_SRC" \
       go test ./app -run 'TestPrivatePersonhood' -count=1 -timeout 60m )
 fi
 if [ "$WHAT" = all ] || [ "$WHAT" = gas ]; then

@@ -104,8 +104,13 @@ func ParseSignal(s string) (fr.Element, error) {
 
 // --- MsgRegister ---------------------------------------------------------
 
-// PrivateTransfer implements PrivateMsg.
-func (m *MsgRegister) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgRegister) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
+
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgRegister) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
 
 // MaxAddressBytes bounds a bech32 address string in a msg.
 const MaxAddressBytes = 128
@@ -145,25 +150,25 @@ func (m *MsgRegister) Binding(ac address.Codec) (fr.Element, error) {
 	return privacy.RegistrationBinding(idc, pcAnml, pcErth, aff), nil
 }
 
-// Signal implements PrivateMsg. Fields: idc, pc_anml, Bytes(ciphertext_anml),
+// SighashFields implements PrivateMsg: idc, pc_anml, Bytes(ciphertext_anml),
 // pc_erth, Bytes(ciphertext_erth), AffiliateField, Bytes(signature_algorithm),
 // then every public signal in order.
-func (m *MsgRegister) Signal(chainID string, ac address.Codec) (fr.Element, error) {
+func (m *MsgRegister) SighashFields(ac address.Codec) ([]fr.Element, error) {
 	idc, err := Field("idc", m.Idc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
 	pcAnml, err := Field("pc_anml", m.PcAnml)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
 	pcErth, err := Field("pc_erth", m.PcErth)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
 	aff, err := AffiliateField(ac, m.Affiliate)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
 	extra := []fr.Element{
 		idc, pcAnml, privacy.Bytes(m.CiphertextAnml), pcErth, privacy.Bytes(m.CiphertextErth),
@@ -172,20 +177,17 @@ func (m *MsgRegister) Signal(chainID string, ac address.Codec) (fr.Element, erro
 	for _, s := range m.PublicSignals {
 		e, err := ParseSignal(s)
 		if err != nil {
-			return fr.Element{}, err
+			return nil, err
 		}
 		extra = append(extra, e)
 	}
-	return m.Fee.ActionSignal(sdk.MsgTypeURL(m), chainID, extra...)
+	return extra, nil
 }
 
 // ValidateBasic checks everything that needs no state.
 func (m *MsgRegister) ValidateBasic() error {
-	if err := m.Fee.ValidateBasic(); err != nil {
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
-	}
-	if m.Fee.ValueOut != 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "a registration's fee transfer releases nothing")
 	}
 	if len(m.Proof) == 0 || len(m.Proof) > shieldedtypes.MaxProofBytes {
 		return errorsmod.Wrapf(ErrInvalidMsg, "proof must be 1..%d bytes", shieldedtypes.MaxProofBytes)
@@ -221,25 +223,27 @@ func (m *MsgRegister) ValidateBasic() error {
 
 // --- MsgClaimAnml --------------------------------------------------------
 
-// PrivateTransfer implements PrivateMsg.
-func (m *MsgClaimAnml) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgClaimAnml) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
 
-// Signal implements PrivateMsg. Fields: day, pc, Bytes(ciphertext).
-func (m *MsgClaimAnml) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgClaimAnml) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+
+// SighashFields implements PrivateMsg: day, pc, Bytes(ciphertext).
+func (m *MsgClaimAnml) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := Field("pc", m.Pc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
-	return m.Fee.ActionSignal(sdk.MsgTypeURL(m), chainID, privacy.U64(m.Day), pc, privacy.Bytes(m.Ciphertext))
+	return []fr.Element{privacy.U64(m.Day), pc, privacy.Bytes(m.Ciphertext)}, nil
 }
 
 // ValidateBasic checks everything that needs no state.
 func (m *MsgClaimAnml) ValidateBasic() error {
-	if err := m.Fee.ValidateBasic(); err != nil {
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
-	}
-	if m.Fee.ValueOut != 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "a claim's fee transfer releases nothing")
 	}
 	if err := m.Membership.ValidateBasic(); err != nil {
 		return err
@@ -252,26 +256,28 @@ func (m *MsgClaimAnml) ValidateBasic() error {
 
 // --- MsgSetCaretaker -----------------------------------------------------
 
-// PrivateTransfer implements PrivateMsg.
-func (m *MsgSetCaretaker) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgSetCaretaker) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
 
-// Signal implements PrivateMsg. Fields: option_id then percent, per entry.
-func (m *MsgSetCaretaker) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgSetCaretaker) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+
+// SighashFields implements PrivateMsg: option_id then percent, per entry.
+func (m *MsgSetCaretaker) SighashFields(address.Codec) ([]fr.Element, error) {
 	extra := make([]fr.Element, 0, 2*len(m.Percentages))
 	for _, w := range m.Percentages {
 		extra = append(extra, privacy.U64(w.OptionId), privacy.U64(w.Percent))
 	}
-	return m.Fee.ActionSignal(sdk.MsgTypeURL(m), chainID, extra...)
+	return extra, nil
 }
 
 // ValidateBasic checks everything that needs no state. The split itself is
 // checked by x/allocation, against the options as they stand.
 func (m *MsgSetCaretaker) ValidateBasic() error {
-	if err := m.Fee.ValidateBasic(); err != nil {
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
-	}
-	if m.Fee.ValueOut != 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "a caretaker split's fee transfer releases nothing")
 	}
 	if len(m.Percentages) > allocationtypes.MaxVoterOptions {
 		return errorsmod.Wrapf(ErrInvalidMsg, "split across %d options exceeds %d", len(m.Percentages), allocationtypes.MaxVoterOptions)
@@ -281,29 +287,31 @@ func (m *MsgSetCaretaker) ValidateBasic() error {
 
 // --- MsgBindReferrer -----------------------------------------------------
 
-// PrivateTransfer implements PrivateMsg.
-func (m *MsgBindReferrer) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgBindReferrer) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
 
-// Signal implements PrivateMsg. Fields: Bytes(address bytes) (Bytes of
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgBindReferrer) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+
+// SighashFields implements PrivateMsg: Bytes(address bytes) (Bytes of
 // nothing to clear).
-func (m *MsgBindReferrer) Signal(chainID string, ac address.Codec) (fr.Element, error) {
+func (m *MsgBindReferrer) SighashFields(ac address.Codec) ([]fr.Element, error) {
 	var bz []byte
 	if m.Address != "" {
 		var err error
 		if bz, err = ac.StringToBytes(m.Address); err != nil {
-			return fr.Element{}, errorsmod.Wrapf(ErrInvalidMsg, "address: %v", err)
+			return nil, errorsmod.Wrapf(ErrInvalidMsg, "address: %v", err)
 		}
 	}
-	return m.Fee.ActionSignal(sdk.MsgTypeURL(m), chainID, privacy.Bytes(bz))
+	return []fr.Element{privacy.Bytes(bz)}, nil
 }
 
 // ValidateBasic checks everything that needs no state.
 func (m *MsgBindReferrer) ValidateBasic() error {
-	if err := m.Fee.ValidateBasic(); err != nil {
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
-	}
-	if m.Fee.ValueOut != 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "a referrer binding's fee transfer releases nothing")
 	}
 	if len(m.Address) > MaxAddressBytes {
 		return errorsmod.Wrapf(ErrInvalidMsg, "address exceeds %d bytes", MaxAddressBytes)

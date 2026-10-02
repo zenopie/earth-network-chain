@@ -12,16 +12,17 @@ option go_package = "github.com/earth-network/earth/x/assembly/types";
 // Msg is the assembly: the chamber where weight is a person rather than a coin.
 //
 // Every message here is a private msg (unsigned, alone in its tx, its fee paid
-// from the shielded pool by the earth.shielded Transfer it embeds) carrying a
+// from the shielded pool by the earth.shielded Bundle it embeds) carrying a
 // membership proof against x/personhood's identity tree. Who voted is never
 // known; that the same person voted twice in one ballot is, because they
 // present the same nullifier, and the later vote replaces the earlier. There is
 // no UpdateParams: the assembly exists to check stake-weighted governance, so
 // nothing about it is a governance parameter.
 //
-// Each msg's signal is zk/privacy.ActionSignal(type URL, chain id, fee
-// ciphertexts, fee nullifiers, fields...), bound by both proofs; the fields
-// are listed on each msg.
+// fee is a fee bundle: its only balance is the uerth fee. Each msg's sighash
+// is zk/orchard.Sighash(type URL, chain id, 1, digest(fee), fields...), which
+// every action proof and the binding signature bind and which the membership
+// proof binds as its signal; the fields are listed on each msg.
 service Msg {
   option (cosmos.msg.v1.service) = true;
 
@@ -51,9 +52,9 @@ service Msg {
 // person who switched identity after the round opened cannot vote in it
 // again. Query BallotInputs for the round's values.
 //
-// signal fields: proposal_id, option.
+// sighash fields: proposal_id, option.
 message MsgVoteProposal {
-  earth.shielded.v1.Transfer fee = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle fee = 1 [(gogoproto.nullable) = false];
   earth.personhood.v1.Membership membership = 2 [(gogoproto.nullable) = false];
   uint64 proposal_id = 3;
   VoteOption option = 4;
@@ -73,9 +74,9 @@ message MsgVoteProposalResponse {}
 // today's UTC day), excluded_dsc and excluded_country 0 and max_activation the start of today
 // (UTC) minus the identity root window. Its nullifier is not recorded.
 //
-// signal fields: option_id.
+// sighash fields: option_id.
 message MsgProposeRemoval {
-  earth.shielded.v1.Transfer fee = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle fee = 1 [(gogoproto.nullable) = false];
   earth.personhood.v1.Membership membership = 2 [(gogoproto.nullable) = false];
   uint64 option_id = 3;
 }
@@ -92,9 +93,9 @@ message MsgProposeRemovalResponse {
 // excluded_dsc and excluded_country 0 and max_activation the ballot's opening time minus the
 // identity root window.
 //
-// signal fields: option_id, option.
+// sighash fields: option_id, option.
 message MsgVoteRemoval {
-  earth.shielded.v1.Transfer fee = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle fee = 1 [(gogoproto.nullable) = false];
   earth.personhood.v1.Membership membership = 2 [(gogoproto.nullable) = false];
   uint64 option_id = 3;
   VoteOption option = 4;

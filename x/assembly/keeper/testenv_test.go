@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -129,19 +128,13 @@ func (s *stubPersonhood) IdentityRootWindow(context.Context) (int64, error) { re
 // action's check and verify, then the handler under an authorization. A
 // voter is named by an address string, which stands in for their nullifier.
 type privateServer struct {
-	k   Keeper
-	ms  types.MsgServer
-	seq *int
+	k  Keeper
+	ms types.MsgServer
 }
 
 func (p privateServer) authorize(ctx sdk.Context, msg shieldedtypes.PrivateMsg, h shieldedtypes.PrivateActionHandler) (sdk.Context, error) {
-	// TODO(orchard-phase2): the msgs carry no bundle yet; the legacy fee
-	// transfer's nullifiers still make each msg distinct.
-	t := msg.(shieldedtypes.TransferMsg).PrivateTransfer()
-	if len(t.Nullifiers) == 0 {
-		*p.seq++
-		t.Nullifiers = [][]byte{[]byte(fmt.Sprintf("fee-%d", *p.seq))}
-	}
+	// The ante would have verified the fee bundle; the authorization is
+	// keyed by the msg's bytes, as the ante's is.
 	prepared, err := h.CheckPrivateAction(ctx, msg)
 	if err != nil {
 		return ctx, err
@@ -282,7 +275,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	return &testEnv{
 		k:          k,
 		pki:        pki,
-		ms:         privateServer{k: k, ms: NewMsgServerImpl(k), seq: new(int)},
+		ms:         privateServer{k: k, ms: NewMsgServerImpl(k)},
 		ctx:        ctx,
 		gov:        gov,
 		humans:     humans,

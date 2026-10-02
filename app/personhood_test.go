@@ -44,12 +44,13 @@ import (
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/merkle"
+	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
 const (
-	phFee      = 50_000
-	phGas      = 8_000_000
+	phFee      = 80_000
+	phGas      = 12_000_000
 	phFeeNote  = 2_000_000
 	phFeeNotes = 40
 	phDay      = int64(86400)
@@ -91,7 +92,9 @@ func loadPassport(t *testing.T, name string) passport {
 
 type phEnv struct {
 	*shieldedEnv
-	prover   *personhoodtest.Prover
+	prover *personhoodtest.Prover
+	// actions proves the fee bundles' actions (cached by public inputs).
+	actions  *shieldedtest.Prover
 	feeNotes []feeNote
 	payer    fr.Element
 }
@@ -104,8 +107,8 @@ type feeNote struct {
 func initPersonhoodEnv(t *testing.T) *phEnv {
 	t.Helper()
 	prover := &personhoodtest.Prover{Dir: filepath.Join("..", "x", "personhood", "testdata", "app")}
-	transferVK, err := prover.VK("transfer")
-	require.NoError(t, err)
+	actions := shieldedtest.ForDir(t, filepath.Join("..", "x", "personhood", "testdata", "app", "actions"), "scripts/personhood-fixtures.sh")
+	actionVK := actions.VerifyingKey(t)
 	membershipVK, err := prover.VK("membership")
 	require.NoError(t, err)
 	leanVK, err := os.ReadFile(filepath.Join(passports, "lean_poa.vk"))
@@ -119,7 +122,7 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 			var sh shieldedtypes.GenesisState
 			require.NoError(t, cdc.UnmarshalJSON(st[shieldedtypes.ModuleName], &sh))
 			sh.Params.VerifyingKeys = map[string][]byte{
-				shieldedtypes.CircuitTransfer: transferVK, shieldedtypes.CircuitMembership: membershipVK,
+				shieldedtypes.CircuitAction: actionVK, shieldedtypes.CircuitMembership: membershipVK,
 			}
 			st[shieldedtypes.ModuleName] = cdc.MustMarshalJSON(&sh)
 
@@ -138,7 +141,7 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 			st[pkitypes.ModuleName] = cdc.MustMarshalJSON(&pki)
 		},
 	})
-	e := &phEnv{shieldedEnv: se, prover: prover, payer: personhoodtest.WalletNK("payer")}
+	e := &phEnv{shieldedEnv: se, prover: prover, actions: actions, payer: personhoodtest.WalletNK("payer")}
 
 	// Fee notes: phFeeNotes notes of phFeeNote uerth, owned by the payer.
 	for batch := 0; batch < phFeeNotes/10; batch++ {
@@ -207,19 +210,18 @@ func (e *phEnv) identityTree() *merkle.Tree {
 
 func ct(name string, i int) []byte { return []byte(fmt.Sprintf("personhood-ct:%s:%d", name, i)) }
 
-// feeFor spends the next fee note into msg's fee transfer (proof unset).
-func (e *phEnv) feeFor(name string) personhoodtest.Fee {
+// feeFor plans the msg's fee bundle: the next fee note pays phFee, its
+// change back to the payer, padded with a dummy action.
+func (e *phEnv) feeFor(name string) *shieldedtest.Plan {
 	e.t.Helper()
 	require.NotEmpty(e.t, e.feeNotes, "out of fee notes")
 	fn := e.feeNotes[0]
 	e.feeNotes = e.feeNotes[1:]
-	return personhoodtest.Fee{
-		Note: fn.note, Position: fn.pos, Tree: e.noteTree(), Fee: phFee,
-		Change: personhoodtest.Note{NK: e.payer, Denom: "uerth", Value: phFeeNote - phFee,
-			Rho: personhoodtest.Det(name+"/change/rho", 0), Rcm: personhoodtest.Det(name+"/change/rcm", 0)},
-		Ciphertexts: [3][]byte{ct(name, 0), ct(name, 1), ct(name, 2)},
-		DummyRho:    personhoodtest.Det(name+"/dummy", 0),
-	}
+	change := personhoodtest.Note{NK: e.payer, Denom: "uerth", Value: phFeeNote - phFee,
+		Rho: personhoodtest.Det(name+"/change/rho", 0), Rcm: personhoodtest.Det(name+"/change/rcm", 0)}
+	return shieldedtest.FeePlan(name, e.noteTree(), shieldedtest.PlanSpend{
+		NK: fn.note.NK, Denom: "uerth", Value: fn.note.Value, Rho: fn.note.Rho, Rcm: fn.note.Rcm, Position: fn.pos,
+	}, phFee, change.PC())
 }
 
 // member is the membership a msg proves: whose registration, and the
@@ -233,18 +235,16 @@ type member struct {
 	maxAct          int64
 }
 
-// prove fills msg's fee (and membership) proofs. fee must already be set on
-// msg (Transfer without proof) so its signal can be computed.
-func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f personhoodtest.Fee, m *member) {
+// prove fills msg's fee bundle proofs and binding signature (and its
+// membership proof). The fee bundle must already be set on msg (unproven,
+// from f) so the sighash can be computed; the membership proof binds that
+// sighash as its signal.
+func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f *shieldedtest.Plan, m *member) {
 	e.t.Helper()
-	lm := msg.(shieldedtypes.TransferMsg) // TODO(orchard-phase2): bundles
-	signal, err := lm.Signal(shieldedtest.ChainID, e.app.AuthKeeper.AddressCodec())
+	ac := e.app.AuthKeeper.AddressCodec()
+	signal, err := shieldedtypes.Sighash(msg, shieldedtest.ChainID, ac)
 	require.NoError(e.t, err)
-	toml, pub, err := f.Witness(signal)
-	require.NoError(e.t, err)
-	proof, err := e.prover.Proof(name+".fee", "transfer", toml, pub)
-	require.NoError(e.t, err, name)
-	lm.PrivateTransfer().Proof = proof
+	require.NoError(e.t, shieldedtest.ProveMsg(msg, shieldedtest.ChainID, ac, []*shieldedtest.Plan{f}, e.actions.TryProve), name)
 	if m == nil {
 		return
 	}
@@ -286,11 +286,38 @@ func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f personhoodtes
 	}
 }
 
-func (e *phEnv) transfer(f personhoodtest.Fee) shieldedtypes.Transfer {
+// unverified is f's fee bundle with placeholder proofs and binding
+// signature: well formed, for a msg the chain must refuse before verifying
+// anything.
+func (e *phEnv) unverified(f *shieldedtest.Plan) shieldedtypes.Bundle {
 	e.t.Helper()
-	tr, err := f.Transfer()
+	b := e.bundle(f)
+	for i := range b.Actions {
+		b.Actions[i].Proof = []byte("never verified")
+	}
+	b.BindingSig = make([]byte, orchard.BindingSigSize)
+	return b
+}
+
+// stubFeeBundle is a well-formed, unproven two-action fee bundle paying fee.
+func stubFeeBundle(fee uint64) shieldedtypes.Bundle {
+	cv := orchard.PointBytes(orchard.ValueCommit(privacy.AssetID("uerth"), fee, privacy.AssetID("uerth"), 0, privacy.U64(7)))
+	b := shieldedtypes.Bundle{Balances: []shieldedtypes.ValueBalance{{Denom: "uerth", Amount: fee}},
+		BindingSig: make([]byte, orchard.BindingSigSize)}
+	for i := range uint64(2) {
+		b.Actions = append(b.Actions, shieldedtypes.Action{Anchor: make([]byte, 32),
+			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: []byte{1}})
+	}
+	return b
+}
+
+// bundle is f's unproven fee bundle, for the msg to carry while its sighash
+// is computed.
+func (e *phEnv) bundle(f *shieldedtest.Plan) shieldedtypes.Bundle {
+	e.t.Helper()
+	b, err := f.Unproven()
 	require.NoError(e.t, err)
-	return tr
+	return b
 }
 
 func (e *phEnv) tx(msg sdk.Msg) []byte { return e.privateTx(phGas, nil, msg) }
@@ -302,7 +329,7 @@ func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {
 	p := loadPassport(e.t, name)
 	f := e.feeFor("register/" + name)
 	msg := &personhoodtypes.MsgRegister{
-		Fee: e.transfer(f), Proof: p.proof, PublicSignals: p.signals, SignatureAlgorithm: "lean_poa", DscDer: p.dscDER,
+		Fee: e.bundle(f), Proof: p.proof, PublicSignals: p.signals, SignatureAlgorithm: "lean_poa", DscDer: p.dscDER,
 		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), CiphertextAnml: ct(name, 10),
 		PcErth: privacy.FieldBytes(r.ErthPC()), CiphertextErth: ct(name, 11),
 	}
@@ -323,7 +350,7 @@ func claimPC(name string) personhoodtest.Note {
 func (e *phEnv) claim(name, reg string, day int64, maxAct int64) *personhoodtypes.MsgClaimAnml {
 	e.t.Helper()
 	f := e.feeFor("claim/" + name)
-	msg := &personhoodtypes.MsgClaimAnml{Fee: e.transfer(f), Day: uint64(day),
+	msg := &personhoodtypes.MsgClaimAnml{Fee: e.bundle(f), Day: uint64(day),
 		Pc: privacy.FieldBytes(claimPC(name).PC()), Ciphertext: ct(name, 20)}
 	if maxAct < 0 {
 		maxAct = (day - 1) * phDay
@@ -335,7 +362,7 @@ func (e *phEnv) claim(name, reg string, day int64, maxAct int64) *personhoodtype
 func (e *phEnv) caretaker(name, reg string, maxAct int64, split []allocationtypes.AllocationWeight) *personhoodtypes.MsgSetCaretaker {
 	e.t.Helper()
 	f := e.feeFor("caretaker/" + name)
-	msg := &personhoodtypes.MsgSetCaretaker{Fee: e.transfer(f), Percentages: split, MaxActivation: uint64(maxAct)}
+	msg := &personhoodtypes.MsgSetCaretaker{Fee: e.bundle(f), Percentages: split, MaxActivation: uint64(maxAct)}
 	e.prove("caretaker/"+name, msg, f, &member{reg: reg, scope: privacy.CaretakerScope(), maxAct: maxAct})
 	return msg
 }
@@ -345,7 +372,7 @@ func (e *phEnv) caretaker(name, reg string, maxAct int64, split []allocationtype
 func (e *phEnv) bindReferrer(name, reg, human string, maxAct int64) *personhoodtypes.MsgBindReferrer {
 	e.t.Helper()
 	f := e.feeFor("referrer/" + name)
-	msg := &personhoodtypes.MsgBindReferrer{Fee: e.transfer(f), MaxActivation: uint64(maxAct)}
+	msg := &personhoodtypes.MsgBindReferrer{Fee: e.bundle(f), MaxActivation: uint64(maxAct)}
 	if human != "" {
 		msg.Address = e.bech(personhoodtest.ReferralAddress(human))
 	}
@@ -379,7 +406,7 @@ func (e *phEnv) voteProposal(name, reg string, id uint64, opt assemblytypes.Vote
 	e.t.Helper()
 	in := e.ballotInputs(&assemblytypes.QueryBallotInputsRequest{ProposalId: id})
 	f := e.feeFor("vote/" + name)
-	msg := &assemblytypes.MsgVoteProposal{Fee: e.transfer(f), ProposalId: id, Option: opt}
+	msg := &assemblytypes.MsgVoteProposal{Fee: e.bundle(f), ProposalId: id, Option: opt}
 	e.prove("vote/"+name, msg, f, &member{reg: reg, scope: field(e.t, in.Scope), excluded: field(e.t, in.ExcludedDsc),
 		excludedCountry: field(e.t, in.ExcludedCountry), maxAct: int64(in.MaxActivation)})
 	return msg
@@ -390,7 +417,7 @@ func (e *phEnv) voteProposal(name, reg string, id uint64, opt assemblytypes.Vote
 func (e *phEnv) voteProposalAs(name, reg string, id uint64, opt assemblytypes.VoteOption, m member) *assemblytypes.MsgVoteProposal {
 	e.t.Helper()
 	f := e.feeFor("vote/" + name)
-	msg := &assemblytypes.MsgVoteProposal{Fee: e.transfer(f), ProposalId: id, Option: opt}
+	msg := &assemblytypes.MsgVoteProposal{Fee: e.bundle(f), ProposalId: id, Option: opt}
 	m.reg = reg
 	e.prove("vote/"+name, msg, f, &m)
 	return msg
@@ -399,7 +426,7 @@ func (e *phEnv) voteProposalAs(name, reg string, id uint64, opt assemblytypes.Vo
 func (e *phEnv) proposeRemoval(name, reg string, option uint64) *assemblytypes.MsgProposeRemoval {
 	e.t.Helper()
 	f := e.feeFor("propose/" + name)
-	msg := &assemblytypes.MsgProposeRemoval{Fee: e.transfer(f), OptionId: option}
+	msg := &assemblytypes.MsgProposeRemoval{Fee: e.bundle(f), OptionId: option}
 	now := e.now.Unix()
 	e.prove("propose/"+name, msg, f, &member{reg: reg,
 		scope: privacy.ProposeRemovalScope(option, uint64(now/phDay)), maxAct: now/phDay*phDay - 3600})
@@ -410,7 +437,7 @@ func (e *phEnv) voteRemoval(name, reg string, option uint64, opt assemblytypes.V
 	e.t.Helper()
 	in := e.ballotInputs(&assemblytypes.QueryBallotInputsRequest{OptionId: option})
 	f := e.feeFor("vote-removal/" + name)
-	msg := &assemblytypes.MsgVoteRemoval{Fee: e.transfer(f), OptionId: option, Option: opt}
+	msg := &assemblytypes.MsgVoteRemoval{Fee: e.bundle(f), OptionId: option, Option: opt}
 	e.prove("vote-removal/"+name, msg, f, &member{reg: reg, scope: field(e.t, in.Scope), maxAct: int64(in.MaxActivation)})
 	return msg
 }
@@ -470,7 +497,6 @@ func hasCommitment(r *abci.ExecTxResult, cm fr.Element) bool {
 func dayStart(d int64) time.Time { return time.Unix(d*phDay, 0).UTC() }
 
 func TestPrivatePersonhood(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initPersonhoodEnv(t)
 	k := e.app.PersonhoodKeeper
 	ctxNow := func() sdk.Context { return e.ctx() }
@@ -509,12 +535,11 @@ func TestPrivatePersonhood(t *testing.T) {
 	// proof is bound to its idc and pcs. Refused in CheckTx, before either
 	// proof is verified or any fee note spent.
 	lifted := *regA1
-	lifted.Fee = e.transfer(e.feeFor("lifted"))
-	lifted.Fee.Proof = []byte("never verified")
+	lifted.Fee = e.unverified(e.feeFor("lifted"))
 	lifted.PcErth = privacy.FieldBytes(personhoodtest.Det("thief", 0))
 	res = e.checkTx(e.tx(&lifted))
 	require.Equal(t, personhoodtypes.ErrBadPublicInputs.ABCICode(), res.Code, res.Log)
-	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(ctxNow(), lifted.Fee.Nullifiers[2])
+	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(ctxNow(), lifted.Fee.Actions[0].Nullifier)
 	require.NoError(t, err)
 	require.False(t, spent)
 
@@ -652,8 +677,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	// A claim for another day is refused before any proof is checked.
 	wrong := *c
 	wrong.Day = uint64(d2 + 1)
-	wrong.Fee = e.transfer(e.feeFor("wrong-day"))
-	wrong.Fee.Proof = []byte("never verified")
+	wrong.Fee = e.unverified(e.feeFor("wrong-day"))
 	res = e.checkTx(e.tx(&wrong))
 	require.Equal(t, personhoodtypes.ErrWrongDay.ABCICode(), res.Code, res.Log)
 	// A1 proves tomorrow's claim now, before switching away.
@@ -668,7 +692,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	regEv = eventsOf(fb.TxResults[0].Events, "register")[0]
 	require.Equal(t, "true", regEv["switched"])
 	require.Equal(t, "0", regEv["reward"])
-	require.Len(t, mintedNotes(fb.TxResults[0]), 3, "only the fee transfer's outputs")
+	require.Len(t, mintedNotes(fb.TxResults[0]), 2, "only the fee bundle's outputs")
 	require.True(t, e.leaf(0).IsZero())
 	a2, ok := e.registration("A2")
 	require.True(t, ok)
@@ -771,10 +795,8 @@ func TestPrivatePersonhood(t *testing.T) {
 // private ante (a contract's CosmosMsg::Any, an ICA host tx) is refused, and a
 // signed tx cannot carry one.
 func TestPrivatePersonhoodBypassRefused(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initShieldedEnv(t)
-	tr := shieldedtypes.Transfer{Root: make([]byte, 32), Nullifiers: [][]byte{make([]byte, 32), {31: 1}, {31: 2}},
-		Commitments: [][]byte{make([]byte, 32), make([]byte, 32), make([]byte, 32)}, Ciphertexts: [][]byte{nil, nil, nil}, Fee: 1000, Proof: []byte{1}}
+	tr := stubFeeBundle(1000)
 	mem := personhoodtypes.Membership{Proof: []byte{1}, Root: make([]byte, 32), Nullifier: make([]byte, 32)}
 	for _, msg := range []sdk.Msg{
 		&personhoodtypes.MsgClaimAnml{Fee: tr, Membership: mem, Pc: make([]byte, 32)},

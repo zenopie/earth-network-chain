@@ -2,7 +2,6 @@ package types
 
 import (
 	"cosmossdk.io/core/address"
-	errorsmod "cosmossdk.io/errors"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
@@ -20,22 +19,17 @@ var (
 	_ sdk.HasValidateBasic = (*MsgVoteRemoval)(nil)
 )
 
-func validateFee(t *shieldedtypes.Transfer) error {
-	if err := t.ValidateBasic(); err != nil {
-		return err
-	}
-	if t.ValueOut != 0 {
-		return errorsmod.Wrap(shieldedtypes.ErrInvalidTransfer, "an assembly msg's fee transfer releases nothing")
-	}
-	return nil
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgVoteProposal) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
 }
 
-// PrivateTransfer implements PrivateMsg.
-func (m *MsgVoteProposal) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgVoteProposal) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
 
-// Signal implements PrivateMsg. Fields: proposal_id, option.
-func (m *MsgVoteProposal) Signal(chainID string, _ address.Codec) (fr.Element, error) {
-	return m.Fee.ActionSignal(sdk.MsgTypeURL(m), chainID, privacy.U64(m.ProposalId), privacy.U64(uint64(m.Option)))
+// SighashFields implements PrivateMsg: proposal_id, option.
+func (m *MsgVoteProposal) SighashFields(address.Codec) ([]fr.Element, error) {
+	return []fr.Element{privacy.U64(m.ProposalId), privacy.U64(uint64(m.Option))}, nil
 }
 
 // ValidateBasic checks everything that needs no state.
@@ -43,34 +37,44 @@ func (m *MsgVoteProposal) ValidateBasic() error {
 	if m.Option != VOTE_OPTION_YES && m.Option != VOTE_OPTION_NO {
 		return ErrBadVoteOption
 	}
-	if err := validateFee(&m.Fee); err != nil {
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
 	}
 	return m.Membership.ValidateBasic()
 }
 
-// PrivateTransfer implements PrivateMsg.
-func (m *MsgProposeRemoval) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgProposeRemoval) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
 
-// Signal implements PrivateMsg. Fields: option_id.
-func (m *MsgProposeRemoval) Signal(chainID string, _ address.Codec) (fr.Element, error) {
-	return m.Fee.ActionSignal(sdk.MsgTypeURL(m), chainID, privacy.U64(m.OptionId))
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgProposeRemoval) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+
+// SighashFields implements PrivateMsg: option_id.
+func (m *MsgProposeRemoval) SighashFields(address.Codec) ([]fr.Element, error) {
+	return []fr.Element{privacy.U64(m.OptionId)}, nil
 }
 
 // ValidateBasic checks everything that needs no state.
 func (m *MsgProposeRemoval) ValidateBasic() error {
-	if err := validateFee(&m.Fee); err != nil {
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
 	}
 	return m.Membership.ValidateBasic()
 }
 
-// PrivateTransfer implements PrivateMsg.
-func (m *MsgVoteRemoval) PrivateTransfer() *shieldedtypes.Transfer { return &m.Fee }
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgVoteRemoval) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
 
-// Signal implements PrivateMsg. Fields: option_id, option.
-func (m *MsgVoteRemoval) Signal(chainID string, _ address.Codec) (fr.Element, error) {
-	return m.Fee.ActionSignal(sdk.MsgTypeURL(m), chainID, privacy.U64(m.OptionId), privacy.U64(uint64(m.Option)))
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgVoteRemoval) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+
+// SighashFields implements PrivateMsg: option_id, option.
+func (m *MsgVoteRemoval) SighashFields(address.Codec) ([]fr.Element, error) {
+	return []fr.Element{privacy.U64(m.OptionId), privacy.U64(uint64(m.Option))}, nil
 }
 
 // ValidateBasic checks everything that needs no state.
@@ -78,7 +82,7 @@ func (m *MsgVoteRemoval) ValidateBasic() error {
 	if m.Option != VOTE_OPTION_YES && m.Option != VOTE_OPTION_NO {
 		return ErrBadVoteOption
 	}
-	if err := validateFee(&m.Fee); err != nil {
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
 	}
 	return m.Membership.ValidateBasic()

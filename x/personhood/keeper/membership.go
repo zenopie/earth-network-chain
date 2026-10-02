@@ -43,15 +43,9 @@ func (k Keeper) MembershipActionGas(ctx context.Context, writes uint64) (uint64,
 	return proof + writes*note, nil
 }
 
-// SignalOf is a private msg's signal on this chain.
-//
-// TODO(orchard-phase2): bind shieldedtypes.Sighash(msg, ...) once these msgs
-// carry bundles. Until then they keep their legacy transfer signal; the
-// private ante refuses them before any proof is checked.
+// SignalOf is the signal a private msg's membership proof binds: the msg's
+// sighash on this chain (shieldedtypes.Sighash), the same value every action
+// proof of its fee bundle binds and its binding signature signs.
 func (k Keeper) SignalOf(ctx context.Context, msg shieldedtypes.PrivateMsg) (fr.Element, error) {
-	lm, ok := msg.(shieldedtypes.TransferMsg)
-	if !ok {
-		return shieldedtypes.Sighash(msg, sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
-	}
-	return lm.Signal(sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
+	return shieldedtypes.Sighash(msg, sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
 }

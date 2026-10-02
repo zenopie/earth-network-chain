@@ -87,7 +87,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 
 	// Register, ClaimAnml and SetCaretaker are private msgs: their proofs are
-	// checked in the private ante, with the fee transfer they embed.
+	// checked in the private ante, with the fee bundle they embed.
 	k.RegisterPrivateActions(in.ShieldedKeeper)
 	// Revoking a Document Signer starts retiring the registrations made under it.
 	in.PkiKeeper.RegisterRevocationListener(k)

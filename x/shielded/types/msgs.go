@@ -256,3 +256,26 @@ func (m *MsgShield) ValidateBasic() error {
 func (m *MsgRegisterAsset) ValidateBasic() error {
 	return sdk.ValidateDenom(m.Denom)
 }
+
+// ValidateFeeOnly checks a private msg whose bundles pay its fee and nothing
+// else (personhood and assembly msgs): ValidateBundles, a positive fee, and no
+// value released beyond it.
+func ValidateFeeOnly(msg PrivateMsg) error {
+	if err := ValidateBundles(msg); err != nil {
+		return err
+	}
+	if msg.PrivateFee() == 0 {
+		return errorsmod.Wrap(ErrReleaseMap, "the fee bundle pays a positive uerth fee")
+	}
+	rem, err := Remainders(msg)
+	if err != nil {
+		return err
+	}
+	if len(rem) != 0 {
+		return errorsmod.Wrap(ErrReleaseMap, "a fee bundle releases nothing beyond its uerth fee")
+	}
+	return nil
+}
+
+// FeeBundleFee is the fee a fee bundle pays: its uerth balance.
+func FeeBundleFee(b *Bundle) uint64 { return b.Balance(FeeDenom) }

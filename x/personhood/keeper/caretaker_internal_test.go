@@ -21,6 +21,7 @@ import (
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"github.com/earth-network/earth/x/personhood/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
+	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
@@ -214,10 +215,14 @@ func TestIdentityRootWindow(t *testing.T) {
 	require.False(t, has)
 }
 
-func feeStub() shieldedtypes.Transfer {
-	return shieldedtypes.Transfer{
-		Proof: []byte{1}, Root: make([]byte, 32),
-		Nullifiers:  [][]byte{privacy.FieldBytes(privacy.U64(1)), privacy.FieldBytes(privacy.U64(2)), privacy.FieldBytes(privacy.U64(3))},
-		Commitments: [][]byte{make([]byte, 32), make([]byte, 32), make([]byte, 32)}, Ciphertexts: [][]byte{nil, nil, nil}, Fee: 1000,
+// feeStub is a well-formed, unproven fee bundle of 1000uerth: enough for the
+// sighash a membership statement binds.
+func feeStub() shieldedtypes.Bundle {
+	cv := orchard.PointBytes(orchard.ValueCommit(privacy.AssetID("uerth"), 1000, privacy.AssetID("uerth"), 0, privacy.U64(7)))
+	b := shieldedtypes.Bundle{Balances: []shieldedtypes.ValueBalance{{Denom: "uerth", Amount: 1000}}, BindingSig: make([]byte, 96)}
+	for i := range uint64(2) {
+		b.Actions = append(b.Actions, shieldedtypes.Action{Anchor: make([]byte, 32),
+			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: []byte{1}})
 	}
+	return b
 }
