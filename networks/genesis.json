@@ -330,7 +330,7 @@
           },
           "body": {
             "extension_options": [],
-            "memo": "6ad7347a1e15cc3a247347e152fee9fdd7ed2440@provider.akash-palmito.org:26656",
+            "memo": "4284b363d760766e8ccc3d18139d8f3963c620f6@192.168.0.2:26656",
             "messages": [
               {
                 "@type": "/cosmos.staking.v1beta1.MsgCreateValidator",
@@ -350,7 +350,7 @@
                 "min_self_delegation": "1",
                 "pubkey": {
                   "@type": "/cosmos.crypto.ed25519.PubKey",
-                  "key": "kTMzoCBEj1g2z49K1D/jxuLGrhTsnzfTx6Gf1LnBUJw="
+                  "key": "PGqvPN4CxEkxvvh3tSBX0SGeBgjMdqQwZkdHt8FRLm4="
                 },
                 "validator_address": "earthvaloper14e6sqtf5y7mtzwykqreewe9kg3w94t0f0rul29",
                 "value": {
@@ -365,7 +365,7 @@
             "unordered": false
           },
           "signatures": [
-            "07u+vTG1ixNh6rMe2Q/cmpSRNYduAqsSoS04+hS/zzoW149oXRmYzhES4vfJJaUZWMa+JK8+5GzXj3fvL1ua7Q=="
+            "INAjaq04K+d/MbgfdGemJCns2Xp4AJ3pu9nZ7WZv4mYYq+NidBqJFLU6XoMGcFHaiUKc/gWV2+Ar4k7kOjaJRQ=="
           ]
         }
       ]
@@ -2289,6 +2289,6 @@
       }
     }
   },
-  "genesis_time": "2026-09-29T12:00:00Z",
+  "genesis_time": "2026-10-02T12:00:00Z",
   "initial_height": 1
 }
