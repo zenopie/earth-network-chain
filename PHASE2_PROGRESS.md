@@ -32,25 +32,17 @@ Added by the user: private LP shares (dex), self-bond auto-compound
 - Verified at 4ca59eb: go build, go test ./... (all ok, no orchard skips),
   make genesis-check, make privacy-vks-check.
 
-## In progress
-- plan file update (step 7), then the private-staking redesign.
+- Private-staking redesign (owner-locked stake note tree): mobile 2253c48
+  circuits/stake; chain 441992e (VK + hashes), a26a006 (x/shielded:
+  ExcludeAssetPrefix, bundle-less fee-from-output msgs, prover per
+  circuit), 8126b2c (chain side), 81a5dc8 + TestStakeNotesOwnerLocked
+  (app tests, 111 proofs). ORCHARD_DESIGN.md section 13.
+- Verified at the last commit: go build/vet, go test ./... (all ok, zero
+  orchard-phase2), make genesis-check, make privacy-vks-check, nargo test
+  (stake 19, action 38, membership 11, privacy_core 9).
 
-## Next: private-staking redesign (user-approved spec, own commits)
-derth NON-TRANSFERABLE. Separate append-only stake note tree in
-x/shieldedstaking (own root window, snapshot roots for votes, own
-nullifier set). Stake note = H(TAG_STAKE, validator_id, amount, owner_pk,
-rho, rcm). derth/unbond leave the main pool's asset registry/turnstile; dex
-refuses them. New Noir circuit `stake` (mobile-orch circuits/, nargo tests
-incl. negative): input stake note (or none), outputs owner-locked to the
-input's owner_pk, public validator/amounts, binds the sighash. Ops:
-delegate (ERTH bundle -> stake note for owner proven by nk), merge/split
-(same owner), undelegate (-> owner-locked unbond claim until maturity, then
-an ERTH main-pool note), stake vote (snapshot stake root, re-create same
-note), positions (owner proof replaces the one-time key). Fees: ordinary
-ERTH fee bundle. Rates/epochs/compounding/slashing/tally/Groundworks/self-
-bond compounding unchanged. Tests with real proofs (see brief). Update
-ORCHARD_DESIGN.md + plan, incl. the future option to bind stake notes to a
-personhood identity if account selling appears.
+## Status
+Phase 2 complete (incl. the user's three additions). Plan file updated.
 
 ## Decisions
 - Fee-only msgs (personhood, assembly) carry `Bundle fee = 1`; their fee is

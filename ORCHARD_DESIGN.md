@@ -340,3 +340,64 @@ key and fixtures are gone; Phase 2 modules (personhood, assembly,
 shieldedstaking, dex) still carry a legacy `Transfer` and report no bundle,
 so the ante refuses their private msgs until they are ported
 (`TODO(orchard-phase2)`).
+
+## 13. Phase 2 (2026-10-02): modules on bundles, private LP, stake notes
+
+**Fees.** Personhood and assembly msgs carry `Bundle fee = 1`; its only
+balance is the uerth fee. Staking and dex msgs carry an explicit `fee`
+field (bound by the sighash) and release their value as the release-map
+remainder of their denom. Membership proofs bind the msg's sighash as their
+signal (`SignalOf = Sighash`). A msg paying its whole fee from its output
+(an unbonding claim) may carry no bundle at all.
+
+**Dex, private LP shares (user decision).** `dexlp/<pool>` is a pool asset
+(admitted on first use); MsgAddLiquidityShielded mints the shares as a note
+to `share_pc`; MsgRemoveLiquidityShielded releases exactly `dexlp/<pool>`
+into an LpUnbonding with no address (`withdrawal_id = 0x00 || first nf`),
+paying both legs as notes at maturity. `dexlp/*` notes cannot be unshielded
+(`RegisterPoolLockedPrefix`). Only module-held liquidity is public.
+
+**Private staking: owner-locked stake notes (user decision).** derth is
+non-transferable. `derth/<valoper>` and `unbond/<valoper>/<epoch>` are not
+coins and not pool assets (`ExcludeAssetPrefix`; shielded-only for every
+transparent path, so the dex refuses them): they are notes of
+x/shieldedstaking's own append-only depth-32 Poseidon2 stake tree, with its
+own nullifier set, root window (`stake_root_window_seconds`, 14 days) and
+proposal snapshot roots. Supply is a book entry
+(`ValidatorState.derth_supply`).
+
+    spc  = H(TAG_SPC, owner_pk, rho, rcm)        owner_pk = H(TAG_OWNER, nk)
+    cm   = H(TAG_STAKE, AssetID(denom), amount, spc)
+    nf   = H(TAG_SNF, nk, rho, position)
+    otag = H(TAG_OTAG, owner_pk, salt)
+    TAG_STAKE "earth.stake", TAG_SPC "earth.spc", TAG_SNF "earth.snf", TAG_OTAG "earth.otag"
+
+Circuit `stake` (mobile 2253c48, 9,647 gates, 2^14, 19 tests): up to two
+inputs under `anchor` (amount 0 = none: nf 0, no path), up to two outputs
+(amount 0 = none: cm 0), one asset, `in0 + in1 + v_in == out0 + out1 +
+v_out`, and `spc_mint`/`otag` of the SAME owner_pk; binds the sighash.
+Public: `anchor, asset, nf_0, nf_1, cm_out_0, cm_out_1, v_in, v_out,
+spc_mint, otag, sighash`. The chain fixes asset (the msg's stake denom, 0
+for position msgs), v_in (0) and v_out (the msg's amount). Every staking
+msg's sighash binds the StakeFields first: `anchor, nf_0, nf_1, cm_0, cm_1,
+Bytes(ct_0), Bytes(ct_1), spc_mint, otag`.
+
+| Msg | proof | chain |
+| --- | --- | --- |
+| Delegate {bundle: ERTH + fee} | spends/creates nothing | mints derth at the live rate to spc_mint |
+| Restake (merge/split) | spends 1-2, creates 1-2 | — |
+| Undelegate {amount} | spends, v_out = amount, change | mints owner-locked unbond claim (value at rate) to spc_mint |
+| ClaimUnbonding {amount, pc, fee or fee_from_output} | spends claims, v_out = amount | mints ERTH (transferable) to pc in the pool; no bundle with fee_from_output |
+| StakeVote {weight} | anchor = snapshot stake root, v_out = weight, creates nothing | records vote, re-mints weight to spc_mint |
+| LockPosition {amount} | spends, v_out = amount, change; otag | position stores otag |
+| Update/Unlock/PositionVote | spends nothing; otag must equal the position's | unlock mints derth to spc_mint |
+
+Owner proof replaces the one-time position key and nonce (the sighash binds
+the fee bundle, so a proof is never reusable). Rates, epochs, slashing,
+MaxEntries, gov tally, Groundworks weight and self-bond compounding are
+unchanged.
+
+**Future option (noted for the user).** If selling of whole accounts
+(mnemonics) appears, stake notes can additionally be bound to a personhood
+identity: the stake circuit would also prove an identity leaf (or bind
+owner_pk to an idc), so stake could not outlive a transfer of the account.
