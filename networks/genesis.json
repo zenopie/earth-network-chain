@@ -2206,10 +2206,14 @@
       "params": {
         "epoch_seconds": "86400",
         "max_positions": "10000",
-        "min_position": "1000000"
+        "min_position": "1000000",
+        "stake_root_window_seconds": "1209600"
       },
       "positions": [],
       "snapshots": [],
+      "stake_commitments": [],
+      "stake_nullifiers": [],
+      "stake_roots": [],
       "unbond_records": [],
       "validators": [],
       "votes": []

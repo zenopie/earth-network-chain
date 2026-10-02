@@ -6,10 +6,11 @@ package app
 // validators earn), ABCI misbehavior for slashing, and real UltraHonk proofs.
 //
 // Proofs. A private staking test's public inputs depend on what the chain
-// computed before it (a derth note's value depends on the rate, which depends
+// computed before it (a derth note's amount depends on the rate, which depends
 // on rewards), so they cannot be written down ahead of time the way
 // x/shielded/testutil's scenario is. Instead the chain run is deterministic —
-// fixed keys, genesis time and block times — and every proof is cached under
+// fixed keys, genesis time and block times — and every proof (fee bundles'
+// action proofs, stake proofs: stake_notes_test.go) is cached under
 // x/shieldedstaking/testdata/proofs, keyed by circuit and public inputs.
 // A test that needs a proof it has no file for fails, naming the fix:
 //
@@ -51,6 +52,7 @@ import (
 	earthtypes "github.com/earth-network/earth/x/earth/types"
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
+	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
@@ -78,6 +80,7 @@ type stakeEnv struct {
 	user   *secp256k1.PrivKey
 	val    *secp256k1.PrivKey
 	w      *wallet
+	sw     *stakeWallet
 	extra  int
 	// reserved are notes build must not pick as a fee note (one already
 	// committed to another bundle of the msg being built).
@@ -136,6 +139,7 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 	gs := shieldedtypes.DefaultGenesis()
 	gs.Params.VerifyingKeys = map[string][]byte{
 		shieldedtypes.CircuitAction: mustRead(t, "../x/shielded/testdata/action.vk"),
+		shieldedtypes.CircuitStake:  mustRead(t, "../x/shieldedstaking/testdata/stake.vk"),
 	}
 	doc.AppState[shieldedtypes.ModuleName], err = app0.AppCodec().MarshalJSON(gs)
 	require.NoError(t, err)
@@ -152,7 +156,7 @@ func initStakeEnv(t *testing.T) *stakeEnv {
 	})
 	require.NoError(t, err)
 	e := &stakeEnv{t: t, app: app, now: ssGenesisTime, times: map[int64]time.Time{}, user: user, val: val,
-		w: &wallet{nk: ssDet("nk", 0)}, proofDir: stakingProofs}
+		w: &wallet{nk: ssDet("nk", 0)}, sw: &stakeWallet{}, proofDir: stakingProofs}
 	e.next(5 * time.Second)
 	return e
 }
@@ -230,6 +234,7 @@ func (e *stakeEnv) block(dt time.Duration, mis []abci.Misbehavior, txs ...[]byte
 	_, err = e.app.Commit()
 	require.NoError(e.t, err)
 	e.w.scan(e)
+	e.scanStake()
 	return res
 }
 
@@ -632,15 +637,18 @@ func (e *stakeEnv) prove(msg shieldedtypes.PrivateMsg, ps ...*pendingBundle) {
 	require.NoError(e.t, shieldedtest.ProveMsg(msg, ssChainID, e.app.AuthKeeper.AddressCodec(), plans, pr.TryProve))
 }
 
-// unproven fills msg's bundles with placeholder proofs and binding
-// signatures: well formed, for a msg the chain must refuse before verifying
-// anything.
+// unproven fills msg's bundles (and stake proof) with placeholder proofs and
+// binding signatures: well formed, for a msg the chain must refuse before
+// verifying anything.
 func unproven(msg shieldedtypes.PrivateMsg) {
 	for _, b := range msg.PrivateBundles() {
 		for i := range b.Actions {
 			b.Actions[i].Proof = make([]byte, 14656)
 		}
 		b.BindingSig = make([]byte, orchard.BindingSigSize)
+	}
+	if sm, ok := msg.(sstypes.StakeMsg); ok {
+		sm.StakeProofOf().Proof = make([]byte, 14656)
 	}
 }
 
