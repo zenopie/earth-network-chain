@@ -10,8 +10,17 @@ dex on bundles; cleanup of legacy transfer code; gas-check; plan file.
   (x/personhood/testdata/app/actions = action proofs by public inputs;
   membership proofs re-recorded by name).
 
+- d1eb129 + bb6b0ab shieldedstaking on bundles: every msg `Bundle bundle`
+  + explicit `fee` (bound by the sighash); moved value = release-map
+  remainder of the msg's denom; MsgStakeVote = vote bundle (all anchors ==
+  snapshot root, only derth/<valoper>) + fee_bundle (only uerth == fee);
+  claim keeps fee_from_output. App tests pass on 82 re-recorded proofs.
+  NOTE: app/dex_notes_test.go parked behind `//go:build dexpending` until
+  the dex step removes it.
+
 ## In progress
-- shieldedstaking (8 msgs; stake vote = two bundles)
+- dex: bundles for MsgNoteSwap / MsgAddLiquidityShielded, then (separate
+  commit) private LP shares
 
 ## Next
 - dex (+ USER DECISION: private LP shares, see below), cleanup, gas-check,
