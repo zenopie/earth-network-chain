@@ -22,8 +22,14 @@ dex on bundles; cleanup of legacy transfer code; gas-check; plan file.
   remainder; fee_from_output kept), MsgAddLiquidityShielded{bundle, fee}
   (one bundle, token + uerth legs). dex_notes_test unparked; 12 proofs.
 
+- b6f0155 dex private LP shares: MsgAddLiquidityShielded -> share note
+  (no provider); new MsgRemoveLiquidityShielded (LpUnbonding w/o address,
+  withdrawal_id = 0x00||nf, both legs as notes); dexlp/ pool-locked (no
+  unshield); 14 dex proofs.
+
 ## In progress
-- dex private LP shares (user decision below), separate commit
+- cleanup (legacy_phase2.go, Transfer proto, zk/privacy transfer signals,
+  fixture scripts), then gas-check, plan file
 
 ## Next
 - dex (+ USER DECISION: private LP shares, see below), cleanup, gas-check,
