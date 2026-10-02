@@ -18,9 +18,12 @@ dex on bundles; cleanup of legacy transfer code; gas-check; plan file.
   NOTE: app/dex_notes_test.go parked behind `//go:build dexpending` until
   the dex step removes it.
 
+- 65fa337 dex on bundles: MsgNoteSwap{bundle, fee} (asset in = the one
+  remainder; fee_from_output kept), MsgAddLiquidityShielded{bundle, fee}
+  (one bundle, token + uerth legs). dex_notes_test unparked; 12 proofs.
+
 ## In progress
-- dex: bundles for MsgNoteSwap / MsgAddLiquidityShielded, then (separate
-  commit) private LP shares
+- dex private LP shares (user decision below), separate commit
 
 ## Next
 - dex (+ USER DECISION: private LP shares, see below), cleanup, gas-check,
