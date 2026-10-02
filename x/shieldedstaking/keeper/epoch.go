@@ -29,7 +29,8 @@ import (
 //     it.
 //  2. epoch end, once end_time has passed: per validator withdraw rewards,
 //     delegate the queue plus the rewards, undelegate the epoch's unbond
-//     notes; re-weigh positions; sweep non-ERTH rewards to the community pool.
+//     notes; compound every active validator operator's self-bond rewards;
+//     re-weigh positions; sweep non-ERTH rewards to the community pool.
 //  3. forget proposals whose voting has ended (x/gov has tallied them).
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	k.reweighSlashed(ctx)
@@ -84,6 +85,7 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 			k.failure(ctx, "validator", v, err)
 		}
 	}
+	k.compoundSelfBonds(ctx)
 	k.reweighPositions(ctx)
 	if err := k.guarded(ctx, k.sweepForeignRewards); err != nil {
 		k.failure(ctx, "sweep", "", err)
@@ -107,6 +109,74 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeEpoch,
 		sdk.NewAttribute(types.AttributeKeyEpoch, strconv.FormatUint(epoch.Number, 10)),
 	))
+}
+
+// compoundSelfBonds re-delegates, for every active (bonded, unjailed)
+// validator, its operator's self-bond rewards to the same validator from the
+// operator account: a validator's self-bond auto-compounds as the module's
+// delegations do. Only the delegation's own rewards, in uerth: commission is
+// untouched and stays withdrawable. An operator whose withdraw address is
+// another account is skipped (its rewards are paid there, as it asked). Each
+// validator runs in its own cache context; a failure is logged, emitted and
+// skipped, never returned. The re-delegation moves the operator's bond, so
+// x/allocation's staking hook resyncs its Groundworks weight.
+func (k Keeper) compoundSelfBonds(ctx context.Context) {
+	vals, err := k.staking.GetBondedValidatorsByPower(ctx)
+	if err != nil {
+		k.failure(ctx, "self_bond", "", err)
+		return
+	}
+	for _, val := range vals {
+		if val.IsJailed() {
+			continue
+		}
+		if err := k.guarded(ctx, func(cc context.Context) error { return k.compoundSelfBond(cc, val) }); err != nil {
+			k.failure(ctx, "self_bond", val.GetOperator(), err)
+		}
+	}
+}
+
+func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator) error {
+	valAddr, err := k.staking.ValidatorAddressCodec().StringToBytes(val.GetOperator())
+	if err != nil {
+		return err
+	}
+	op := sdk.AccAddress(valAddr)
+	if _, err := k.staking.GetDelegation(ctx, op, valAddr); err != nil {
+		if errors.Is(err, stakingtypes.ErrNoDelegation) {
+			return nil // no self-bond left (it was undelegated whole)
+		}
+		return err
+	}
+	if wa, err := k.distr.GetDelegatorWithdrawAddr(ctx, op); err != nil {
+		return err
+	} else if !wa.Equals(op) {
+		return nil
+	}
+	before := k.bank.GetBalance(ctx, op, types.BondDenom).Amount
+	if _, err := k.distr.WithdrawDelegationRewards(ctx, op, valAddr); err != nil {
+		return err
+	}
+	// What the withdrawal paid the operator in uerth: its self-bond's
+	// rewards, and nothing it held before.
+	amt := k.bank.GetBalance(ctx, op, types.BondDenom).Amount.Sub(before)
+	if !amt.IsPositive() {
+		return nil
+	}
+	// Re-read: the withdrawal touched the validator's distribution period,
+	// not its tokens, but Delegate takes the validator by value.
+	v, err := k.staking.GetValidator(ctx, valAddr)
+	if err != nil {
+		return err
+	}
+	if _, err := k.staking.Delegate(ctx, op, amt, stakingtypes.Unbonded, v, true); err != nil {
+		return err
+	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeSelfBond,
+		sdk.NewAttribute(types.AttributeKeyValidator, val.GetOperator()),
+		sdk.NewAttribute(types.AttributeKeyAmount, amt.String()),
+	))
+	return nil
 }
 
 // pendingRecords is v's PENDING records, in epoch order.

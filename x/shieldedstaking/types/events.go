@@ -14,6 +14,7 @@ const (
 	EventTypeSnapshot       = "shieldedstaking_snapshot"
 	EventTypePosition       = "shieldedstaking_position"
 	EventTypeInvariant      = "shieldedstaking_invariant_broken"
+	EventTypeSelfBond       = "shieldedstaking_self_bond_compounded"
 
 	AttributeKeyValidator   = "validator"
 	AttributeKeyAmount      = "amount"

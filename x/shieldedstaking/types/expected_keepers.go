@@ -41,6 +41,9 @@ type StakingKeeper interface {
 	// GetDelegatorBonded is a validator operator's transparent self-bond (no
 	// other account can delegate): its Groundworks weight.
 	GetDelegatorBonded(ctx context.Context, delegator sdk.AccAddress) (math.Int, error)
+	// GetBondedValidatorsByPower is the active set: the validators whose
+	// operators' self-bond rewards compound at each epoch end.
+	GetBondedValidatorsByPower(ctx context.Context) ([]stakingtypes.Validator, error)
 }
 
 // DistrKeeper is x/distribution: rewards and the community pool.
@@ -49,6 +52,7 @@ type DistrKeeper interface {
 	IncrementValidatorPeriod(ctx context.Context, val stakingtypes.ValidatorI) (uint64, error)
 	CalculateDelegationRewards(ctx context.Context, val stakingtypes.ValidatorI, del stakingtypes.DelegationI, endingPeriod uint64) (sdk.DecCoins, error)
 	FundCommunityPool(ctx context.Context, amount sdk.Coins, sender sdk.AccAddress) error
+	GetDelegatorWithdrawAddr(ctx context.Context, delAddr sdk.AccAddress) (sdk.AccAddress, error)
 }
 
 // SlashingKeeper reports tombstoning.

@@ -245,14 +245,23 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 }
 
 // requireNoAccount fails if any event attribute names an account other than
-// a module's: the shielded LP path involves no account.
-func requireNoAccount(t *testing.T, events []abci.Event) {
+// a module's: the shielded LP path involves no account. With only, it looks
+// at events of those types alone (a block's events carry everything else the
+// block did).
+func requireNoAccount(t *testing.T, events []abci.Event, only ...string) {
 	t.Helper()
 	modules := map[string]bool{}
 	for name := range GetMaccPerms() {
 		modules[authtypes.NewModuleAddress(name).String()] = true
 	}
+	keep := map[string]bool{}
+	for _, o := range only {
+		keep[o] = true
+	}
 	for _, ev := range events {
+		if len(only) > 0 && !keep[ev.Type] {
+			continue
+		}
 		for _, a := range ev.Attributes {
 			if _, err := sdk.AccAddressFromBech32(a.Value); err == nil {
 				require.True(t, modules[a.Value], "%s.%s names account %s", ev.Type, a.Key, a.Value)
@@ -393,7 +402,7 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 		}
 	}
 	require.NotNil(t, paid, "withdrawal never matured")
-	requireNoAccount(t, paid.Events)
+	requireNoAccount(t, paid.Events, "complete_unbond_liquidity", shieldedtypes.EventTypeMint, shieldedtypes.EventTypeNote)
 	done := eventsOf(paid.Events, "complete_unbond_liquidity")[0]
 	_, named = done["provider"]
 	require.False(t, named)

@@ -1135,18 +1135,21 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 		return voterW(op).Add(voterW(sstypes.PositionVoterKey(id))).Add(voterW(sstypes.PositionVoterKey(idA)))
 	}
 
-	// The operator votes with its self-bond (100 ERTH).
+	// The operator votes with its self-bond (100 ERTH, plus the rewards the
+	// epoch compounded into it).
 	fb := e.run(e.signedTx(e.val, 300_000, 5_000, &allocationtypes.MsgSetAllocations{
 		Creator: e.bech(op), Stream: gw, Percentages: opt,
 	}))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
-	require.Equal(t, math.NewInt(100*ssErth), voterW(op))
+	require.True(t, voterW(op).GT(math.NewInt(100*ssErth)))
 	require.Equal(t, bonded(), voterW(op))
 
 	// Bond more: the weight follows (AfterDelegationModified).
+	w0 := voterW(op)
 	fb = e.run(e.signedTx(e.val, 300_000, 5_000, stakingtypes.NewMsgDelegate(e.bech(op), e.valoper(vA), sdk.NewInt64Coin("uerth", 50*ssErth))))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
-	require.Equal(t, math.NewInt(150*ssErth), voterW(op))
+	require.True(t, voterW(op).Sub(w0).Sub(math.NewInt(50*ssErth)).Abs().LTE(math.OneInt()))
+	require.Equal(t, bonded(), voterW(op))
 
 	// The module account has delegations and no weight, ever; the position's
 	// weight is untouched by the operator's moves.
@@ -1160,8 +1163,10 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 	_, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), []byte(mod)))
 	require.ErrorIs(t, err, collections.ErrNotFound)
 	require.Equal(t, posW, voterW(sstypes.PositionVoterKey(id)))
-	e.days(1) // an epoch: positions reweigh, the operator stays at its bond
-	require.Equal(t, math.NewInt(150*ssErth), voterW(op))
+	w1 := voterW(op)
+	e.days(1) // an epoch: positions reweigh; the operator's self-bond compounds its rewards
+	require.True(t, bonded().GT(w1), "self-bond compounded: %s", bonded())
+	require.Equal(t, bonded(), voterW(op), "the weight follows the compounded bond")
 	require.Equal(t, e.position(id).Weight, voterW(sstypes.PositionVoterKey(id)))
 	o, err := ak.Options.Get(e.ctx(), collections.Join(uint32(gw), uint64(1)))
 	require.NoError(t, err)
@@ -1206,5 +1211,135 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sumVoters(), o.AmountAllocated)
 	require.NoError(t, ak.AssertHotInvariants(e.ctx()))
+	e.invariants()
+}
+
+// A validator operator's self-bond rewards (uerth, not commission) are
+// re-delegated to its validator at every epoch end: the bond grows by them,
+// the operator's Groundworks weight follows, commission stays withdrawable.
+// A jailed validator is skipped; a validator whose compounding fails is
+// skipped and reported while the others compound and the block commits.
+func TestSelfBondCompounds(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, vBKey := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	opA, opB := sdk.AccAddress(e.genesisValidator()), sdk.AccAddress(vB)
+	selfBond := func(op sdk.AccAddress, v sdk.ValAddress) math.Int {
+		d, err := e.app.StakingKeeper.GetDelegation(e.ctx(), op, v)
+		require.NoError(t, err)
+		val, err := e.app.StakingKeeper.GetValidator(e.ctx(), v)
+		require.NoError(t, err)
+		return val.TokensFromShares(d.Shares).TruncateInt()
+	}
+	commission := func(v sdk.ValAddress) math.Int {
+		c, err := e.app.DistrKeeper.GetValidatorAccumulatedCommission(e.ctx(), v)
+		require.NoError(t, err)
+		return c.Commission.AmountOf("uerth").TruncateInt()
+	}
+
+	// The operator votes on Groundworks with its self-bond, so the weight
+	// resync is visible.
+	gw := allocationtypes.STREAM_ID_GROUNDWORKS
+	gov := authtypes.NewModuleAddress("gov")
+	require.NoError(t, e.app.BankKeeper.SendCoins(e.ctx(), e.userAddr(), gov, sdk.NewCoins(sdk.NewInt64Coin("uerth", 10*ssErth))))
+	_, err := allocationkeeper.NewMsgServerImpl(e.app.AllocationKeeper).AddAddressOption(e.ctx(), &allocationtypes.MsgAddAddressOption{
+		Submitter: e.bech(gov), Stream: gw, Description: "a public good", Recipient: e.bech(e.userAddr()),
+	})
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	fb := e.run(e.signedTx(vBKey, 300_000, 5_000, &allocationtypes.MsgSetAllocations{
+		Creator: e.bech(opB), Stream: gw, Percentages: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 100}},
+	}))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
+	weight := func() math.Int {
+		v, err := e.app.AllocationKeeper.Voters.Get(e.ctx(), collections.Join(uint32(gw), []byte(opB)))
+		require.NoError(t, err)
+		return v.Weight
+	}
+
+	// --- an epoch: both self-bonds grow by their rewards; the event says by
+	// how much; commission keeps accruing.
+	e.next(time.Hour)
+	a0, b0 := selfBond(opA, e.genesisValidator()), selfBond(opB, vB)
+	balB := e.app.BankKeeper.GetBalance(e.ctx(), opB, "uerth").Amount
+	var res *abci.ResponseFinalizeBlock
+	for i := 0; i < 2 && res == nil; i++ {
+		r := e.next(24 * time.Hour)
+		if len(eventsOf(r.Events, sstypes.EventTypeEpoch)) > 0 {
+			res = r
+		}
+	}
+	require.NotNil(t, res, "no epoch end")
+	compounded := map[string]math.Int{}
+	for _, ev := range eventsOf(res.Events, sstypes.EventTypeSelfBond) {
+		amt, ok := math.NewIntFromString(ev["amount"])
+		require.True(t, ok)
+		compounded[ev["validator"]] = amt
+	}
+	require.Len(t, compounded, 2)
+	for _, c := range []struct {
+		op  sdk.AccAddress
+		v   sdk.ValAddress
+		was math.Int
+	}{{opA, e.genesisValidator(), a0}, {opB, vB, b0}} {
+		got := selfBond(c.op, c.v)
+		add := compounded[e.valoper(c.v)]
+		require.True(t, add.IsPositive(), "%s", e.valoper(c.v))
+		require.True(t, got.Sub(c.was).Sub(add).Abs().LTE(math.OneInt()), "%s: %s -> %s, compounded %s", e.valoper(c.v), c.was, got, add)
+	}
+	require.Equal(t, balB, e.app.BankKeeper.GetBalance(e.ctx(), opB, "uerth").Amount, "the rewards were bonded, not paid out")
+	bondedB, err := e.app.StakingKeeper.GetDelegatorBonded(e.ctx(), opB)
+	require.NoError(t, err)
+	require.Equal(t, bondedB, weight(), "Groundworks weight follows the compounded self-bond")
+	require.NoError(t, e.app.AllocationKeeper.AssertHotInvariants(e.ctx()))
+	e.invariants()
+
+	// Commission is not compounded: it stays withdrawable, to the account.
+	comm := commission(vB)
+	require.True(t, comm.IsPositive())
+	before := e.app.BankKeeper.GetBalance(e.ctx(), opB, "uerth").Amount
+	fb = e.run(e.signedTx(vBKey, 300_000, 5_000, &distrtypes.MsgWithdrawValidatorCommission{ValidatorAddress: e.valoper(vB)}))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
+	got := e.app.BankKeeper.GetBalance(e.ctx(), opB, "uerth").Amount.Sub(before).AddRaw(5_000)
+	require.True(t, got.GTE(comm), "commission %s withdrawn %s", comm, got)
+
+	// --- halt safety: vB's compounding panics (its distribution starting
+	// info claims more stake than it has). The epoch still ends, vA still
+	// compounds, the failure is reported, the block commits. Repaired, vB
+	// compounds again.
+	vBAddr := vB
+	info, err := e.app.DistrKeeper.GetDelegatorStartingInfo(e.ctx(), vBAddr, opB)
+	require.NoError(t, err)
+	bad := info
+	bad.Stake = info.Stake.MulInt64(1000)
+	require.NoError(t, e.app.DistrKeeper.SetDelegatorStartingInfo(e.ctx(), vBAddr, opB, bad))
+	b1, a1 := selfBond(opB, vB), selfBond(opA, e.genesisValidator())
+	res = e.next(24 * time.Hour)
+	fails := eventsOf(res.Events, sstypes.EventTypeEpochFailure)
+	require.Len(t, fails, 1)
+	require.Equal(t, "self_bond", fails[0]["stage"])
+	require.Equal(t, e.valoper(vB), fails[0]["validator"])
+	require.Equal(t, b1, selfBond(opB, vB), "vB's work rolled back")
+	require.True(t, selfBond(opA, e.genesisValidator()).GT(a1), "vA still compounded")
+	require.NoError(t, e.app.DistrKeeper.SetDelegatorStartingInfo(e.ctx(), vBAddr, opB, info))
+	res = e.next(24 * time.Hour)
+	require.Empty(t, eventsOf(res.Events, sstypes.EventTypeEpochFailure))
+	require.True(t, selfBond(opB, vB).GT(b1), "repaired: vB compounds again")
+
+	// --- jailed: skipped.
+	ctx := e.ctx()
+	val, err := e.app.StakingKeeper.GetValidator(ctx, vB)
+	require.NoError(t, err)
+	consAddr, err := val.GetConsAddr()
+	require.NoError(t, err)
+	require.NoError(t, e.app.StakingKeeper.Jail(ctx, consAddr))
+	e.next(5 * time.Second)
+	b2 := selfBond(opB, vB)
+	res = e.next(24 * time.Hour)
+	for _, ev := range eventsOf(res.Events, sstypes.EventTypeSelfBond) {
+		require.NotEqual(t, e.valoper(vB), ev["validator"], "a jailed validator does not compound")
+	}
+	require.Empty(t, eventsOf(res.Events, sstypes.EventTypeEpochFailure))
+	require.Equal(t, b2, selfBond(opB, vB))
 	e.invariants()
 }
