@@ -37,7 +37,6 @@ var burnSites = map[string]string{
 	// derth/<valoper> when it is undelegated (the ERTH behind it stays bonded
 	// until the SDK pays it back) and unbond/<valoper>/<epoch> when it is
 	// claimed (the ERTH it was a claim on is paid out, not destroyed).
-	"x/shieldedstaking/keeper/msg_server.go": "NOT COUNTED: derth and unbond notes are claims on staked ERTH, not supply",
 
 	// Deliberately uncounted. Withdrawing liquidity burns the shares that
 	// represented the claim; the assets behind them go back to their owner and
