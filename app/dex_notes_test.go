@@ -1,5 +1,3 @@
-//go:build dexpending
-
 
 package app
 
@@ -54,19 +52,19 @@ func (e *stakeEnv) pool(id uint64) dextypes.Pool {
 
 // noteSwapMsg spends amount of in (a fee note pays the fee, unless
 // feeFromOutput is set) and swaps it for denomOut, minted to a fresh note.
-func (e *stakeEnv) noteSwapMsg(in *wnote, amount uint64, denomOut string, minOut, feeFromOutput uint64, prove bool) (*dextypes.MsgNoteSwap, *pendingTransfer, *wnote) {
+func (e *stakeEnv) noteSwapMsg(in *wnote, amount uint64, denomOut string, minOut, feeFromOutput uint64, prove bool) (*dextypes.MsgNoteSwap, *pendingBundle, *wnote) {
 	e.t.Helper()
 	p := e.build(spend{denom: in.denom, inputs: []*wnote{in}, valueOut: amount, feeless: feeFromOutput > 0})
 	out := e.w.fresh(denomOut, 0)
 	m := &dextypes.MsgNoteSwap{
-		Transfer: p.tr, DenomOut: denomOut, MinAmountOut: minOut,
+		Bundle: p.b, Fee: p.fee, DenomOut: denomOut, MinAmountOut: minOut,
 		Pc: privacy.FieldBytes(e.w.pc(out)), Ciphertext: []byte("swap out"), FeeFromOutput: feeFromOutput,
 	}
 	if !prove {
-		m.Transfer.Proof = make([]byte, 14656)
+		unproven(m)
 		return m, p, out
 	}
-	e.prove(p, m)
+	e.prove(m, p)
 	return m, p, out
 }
 
@@ -98,7 +96,6 @@ func feeEvents(t *testing.T, res *abci.ExecTxResult) []map[string]string {
 // it unshields; and a swap whose price moved past its bound, which fails
 // whole: nothing spent, no fee.
 func TestDexNoteSwaps(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initDexEnv(t)
 	e.shield(uint64(100_000 * ssErth))
 	e.shield(uint64(100 * ssErth)) // fees
@@ -166,8 +163,8 @@ func TestDexNoteSwaps(t *testing.T) {
 	require.Empty(t, feeEvents(t, res))
 	e.dexInvariants()
 
-	// TODO(orchard-phase2): the unshield paying its fee from what it
-	// unshields is MsgSend's now (x/shielded keeper and app tests).
+	// (The unshield paying its fee from what it unshields is MsgSend's: see
+	// x/shielded's keeper and app tests.)
 }
 
 // A transparent ERTH holder buys ANML as a note; every transparent ANML leg
@@ -214,19 +211,12 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 
 	// --- bypass: the private msgs' handlers, reached by the router as a
 	// contract or an ICA host would reach them, refuse.
-	tr := func(denom string, v uint64, label string) shieldedtypes.Transfer {
-		x := shieldedtypes.Transfer{Proof: []byte{1}, Root: make([]byte, 32), Fee: ssFee, ValueOut: v, DenomOut: denom}
-		for i := uint64(0); i < 3; i++ {
-			x.Nullifiers = append(x.Nullifiers, privacy.FieldBytes(ssDet(label+"-nf", i)))
-			x.Commitments = append(x.Commitments, privacy.FieldBytes(ssDet(label+"-cm", i)))
-			x.Ciphertexts = append(x.Ciphertexts, nil)
-		}
-		return x
-	}
+	bal := func(denom string, v uint64) shieldedtypes.ValueBalance { return shieldedtypes.ValueBalance{Denom: denom, Amount: v} }
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
 	for _, m := range []sdk.Msg{
-		&dextypes.MsgNoteSwap{Transfer: tr("uanml", 1, "a"), DenomOut: "uerth", MinAmountOut: 1, Pc: pc},
-		&dextypes.MsgAddLiquidityShielded{Transfer: tr("uanml", 1, "a"), ErthTransfer: tr("uerth", 1, "b"), PoolId: anmlPool, Provider: user, RefundPc: pc},
+		&dextypes.MsgNoteSwap{Bundle: stubBundle("a", bal("uanml", 1), bal("uerth", ssFee)), Fee: ssFee, DenomOut: "uerth", MinAmountOut: 1, Pc: pc},
+		&dextypes.MsgAddLiquidityShielded{Bundle: stubBundle("b", bal("uanml", 1), bal("uerth", ssFee+1)), Fee: ssFee,
+			PoolId: anmlPool, Provider: user, RefundPc: pc},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
 		require.NotNil(t, h, "%T", m)
@@ -238,17 +228,16 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 	fb := e.run(e.signedTx(e.user, 400_000, 5_000, &exec))
 	require.NotEqual(t, uint32(0), fb.Code)
 	// A private msg in a signed tx goes nowhere either.
-	sw := &dextypes.MsgNoteSwap{Transfer: tr("uanml", 1, "c"), DenomOut: "uerth", MinAmountOut: 1, Pc: pc}
+	sw := &dextypes.MsgNoteSwap{Bundle: stubBundle("c", bal("uanml", 1), bal("uerth", ssFee)), Fee: ssFee, DenomOut: "uerth", MinAmountOut: 1, Pc: pc}
 	ct := e.checkTx(e.signedTx(e.user, 400_000, 5_000, sw))
 	require.NotEqual(t, uint32(0), ct.Code)
 }
 
-// Pool-1 liquidity from notes: ANML from one transfer, ERTH from another,
-// shares to a transparent provider, the leftover of the ratio back as notes;
+// Pool-1 liquidity from notes: ANML and ERTH released by one bundle, shares
+// to a transparent provider, the leftover of the ratio back as notes;
 // then a withdrawal that pays the ERTH leg to the account and mints the ANML
 // leg as a note.
 func TestDexAnmlPoolLiquidity(t *testing.T) {
-	t.Skip("TODO(orchard-phase2): its private msgs still carry a legacy transfer, which the private ante refuses")
 	e := initDexEnv(t)
 	user := e.bech(e.userAddr())
 	e.shield(uint64(200_000 * ssErth))
@@ -262,27 +251,21 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	lp := dextypes.LPShareDenom(anmlPool)
 	total := e.app.BankKeeper.GetSupply(e.ctx(), lp).Amount
 	erthIn := uint64(100_000 * ssErth)
-	erthNote := e.w.unspent("uerth", erthIn)
-	pe := e.build(spend{denom: "uerth", inputs: []*wnote{erthNote}, valueOut: erthIn, feeless: true})
-	e.reserved = []*wnote{erthNote}
-	pa := e.build(spend{denom: "uanml", inputs: []*wnote{anml}, valueOut: anml.value})
-	e.reserved = nil
-	pa.also = append(pa.also, pe)
+	erthNote := e.w.unspent("uerth", erthIn+ssFee)
+	pa := e.buildLegs(ssFee, leg{anml, anml.value}, leg{erthNote, erthIn})
 	refE := e.w.fresh("uerth", 0)
 	refT := &wnote{denom: "uanml", rho: refE.rho, rcm: refE.rcm} // the same pc
 	wantShares := math.NewIntFromUint64(anml.value).Mul(total).Quo(pool.ReserveToken.Amount)
 	m := &dextypes.MsgAddLiquidityShielded{
-		Transfer: pa.tr, ErthTransfer: pe.tr, PoolId: anmlPool, Provider: user, MinShares: wantShares.String(),
+		Bundle: pa.b, Fee: pa.fee, PoolId: anmlPool, Provider: user, MinShares: wantShares.String(),
 		RefundPc: privacy.FieldBytes(e.w.pc(refE)), RefundCiphertext: []byte("refund"),
 	}
-	e.proveInto(pa, m, &m.Transfer)
-	e.proveInto(pe, m, &m.ErthTransfer)
-	// Proofs bind both transfers: the ERTH transfer of another deposit's
-	// shape cannot be swapped in, nor the provider changed.
+	e.prove(m, pa)
+	// The sighash binds the provider: it cannot be changed.
 	other := *m
 	other.Provider = e.bech(e.genesisValidator().Bytes())
 	ct := e.checkTx(e.privateTx(&other))
-	require.Equal(t, shieldedtypes.ErrInvalidProof.ABCICode(), ct.Code, ct.Log)
+	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), ct.Code, ct.Log)
 
 	res := e.run(e.privateTx(m))
 	require.Equal(t, uint32(0), res.Code, res.Log)

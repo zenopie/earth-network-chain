@@ -57,10 +57,10 @@ service Msg {
   // the way into ANML for an ERTH holder (ANML never sits in an account).
   rpc BuyAnml(MsgBuyAnml) returns (MsgBuyAnmlResponse);
 
-  // AddLiquidityShielded deposits both legs from shielded notes (the pool
-  // token by one transfer, ERTH by a second) and mints LP shares to a
-  // transparent provider. Unsigned private msg; the only way to add to the
-  // ANML/ERTH pool.
+  // AddLiquidityShielded deposits both legs from shielded notes (one bundle
+  // releasing the pool token and ERTH) and mints LP shares to a transparent
+  // provider. Unsigned private msg; the only way to add to the ANML/ERTH
+  // pool.
   rpc AddLiquidityShielded(MsgAddLiquidityShielded) returns (MsgAddLiquidityShieldedResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -220,30 +220,36 @@ message MsgClaimLiquidityAuctionResponse {
   cosmos.base.v1beta1.Coin amount = 1 [(gogoproto.nullable) = false];
 }
 
-// MsgNoteSwap spends transfer.value_out of transfer.denom_out (the asset in,
-// public) into the dex, swaps it for denom_out through the ERTH hub (one or
-// two hops, any pools), and mints the output to pc as a note. It has NO
-// signer: authorization is the transfer proof, replay protection its
-// nullifiers (see x/shielded/ante).
+// MsgNoteSwap releases bundle's balance of one asset (the asset in, public)
+// into the dex, swaps it for denom_out through the ERTH hub (one or two hops,
+// any pools), and mints the output to pc as a note. It has NO signer:
+// authorization is the bundle (action proofs and binding signature over the
+// sighash), replay protection its nullifiers (see x/shielded/ante).
+//
+// bundle's balances: the asset in, plus the uerth fee (for an ERTH swap the
+// uerth balance is amount in + fee). The release map, after fee, must hold
+// exactly one positive denom: the asset in.
 //
 // The swap runs in the private ante, atomically with the spend: if the
 // output would fall below min_amount_out the whole tx fails and nothing is
 // spent. Only the amounts and the pools are visible.
 //
-// fee_from_output > 0 pays the tx fee out of the output instead of from a fee
-// note: denom_out must be uerth, transfer.fee 0 and min_amount_out >
+// fee_from_output > 0 pays the tx fee out of the output instead of from the
+// bundle: denom_out must be uerth, fee 0 and min_amount_out >
 // fee_from_output; pc receives the output less the fee.
 //
-// signal = SpendSignal("/earth.dex.v1.MsgNoteSwap", chain_id, ciphertexts,
-// Bytes(denom_out), min_amount_out, pc, Bytes(ciphertext), fee_from_output).
+// sighash fields: Bytes(denom_out), min_amount_out, pc, Bytes(ciphertext),
+// fee_from_output, fee.
 message MsgNoteSwap {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string denom_out = 2;
   // min_amount_out is the least output (before fee_from_output) accepted.
   uint64 min_amount_out = 3;
   bytes pc = 4;
   bytes ciphertext = 5;
   uint64 fee_from_output = 6;
+  // fee is paid from bundle's uerth balance (0 with fee_from_output).
+  uint64 fee = 7;
 }
 
 // MsgNoteSwapResponse returns the swap's output (before any fee from output)
@@ -271,30 +277,31 @@ message MsgBuyAnmlResponse {
   uint64 position = 2;
 }
 
-// MsgAddLiquidityShielded deposits into pool_id from two transfers: transfer
-// releases value_out of the pool's token (ANML), erth_transfer value_out of
-// ERTH. Either may pay the fee (the tx fee is their sum). The deposit is
-// taken in the pool ratio, as MsgAddLiquidity's is; whatever of each leg the
-// ratio does not take is minted back to refund_pc as a note. The LP shares
-// go to provider, a transparent address: liquidity provision is public.
+// MsgAddLiquidityShielded deposits into pool_id from one bundle whose
+// balances are the pool's token (ANML) and uerth: the token balance is the
+// token leg, the uerth balance less fee the ERTH leg. The deposit is taken in
+// the pool ratio, as MsgAddLiquidity's is; whatever of each leg the ratio
+// does not take is minted back to refund_pc as a note. The LP shares go to
+// provider, a transparent address.
 //
-// The deposit runs in the private ante, atomically with both spends: below
+// The deposit runs in the private ante, atomically with the spend: below
 // min_shares the whole tx fails and nothing is spent.
 //
-// Both proofs bind signal = MultiSpendSignal(
-// "/earth.dex.v1.MsgAddLiquidityShielded", chain_id, [transfer.ciphertexts,
-// erth_transfer.ciphertexts], [transfer.nullifiers,
-// erth_transfer.nullifiers], pool_id, Bytes(provider address bytes),
-// Bytes(min_shares), refund_pc, Bytes(refund_ciphertext)).
+// sighash fields: pool_id, Bytes(provider address bytes), Bytes(min_shares),
+// refund_pc, Bytes(refund_ciphertext), fee.
 message MsgAddLiquidityShielded {
-  earth.shielded.v1.Transfer transfer = 1 [(gogoproto.nullable) = false];
-  earth.shielded.v1.Transfer erth_transfer = 2 [(gogoproto.nullable) = false];
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 pool_id = 3;
   string provider = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   // min_shares is the fewest shares accepted, a decimal integer ("" = none).
   string min_shares = 5;
   bytes refund_pc = 6;
   bytes refund_ciphertext = 7;
+  // fee is paid from bundle's uerth balance; the rest of it is the ERTH leg.
+  uint64 fee = 8;
+  // erth_transfer: the ERTH leg is now part of bundle.
+  reserved 2;
+  reserved "erth_transfer";
 }
 
 // MsgAddLiquidityShieldedResponse returns the shares minted and the refunds.

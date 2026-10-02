@@ -40,7 +40,7 @@ import (
 // account (ReleaseToModule) and goes into the reserves; the output leaves the
 // reserves and this module's account (MintNote) in the same execution.
 
-// Fixed gas per action, on top of the transfers' and one note write per note
+// Fixed gas per action, on top of the bundles' and one note write per note
 // minted: a two-hop swap settles two pools' rewards and moves their
 // reserves; a deposit settles one and mints shares.
 const (
@@ -103,7 +103,7 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 }
 
 // VerifyPrivateAction: no msg of this module carries a proof beyond its
-// transfers.
+// bundle.
 func (h ActionHandler) VerifyPrivateAction(context.Context, shieldedtypes.PrivateMsg, any) error {
 	return nil
 }
@@ -157,7 +157,7 @@ func (k Keeper) checkNoteOut(ctx context.Context, denom string, pc, ct []byte) e
 // ---- MsgNoteSwap --------------------------------------------------------------
 
 func (k Keeper) checkNoteSwap(ctx context.Context, m *types.MsgNoteSwap) error {
-	if err := k.checkRoute(ctx, m.Transfer.DenomOut, m.DenomOut); err != nil {
+	if err := k.checkRoute(ctx, m.In().Denom, m.DenomOut); err != nil {
 		return err
 	}
 	return k.checkNoteOut(ctx, m.DenomOut, m.Pc, m.Ciphertext)
@@ -165,11 +165,10 @@ func (k Keeper) checkNoteSwap(ctx context.Context, m *types.MsgNoteSwap) error {
 
 // executeNoteSwap: the note's value into this module, through the pools, the
 // fee from output (if any) to fee_collector, the rest minted to pc. Runs in
-// the private ante after the transfer was spent; any error (min_amount_out
+// the private ante after the bundle was spent; any error (min_amount_out
 // not met) fails the whole tx, spend included.
 func (k Keeper) executeNoteSwap(ctx sdk.Context, m *types.MsgNoteSwap) (*types.MsgNoteSwapResponse, error) {
-	in, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
-		types.ModuleName)
+	in, err := k.shielded.ReleaseToModule(ctx, m, m.In().Denom, types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +251,7 @@ func (k Keeper) checkAddShielded(ctx context.Context, m *types.MsgAddLiquiditySh
 	if err != nil {
 		return errorsmod.Wrapf(types.ErrPoolNotFound, "pool %d", m.PoolId)
 	}
-	if m.Transfer.DenomOut != pool.ReserveToken.Denom || m.ErthTransfer.DenomOut != pool.ReserveErth.Denom {
+	if erth, token := m.Legs(); token.Denom != pool.ReserveToken.Denom || erth.Denom != pool.ReserveErth.Denom {
 		return errorsmod.Wrapf(types.ErrInvalidDenom, "pool %d takes %s and %s", m.PoolId, pool.ReserveToken.Denom, pool.ReserveErth.Denom)
 	}
 	if _, err := m.ProviderBytes(k.addressCodec); err != nil {
@@ -263,20 +262,19 @@ func (k Keeper) checkAddShielded(ctx context.Context, m *types.MsgAddLiquiditySh
 
 // executeAddShielded: both legs into this module, the deposit in the pool
 // ratio, shares to the provider, whatever the ratio did not take minted back
-// to refund_pc. Runs in the private ante after both transfers were spent;
+// to refund_pc. Runs in the private ante after the bundle was spent;
 // any error (below min_shares) fails the whole tx, spends included.
 func (k Keeper) executeAddShielded(ctx sdk.Context, m *types.MsgAddLiquidityShielded) (*types.MsgAddLiquidityShieldedResponse, error) {
 	provider, err := m.ProviderBytes(k.addressCodec)
 	if err != nil {
 		return nil, err
 	}
-	tokenIn, err := k.shielded.ReleaseToModule(ctx, m, m.Transfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
-		types.ModuleName)
+	erth, token := m.Legs()
+	tokenIn, err := k.shielded.ReleaseToModule(ctx, m, token.Denom, types.ModuleName)
 	if err != nil {
 		return nil, err
 	}
-	erthIn, err := k.shielded.ReleaseToModule(ctx, m, m.ErthTransfer.DenomOut, // TODO(orchard-phase2): the bundle's balance
-		types.ModuleName)
+	erthIn, err := k.shielded.ReleaseToModule(ctx, m, erth.Denom, types.ModuleName)
 	if err != nil {
 		return nil, err
 	}

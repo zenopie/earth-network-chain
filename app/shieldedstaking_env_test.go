@@ -545,6 +545,76 @@ func (e *stakeEnv) build(s spend) *pendingBundle {
 	return p
 }
 
+// leg is one note a multi-asset bundle spends, releasing valueOut of it and
+// returning the change.
+type leg struct {
+	n        *wnote
+	valueOut uint64
+}
+
+// buildLegs lays out one bundle spending each leg's note (one action each,
+// the change back to the wallet), paying fee out of the first uerth leg's
+// change, or out of an ERTH fee note when no leg is uerth.
+func (e *stakeEnv) buildLegs(fee uint64, legs ...leg) *pendingBundle {
+	e.t.Helper()
+	w := e.w
+	w.seq++
+	p := &pendingBundle{fee: fee, plan: &shieldedtest.Plan{
+		Seed: fmt.Sprintf("staking/%d", w.seq), Tree: w.tree(e.t, uint64(len(w.leaves))), DummyNK: w.nk,
+	}}
+	paid := false
+	for _, l := range legs {
+		require.GreaterOrEqual(e.t, l.n.value, l.valueOut)
+		change := l.n.value - l.valueOut
+		if !paid && l.n.denom == "uerth" {
+			require.GreaterOrEqual(e.t, change, fee, "the uerth leg cannot pay the fee")
+			change -= fee
+			paid = true
+		}
+		out := w.fresh(l.n.denom, change)
+		p.in, p.out = append(p.in, l.n), append(p.out, out)
+		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{
+			Spend: &shieldedtest.PlanSpend{NK: w.nk, Denom: l.n.denom, Value: l.n.value, Rho: l.n.rho, Rcm: l.n.rcm, Position: l.n.pos},
+			Out: shieldedtest.PlanOutput{Denom: out.denom, Value: out.value, PC: w.pc(out),
+				Ciphertext: []byte(fmt.Sprintf("ct:%s:%d", p.plan.Seed, len(p.out)))},
+		})
+	}
+	if !paid {
+		avoid := append([]*wnote{}, e.reserved...)
+		for _, l := range legs {
+			avoid = append(avoid, l.n)
+		}
+		feeNote := w.unspent("uerth", fee, avoid...)
+		require.NotNil(e.t, feeNote, "no ERTH note to pay the fee")
+		out := w.fresh("uerth", feeNote.value-fee)
+		p.in, p.out = append(p.in, feeNote), append(p.out, out)
+		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{
+			Spend: &shieldedtest.PlanSpend{NK: w.nk, Denom: "uerth", Value: feeNote.value, Rho: feeNote.rho, Rcm: feeNote.rcm, Position: feeNote.pos},
+			Out:   shieldedtest.PlanOutput{Denom: "uerth", Value: out.value, PC: w.pc(out)},
+		})
+	}
+	for len(p.plan.Actions) < shieldedtypes.MinActionsPerBundle {
+		out := w.fresh("uerth", 0)
+		p.out = append(p.out, out)
+		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{Out: shieldedtest.PlanOutput{Denom: "uerth", PC: w.pc(out)}})
+	}
+	b, err := p.plan.Unproven()
+	require.NoError(e.t, err)
+	p.b = b
+	return p
+}
+
+// stubBundle is a well-formed, unproven two-action bundle with balances,
+// its nullifiers derived from label.
+func stubBundle(label string, balances ...shieldedtypes.ValueBalance) shieldedtypes.Bundle {
+	b := stubFeeBundle(1)
+	b.Balances = balances
+	for i := range b.Actions {
+		b.Actions[i].Nullifier = privacy.FieldBytes(ssDet("stub-nf/"+label, uint64(i)))
+	}
+	return b
+}
+
 // prove fills in the proofs and binding signatures of msg's bundles,
 // ps[i] for msg.PrivateBundles()[i], under msg's sighash (computed here, so
 // every other field of msg must be final).

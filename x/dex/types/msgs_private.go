@@ -11,7 +11,7 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// Private msg type URLs: the kind every signal binds first.
+// Private msg type URLs: the kind every sighash binds first.
 const (
 	TypeMsgNoteSwap             = "/earth.dex.v1.MsgNoteSwap"
 	TypeMsgAddLiquidityShielded = "/earth.dex.v1.MsgAddLiquidityShielded"
@@ -20,7 +20,7 @@ const (
 var (
 	_ shieldedtypes.PrivateMsg       = (*MsgNoteSwap)(nil)
 	_ shieldedtypes.FeeFromOutputMsg = (*MsgNoteSwap)(nil)
-	_ shieldedtypes.MultiTransferMsg = (*MsgAddLiquidityShielded)(nil)
+	_ shieldedtypes.PrivateMsg       = (*MsgAddLiquidityShielded)(nil)
 
 	_ sdk.HasValidateBasic = (*MsgNoteSwap)(nil)
 	_ sdk.HasValidateBasic = (*MsgAddLiquidityShielded)(nil)
@@ -45,43 +45,68 @@ func checkNote(pc, ct []byte) error {
 	return nil
 }
 
-// releases checks t moves a positive amount out of the pool.
-func releases(t *shieldedtypes.Transfer, what string) error {
-	if t.ValueOut == 0 || t.DenomOut == "" {
-		return errorsmod.Wrapf(ErrInvalidPrivateMsg, "%s must release a positive amount", what)
+// remainders is msg's release map after its fee, refusing an empty one.
+func remainders(msg shieldedtypes.PrivateMsg) ([]shieldedtypes.Remainder, error) {
+	if err := shieldedtypes.ValidateBundles(msg); err != nil {
+		return nil, err
 	}
-	return nil
+	rem, err := shieldedtypes.Remainders(msg)
+	if err != nil {
+		return nil, err
+	}
+	if len(rem) == 0 {
+		return nil, errorsmod.Wrap(ErrInvalidPrivateMsg, "the bundle must release a positive amount beyond its fee")
+	}
+	return rem, nil
 }
 
 // ---- MsgNoteSwap ------------------------------------------------------------
 
-func (m *MsgNoteSwap) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgNoteSwap) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Bundle}
+}
+
+func (m *MsgNoteSwap) PrivateFee() uint64 { return m.Fee }
 
 // OutputFee implements x/shielded's FeeFromOutputMsg.
 func (m *MsgNoteSwap) OutputFee() uint64 { return m.FeeFromOutput }
 
-// Signal binds the asset out, the slippage bound, where the output goes and
-// the fee from output. The asset in is the transfer's asset_pub.
-func (m *MsgNoteSwap) Signal(chainID string, _ address.Codec) (fr.Element, error) {
+// In is the asset swapped in: the release map's one remainder (zero coin if
+// the msg is malformed; ValidateBasic refuses it).
+func (m *MsgNoteSwap) In() sdk.Coin {
+	rem, err := shieldedtypes.Remainders(m)
+	if err != nil || len(rem) != 1 {
+		return sdk.Coin{}
+	}
+	return sdk.NewCoin(rem[0].Denom, math.NewIntFromUint64(rem[0].Amount))
+}
+
+// SighashFields binds the asset out, the slippage bound, where the output
+// goes and both fees. The asset in is the bundle's balance.
+func (m *MsgNoteSwap) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := pcField(m.Pc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
-	return privacy.SpendSignal(TypeMsgNoteSwap, chainID, m.Transfer.Ciphertexts3(), privacy.Bytes([]byte(m.DenomOut)),
-		privacy.U64(m.MinAmountOut), pc, privacy.Bytes(m.Ciphertext), privacy.U64(m.FeeFromOutput)), nil
+	return []fr.Element{privacy.Bytes([]byte(m.DenomOut)), privacy.U64(m.MinAmountOut), pc,
+		privacy.Bytes(m.Ciphertext), privacy.U64(m.FeeFromOutput), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgNoteSwap) ValidateBasic() error {
-	if err := shieldedtypes.ValidateTransfers(m); err != nil {
+	rem, err := remainders(m)
+	if err != nil {
 		return err
 	}
-	if err := releases(&m.Transfer, "transfer"); err != nil {
-		return err
+	if len(rem) != 1 {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, "a swap releases one asset beyond its fee")
+	}
+	if (m.Fee == 0) == (m.FeeFromOutput == 0) {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the fee is paid by the bundle or from the output, exactly one")
 	}
 	if err := sdk.ValidateDenom(m.DenomOut); err != nil {
 		return errorsmod.Wrap(ErrInvalidDenom, err.Error())
 	}
-	if m.DenomOut == m.Transfer.DenomOut {
+	if m.DenomOut == rem[0].Denom {
 		return errorsmod.Wrap(ErrInvalidDenom, "denom in and denom out must differ")
 	}
 	if m.MinAmountOut == 0 {
@@ -102,11 +127,28 @@ func (m *MsgNoteSwap) ValidateBasic() error {
 
 // ---- MsgAddLiquidityShielded ------------------------------------------------
 
-func (m *MsgAddLiquidityShielded) PrivateTransfer() *shieldedtypes.Transfer { return &m.Transfer }
+func (m *MsgAddLiquidityShielded) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Bundle}
+}
 
-// PrivateTransfers is the token transfer, then the ERTH transfer.
-func (m *MsgAddLiquidityShielded) PrivateTransfers() []*shieldedtypes.Transfer {
-	return []*shieldedtypes.Transfer{&m.Transfer, &m.ErthTransfer}
+func (m *MsgAddLiquidityShielded) PrivateFee() uint64 { return m.Fee }
+
+// Legs is the deposit: the ERTH leg (the uerth balance less the fee) and the
+// token leg (the other balance). Zero coins if the msg is malformed.
+func (m *MsgAddLiquidityShielded) Legs() (erth, token sdk.Coin) {
+	rem, err := shieldedtypes.Remainders(m)
+	if err != nil || len(rem) != 2 {
+		return sdk.Coin{}, sdk.Coin{}
+	}
+	for _, r := range rem {
+		c := sdk.NewCoin(r.Denom, math.NewIntFromUint64(r.Amount))
+		if r.Denom == shieldedtypes.FeeDenom {
+			erth = c
+		} else {
+			token = c
+		}
+	}
+	return erth, token
 }
 
 // ProviderBytes is the share recipient's raw address.
@@ -118,33 +160,31 @@ func (m *MsgAddLiquidityShielded) ProviderBytes(ac address.Codec) ([]byte, error
 	return bz, nil
 }
 
-// Signal binds both transfers, the pool, the provider, the slippage bound and
-// where refunds go.
-func (m *MsgAddLiquidityShielded) Signal(chainID string, ac address.Codec) (fr.Element, error) {
+// SighashFields binds the pool, the provider, the slippage bound, where
+// refunds go and the fee.
+func (m *MsgAddLiquidityShielded) SighashFields(ac address.Codec) ([]fr.Element, error) {
 	pc, err := pcField(m.RefundPc)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
 	prov, err := m.ProviderBytes(ac)
 	if err != nil {
-		return fr.Element{}, err
+		return nil, err
 	}
-	return shieldedtypes.MultiSignal(TypeMsgAddLiquidityShielded, chainID, m.PrivateTransfers(), privacy.U64(m.PoolId),
-		privacy.Bytes(prov), privacy.Bytes([]byte(m.MinShares)), pc, privacy.Bytes(m.RefundCiphertext))
+	return []fr.Element{privacy.U64(m.PoolId), privacy.Bytes(prov), privacy.Bytes([]byte(m.MinShares)), pc,
+		privacy.Bytes(m.RefundCiphertext), privacy.U64(m.Fee)}, nil
 }
 
 func (m *MsgAddLiquidityShielded) ValidateBasic() error {
-	if err := shieldedtypes.ValidateTransfers(m); err != nil {
+	rem, err := remainders(m)
+	if err != nil {
 		return err
 	}
-	if err := releases(&m.Transfer, "transfer"); err != nil {
-		return err
+	if m.Fee == 0 {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the bundle pays a positive fee")
 	}
-	if err := releases(&m.ErthTransfer, "erth_transfer"); err != nil {
-		return err
-	}
-	if m.ErthTransfer.DenomOut != shieldedtypes.FeeDenom {
-		return errorsmod.Wrapf(ErrInvalidDenom, "erth_transfer releases %s", shieldedtypes.FeeDenom)
+	if erth, token := m.Legs(); len(rem) != 2 || !erth.IsValid() || !token.IsValid() || erth.IsZero() || token.IsZero() {
+		return errorsmod.Wrapf(ErrInvalidDenom, "the bundle releases %s and the pool's token beyond its fee", shieldedtypes.FeeDenom)
 	}
 	if m.Provider == "" {
 		return errorsmod.Wrap(ErrInvalidPrivateMsg, "provider is required")
