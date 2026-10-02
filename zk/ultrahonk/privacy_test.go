@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-// privacyCircuits are the membership and transfer fixtures written by
-// scripts/privacy-parity.sh (Go-built trees, proven with nargo + bb v5.0.0).
-var privacyCircuits = []string{"membership", "transfer"}
+// privacyCircuits are the fixtures written by scripts/privacy-parity.sh
+// (Go-built trees, proven with nargo + bb v5.0.0). The action circuit's are
+// under testdata/orchard (TestOrchardBundles).
+var privacyCircuits = []string{"membership"}
 
 // TestVerifyPrivacyCircuits checks the chain verifier accepts the privacy
 // circuits' proofs and rejects every single-input tamper, i.e. each public
