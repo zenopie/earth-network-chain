@@ -30,8 +30,10 @@ import (
 
 	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
+	dextypes "github.com/earth-network/earth/x/dex/types"
 	earthtypes "github.com/earth-network/earth/x/earth/types"
 	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
@@ -1366,4 +1368,77 @@ func TestSelfBondCompounds(t *testing.T) {
 	require.Empty(t, eventsOf(res.Events, sstypes.EventTypeEpochFailure))
 	require.Equal(t, b2, selfBond(opB, vB))
 	e.invariants()
+}
+
+// Stake notes are owner-locked and derth is nobody's coin: a restake whose
+// output belongs to another owner has no witness (the circuit refuses it),
+// and a proof made for one output cannot be passed off for another's; an
+// honest restake splits within the owner; derth can be neither a pool asset,
+// a dex pool token nor a swap's output.
+func TestStakeNotesOwnerLocked(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(3_000 * ssErth))
+	e.shield(uint64(100 * ssErth))
+	dn := e.delegate(vB, uint64(1_000*ssErth))
+	v := e.valoper(vB)
+	asset := privacy.AssetID(dn.denom)
+	other := privacy.OwnerPK(ssDet("nk", 99))
+
+	restake := func(outs ...*snote) (*sstypes.MsgRestake, *pendingBundle, *stakePlan) {
+		p := e.feeOnly()
+		sp := e.stake(&stakePlan{denom: dn.denom, ins: []*snote{dn}, outs: outs})
+		return &sstypes.MsgRestake{Bundle: p.b, Fee: p.fee, Validator: v, Stake: sp.proof}, p, sp
+	}
+
+	// The transfer attempt: an output note of another owner. No witness
+	// exists (proven only when the circuits are at hand: a refused witness
+	// leaves nothing to cache).
+	a, b := e.freshStake(dn.denom, 400*uint64(ssErth)), e.freshStake(dn.denom, 600*uint64(ssErth))
+	steal, _, ssp := restake(a, b)
+	steal.Stake.Commitments[0] = privacy.FieldBytes(privacy.StakeCM(asset, a.amount, privacy.StakePC(other, a.rho, a.rcm)))
+	ssp.proof = steal.Stake
+	_, err := e.tryProveStake(steal, ssp)
+	if shieldedtest.Circuits() != "" {
+		require.ErrorIs(t, err, shieldedtest.ErrWitnessRefused)
+	} else {
+		require.ErrorIs(t, err, shieldedtest.ErrNoCircuits)
+	}
+
+	// An honest split, and the same proof with its first output swapped for
+	// another owner's (fee bundle re-proven over the forged msg): the stake
+	// proof no longer verifies.
+	honest, hp, hsp := restake(a, b)
+	e.prove(honest, hp)
+	e.proveStake(honest, hsp)
+	forged := *honest
+	forged.Stake.Commitments = [][]byte{privacy.FieldBytes(privacy.StakeCM(asset, a.amount, privacy.StakePC(other, a.rho, a.rcm))),
+		honest.Stake.Commitments[1]}
+	fb := e.feeOnly()
+	forged.Bundle, forged.Fee = fb.b, fb.fee
+	e.prove(&forged, fb)
+	res := e.checkTx(e.privateTx(&forged))
+	require.Equal(t, sstypes.ErrInvalidStakeProof.ABCICode(), res.Code, res.Log)
+	r := e.run(e.privateTx(honest))
+	require.Equal(t, uint32(0), r.Code, r.Log)
+	e.settle(hp)
+	e.settleStake(hsp)
+	require.True(t, a.known && b.known)
+	require.Equal(t, uint64(1_000*ssErth), e.stakeBalance(dn.denom), "split, still the owner's")
+	e.invariants()
+
+	// derth is never a pool asset, a dex token or a swap output.
+	_, err = e.app.ShieldedKeeper.RegisterAsset(e.ctx(), dn.denom)
+	require.Error(t, err)
+	cp := e.run(e.signedTx(e.user, 600_000, 5_000, &dextypes.MsgCreatePool{Creator: e.bech(e.userAddr()),
+		AmountA: sdk.NewInt64Coin("uerth", ssErth), AmountB: sdk.NewInt64Coin(dn.denom, 1)}))
+	require.Equal(t, dextypes.ErrShieldedOnly.ABCICode(), cp.Code, cp.Log)
+	in := e.w.unspent("uerth", uint64(ssErth))
+	sw := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: uint64(ssErth)})
+	out := e.w.fresh(dn.denom, 0)
+	swap := &dextypes.MsgNoteSwap{Bundle: sw.b, Fee: sw.fee, DenomOut: dn.denom, MinAmountOut: 1, Pc: privacy.FieldBytes(e.w.pc(out))}
+	unproven(swap)
+	res = e.checkTx(e.privateTx(swap))
+	require.Equal(t, dextypes.ErrPoolNotFound.ABCICode(), res.Code, res.Log)
 }
