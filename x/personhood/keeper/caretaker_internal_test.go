@@ -131,11 +131,12 @@ func TestCaretakerLeaseAndSweep(t *testing.T) {
 }
 
 // The caretaker statement refuses a max_activation later than now - R -
-// window: a switched-to identity cannot vote beside a predecessor's live split.
+// activation margin: a switched-to identity cannot vote beside a
+// predecessor's live split.
 func TestCaretakerActivationBound(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
 	now := ctx.BlockTime().Unix()
-	bound := now - 1000 - types.DefaultIdentityRootWindowSeconds
+	bound := now - 1000 - types.ActivationMarginSeconds
 	m := &types.MsgSetCaretaker{Fee: feeStub(), MaxActivation: uint64(bound)}
 	st, err := k.caretakerStatement(ctx, m)
 	require.NoError(t, err)
@@ -226,4 +227,60 @@ func feeStub() shieldedtypes.Bundle {
 			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: make([]byte, shieldedtypes.ProofBytes)})
 	}
 	return b
+}
+
+// Audit 3 L5: governance lowering R (or the root window) must not let a
+// switched-to identity lease beside its predecessor's lease cast under the
+// old R. The old R keeps bounding activation until every lease cast under
+// it has lapsed; the root window never enters the bound.
+func TestAudit3LoweredLeaseLengthHeld(t *testing.T) {
+	k, _, ctx := caretakerKeepers(t)
+	ms := NewMsgServerImpl(k)
+	params, err := k.Params.Get(ctx)
+	require.NoError(t, err)
+	oldR := params.CaretakerVoteSecondsOrDefault()
+	now := ctx.BlockTime().Unix()
+	b0, err := k.LeaseActivationBound(ctx)
+	require.NoError(t, err)
+	require.Equal(t, now-oldR-types.ActivationMarginSeconds, b0)
+
+	// The root window does not move the bound, either way.
+	for _, w := range []uint64{60, types.SecondsPerDay} {
+		params.IdentityRootWindowSeconds = w
+		_, err = ms.UpdateParams(ctx, &types.MsgUpdateParams{Authority: authorityOf(t, k), Params: params})
+		require.NoError(t, err)
+		b, err := k.LeaseActivationBound(ctx)
+		require.NoError(t, err)
+		require.Equal(t, b0, b)
+	}
+
+	// Lower R to a tenth: the bound keeps the old R until now + old R.
+	params.CaretakerVoteSeconds = uint64(oldR / 10)
+	_, err = ms.UpdateParams(ctx, &types.MsgUpdateParams{Authority: authorityOf(t, k), Params: params})
+	require.NoError(t, err)
+	b, err := k.LeaseActivationBound(ctx)
+	require.NoError(t, err)
+	require.Equal(t, b0, b, "a lowered R does not shorten the bound while old leases run")
+	held := ctx.WithBlockTime(time.Unix(now+oldR-1, 0))
+	b, err = k.LeaseActivationBound(held)
+	require.NoError(t, err)
+	require.Equal(t, now+oldR-1-oldR-types.ActivationMarginSeconds, b)
+	// Every lease cast under the old R has lapsed: the new R applies.
+	after := ctx.WithBlockTime(time.Unix(now+oldR, 0))
+	b, err = k.LeaseActivationBound(after)
+	require.NoError(t, err)
+	require.Equal(t, now+oldR-oldR/10-types.ActivationMarginSeconds, b)
+
+	// The hold survives export/import.
+	gs, err := k.ExportGenesis(ctx)
+	require.NoError(t, err)
+	require.Equal(t, types.LeaseHold{Seconds: oldR, Until: now + oldR}, gs.LeaseHold)
+	require.NoError(t, gs.Validate())
+}
+
+func authorityOf(t *testing.T, k Keeper) string {
+	t.Helper()
+	a, err := k.addressCodec.BytesToString(k.GetAuthority())
+	require.NoError(t, err)
+	return a
 }

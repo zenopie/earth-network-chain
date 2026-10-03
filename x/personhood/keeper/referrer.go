@@ -187,19 +187,17 @@ func (a referrerAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.Pr
 // referrerStatement: scope referrer, and the caretaker activation rule (see
 // caretakerStatement): max_activation at most now - R - root window.
 func (k Keeper) referrerStatement(ctx context.Context, m *types.MsgBindReferrer) (MembershipStatement, error) {
-	params, err := k.Params.Get(ctx)
-	if err != nil {
-		return MembershipStatement{}, err
-	}
 	signal, err := k.SignalOf(ctx, m)
 	if err != nil {
 		return MembershipStatement{}, err
 	}
-	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
-	bound := now - params.CaretakerVoteSecondsOrDefault() - params.IdentityRootWindowSecondsOrDefault()
+	bound, err := k.LeaseActivationBound(ctx)
+	if err != nil {
+		return MembershipStatement{}, err
+	}
 	if bound < 0 || m.MaxActivation > uint64(bound) {
 		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg,
-			"max_activation %d is after %d (now - caretaker_vote_seconds - identity root window)", m.MaxActivation, bound)
+			"max_activation %d is after %d (now - lease length - activation margin)", m.MaxActivation, bound)
 	}
 	return MembershipStatement{
 		Scope:         privacy.ReferrerScope(),

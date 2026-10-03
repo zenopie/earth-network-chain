@@ -166,3 +166,59 @@ func (k Keeper) pruneClaimNullifiers(ctx context.Context, limit int) error {
 	}
 	return nil
 }
+
+// leaseSeconds is the lease length the activation bound uses: R, or a longer
+// R governance lowered from while leases cast under it may still run (see
+// types.LeaseHold).
+func (k Keeper) leaseSeconds(ctx context.Context, params types.Params) (int64, error) {
+	r := params.CaretakerVoteSecondsOrDefault()
+	h, err := k.LeaseHold.Get(ctx)
+	if errors.Is(err, collections.ErrNotFound) {
+		return r, nil
+	} else if err != nil {
+		return 0, err
+	}
+	if sdk.UnwrapSDKContext(ctx).BlockTime().Unix() < h.Until && h.Seconds > r {
+		return h.Seconds, nil
+	}
+	return r, nil
+}
+
+// LeaseActivationBound is the latest activated_at a caretaker split or a
+// referrer binding may prove now: now - lease length - activation margin.
+// A switched-to identity is activated at the switch, and its predecessor's
+// leaf proves for at most a root window (<= the margin) after it, so every
+// lease the predecessor could cast has lapsed before the successor may cast
+// one.
+func (k Keeper) LeaseActivationBound(ctx context.Context) (int64, error) {
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return 0, err
+	}
+	r, err := k.leaseSeconds(ctx, params)
+	if err != nil {
+		return 0, err
+	}
+	return sdk.UnwrapSDKContext(ctx).BlockTime().Unix() - r - types.ActivationMarginSeconds, nil
+}
+
+// holdLeaseSeconds records, before params change to next, that the lease
+// length in force (old, or a hold already running) keeps bounding activation
+// until every lease cast under it has lapsed.
+func (k Keeper) holdLeaseSeconds(ctx context.Context, old, next types.Params) error {
+	cur, err := k.leaseSeconds(ctx, old)
+	if err != nil {
+		return err
+	}
+	if next.CaretakerVoteSecondsOrDefault() >= cur {
+		return nil
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	h := types.LeaseHold{Seconds: cur, Until: now + cur}
+	if prev, err := k.LeaseHold.Get(ctx); err == nil && prev.Until > h.Until {
+		h.Until = prev.Until
+	} else if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	return k.LeaseHold.Set(ctx, h)
+}

@@ -115,23 +115,23 @@ func (a caretakerAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.P
 }
 
 // caretakerStatement: scope caretaker, and an identity activated by the msg's
-// max_activation, which must be at least R + the identity root window ago. A split lasts R, and a zeroed leaf keeps
-// proving for one root window, so by the time a switched-to identity may cast
-// a split, every split its predecessor could have cast has lapsed.
+// max_activation, which must be at most LeaseActivationBound: R (or a held,
+// longer R) + the activation margin ago. A split lasts R, and a zeroed leaf
+// keeps proving for one root window (<= the margin), so by the time a
+// switched-to identity may cast a split, every split its predecessor could
+// have cast has lapsed, whatever governance did to either parameter.
 func (k Keeper) caretakerStatement(ctx context.Context, m *types.MsgSetCaretaker) (MembershipStatement, error) {
-	params, err := k.Params.Get(ctx)
-	if err != nil {
-		return MembershipStatement{}, err
-	}
 	signal, err := k.SignalOf(ctx, m)
 	if err != nil {
 		return MembershipStatement{}, err
 	}
-	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
-	bound := now - params.CaretakerVoteSecondsOrDefault() - params.IdentityRootWindowSecondsOrDefault()
+	bound, err := k.LeaseActivationBound(ctx)
+	if err != nil {
+		return MembershipStatement{}, err
+	}
 	if bound < 0 || m.MaxActivation > uint64(bound) {
 		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg,
-			"max_activation %d is after %d (now - caretaker_vote_seconds - identity root window)", m.MaxActivation, bound)
+			"max_activation %d is after %d (now - lease length - activation margin)", m.MaxActivation, bound)
 	}
 	return MembershipStatement{
 		Scope:         privacy.CaretakerScope(),

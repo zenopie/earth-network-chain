@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/earth-network/earth/x/assembly/types"
+	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
@@ -313,13 +314,13 @@ func TestDeclinedExpeditedProposalIsDemotedNotKilled(t *testing.T) {
 	require.Equal(t, types.Tally{}, tally)
 
 	// The regular round is a new ballot scope, opened now: a voter proves an
-	// identity activated a root window before the demotion, and alice's
+	// identity activated the activation margin before the demotion, and alice's
 	// nullifier in it is a new one.
 	in, err := NewQueryServerImpl(e.k).BallotInputs(e.ctx, &types.QueryBallotInputsRequest{ProposalId: 1})
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), in.Round)
 	require.Equal(t, privacy.FieldBytes(privacy.ProposalScope(1, 1)), in.Scope)
-	require.Equal(t, uint64(e.ctx.BlockTime().Unix()-3600), in.MaxActivation)
+	require.Equal(t, uint64(e.ctx.BlockTime().Unix()-personhoodtypes.ActivationMarginSeconds), in.MaxActivation)
 
 	// And the second round runs under ordinary rules: two thirds now suffices.
 	e.voteAll(t, 1, types.VOTE_OPTION_YES, "dave", "erin")

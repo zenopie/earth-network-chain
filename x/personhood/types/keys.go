@@ -355,3 +355,13 @@ const UsedBindingGraceSeconds = 24 * 60 * 60
 // governance may set (a year). A used binding is held for it whatever the
 // skew in force, so raising the skew never reopens a replay.
 const MaxCurrentDateMaxSkewSeconds = 365 * SecondsPerDay
+
+// ActivationMarginSeconds is how long before a ballot opens (or, for a lease,
+// before now less the lease length) a member's identity must have been
+// activated to take part: the largest identity_root_window_seconds governance
+// may set. A zeroed leaf keeps proving for at most one root window, so with
+// the margin at its maximum no change of the window, either way and at any
+// time, lets an identity and the one it switched to both take part (an old
+// root never outlives the margin). The window parameter itself only governs
+// how long a superseded root stays an anchor.
+const ActivationMarginSeconds = SecondsPerDay

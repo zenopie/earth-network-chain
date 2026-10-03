@@ -82,9 +82,11 @@ func (k Keeper) votingProposal(ctx context.Context, id uint64) (v1.Proposal, err
 
 // proposalInputs is the statement (less the signal) a vote on proposal's
 // current round proves: scope proposal/id/round; its subjects (the signer or
-// country it revokes) excluded; an identity activated an identity root window before the round
-// opened, so a person who switched identity during the round cannot vote in
-// it twice.
+// country it revokes) excluded; an identity activated before the round opened, by the activation margin
+// (personhoodtypes.ActivationMarginSeconds, the largest root window
+// governance may set: a constant, so no change of the window mid-round lets a
+// switched identity and its predecessor both vote), so a person who switched
+// identity cannot vote in a round twice.
 func (k Keeper) proposalInputs(ctx context.Context, proposal v1.Proposal) (personhoodtypes.MembershipStatement, uint64, error) {
 	var st personhoodtypes.MembershipStatement
 	round, openedAt, err := k.proposalRound(ctx, proposal)
@@ -95,14 +97,10 @@ func (k Keeper) proposalInputs(ctx context.Context, proposal v1.Proposal) (perso
 	if err != nil {
 		return st, 0, err
 	}
-	window, err := k.personhood.IdentityRootWindow(ctx)
-	if err != nil {
-		return st, 0, err
-	}
 	st.Scope = privacy.ProposalScope(proposal.Id, round)
 	st.ExcludedDsc = excludedDsc
 	st.ExcludedCountry = excludedCountry
-	st.MaxActivation = openedAt - window
+	st.MaxActivation = openedAt - personhoodtypes.ActivationMarginSeconds
 	return st, round, nil
 }
 
@@ -116,12 +114,8 @@ func (k Keeper) removalInputs(ctx context.Context, optionID uint64) (personhoodt
 	} else if err != nil {
 		return st, ballot, err
 	}
-	window, err := k.personhood.IdentityRootWindow(ctx)
-	if err != nil {
-		return st, ballot, err
-	}
 	st.Scope = privacy.RemovalScope(ballot.BallotId)
-	st.MaxActivation = ballot.OpenedAt - window
+	st.MaxActivation = ballot.OpenedAt - personhoodtypes.ActivationMarginSeconds
 	return st, ballot, nil
 }
 
@@ -199,18 +193,15 @@ func (a proposeRemovalAction) CheckPrivateAction(ctx context.Context, msg shield
 	if err := a.k.personhood.CheckMembership(ctx, m.Membership); err != nil {
 		return nil, err
 	}
-	window, err := a.k.personhood.IdentityRootWindow(ctx)
-	if err != nil {
-		return nil, err
-	}
 	// Fixed per UTC day, not per block, so a wallet knows the statement it
-	// proves before its tx lands: an identity activated a root window before
-	// today began.
+	// proves before its tx lands: an identity activated the activation margin
+	// (a day) before today began.
 	day := sdk.UnwrapSDKContext(ctx).BlockTime().Unix() / personhoodtypes.SecondsPerDay
 	st := personhoodtypes.MembershipStatement{
 		Scope:         privacy.ProposeRemovalScope(m.OptionId, uint64(day)),
-		MaxActivation: day*personhoodtypes.SecondsPerDay - window,
+		MaxActivation: day*personhoodtypes.SecondsPerDay - personhoodtypes.ActivationMarginSeconds,
 	}
+	var err error
 	if st.Signal, err = a.k.personhood.SignalOf(ctx, m); err != nil {
 		return nil, err
 	}
