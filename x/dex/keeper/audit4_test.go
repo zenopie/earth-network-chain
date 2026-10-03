@@ -80,7 +80,10 @@ func TestAudit4UnbondingPayoutOverflowNoHalt(t *testing.T) {
 	require.NotPanics(t, func() { require.NoError(t, k.SweepMaturedUnbondings(later)) })
 
 	n := 0
-	require.NoError(t, k.LpUnbondings.Walk(later, nil, func(_ collections.Triple[int64, uint64, []byte], _ types.LpUnbonding) (bool, error) { n++; return false, nil }))
+	require.NoError(t, k.LpUnbondings.Walk(later, nil, func(_ collections.Triple[int64, uint64, []byte], _ types.LpUnbonding) (bool, error) {
+		n++
+		return false, nil
+	}))
 	require.Zero(t, n, "the entry is dropped, not retried every block")
 	failed := false
 	for _, e := range later.EventManager().Events() {
