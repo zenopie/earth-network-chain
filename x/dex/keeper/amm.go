@@ -11,9 +11,11 @@ import (
 var oneHundredPercent = math.LegacyNewDec(100)
 
 // feeOf returns the ERTH fee charged on amount for a swap fee expressed as a
-// percentage (e.g. swapFee = 0.3 means 0.3%). It truncates to an integer.
+// percentage (e.g. swapFee = 0.3 means 0.3%), rounded up: the protocol's
+// favour, like every other rounding in the dex, so a small swap cannot pay
+// nothing (audit 5 L-DX4). Never above amount (swap_fee <= 100%).
 func feeOf(amount math.Int, swapFee math.LegacyDec) math.Int {
-	return math.LegacyNewDecFromInt(amount).Mul(swapFee).Quo(oneHundredPercent).TruncateInt()
+	return math.LegacyNewDecFromInt(amount).Mul(swapFee).Quo(oneHundredPercent).Ceil().TruncateInt()
 }
 
 // intSqrt returns the integer square root of a non-negative math.Int.

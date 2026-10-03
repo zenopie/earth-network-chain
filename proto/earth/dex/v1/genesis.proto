@@ -66,6 +66,25 @@ message GenesisState {
   // pool_stale_due is when each pool with volume falls due for the staleness
   // sweep. A pool with volume and no entry here would never be swept.
   repeated PoolStaleDue pool_stale_due = 10 [(gogoproto.nullable) = false];
+
+  // price_accumulators carries each pool's TWAP accumulator (the running sum
+  // of its spot price over time) and the second it was last brought forward.
+  // Restarting them at zero would read a window spanning the import as a
+  // negative average (audit 5 L-DX3), and the buyback would skip it.
+  repeated PriceAccumulator price_accumulators = 11 [(gogoproto.nullable) = false];
+}
+
+// PriceAccumulator is one pool's TWAP accumulator.
+message PriceAccumulator {
+  uint64 pool_id = 1;
+  // cumulative is the running sum of price (ERTH per token) x seconds.
+  string cumulative = 2 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false
+  ];
+  // observed_at is the unix second it was last brought forward.
+  int64 observed_at = 3;
 }
 
 // PoolStaleDue is one pool's place in the staleness queue.

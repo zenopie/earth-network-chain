@@ -83,6 +83,14 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 	}
+	for _, a := range genState.PriceAccumulators {
+		if err := k.PriceCumulative.Set(ctx, a.PoolId, a.Cumulative); err != nil {
+			return err
+		}
+		if err := k.PriceObservedAt.Set(ctx, a.PoolId, a.ObservedAt); err != nil {
+			return err
+		}
+	}
 	// Resume the id sequence past the highest imported pool id.
 	if maxID > 0 {
 		if err := k.PoolSeq.Set(ctx, maxID); err != nil {
@@ -208,6 +216,16 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}
 	if err := k.PoolStaleDue.Walk(ctx, nil, func(id uint64, at int64) (stop bool, err error) {
 		genesis.PoolStaleDue = append(genesis.PoolStaleDue, types.PoolStaleDue{PoolId: id, Due: at})
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.PriceObservedAt.Walk(ctx, nil, func(id uint64, at int64) (stop bool, err error) {
+		cum, _, err := k.getPriceCumulative(ctx, id)
+		if err != nil {
+			return true, err
+		}
+		genesis.PriceAccumulators = append(genesis.PriceAccumulators, types.PriceAccumulator{PoolId: id, Cumulative: cum, ObservedAt: at})
 		return false, nil
 	}); err != nil {
 		return nil, err

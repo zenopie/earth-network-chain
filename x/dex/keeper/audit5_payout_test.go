@@ -232,3 +232,23 @@ func TestAudit5WithdrawalNoteLegCappedAtStart(t *testing.T) {
 		Shares: sdk.NewInt64Coin(types.LPShareDenom(id), 400), Pc: privacy.FieldBytes(privacy.U64(1)), Ciphertext: ct})
 	require.NoError(t, err)
 }
+
+// Audit 5 L-DX3: the TWAP accumulator survives an export and import.
+func TestAudit5TwapAccumulatorExported(t *testing.T) {
+	k, ctx, bank := initRewardFixture(t)
+	seedFundedPool(t, k, ctx, bank, 1, 1_000_000, 1_000_000, 0)
+	require.NoError(t, k.PriceCumulative.Set(ctx, 1, math.LegacyNewDec(12345)))
+	require.NoError(t, k.PriceObservedAt.Set(ctx, 1, 777))
+	gs, err := k.ExportGenesis(ctx)
+	require.NoError(t, err)
+	require.NoError(t, gs.Validate())
+	require.Equal(t, []types.PriceAccumulator{{PoolId: 1, Cumulative: math.LegacyNewDec(12345), ObservedAt: 777}}, gs.PriceAccumulators)
+	k2, ctx2, _ := initRewardFixture(t)
+	require.NoError(t, k2.InitGenesis(ctx2, *gs))
+	cum, err := k2.PriceCumulative.Get(ctx2, 1)
+	require.NoError(t, err)
+	require.Equal(t, math.LegacyNewDec(12345), cum)
+	at, err := k2.PriceObservedAt.Get(ctx2, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(777), at)
+}

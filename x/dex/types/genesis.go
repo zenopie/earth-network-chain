@@ -283,6 +283,19 @@ func (gs GenesisState) Validate() error {
 		}
 		stale[d.PoolId] = struct{}{}
 	}
+	acc := make(map[uint64]struct{}, len(gs.PriceAccumulators))
+	for _, a := range gs.PriceAccumulators {
+		if _, ok := pools[a.PoolId]; !ok {
+			return fmt.Errorf("price_accumulators names pool %d, which does not exist", a.PoolId)
+		}
+		if _, ok := acc[a.PoolId]; ok {
+			return fmt.Errorf("price_accumulators names pool %d twice", a.PoolId)
+		}
+		acc[a.PoolId] = struct{}{}
+		if a.Cumulative.IsNil() || a.Cumulative.IsNegative() || a.ObservedAt < 0 {
+			return fmt.Errorf("price_accumulators: pool %d carries %s at %d", a.PoolId, a.Cumulative, a.ObservedAt)
+		}
+	}
 
 	return gs.Params.Validate()
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"cosmossdk.io/math"
+	"github.com/stretchr/testify/require"
 )
 
 // TestSplitFeeRoundsToTheBurn pins the swap fee's rounding rule alongside the
@@ -35,4 +36,15 @@ func TestSplitFeeRoundsToTheBurn(t *testing.T) {
 			t.Errorf("splitFee(%d) gave the burn the smaller half", tc.fee)
 		}
 	}
+}
+
+// Audit 5 L-DX4: the swap fee rounds up, so a small swap pays at least one
+// unit and an exact multiple pays exactly.
+func TestFeeOfRoundsUp(t *testing.T) {
+	fee := math.LegacyNewDecWithPrec(3, 1) // 0.3%
+	require.Equal(t, int64(1), feeOf(math.NewInt(1), fee).Int64())
+	require.Equal(t, int64(1), feeOf(math.NewInt(333), fee).Int64())
+	require.Equal(t, int64(3), feeOf(math.NewInt(1000), fee).Int64())
+	require.Equal(t, int64(4), feeOf(math.NewInt(1001), fee).Int64())
+	require.True(t, feeOf(math.NewInt(1000), math.LegacyZeroDec()).IsZero())
 }
