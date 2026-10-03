@@ -36,4 +36,9 @@ var (
 	// ErrBindingUsed: this registration (its exact binding: idc, notes,
 	// ciphertexts, affiliate) has landed before. A replay of a public proof.
 	ErrBindingUsed = errors.Register(ModuleName, 1124, "this registration has already been used")
+	// ErrReferralCodeTaken: the code is held by another referrer binding, or
+	// reserved to its last holder for the grace period.
+	ErrReferralCodeTaken = errors.Register(ModuleName, 1126, "referral code is taken")
+	// ErrUnknownReferralCode: no live referrer binding holds the code.
+	ErrUnknownReferralCode = errors.Register(ModuleName, 1127, "referral code names no live referrer")
 )

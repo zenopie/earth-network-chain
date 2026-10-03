@@ -100,5 +100,11 @@ func (q queryServer) Referrer(ctx context.Context, req *types.QueryReferrerReque
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &types.QueryReferrerResponse{Live: live, ExpiresAt: expiresAt}, nil
+	res := &types.QueryReferrerResponse{Live: live, ExpiresAt: expiresAt}
+	if nf, err := q.k.ReferrerByAddr.Get(ctx, addr); err == nil {
+		if code, err := q.k.ReferralCodeByNf.Get(ctx, nf); err == nil {
+			res.Code = code
+		}
+	}
+	return res, nil
 }

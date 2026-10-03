@@ -342,7 +342,9 @@ func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {
 		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), CiphertextAnml: r.CiphertextAnml(),
 		PcErth: privacy.FieldBytes(r.ErthPC()), CiphertextErth: r.CiphertextErth(),
 	}
-	if r.Referrer != "" {
+	if r.ReferrerCode != "" {
+		msg.AffiliateCode = r.ReferrerCode
+	} else if r.Referrer != "" {
 		msg.Affiliate = e.bech(personhoodtest.ReferralAddress(r.Referrer))
 	}
 	e.prove("register/"+name, msg, f, nil)
@@ -380,8 +382,15 @@ func (e *phEnv) caretaker(name, reg string, maxAct int64, split []allocationtype
 // registration reg.
 func (e *phEnv) bindReferrer(name, reg, human string, maxAct int64) *personhoodtypes.MsgBindReferrer {
 	e.t.Helper()
+	return e.bindReferrerCode(name, reg, human, "", maxAct)
+}
+
+// bindReferrerCode is bindReferrer claiming (or, "", keeping) a referral
+// code.
+func (e *phEnv) bindReferrerCode(name, reg, human, code string, maxAct int64) *personhoodtypes.MsgBindReferrer {
+	e.t.Helper()
 	f := e.feeFor("referrer/" + name)
-	msg := &personhoodtypes.MsgBindReferrer{Fee: e.bundle(f), MaxActivation: uint64(maxAct)}
+	msg := &personhoodtypes.MsgBindReferrer{Fee: e.bundle(f), MaxActivation: uint64(maxAct), Code: code}
 	if human != "" {
 		msg.Address = e.bech(personhoodtest.ReferralAddress(human))
 	}
@@ -779,13 +788,55 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.True(t, paid.IsPositive())
 	require.True(t, rewardC2.Sub(paid).Abs().LTE(math.OneInt()), "the referrer's half: %s vs %s", paid, rewardC2)
 	require.True(t, hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), rewardC2.Uint64(), personhoodtest.Registrations["C2"].ErthPC())))
-	// Rebinding the same nullifier moves the binding.
+	// ---------------------------------------------------------- referral code
+	// A2 rebinds A's address claiming the code "alice". The code is bound by
+	// the sighash: a relayer cannot claim another with the same proof.
+	e.at(e.now.Add(time.Minute))
+	withCode := e.bindReferrerCode("A2-code", "A2", "A", "alice", e.now.Unix()/3600*3600-phR-phDay-1)
+	swapped := *withCode
+	swapped.Code = "mallory"
+	res = e.checkTx(e.tx(&swapped))
+	require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the claimed code")
+	e.mustDeliver(withCode)
+	byCode, err := personhoodkeeper.NewQueryServerImpl(k).ReferrerByCode(ctxNow(), &personhoodtypes.QueryReferrerByCodeRequest{Code: "alice"})
+	require.NoError(t, err)
+	require.True(t, byCode.Live)
+	require.Equal(t, e.bech(personhoodtest.ReferralAddress("A")), byCode.Address)
+
+	// D1 names its referrer by code: the referrer's half goes to the
+	// address the code is bound to. The passport binding commits to the
+	// code, so a relayer cannot swap it for another code or an address.
+	regD1 := e.register("D1")
+	for _, mutate := range []func(*personhoodtypes.MsgRegister){
+		func(m *personhoodtypes.MsgRegister) { m.AffiliateCode = "mallory" },
+		func(m *personhoodtypes.MsgRegister) {
+			m.AffiliateCode, m.Affiliate = "", e.bech(personhoodtest.ReferralAddress("A"))
+		},
+	} {
+		bad := *regD1
+		mutate(&bad)
+		res = e.checkTx(e.tx(&bad))
+		require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the affiliate")
+	}
+	before = e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount
+	fb = e.mustDeliver(regD1)
+	regEv = eventsOf(fb.TxResults[0].Events, "register")[0]
+	rewardD1, ok := math.NewIntFromString(regEv["reward"])
+	require.True(t, ok)
+	paid = e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount.Sub(before)
+	require.True(t, paid.IsPositive())
+	require.True(t, rewardD1.Sub(paid).Abs().LTE(math.OneInt()), "the referrer's half, by code: %s vs %s", paid, rewardD1)
+
+	// Rebinding the same nullifier moves the binding, and keeps its code.
 	e.at(e.now.Add(time.Minute))
 	e.mustDeliver(e.bindReferrer("A2-move", "A2", "A-alt", e.now.Unix()/3600*3600-phR-phDay-1))
 	require.False(t, e.referrerLive("A"))
 	require.True(t, e.referrerLive("A-alt"))
+	byCode, err = personhoodkeeper.NewQueryServerImpl(k).ReferrerByCode(ctxNow(), &personhoodtypes.QueryReferrerByCodeRequest{Code: "alice"})
+	require.NoError(t, err)
+	require.Equal(t, e.bech(personhoodtest.ReferralAddress("A-alt")), byCode.Address, "the code follows the binding")
 	cnt, _ = k.RegCount.Get(ctxNow())
-	require.Equal(t, uint64(2), cnt)
+	require.Equal(t, uint64(3), cnt)
 
 	require.NoError(t, e.app.ShieldedKeeper.AssertInvariants(ctxNow()))
 

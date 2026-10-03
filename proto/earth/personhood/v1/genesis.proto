@@ -68,6 +68,10 @@ message GenesisState {
   // lease_hold keeps a lowered caretaker_vote_seconds from shortening the
   // activation bound before the leases cast under the old one have lapsed.
   LeaseHold lease_hold = 14 [(gogoproto.nullable) = false];
+
+  // referral_codes are the claimed referral codes: held by a live binding,
+  // or reserved to their last holder until releases_at (see ReferralCode).
+  repeated ReferralCode referral_codes = 15 [(gogoproto.nullable) = false];
 }
 
 // DscRateCounter is one Document Signer's rate counter.

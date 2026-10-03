@@ -175,6 +175,19 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	// A paid registration's affiliate must be a live referrer. A switch pays
 	// nothing, so its affiliate is not looked at.
 	var affiliate []byte
+	if !switched && msg.AffiliateCode != "" {
+		// Named by code: resolved now, to the address of the live binding
+		// whose active code it is. The binding commits to the code itself
+		// (types.AffiliateField), so a relayer cannot swap it.
+		addr, live, _, err := k.resolveReferralCode(ctx, msg.AffiliateCode)
+		if err != nil {
+			return preparedRegistration{}, err
+		}
+		if !live {
+			return preparedRegistration{}, errorsmod.Wrapf(types.ErrUnknownReferralCode, "affiliate_code %q", msg.AffiliateCode)
+		}
+		affiliate = addr
+	}
 	if !switched && msg.Affiliate != "" {
 		if affiliate, err = k.addressCodec.StringToBytes(msg.Affiliate); err != nil {
 			return preparedRegistration{}, errorsmod.Wrapf(types.ErrInvalidMsg, "affiliate: %v", err)

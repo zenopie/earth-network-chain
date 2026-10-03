@@ -117,6 +117,10 @@ func (gs GenesisState) Validate() error {
 		seenAddr[strings.ToLower(b.Address)] = struct{}{}
 	}
 
+	if err := validateReferralCodes(gs.ReferralCodes); err != nil {
+		return err
+	}
+
 	seenUsed := map[string]struct{}{}
 	for _, u := range gs.UsedBindings {
 		if _, err := privacy.FieldFromBytes(u.Binding); err != nil {

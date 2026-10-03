@@ -110,6 +110,9 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 	}
+	if err := k.importReferralCodes(ctx, genState.ReferralCodes); err != nil {
+		return err
+	}
 	for _, u := range genState.UsedBindings {
 		if err := k.putUsedBinding(ctx, u.Binding, u.ExpiresAt); err != nil {
 			return err
@@ -223,6 +226,12 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}
 	if err := k.ReferrerBindings.Walk(ctx, nil, func(_ []byte, b types.ReferrerBinding) (bool, error) {
 		genesis.ReferrerBindings = append(genesis.ReferrerBindings, b)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.ReferralCodes.Walk(ctx, nil, func(_ string, c types.ReferralCode) (bool, error) {
+		genesis.ReferralCodes = append(genesis.ReferralCodes, c)
 		return false, nil
 	}); err != nil {
 		return nil, err

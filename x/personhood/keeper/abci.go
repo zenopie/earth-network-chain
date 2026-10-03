@@ -97,6 +97,7 @@ func (k Keeper) runSweeps(ctx context.Context, budget int) error {
 		k.sweepCaretakerVotes,
 		k.sweepReferrerBindings,
 		k.sweepUsedBindings,
+		k.sweepReferralCodes,
 	}
 	reserve := budget / sweepReserveDivisor
 	if reserve == 0 && budget >= len(sweeps) {

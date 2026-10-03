@@ -103,6 +103,26 @@ message ReferrerBinding {
   int64 expires_at = 3;
 }
 
+// ReferralCode is a human-readable name for a referrer binding: lowercase
+// [a-z0-9-], 3 to 32 characters, no leading or trailing dash. One per
+// binding (the binding's nullifier: one per human). A registration may name
+// its referrer by code (MsgRegister.affiliate_code) instead of by address;
+// the code resolves to the binding's address at registration.
+//
+// It is held by its binding while that is live, and stays reserved to the
+// same nullifier for ReferralCodeGraceSeconds after the binding lapses or is
+// cleared (releases_at): nobody else can claim a code someone has just
+// stopped renewing. Past releases_at, anyone may claim it, and the sweep
+// deletes it.
+message ReferralCode {
+  string code = 1;
+  // nullifier is the referrer binding's nullifier (scope referrer).
+  bytes nullifier = 2;
+  // releases_at (unix seconds): the binding's expiry (or its clearing) plus
+  // the grace period.
+  int64 releases_at = 3;
+}
+
 // UsedRegistrationBinding is a registration binding (the proof's address
 // input: Poseidon2 of idc, the reward notes, their ciphertexts and the
 // affiliate) that has been registered, refused for reuse until expires_at.

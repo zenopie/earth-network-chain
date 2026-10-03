@@ -54,6 +54,11 @@ service Query {
     option (google.api.http).get = "/earth/personhood/v1/referrer/{address}";
   }
 
+  // ReferrerByCode resolves a referral code to its binding's address.
+  rpc ReferrerByCode(QueryReferrerByCodeRequest) returns (QueryReferrerByCodeResponse) {
+    option (google.api.http).get = "/earth/personhood/v1/referrer_code/{code}";
+  }
+
   // RegistrationCountries returns the registration count per issuing country.
   rpc RegistrationCountries(QueryRegistrationCountriesRequest) returns (QueryRegistrationCountriesResponse) {
     option (google.api.http).get = "/earth/personhood/v1/registration_countries";
@@ -149,4 +154,21 @@ message QueryReferrerRequest {
 message QueryReferrerResponse {
   bool live = 1;
   int64 expires_at = 2;
+  // code is the binding's referral code, "" for none.
+  string code = 3;
+}
+
+// QueryReferrerByCodeRequest asks what a referral code names.
+message QueryReferrerByCodeRequest {
+  string code = 1;
+}
+
+// QueryReferrerByCodeResponse: the address the code names (empty when no
+// live binding holds it), whether a registration may name it now (live),
+// the binding's expiry, and when the code is released (0: unclaimed).
+message QueryReferrerByCodeResponse {
+  string address = 1;
+  bool live = 2;
+  int64 expires_at = 3;
+  int64 releases_at = 4;
 }

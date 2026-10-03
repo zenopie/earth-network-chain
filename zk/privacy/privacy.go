@@ -48,6 +48,9 @@ var (
 	TagBytes  = tag("earth.bytes")
 	// TagScope domain-separates membership scopes (see Scope).
 	TagScope = tag("earth.scope")
+	// TagAffCode domain-separates a registration's affiliate named by
+	// referral code from one named by address (see AffiliateCode).
+	TagAffCode = tag("earth.affcode")
 )
 
 func tag(s string) fr.Element {
@@ -249,6 +252,12 @@ func ProposeRemovalScope(optionID, day uint64) fr.Element {
 func RegistrationBinding(idc, pcAnml fr.Element, ctAnml []byte, pcErth fr.Element, ctErth []byte, affiliate fr.Element) fr.Element {
 	return H(TagReg, idc, pcAnml, Bytes(ctAnml), pcErth, Bytes(ctErth), affiliate)
 }
+
+// AffiliateCode is the registration binding's affiliate field for a
+// referrer named by referral code: H(TAG_AFFCODE, Bytes(code)). One named by
+// address is Bytes(address bytes) = H(TAG_BYTES, ...): the tags differ, so
+// the two forms never collide.
+func AffiliateCode(code string) fr.Element { return H(TagAffCode, Bytes([]byte(code))) }
 
 // ErrNonCanonical is returned for a 32-byte string that is not a reduced
 // BN254 scalar.

@@ -49,36 +49,64 @@ func (k msgServer) BindReferrer(goCtx context.Context, msg *types.MsgBindReferre
 		return nil, err
 	}
 	nf := msg.Membership.Nullifier
-	if err := k.removeReferrerBinding(ctx, nf); err != nil {
+	expiresAt, code, err := k.applyBindReferrer(ctx, nf, msg.Address, msg.Code)
+	if err != nil {
 		return nil, err
 	}
+	ctx.EventManager().EmitEvent(sdk.NewEvent("bind_referrer",
+		sdk.NewAttribute("nullifier", hexOf(nf)),
+		sdk.NewAttribute("address", msg.Address),
+		sdk.NewAttribute("code", code),
+		sdk.NewAttribute("expires_at", strconv.FormatInt(expiresAt, 10)),
+	))
+	return &types.MsgBindReferrerResponse{ExpiresAt: expiresAt}, nil
+}
+
+// applyBindReferrer binds (address != ""), moves or clears nf's referrer
+// binding and its referral code; BindReferrer's state change.
+func (k Keeper) applyBindReferrer(ctx sdk.Context, nf []byte, address, codeIn string) (int64, string, error) {
+	if err := k.removeReferrerBinding(ctx, nf); err != nil {
+		return 0, "", err
+	}
 	expiresAt := int64(0)
-	if msg.Address != "" {
-		addr, err := k.addressCodec.StringToBytes(msg.Address)
+	code := ""
+	if address == "" {
+		// Clearing starts the active code's grace period; it stays reserved
+		// to this nullifier until then (a rebind with no code takes it back).
+		if cur, err := k.ReferralCodeByNf.Get(ctx, nf); err == nil {
+			if err := k.releaseCode(ctx, cur); err != nil {
+				return 0, "", err
+			}
+		} else if !errors.Is(err, collections.ErrNotFound) {
+			return 0, "", err
+		}
+	}
+	if address != "" {
+		addr, err := k.addressCodec.StringToBytes(address)
 		if err != nil {
-			return nil, err
+			return 0, "", err
 		}
 		params, err := k.Params.Get(ctx)
 		if err != nil {
-			return nil, err
+			return 0, "", err
 		}
 		// Rechecked here: the ante's check ran against the same state, but a
 		// second binding of the address in the same block would have passed
 		// it too.
 		if err := k.checkReferrerAddress(ctx, nf, addr); err != nil {
-			return nil, err
+			return 0, "", err
 		}
 		expiresAt = ctx.BlockTime().Unix() + params.CaretakerVoteSecondsOrDefault()
-		if err := k.putReferrerBinding(ctx, types.ReferrerBinding{Nullifier: nf, Address: msg.Address, ExpiresAt: expiresAt}, addr); err != nil {
-			return nil, err
+		if err := k.putReferrerBinding(ctx, types.ReferrerBinding{Nullifier: nf, Address: address, ExpiresAt: expiresAt}, addr); err != nil {
+			return 0, "", err
+		}
+		// The referral code: claimed, kept (empty) or moved, held while the
+		// binding lives and for the grace period after.
+		if code, err = k.bindCode(ctx, nf, codeIn, expiresAt); err != nil {
+			return 0, "", err
 		}
 	}
-	ctx.EventManager().EmitEvent(sdk.NewEvent("bind_referrer",
-		sdk.NewAttribute("nullifier", hexOf(nf)),
-		sdk.NewAttribute("address", msg.Address),
-		sdk.NewAttribute("expires_at", strconv.FormatInt(expiresAt, 10)),
-	))
-	return &types.MsgBindReferrerResponse{ExpiresAt: expiresAt}, nil
+	return expiresAt, code, nil
 }
 
 // checkReferrerAddress refuses an address bank will not pay, or one another
@@ -262,6 +290,11 @@ func (k Keeper) checkBindReferrer(ctx context.Context, m *types.MsgBindReferrer)
 		sdkCtx := sdk.UnwrapSDKContext(ctx)
 		if err := checkReferrerConsent(sdkCtx.ChainID(), sdkCtx.BlockHeight(), m, addr); err != nil {
 			return MembershipStatement{}, err
+		}
+		if m.Code != "" {
+			if err := k.codeAvailable(ctx, m.Membership.Nullifier, m.Code); err != nil {
+				return MembershipStatement{}, err
+			}
 		}
 		if holder, err := k.ReferrerByAddr.Get(ctx, addr); err == nil && string(holder) != string(m.Membership.Nullifier) {
 			if live, _, err := k.liveReferrer(ctx, addr); err != nil {

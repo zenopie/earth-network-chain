@@ -121,8 +121,19 @@ func (m *MsgRegister) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m
 const MaxAddressBytes = 128
 
 // AffiliateField is the affiliate's place in the registration binding and
-// signal: Bytes(its address bytes), or 0 for none.
-func AffiliateField(ac address.Codec, affiliate string) (fr.Element, error) {
+// signal: Bytes(its address bytes) when named by address,
+// privacy.AffiliateCode(code) when named by referral code, 0 for none. At
+// most one of the two may be set.
+func AffiliateField(ac address.Codec, affiliate, code string) (fr.Element, error) {
+	if affiliate != "" && code != "" {
+		return fr.Element{}, errorsmod.Wrap(ErrInvalidMsg, "name the affiliate by address or by code, not both")
+	}
+	if code != "" {
+		if err := ValidateReferralCode(code); err != nil {
+			return fr.Element{}, err
+		}
+		return privacy.AffiliateCode(code), nil
+	}
 	if affiliate == "" {
 		return fr.Element{}, nil
 	}
@@ -164,7 +175,7 @@ func (m *MsgRegister) Binding(ac address.Codec) (fr.Element, error) {
 	if err != nil {
 		return fr.Element{}, err
 	}
-	aff, err := AffiliateField(ac, m.Affiliate)
+	aff, err := AffiliateField(ac, m.Affiliate, m.AffiliateCode)
 	if err != nil {
 		return fr.Element{}, err
 	}
@@ -187,7 +198,7 @@ func (m *MsgRegister) SighashFields(ac address.Codec) ([]fr.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	aff, err := AffiliateField(ac, m.Affiliate)
+	aff, err := AffiliateField(ac, m.Affiliate, m.AffiliateCode)
 	if err != nil {
 		return nil, err
 	}
@@ -231,6 +242,14 @@ func (m *MsgRegister) ValidateBasic() error {
 	}
 	if len(m.Affiliate) > MaxAddressBytes {
 		return errorsmod.Wrapf(ErrInvalidMsg, "affiliate exceeds %d bytes", MaxAddressBytes)
+	}
+	if m.AffiliateCode != "" {
+		if m.Affiliate != "" {
+			return errorsmod.Wrap(ErrInvalidMsg, "name the affiliate by address or by code, not both")
+		}
+		if err := ValidateReferralCode(m.AffiliateCode); err != nil {
+			return err
+		}
 	}
 	for what, ct := range map[string][]byte{
 		"ciphertext_anml": m.CiphertextAnml, "ciphertext_erth": m.CiphertextErth,
@@ -316,8 +335,9 @@ func (m *MsgBindReferrer) PrivateBundles() []*shieldedtypes.Bundle {
 // PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
 func (m *MsgBindReferrer) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
 
-// SighashFields implements PrivateMsg: Bytes(address bytes) (Bytes of
-// nothing to clear).
+// SighashFields implements PrivateMsg: Bytes(address bytes), Bytes(code)
+// (Bytes of nothing for an empty address or code). The code is bound so
+// whoever relays the bind cannot claim another code with it.
 func (m *MsgBindReferrer) SighashFields(ac address.Codec) ([]fr.Element, error) {
 	var bz []byte
 	if m.Address != "" {
@@ -326,7 +346,7 @@ func (m *MsgBindReferrer) SighashFields(ac address.Codec) ([]fr.Element, error) 
 			return nil, errorsmod.Wrapf(ErrInvalidMsg, "address: %v", err)
 		}
 	}
-	return []fr.Element{privacy.Bytes(bz)}, nil
+	return []fr.Element{privacy.Bytes(bz), privacy.Bytes([]byte(m.Code))}, nil
 }
 
 // ValidateBasic checks everything that needs no state.
@@ -338,11 +358,18 @@ func (m *MsgBindReferrer) ValidateBasic() error {
 		if len(m.ReferrerPubKey) != 0 || len(m.ReferrerSignature) != 0 || m.ConsentExpiryHeight != 0 {
 			return errorsmod.Wrap(ErrInvalidMsg, "clearing a binding carries no consent")
 		}
+		if m.Code != "" {
+			return errorsmod.Wrap(ErrInvalidMsg, "clearing a binding claims no referral code")
+		}
 	} else if len(m.ReferrerPubKey) != ReferrerPubKeyBytes || len(m.ReferrerSignature) != ReferrerSignatureBytes {
 		return errorsmod.Wrapf(ErrNoReferrerConsent, "referrer_pub_key must be %d bytes and referrer_signature %d",
 			ReferrerPubKeyBytes, ReferrerSignatureBytes)
 	} else if m.ConsentExpiryHeight == 0 {
 		return errorsmod.Wrap(ErrNoReferrerConsent, "consent_expiry_height must be set")
+	} else if m.Code != "" {
+		if err := ValidateReferralCode(m.Code); err != nil {
+			return err
+		}
 	}
 	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
