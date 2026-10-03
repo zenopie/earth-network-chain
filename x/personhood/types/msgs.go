@@ -126,23 +126,17 @@ const MaxAddressBytes = 128
 
 // AffiliateField is the affiliate's place in the registration binding and
 // signal: 0 when the registration names no referrer, and
-// privacy.AffiliateField(affiliate_handle, affiliate_pc,
-// affiliate_ciphertext) when it does. All three are set, or none.
+// privacy.AffiliateField(affiliate_handle) = H(TAG_AFFILIATE,
+// Bytes(affiliate_handle)) when it does. The referral note is the chain's to
+// make (to the handle's registered address), so the handle is all it binds.
 func (m *MsgRegister) AffiliateField() (fr.Element, error) {
-	if m.AffiliateHandle == "" && len(m.AffiliatePc) == 0 && len(m.AffiliateCiphertext) == 0 {
+	if m.AffiliateHandle == "" {
 		return fr.Element{}, nil
 	}
 	if err := ValidateHandle(m.AffiliateHandle); err != nil {
 		return fr.Element{}, errorsmod.Wrapf(ErrInvalidMsg, "affiliate_handle: %v", err)
 	}
-	pc, err := Field("affiliate_pc", m.AffiliatePc)
-	if err != nil {
-		return fr.Element{}, err
-	}
-	if err := checkCiphertext("affiliate_ciphertext", m.AffiliateCiphertext); err != nil {
-		return fr.Element{}, err
-	}
-	return privacy.AffiliateField(m.AffiliateHandle, pc, m.AffiliateCiphertext), nil
+	return privacy.AffiliateField(m.AffiliateHandle), nil
 }
 
 // canonicalBytes decodes addr and requires it to be the canonical

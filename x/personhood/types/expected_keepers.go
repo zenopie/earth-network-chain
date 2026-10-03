@@ -1,6 +1,7 @@
 package types
 
 import (
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"context"
 
 	"cosmossdk.io/core/address"
@@ -52,6 +53,9 @@ type AllocationKeeper interface {
 // verifying membership proofs against the pool's verifying keys.
 type ShieldedKeeper interface {
 	MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error)
+	// MintOpenNote mints a note to a public owner_pk with a chain-chosen
+	// opening, emitted on the mint event (the referral note).
+	MintOpenNote(ctx context.Context, fromModule string, coin sdk.Coin, ownerPK, rho, rcm fr.Element) (uint64, []byte, error)
 	RegisterPrivateAction(msgTypeURL string, h shieldedtypes.PrivateActionHandler)
 	VerifyCircuit(ctx context.Context, circuit string, proof []byte, publicInputs [][]byte) error
 	PrivateGasPrices(ctx context.Context) (proof, note uint64, err error)

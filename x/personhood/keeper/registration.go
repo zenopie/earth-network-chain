@@ -42,7 +42,8 @@ type preparedRegistration struct {
 	// neither rate-limited nor paid.
 	switched bool
 	// referred: the registration names a live affiliate handle and is paid
-	// (not a switch); the referral note goes to msg.AffiliatePc.
+	// (not a switch); Register mints the referral note to the handle's
+	// address (referralNote).
 	referred bool
 }
 
@@ -173,9 +174,10 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		}
 	}
 	// A paid registration's affiliate handle must be live (it resolves). A
-	// switch pays nothing, so its affiliate is not looked at. The note's pc
-	// and ciphertext are the registrant's wallet's, made to the handle's
-	// address; the passport binding commits to all three.
+	// switch pays nothing, so its affiliate is not looked at. The binding
+	// commits to the handle; the referral note is the chain's to make, to the
+	// address the handle resolves to (audit 5 P1: a registrant-made pc could
+	// name any owner, the registrant's own included).
 	referred := false
 	if !switched && msg.AffiliateHandle != "" {
 		_, live, err := k.liveHandle(ctx, msg.AffiliateHandle)

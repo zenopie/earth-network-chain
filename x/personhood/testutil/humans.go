@@ -76,27 +76,23 @@ func ShieldedAddress(human string) privacy.ShieldedAddress {
 	return a
 }
 
-// ReferralNote is the referrer's half of r's reward: a note the registrant's
-// wallet makes to the referrer's address (its value is only known once
-// paid).
-func (r Registration) ReferralNote() Note {
-	return Note{NK: WalletNK(r.Referrer), Denom: "uerth",
-		Rho: Det(r.Name+"/referral/rho", 0), Rcm: Det(r.Name+"/referral/rcm", 0)}
-}
-
-// ReferralCiphertext is the referral note's ciphertext stand-in.
-func (r Registration) ReferralCiphertext() []byte {
-	return shieldedtest.BlindCT("personhood-ct:" + r.Name + ":12")
+// ReferralNote is the referrer's half of r's reward as the chain mints it:
+// to the referrer's address, with the opening derived from r's passport
+// nullifier and the leaf index it was given (privacy.ReferralOpening). Its
+// value is only known once paid.
+func (r Registration) ReferralNote(passportNullifier fr.Element, leafIndex uint64) Note {
+	rho, rcm := privacy.ReferralOpening(passportNullifier, leafIndex)
+	return Note{NK: WalletNK(r.Referrer), Denom: "uerth", Rho: rho, Rcm: rcm}
 }
 
 // ReferrerField is the affiliate r names, as the binding carries it:
-// privacy.AffiliateField(handle, the referral note's pc, its ciphertext),
-// 0 for none (types.MsgRegister.AffiliateField).
+// privacy.AffiliateField(handle), 0 for none
+// (types.MsgRegister.AffiliateField).
 func (r Registration) ReferrerField() fr.Element {
 	if r.ReferrerHandle == "" {
 		return fr.Element{}
 	}
-	return privacy.AffiliateField(r.ReferrerHandle, r.ReferralNote().PC(), r.ReferralCiphertext())
+	return privacy.AffiliateField(r.ReferrerHandle)
 }
 
 // CiphertextAnml and CiphertextErth are the registration's note ciphertexts:

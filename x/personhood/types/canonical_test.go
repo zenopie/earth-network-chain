@@ -24,30 +24,20 @@ func TestHandleAddressCanonical(t *testing.T) {
 	require.ErrorContains(t, (&MsgBindHandle{Handle: "Alice", Address: addr}).ValidateBasic(), "only a-z")
 }
 
-// A registration's affiliate: none, or all three of handle, pc and
-// ciphertext; the field differs from the none case and binds each.
+// A registration's affiliate: none (0), or H(TAG_AFFILIATE, Bytes(handle))
+// for a well-formed handle; the field binds the handle.
 func TestRegisterAffiliateField(t *testing.T) {
 	none, err := (&MsgRegister{}).AffiliateField()
 	require.NoError(t, err)
 	require.True(t, none.IsZero())
-	ct := make([]byte, 177)
-	ct[0] = 1
-	pc := privacy.FieldBytes(privacy.U64(5))
-	full := &MsgRegister{AffiliateHandle: "alice", AffiliatePc: pc, AffiliateCiphertext: ct}
+	full := &MsgRegister{AffiliateHandle: "alice"}
 	f, err := full.AffiliateField()
 	require.NoError(t, err)
 	require.False(t, f.IsZero())
-	for _, m := range []*MsgRegister{
-		{AffiliateHandle: "alice"},
-		{AffiliatePc: pc, AffiliateCiphertext: ct},
-		{AffiliateHandle: "alice", AffiliatePc: pc},
-	} {
-		_, err := m.AffiliateField()
-		require.Error(t, err)
-	}
-	other := *full
-	other.AffiliateHandle = "bob"
-	g, err := other.AffiliateField()
+	require.Equal(t, privacy.AffiliateField("alice"), f)
+	_, err = (&MsgRegister{AffiliateHandle: "Alice"}).AffiliateField()
+	require.Error(t, err)
+	g, err := (&MsgRegister{AffiliateHandle: "bob"}).AffiliateField()
 	require.NoError(t, err)
 	require.NotEqual(t, f, g)
 }

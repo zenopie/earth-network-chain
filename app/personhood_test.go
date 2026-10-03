@@ -12,11 +12,13 @@ package app
 // the chain's real trees as the test reaches it.
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -356,8 +358,6 @@ func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {
 	}
 	if r.ReferrerHandle != "" {
 		msg.AffiliateHandle = r.ReferrerHandle
-		msg.AffiliatePc = privacy.FieldBytes(r.ReferralNote().PC())
-		msg.AffiliateCiphertext = r.ReferralCiphertext()
 	}
 	e.prove("register/"+name, msg, f, nil)
 	return msg
@@ -538,6 +538,38 @@ func hasCommitment(r *abci.ExecTxResult, cm fr.Element) bool {
 		}
 	}
 	return false
+}
+
+// requireReferral checks the referral note a registration minted: the
+// register event names the handle, its amount and position; the mint event at
+// that position carries the handle owner's owner_pk and the opening
+// privacy.ReferralOpening derives; and its commitment is in the tree.
+func requireReferral(t *testing.T, r *abci.ExecTxResult, regEv map[string]string, handle string, reg personhoodtest.Registration) {
+	t.Helper()
+	require.Equal(t, handle, regEv["handle"])
+	amt, ok := math.NewIntFromString(regEv["referral"])
+	require.True(t, ok)
+	require.True(t, amt.IsPositive())
+	nfBytes, err := hex.DecodeString(regEv["nullifier"])
+	require.NoError(t, err)
+	nf, err := privacy.FieldFromBytes(nfBytes)
+	require.NoError(t, err)
+	leaf, err := strconv.ParseUint(regEv["leaf_index"], 10, 64)
+	require.NoError(t, err)
+	note := reg.ReferralNote(nf, leaf)
+	note.Value = amt.Uint64()
+	var mint map[string]string
+	for _, m := range eventsOf(r.Events, "shielded_mint") {
+		if m["position"] == regEv["referral_position"] {
+			mint = m
+		}
+	}
+	require.NotNil(t, mint, "the referral note's mint event")
+	require.Equal(t, "", mint["ciphertext"])
+	require.Equal(t, fmt.Sprintf("%x", privacy.FieldBytes(privacy.OwnerPK(personhoodtest.WalletNK(reg.Referrer)))), mint["owner_pk"])
+	require.Equal(t, fmt.Sprintf("%x", privacy.FieldBytes(note.Rho)), mint["rho"])
+	require.Equal(t, fmt.Sprintf("%x", privacy.FieldBytes(note.Rcm)), mint["rcm"])
+	require.True(t, hasCommitment(r, privacy.CM(privacy.AssetID("uerth"), note.Value, note.PC())), "the referral note to the handle's owner")
 }
 
 func dayStart(d int64) time.Time { return time.Unix(d*phDay, 0).UTC() }
@@ -828,33 +860,24 @@ func TestPrivatePersonhood(t *testing.T) {
 	e.mustDeliver(e.bindHandle("A2", "A2", "amy", "A", noBound))
 	require.Equal(t, "free", e.handle("alice").Status)
 	require.Equal(t, "live", e.handle("amy").Status)
-	// C2 names "amy": the referrer's half is minted as a note to the pc
-	// C2's wallet made for A's shielded address, the registrant's half as
-	// C2's own note. The passport binding commits to the handle, the pc and
-	// the ciphertext: a relayer can swap none of them.
+	// C2 names "amy": the chain mints the referrer's half as a note to the
+	// handle's registered address (A's), with an opening it derives from the
+	// passport nullifier and leaf index and publishes on the mint event; the
+	// registrant's half is C2's own note. The passport binding commits to the
+	// handle: a relayer cannot swap it, and the registrant has no say in
+	// where the referral note goes (audit 5 P1).
 	regC2 := e.register("C2")
-	for _, mutate := range []func(*personhoodtypes.MsgRegister){
-		func(m *personhoodtypes.MsgRegister) { m.AffiliateHandle = "alice" },
-		func(m *personhoodtypes.MsgRegister) { m.AffiliatePc = privacy.FieldBytes(privacy.U64(666)) },
-		func(m *personhoodtypes.MsgRegister) { m.AffiliateCiphertext = shieldedtest.BlindCT("mallory") },
-	} {
-		bad := *regC2
-		mutate(&bad)
-		res = e.checkTx(e.tx(&bad))
-		require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the affiliate")
-	}
+	bad := *regC2
+	bad.AffiliateHandle = "alice"
+	res = e.checkTx(e.tx(&bad))
+	require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the affiliate")
 	fb = e.mustDeliver(regC2)
 	regEv = eventsOf(fb.TxResults[0].Events, "register")[0]
 	require.Equal(t, "false", regEv["switched"])
 	rewardC2, ok := math.NewIntFromString(regEv["reward"])
 	require.True(t, ok)
 	require.True(t, rewardC2.IsPositive())
-	c2 := personhoodtest.Registrations["C2"]
-	referralC2 := false
-	for _, half := range []uint64{rewardC2.Uint64(), rewardC2.Uint64() - 1, rewardC2.Uint64() + 1} {
-		referralC2 = referralC2 || hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), half, c2.ReferralNote().PC()))
-	}
-	require.True(t, referralC2, "the referrer's half, as a note to A's pc")
+	requireReferral(t, fb.TxResults[0], regEv, "amy", personhoodtest.Registrations["C2"])
 	// C2 is a re-entry (C1 lapsed): its leaf has a predecessor, so it waits
 	// before creating a split or claiming a handle (anything C1 held may
 	// still be live); a statement over its own predecessor_at is refused.
@@ -870,13 +893,8 @@ func TestPrivatePersonhood(t *testing.T) {
 	fb = e.mustDeliver(e.register("D1"))
 	regEv = eventsOf(fb.TxResults[0].Events, "register")[0]
 	rewardD1, ok := math.NewIntFromString(regEv["reward"])
-	require.True(t, ok)
-	d1r := personhoodtest.Registrations["D1"]
-	referralD1 := false
-	for _, half := range []uint64{rewardD1.Uint64(), rewardD1.Uint64() - 1, rewardD1.Uint64() + 1} {
-		referralD1 = referralD1 || hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), half, d1r.ReferralNote().PC()))
-	}
-	require.True(t, referralD1)
+	require.True(t, ok && rewardD1.IsPositive())
+	requireReferral(t, fb.TxResults[0], regEv, "amy", personhoodtest.Registrations["D1"])
 
 	// Rebinding the same nullifier may change the address and keep the
 	// handle. A change to another handle frees the old one at once: D1, a

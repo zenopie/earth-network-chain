@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"strconv"
 
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -107,6 +109,55 @@ func (k Keeper) MintNote(ctx context.Context, fromModule string, coin sdk.Coin, 
 		sdk.NewAttribute(types.AttributeKeyAmount, coin.String()),
 		sdk.NewAttribute(types.AttributeKeyPosition, strconv.FormatUint(pos, 10)),
 		sdk.NewAttribute(types.AttributeKeyCiphertext, base64.StdEncoding.EncodeToString(ciphertext)),
+	))
+	return pos, cm, nil
+}
+
+// MintOpenNote mints coin from fromModule as a note whose opening the chain
+// chose: pc = PC(owner_pk, rho, rcm) for a public recipient owner_pk, no
+// ciphertext. For a note whose recipient and amount are already public, so
+// that the chain, not whoever asked for it, decides who receives it: the
+// referral note a registration mints to its referrer handle's address.
+//
+// The opening is emitted on the mint event (owner_pk, rho, rcm, hex): the
+// owner's wallet finds the note by its owner_pk, recomputes pc and cm, and
+// checks cm against the tree. Spending needs nk, and its nullifier
+// H(TAG_NF, nk, rho, position) is unlinkable without it, so publishing the
+// opening reveals nothing a spend would.
+func (k Keeper) MintOpenNote(ctx context.Context, fromModule string, coin sdk.Coin, ownerPK, rho, rcm fr.Element) (uint64, []byte, error) {
+	if err := notThePool(fromModule); err != nil {
+		return 0, nil, err
+	}
+	if !coin.IsValid() || !coin.IsPositive() || !coin.Amount.IsUint64() {
+		return 0, nil, errorsmod.Wrapf(types.ErrInvalidNote, "note value %s must be positive and fit a u64", coin)
+	}
+	id, err := k.AssetID(ctx, coin.Denom)
+	if err != nil {
+		return 0, nil, err
+	}
+	asset, err := privacy.FieldFromBytes(id)
+	if err != nil {
+		return 0, nil, err
+	}
+	cm := privacy.FieldBytes(privacy.CM(asset, coin.Amount.Uint64(), privacy.PC(ownerPK, rho, rcm)))
+	if err := k.checkCapacity(ctx, 1); err != nil {
+		return 0, nil, err
+	}
+	if err := k.bankKeeper.SendCoinsFromModuleToModule(depositCtx(ctx), fromModule, types.ModuleName, sdk.NewCoins(coin)); err != nil {
+		return 0, nil, err
+	}
+	pos, err := k.depositNote(ctx, coin, cm, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeMint,
+		sdk.NewAttribute(types.AttributeKeyModule, fromModule),
+		sdk.NewAttribute(types.AttributeKeyAmount, coin.String()),
+		sdk.NewAttribute(types.AttributeKeyPosition, strconv.FormatUint(pos, 10)),
+		sdk.NewAttribute(types.AttributeKeyCiphertext, ""),
+		sdk.NewAttribute(types.AttributeKeyOwnerPK, hex.EncodeToString(privacy.FieldBytes(ownerPK))),
+		sdk.NewAttribute(types.AttributeKeyRho, hex.EncodeToString(privacy.FieldBytes(rho))),
+		sdk.NewAttribute(types.AttributeKeyRcm, hex.EncodeToString(privacy.FieldBytes(rcm))),
 	))
 	return pos, cm, nil
 }

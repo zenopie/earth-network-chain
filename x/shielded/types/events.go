@@ -30,4 +30,10 @@ const (
 	AttributeKeyModule     = "module"
 	AttributeKeyDenom      = "denom"
 	AttributeKeyAssetID    = "asset_id" // hex
+	// An open note's opening (MintOpenNote): the chain chose it, and its
+	// recipient and amount are public, so it is emitted for the owner to find
+	// the note by owner_pk rather than by decrypting.
+	AttributeKeyOwnerPK = "owner_pk" // hex
+	AttributeKeyRho     = "rho"      // hex
+	AttributeKeyRcm     = "rcm"      // hex
 )

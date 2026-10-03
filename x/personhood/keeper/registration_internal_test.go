@@ -63,6 +63,12 @@ func (s stubShielded) MintNote(_ context.Context, _ string, coin sdk.Coin, _, _ 
 	}
 	return 0, nil, nil
 }
+func (s stubShielded) MintOpenNote(_ context.Context, _ string, coin sdk.Coin, _, _, _ fr.Element) (uint64, []byte, error) {
+	if s.minted != nil {
+		*s.minted = append(*s.minted, coin)
+	}
+	return 0, nil, nil
+}
 func (stubShielded) RegisterPrivateAction(string, shieldedtypes.PrivateActionHandler) {}
 func (stubShielded) VerifyCircuit(context.Context, string, []byte, [][]byte) error    { return nil }
 func (stubShielded) PrivateGasPrices(context.Context) (uint64, uint64, error) {
@@ -133,8 +139,6 @@ func passportMsg(t *testing.T, name string) *types.MsgRegister {
 	}
 	if r.ReferrerHandle != "" {
 		m.AffiliateHandle = r.ReferrerHandle
-		m.AffiliatePc = privacy.FieldBytes(r.ReferralNote().PC())
-		m.AffiliateCiphertext = r.ReferralCiphertext()
 	}
 	return m
 }
@@ -191,12 +195,10 @@ func TestRegistrationBinding(t *testing.T) {
 
 	other := privacy.FieldBytes(personhoodtest.Det("someone-else", 0))
 	for name, mutate := range map[string]func(*types.MsgRegister){
-		"idc":     func(m *types.MsgRegister) { m.Idc = other },
-		"pc_anml": func(m *types.MsgRegister) { m.PcAnml = other },
-		"pc_erth": func(m *types.MsgRegister) { m.PcErth = other },
-		"affiliate": func(m *types.MsgRegister) {
-			m.AffiliateHandle, m.AffiliatePc, m.AffiliateCiphertext = "amy", other, personhoodtest.Registrations["C2"].ReferralCiphertext()
-		},
+		"idc":       func(m *types.MsgRegister) { m.Idc = other },
+		"pc_anml":   func(m *types.MsgRegister) { m.PcAnml = other },
+		"pc_erth":   func(m *types.MsgRegister) { m.PcErth = other },
+		"affiliate": func(m *types.MsgRegister) { m.AffiliateHandle = "amy" },
 		// A relayer front-running the registration with garbage ciphertexts
 		// (the notes would land, but the wallet could not find them on chain).
 		"ciphertext_anml": func(m *types.MsgRegister) { m.CiphertextAnml = []byte("garbage") },
@@ -210,8 +212,8 @@ func TestRegistrationBinding(t *testing.T) {
 	}
 	// C2 names A's handle "amy": refused while no live handle holds it,
 	// accepted once one does; refused again once its lease ends (the renewal
-	// period does not resolve). Swapping the handle, the referral pc or its
-	// ciphertext, or dropping the affiliate, breaks the binding.
+	// period does not resolve). Swapping the handle or dropping the affiliate
+	// breaks the binding.
 	kC, ctxC := regKeeper(t, stubPki{pubkey: dscKeyOf(t, "C2")})
 	ctxC = ctxC.WithBlockTime(time.Date(2025, 1, 5, 12, 0, 0, 0, time.UTC))
 	mC := passportMsg(t, "C2")
@@ -230,13 +232,7 @@ func TestRegistrationBinding(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrNoReferrer, "a lapsed handle does not resolve")
 	for name, mutate := range map[string]func(*types.MsgRegister){
 		"handle": func(m *types.MsgRegister) { m.AffiliateHandle = "amy-2" },
-		"pc":     func(m *types.MsgRegister) { m.AffiliatePc = other },
-		"ciphertext": func(m *types.MsgRegister) {
-			m.AffiliateCiphertext = personhoodtest.Registrations["D1"].ReferralCiphertext()
-		},
-		"none": func(m *types.MsgRegister) {
-			m.AffiliateHandle, m.AffiliatePc, m.AffiliateCiphertext = "", nil, nil
-		},
+		"none":   func(m *types.MsgRegister) { m.AffiliateHandle = "" },
 	} {
 		if name == "handle" {
 			_, err := kC.applyBindHandle(ctxC, privacy.FieldBytes(personhoodtest.Det("handle-nf", 1)), "amy-2", personhoodtest.ShieldedAddress("B"))

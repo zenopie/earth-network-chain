@@ -50,6 +50,9 @@ var (
 	TagScope = tag("earth.scope")
 	// TagAffiliate: a registration's referrer (see AffiliateField).
 	TagAffiliate = tag("earth.affiliate")
+	// TagReferral: the opening of the referral note the chain mints to a
+	// referrer handle's address (see ReferralOpening).
+	TagReferral = tag("earth.referral")
 )
 
 func tag(s string) fr.Element {
@@ -241,9 +244,8 @@ func ProposeRemovalScope(optionID, day uint64) fr.Element {
 // RegistrationBinding is what a passport proof's `address` public input
 // carries for MsgRegister: the identity commitment the chain will put in the
 // tree, the notes it will pay with their ciphertexts, and the referrer.
-// affiliate is Bytes(referrer's address bytes), or 0 for none; bound so that
-// whoever relays a registration cannot redirect the referral half to
-// themselves. The ciphertexts are bound so that whoever relays it cannot
+// affiliate is AffiliateField(handle), or 0 for none; bound so that whoever
+// relays a registration cannot swap the referrer it names. The ciphertexts are bound so that whoever relays it cannot
 // swap them for garbage, leaving the notes unrecoverable from the chain by
 // the registrant's wallet (a restore from seed finds notes by decrypting).
 //
@@ -256,11 +258,28 @@ func RegistrationBinding(idc, pcAnml fr.Element, ctAnml []byte, pcErth fr.Elemen
 }
 
 // AffiliateField is the registration binding's affiliate field for a
-// referrer named by handle, with the referral note the registration mints to
-// it: H(TAG_AFFILIATE, Bytes(handle), affiliate_pc, Bytes(affiliate_ct)). A
-// registration naming no referrer carries 0 there.
-func AffiliateField(handle string, pc fr.Element, ct []byte) fr.Element {
-	return H(TagAffiliate, Bytes([]byte(handle)), pc, Bytes(ct))
+// referrer named by handle: H(TAG_AFFILIATE, Bytes(handle)). A registration
+// naming no referrer carries 0 there. The handle is all there is to bind: the
+// chain mints the referral note itself, to the address the handle resolves to
+// (ReferralOpening), so the registrant chooses nothing else about it.
+func AffiliateField(handle string) fr.Element {
+	return H(TagAffiliate, Bytes([]byte(handle)))
+}
+
+// ReferralOpening is the (rho, rcm) of the referral note a registration mints
+// to its referrer handle's owner_pk, derived by the chain from the
+// registration's passport nullifier and the leaf index it was given (unique
+// per registration, so per note):
+//
+//	rho = H(TAG_REFERRAL, nullifier, leaf_index, 0)
+//	rcm = H(TAG_REFERRAL, nullifier, leaf_index, 1)
+//
+// Both are public (the mint event carries them): the note's recipient (the
+// handle) and amount are public anyway, and its spend nullifier
+// H(TAG_NF, nk, rho, position) needs the owner's secret nk, so publishing the
+// opening links nothing a spend reveals.
+func ReferralOpening(nullifier fr.Element, leafIndex uint64) (rho, rcm fr.Element) {
+	return H(TagReferral, nullifier, U64(leafIndex), U64(0)), H(TagReferral, nullifier, U64(leafIndex), U64(1))
 }
 
 // ErrNonCanonical is returned for a 32-byte string that is not a reduced

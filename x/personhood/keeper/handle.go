@@ -20,9 +20,10 @@ import (
 // shielded address (owner_pk, ek_pub). A wallet pays a handle by looking it
 // up and making a note to its address (a private transfer, or MsgShield):
 // the chain is only the directory. A registration may name a handle as its
-// referrer and carries the referral note itself (MsgRegister
-// affiliate_handle, affiliate_pc, affiliate_ciphertext), minted by the
-// chain to the pc the registrant's wallet made for the handle's address.
+// referrer (MsgRegister affiliate_handle); the chain mints the referral note
+// itself to the address the handle resolves to, with an opening it derives
+// and publishes (privacy.ReferralOpening), so the registrant cannot redirect
+// it.
 //
 // One handle per human: claimed with a membership proof in the handle scope
 // (one nullifier per identity secret), under the caretaker activation rule

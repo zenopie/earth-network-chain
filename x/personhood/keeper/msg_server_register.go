@@ -38,8 +38,9 @@ func authorized[T any](ctx context.Context, msg shieldedtypes.PrivateMsg) (sdk.C
 //
 // New, or re-entering after the last registration under this passport lapsed:
 // the leaf is appended, and 1 ANML and the registrant's reward are minted as
-// notes to the pcs the proof is bound to; the referrer's half is paid in
-// transparent ERTH to the affiliate address. A live registration under this passport makes it a switch:
+// notes to the pcs the proof is bound to; the referrer's half is minted by
+// the chain to the affiliate handle's address (referralNoteFor). A live
+// registration under this passport makes it a switch:
 // the old leaf is zeroed, the new one appended with a fresh activated_at, and
 // nothing is paid or rate-counted, since the person is already counted.
 func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
@@ -106,7 +107,7 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		return nil, err
 	}
 
-	reward := math.ZeroInt()
+	paid := registrationPayout{registrant: math.ZeroInt(), referral: math.ZeroInt()}
 	if !switched {
 		if err := k.recordRegistrationRate(ctx, p.dsc.key, p.dsc.country); err != nil {
 			return nil, err
@@ -114,21 +115,36 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		if _, err := k.mintAnmlNote(ctx, msg.PcAnml, msg.CiphertextAnml); err != nil {
 			return nil, err
 		}
-		var referrer *rewardNote
+		var referrer *referralNote
 		if p.referred {
-			referrer = &rewardNote{pc: msg.AffiliatePc, ciphertext: msg.AffiliateCiphertext}
+			if referrer, err = k.referralNoteFor(ctx, msg.AffiliateHandle, p.nullifier, index); err != nil {
+				return nil, err
+			}
 		}
-		reward, err = k.payRegistrationReward(ctx, rewardNote{pc: msg.PcErth, ciphertext: msg.CiphertextErth}, referrer)
+		paid, err = k.payRegistrationReward(ctx, rewardNote{pc: msg.PcErth, ciphertext: msg.CiphertextErth}, referrer)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	ctx.EventManager().EmitEvent(sdk.NewEvent("register",
+	attrs := []sdk.Attribute{
 		sdk.NewAttribute("nullifier", hexOf(p.nullifier)),
 		sdk.NewAttribute("leaf_index", strconv.FormatUint(index, 10)),
-		sdk.NewAttribute("reward", reward.String()),
+		sdk.NewAttribute("reward", paid.registrant.String()),
 		sdk.NewAttribute("switched", strconv.FormatBool(switched)),
-	))
+	}
+	if p.referred {
+		// The referral: the handle, what it was paid and where the note is
+		// (its opening is on that position's shielded_mint event). Public: the
+		// handle and the amount are what MsgRegister and the draw already show.
+		attrs = append(attrs,
+			sdk.NewAttribute(types.AttributeKeyHandle, msg.AffiliateHandle),
+			sdk.NewAttribute("referral", paid.referral.String()))
+		if paid.referral.IsPositive() {
+			attrs = append(attrs, sdk.NewAttribute("referral_position", strconv.FormatUint(paid.referralPosition, 10)))
+		}
+	}
+	ctx.EventManager().EmitEvent(sdk.NewEvent("register", attrs...))
+	reward := paid.registrant
 	return &types.MsgRegisterResponse{Reward: reward, Switched: switched, LeafIndex: index}, nil
 }
