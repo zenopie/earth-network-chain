@@ -16,6 +16,7 @@ import (
 	corestore "cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
+	abci "github.com/cometbft/cometbft/abci/types"
 	rpcclient "github.com/cometbft/cometbft/rpc/client"
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -186,23 +187,102 @@ type remoteKV struct {
 }
 
 func (r *remoteKV) query(path string, data []byte) ([]byte, error) {
+	res, err := r.queryFull(path, data, false)
+	if err != nil {
+		return nil, err
+	}
+	return res.Value, nil
+}
+
+func (r *remoteKV) queryFull(path string, data []byte, prove bool) (*abci.ResponseQuery, error) {
 	res, err := r.client.ABCIQueryWithOptions(r.ctx, "/store/"+r.module+path, data,
-		rpcclient.ABCIQueryOptions{Height: r.height})
+		rpcclient.ABCIQueryOptions{Height: r.height, Prove: prove})
 	if err != nil {
 		return nil, &remoteReadError{err}
 	}
 	if res.Response.Code != 0 {
 		return nil, &remoteReadError{fmt.Errorf("code %d: %s", res.Response.Code, res.Response.Log)}
 	}
-	return res.Response.Value, nil
+	return &res.Response, nil
 }
 
+// Get tells an absent key from a present one with an empty value. abci_query
+// answers both with an empty Value, but a KeySet member (a revoked CSCA, a
+// spent nullifier, ...) is stored with exactly that empty value: reading it
+// as absent would make gas-check blind to it. So an empty answer is asked
+// again with a proof, and the proof says which it is.
 func (r *remoteKV) Get(key []byte) ([]byte, error) {
 	v, err := r.query("/key", key)
-	if err != nil || len(v) == 0 {
+	if err != nil {
 		return nil, err
 	}
-	return v, nil
+	if len(v) > 0 {
+		return v, nil
+	}
+	res, err := r.queryFull("/key", key, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(res.Value) > 0 {
+		return res.Value, nil
+	}
+	exists, err := proofSaysExists(res, key)
+	if err != nil {
+		return nil, &remoteReadError{err}
+	}
+	if exists {
+		return []byte{}, nil
+	}
+	return nil, nil
+}
+
+// proofSaysExists reads the first (store-level) op of an abci_query proof: an
+// ics23 CommitmentProof whose oneof is exist = 1 or nonexist = 2. The node is
+// trusted here as for every other read; the proof only carries the
+// existence bit abci_query's Value cannot.
+func proofSaysExists(res *abci.ResponseQuery, key []byte) (bool, error) {
+	if res.ProofOps == nil || len(res.ProofOps.Ops) == 0 {
+		return false, errors.New("node returned no proof for an empty value")
+	}
+	b := res.ProofOps.Ops[0].Data
+	num, typ, n := protowire.ConsumeTag(b)
+	if n < 0 || typ != protowire.BytesType {
+		return false, errors.New("proof is not an ics23 CommitmentProof")
+	}
+	msg, m := protowire.ConsumeBytes(b[n:])
+	if m < 0 {
+		return false, errors.New("proof is truncated")
+	}
+	switch num {
+	case 1: // ExistenceProof{key = 1, value = 2, ...}
+		for len(msg) > 0 {
+			f, t, k := protowire.ConsumeTag(msg)
+			if k < 0 {
+				return false, errors.New("existence proof is malformed")
+			}
+			msg = msg[k:]
+			if f == 1 && t == protowire.BytesType {
+				pk, l := protowire.ConsumeBytes(msg)
+				if l < 0 {
+					return false, errors.New("existence proof is truncated")
+				}
+				if !bytes.Equal(pk, key) {
+					return false, errors.New("existence proof is for another key")
+				}
+				return true, nil
+			}
+			l := protowire.ConsumeFieldValue(f, t, msg)
+			if l < 0 {
+				return false, errors.New("existence proof is malformed")
+			}
+			msg = msg[l:]
+		}
+		return false, errors.New("existence proof has no key")
+	case 2:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected proof kind %d", num)
+	}
 }
 
 func (r *remoteKV) Has(key []byte) (bool, error) {
