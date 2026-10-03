@@ -37,6 +37,10 @@ var (
 	TagSPC   = tag("earth.spc")
 	TagSNF   = tag("earth.snf")
 	TagOTag  = tag("earth.otag")
+	// The stake nullifier indexed tree's leaves and stake vote nullifiers
+	// (circuits/vote).
+	TagSNFL = tag("earth.snfl")
+	TagVNF  = tag("earth.vnf")
 
 	// Chain-side only: no circuit computes these. They define the public
 	// `signal` input the circuits bind (see Signal).
@@ -114,6 +118,18 @@ func StakeNF(nk, rho fr.Element, position uint32) fr.Element {
 // stores one per Groundworks position; its owner proves it again (stake
 // circuit) to update, unlock or vote the position.
 func OwnerTag(ownerPK, salt fr.Element) fr.Element { return H(TagOTag, ownerPK, salt) }
+
+// NFLeaf is a leaf of the stake nullifier indexed tree: H(TAG_SNFL, value,
+// next_value, next_index) (privacy_core::nf_leaf).
+func NFLeaf(value, nextValue fr.Element, nextIndex uint64) fr.Element {
+	return H(TagSNFL, value, nextValue, U64(nextIndex))
+}
+
+// VoteNF is a stake note's vote nullifier on a proposal:
+// H(TAG_VNF, nk, rho, position, proposal_id) (privacy_core::vote_nf).
+func VoteNF(nk, rho fr.Element, position uint32, proposalID uint64) fr.Element {
+	return H(TagVNF, nk, rho, U64(uint64(position)), U64(proposalID))
+}
 
 // CM is the note commitment H(TAG_CM, asset, value, pc).
 func CM(asset fr.Element, value uint64, pc fr.Element) fr.Element {

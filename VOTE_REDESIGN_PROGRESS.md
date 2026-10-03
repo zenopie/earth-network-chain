@@ -7,7 +7,7 @@ only one of several open proposals (decoy-proposal attack).
 
 ## Steps
 - [x] circuits: privacy_core nf_leaf/vote_nf/assert_not_in_indexed; circuits/vote (9,046 gates, 22 tests) — mobile acb398a
-- [ ] zk/indexed: Go indexed tree + privacy.NFLeaf/VoteNF; parity vectors with Noir
+- [x] zk/indexed: Go indexed tree + privacy.NFLeaf/VoteNF; parity vectors with Noir (mobile: test_go_parity)
 - [ ] x/shieldedstaking: nullifier set -> indexed tree (value index, index->value, nodes, size, latest root at end block); snapshot nf root/size
 - [ ] MsgStakeVote v2 (vote proof, vnf; no spend, no re-mint); gas; sighash
 - [ ] x/shielded CircuitVote; privacy-vks; genesis
