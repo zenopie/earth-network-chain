@@ -231,6 +231,7 @@
         }
       ],
       "pool_stale_due": [],
+      "price_accumulators": [],
       "volume_index": "0",
       "volume_index_day": "0"
     },
