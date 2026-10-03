@@ -55,12 +55,21 @@ func TestCheckRegistrationAgreesWithTheChain(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, nf, nf2)
 
-	// A live registration under the passport: the same check reports a switch.
-	require.NoError(t, k.addRegistration(ctx, types.Registration{Nullifier: nf, RegisteredAt: ctx.BlockTime().Unix(),
-		ActivatedAt: ctx.BlockTime().Unix(), Idc: m.Idc}))
+	// A live registration under the passport to another identity: the same
+	// check reports a switch.
+	other := types.Registration{Nullifier: nf, RegisteredAt: ctx.BlockTime().Unix(),
+		ActivatedAt: ctx.BlockTime().Unix(), Idc: privacy.FieldBytes(privacy.U64(424242))}
+	require.NoError(t, k.addRegistration(ctx, other))
 	_, switched, err = k.CheckRegistration(ctx, m)
 	require.NoError(t, err)
 	require.True(t, switched)
+
+	// Live under this very identity: a replay of the registration, refused.
+	same := other
+	same.Idc = m.Idc
+	require.NoError(t, k.Registrations.Set(ctx, nf, same))
+	_, _, err = k.CheckRegistration(ctx, m)
+	require.ErrorIs(t, err, types.ErrRegistrationReplay)
 
 	swapped := passportMsg(t, "A1")
 	swapped.PcErth = privacy.FieldBytes(privacy.U64(7))
