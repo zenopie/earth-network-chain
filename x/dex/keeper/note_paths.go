@@ -364,6 +364,13 @@ func (k Keeper) executeRemoveShielded(ctx sdk.Context, m *types.MsgRemoveLiquidi
 	if err != nil {
 		return nil, err
 	}
+	pool, err := k.Pool.Get(ctx, m.PoolId)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.checkWithdrawalNoteLegs(pool, shares.Amount, k.totalShares(ctx, m.PoolId).Amount, true, true); err != nil {
+		return nil, err
+	}
 	params, err := k.Params.Get(ctx)
 	if err != nil {
 		return nil, err

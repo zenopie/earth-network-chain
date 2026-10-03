@@ -78,6 +78,9 @@ type ShieldedKeeper interface {
 	AssetID(ctx context.Context, denom string) ([]byte, error)
 	CheckMint(ctx context.Context, pc, ciphertext []byte) error
 	MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error)
+	// MintNoteSplit pays a value above a note's u64 as several notes to pc
+	// (at most shieldedtypes.MaxSplitNotes).
+	MintNoteSplit(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) ([]uint64, error)
 	RegisterAsset(ctx context.Context, denom string) ([]byte, error)
 	ReleaseToModule(ctx context.Context, msg shieldedtypes.PrivateMsg, denom, targetModule string) (sdk.Coin, error)
 	PayFeeFromModule(ctx context.Context, fromModule string, fee math.Int) error

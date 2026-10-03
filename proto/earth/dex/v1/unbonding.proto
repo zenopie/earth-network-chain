@@ -51,4 +51,8 @@ message LpUnbonding {
   // 0x00 || the first nullifier its bundle spent (33 bytes). Empty for an
   // account's withdrawal.
   bytes withdrawal_id = 9;
+  // payout_attempts counts payouts that failed (a leg the pool could not pay
+  // as notes, say): the entry is never dropped, it is retried at
+  // completion_time, which each failure moves later (LpUnbondRetryDelay).
+  uint32 payout_attempts = 10;
 }

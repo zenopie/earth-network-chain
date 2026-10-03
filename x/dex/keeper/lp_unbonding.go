@@ -5,10 +5,13 @@ import (
 	"strconv"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/internal/safeexec"
 	"github.com/earth-network/earth/x/dex/types"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
 
 // SweepMaturedUnbondings pays out liquidity withdrawals whose unbonding period
@@ -59,55 +62,42 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 	iter.Close()
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	notes := 0
 	for _, m := range due {
-		// Each payout gets its own branch, and the entry is dropped whether or not
-		// it settles.
-		//
-		// This used to return the error, which took the chain down and kept it
-		// down. The queue is ordered by completion time and the loop breaks at the
-		// first entry not yet due, so a failing entry sits at the head; because it
-		// is removed only after its payout succeeds, the next block reaches the
-		// same entry and fails the same way. EndBlock errors are not recovered by
-		// baseapp and every validator computes the same state, so that is a
-		// permanent chain halt, from one malformed row, freezing every withdrawal
-		// queued behind it. Only an upgrade could clear it. The doc comment above
-		// claimed the remainder was never stranded; that is true of the sweep
-		// limit it was written about and false when the oldest entry is the one
-		// erroring.
-		//
-		// Dropping beats retrying: a retry changes nothing, and the escrowed
-		// shares stay on the module account where CheckShareBacking reports them
-		// rather than vanishing. Anything that did move coins wrongly is still
-		// caught by AssertHotInvariants, which is deliberately left alone — its
-		// halt is over a module already known to be wrong, which is a different
-		// thing from this one.
-		//
-		// The cache branch is what makes the drop safe. payoutUnbonding settles
-		// the pool, burns shares and writes reserves before it can fail, so
-		// letting a half-finished payout persist would be its own corruption. On
-		// failure the branch is discarded and only the removal below survives.
-		//
-		// A panic is dropped the same way (safeexec.Cached recovers it): a
-		// cache branch does not unwind one, and a panic out of the EndBlocker
-		// is the same permanent halt as the error was (audit 4: a math.Int
-		// overflow in the payout).
-		if err := safeexec.Cached(sdkCtx, func(cacheCtx sdk.Context) error {
-			return k.payoutUnbonding(cacheCtx, m.entry)
-		}); err != nil {
-			sdkCtx.Logger().Error("lp unbonding payout failed — dropping the entry",
-				"pool_id", m.entry.PoolId,
-				"provider", m.entry.Address, // empty for a private withdrawal
-				"shares", m.entry.Shares.String(),
-				"height", sdkCtx.BlockHeight(),
-				"err", err)
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"lp_unbond_payout_failed",
-				sdk.NewAttribute("pool_id", strconv.FormatUint(m.entry.PoolId, 10)),
-				sdk.NewAttribute("provider", m.entry.Address),
-				sdk.NewAttribute("shares", m.entry.Shares.String()),
-				sdk.NewAttribute("error", err.Error()),
-			))
+		if notes >= types.LpUnbondNoteBudget {
+			// The rest are still due: the next block takes them, oldest first.
+			capped = true
+			break
 		}
+		// Each payout gets its own branch (safeexec.Cached, recovering
+		// panics): payoutUnbonding settles the pool, burns shares and writes
+		// reserves before it can fail, and a half-finished payout persisting
+		// would be its own corruption. An EndBlock error or panic is a
+		// permanent halt (every validator fails the same way).
+		//
+		// A failed payout is never dropped (audit 5 D1: dropping it lost the
+		// escrowed shares for good, and the failure was forceable: swap into
+		// the pool in the maturity block, pushing a private leg past what a
+		// note can hold, swap back next block). The entry stays, with its
+		// shares escrowed, and is retried later (retryUnbonding): moved off
+		// the head of the queue, so it cannot stall the entries behind it,
+		// and retried at a geometrically growing interval, so a permanently
+		// failing entry costs a sweep slot ever more rarely and never halts.
+		minted := 0
+		if err := safeexec.Cached(sdkCtx, func(cacheCtx sdk.Context) error {
+			n, err := k.payoutUnbonding(cacheCtx, m.entry)
+			minted = n
+			return err
+		}); err != nil {
+			cause := err
+			// Store writes only, but on its own branch too: a failure here
+			// leaves the entry where it is (retried next block), never a halt.
+			safeexec.Item(sdkCtx, types.ModuleName, "lp_unbond_retry", func(c sdk.Context) error {
+				return k.retryUnbonding(c, m.key, m.entry, cause)
+			})
+			continue
+		}
+		notes += minted
 		if err := k.removeLpUnbonding(ctx, m.key); err != nil {
 			return err
 		}
@@ -124,22 +114,72 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 	return nil
 }
 
+// retryUnbonding re-files a matured entry whose payout failed: attempts+1,
+// completion_time = now + LpUnbondRetryDelay(attempts), the shares still
+// escrowed. A key taken at that time (the same provider's withdrawal maturing
+// then) moves it a second later, up to a minute; past that it stays where it
+// is and is retried next block.
+func (k Keeper) retryUnbonding(ctx context.Context, key collections.Triple[int64, uint64, []byte], entry types.LpUnbonding, cause error) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	entry.PayoutAttempts++
+	at := sdkCtx.BlockTime().Unix() + types.LpUnbondRetryDelay(entry.PayoutAttempts)
+	moved := false
+	for i := int64(0); i < 60; i++ {
+		next := collections.Join3(at+i, key.K2(), key.K3())
+		if has, err := k.LpUnbondings.Has(ctx, next); err != nil {
+			return err
+		} else if has {
+			continue
+		}
+		if err := k.removeLpUnbonding(ctx, key); err != nil {
+			return err
+		}
+		entry.CompletionTime = next.K1()
+		if err := k.setLpUnbonding(ctx, next, entry); err != nil {
+			return err
+		}
+		moved = true
+		break
+	}
+	if !moved {
+		if err := k.LpUnbondings.Set(ctx, key, entry); err != nil {
+			return err
+		}
+	}
+	sdkCtx.Logger().Error("lp unbonding payout failed; retrying later",
+		"pool_id", entry.PoolId, "provider", entry.Address, "shares", entry.Shares.String(),
+		"attempts", entry.PayoutAttempts, "retry_at", entry.CompletionTime, "err", cause)
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+		"lp_unbond_payout_failed",
+		sdk.NewAttribute("pool_id", strconv.FormatUint(entry.PoolId, 10)),
+		sdk.NewAttribute("provider", entry.Address),
+		sdk.NewAttribute("shares", entry.Shares.String()),
+		sdk.NewAttribute("attempts", strconv.FormatUint(uint64(entry.PayoutAttempts), 10)),
+		sdk.NewAttribute("retry_at", strconv.FormatInt(entry.CompletionTime, 10)),
+		sdk.NewAttribute("error", cause.Error()),
+	))
+	return nil
+}
+
 // payoutUnbonding prices one matured entry against the pool as it stands now,
 // burns the escrowed shares and sends the assets to the provider, or, for a
-// private withdrawal (no address), mints both legs as notes.
-func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) error {
+// private withdrawal (no address), mints both legs as notes. A note leg above
+// a note's u64 is paid as several notes (MintNoteSplit). Returns how many
+// notes it minted.
+func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) (int, error) {
+	notes := 0
 	private := entry.Address == ""
 	var addrBz []byte
 	if private {
 		if len(entry.WithdrawalId) == 0 || len(entry.ErthPc) == 0 || len(entry.Pc) == 0 {
-			return types.ErrInvalidUnbonding.Wrapf("pool %d: a private withdrawal needs an id and both pcs", entry.PoolId)
+			return 0, types.ErrInvalidUnbonding.Wrapf("pool %d: a private withdrawal needs an id and both pcs", entry.PoolId)
 		}
 	} else {
 		var err error
 		if addrBz, err = k.addressCodec.StringToBytes(entry.Address); err != nil {
 			// The address was validated when unbonding began, so this only fires on
 			// corrupt state. Failing loudly beats silently keeping someone's liquidity.
-			return err
+			return 0, err
 		}
 	}
 
@@ -155,27 +195,27 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 	// pool's supply while paying out of another's reserves, and the invariant
 	// that caught it would name the wrong module.
 	if entry.Shares.Amount.IsNil() || !entry.Shares.Amount.IsPositive() {
-		return types.ErrInvalidUnbonding.Wrapf(
+		return 0, types.ErrInvalidUnbonding.Wrapf(
 			"pool %d: unbonding for %s carries %s shares", entry.PoolId, entry.Address, entry.Shares.Amount)
 	}
 	if want := types.LPShareDenom(entry.PoolId); entry.Shares.Denom != want {
-		return types.ErrInvalidUnbonding.Wrapf(
+		return 0, types.ErrInvalidUnbonding.Wrapf(
 			"pool %d: unbonding is denominated in %s, not %s", entry.PoolId, entry.Shares.Denom, want)
 	}
 
 	pool, err := k.Pool.Get(ctx, entry.PoolId)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if pool.ReserveErth.Amount.IsNil() || pool.ReserveToken.Amount.IsNil() {
-		return types.ErrInvalidUnbonding.Wrapf(
+		return 0, types.ErrInvalidUnbonding.Wrapf(
 			"pool %d holds a nil reserve (%s / %s)", entry.PoolId, pool.ReserveErth, pool.ReserveToken)
 	}
 	// Compound pending rewards into the reserve before pricing against it: the
 	// unbonding position held its shares the whole period, so it is owed its slice
 	// of everything earned up to this moment.
 	if err := k.settlePoolRewards(ctx, entry.PoolId, &pool); err != nil {
-		return err
+		return 0, err
 	}
 
 	// Read supply before burning — the escrowed shares are still outstanding, and
@@ -183,7 +223,7 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 	// of the pool it actually owns.
 	total := k.totalShares(ctx, entry.PoolId).Amount
 	if !total.IsPositive() || entry.Shares.Amount.GT(total) {
-		return types.ErrInsufficientPool.Wrapf(
+		return 0, types.ErrInsufficientPool.Wrapf(
 			"pool %d has %s shares outstanding against an unbonding of %s",
 			entry.PoolId, total, entry.Shares.Amount)
 	}
@@ -192,23 +232,23 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 	// predates the pool cap (types.MaxPoolAmount), and Mul panics there.
 	erthAmt, err := mulDiv(entry.Shares.Amount, pool.ReserveErth.Amount, total)
 	if err != nil {
-		return types.ErrInvalidUnbonding.Wrapf("pool %d: %s", entry.PoolId, err)
+		return 0, types.ErrInvalidUnbonding.Wrapf("pool %d: %s", entry.PoolId, err)
 	}
 	tokenAmt, err := mulDiv(entry.Shares.Amount, pool.ReserveToken.Amount, total)
 	if err != nil {
-		return types.ErrInvalidUnbonding.Wrapf("pool %d: %s", entry.PoolId, err)
+		return 0, types.ErrInvalidUnbonding.Wrapf("pool %d: %s", entry.PoolId, err)
 	}
 	outErth := sdk.NewCoin(pool.ReserveErth.Denom, erthAmt)
 	outToken := sdk.NewCoin(pool.ReserveToken.Denom, tokenAmt)
 
 	if err := k.burnEscrowedShares(ctx, entry.Shares); err != nil {
-		return err
+		return 0, err
 	}
 
 	pool.ReserveErth = pool.ReserveErth.Sub(outErth)
 	pool.ReserveToken = pool.ReserveToken.Sub(outToken)
 	if err := k.SetPool(ctx, entry.PoolId, pool); err != nil {
-		return err
+		return 0, err
 	}
 
 	// A dust position can round both legs to zero. The shares are burned and the
@@ -226,26 +266,30 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 			pc, ct []byte
 		}{{outErth, entry.ErthPc, entry.ErthCiphertext}, {outToken, entry.Pc, entry.Ciphertext}} {
 			if leg.c.IsPositive() {
-				if _, _, err := k.shielded.MintNote(ctx, types.ModuleName, leg.c, leg.pc, leg.ct); err != nil {
-					return err
+				ps, err := k.shielded.MintNoteSplit(ctx, types.ModuleName, leg.c, leg.pc, leg.ct)
+				if err != nil {
+					return 0, err
 				}
+				notes += len(ps)
 			}
 		}
 		payout = nil
 	} else if k.isShieldedOnly(outToken.Denom) {
 		if outToken.IsPositive() {
 			if len(entry.Pc) == 0 {
-				return types.ErrInvalidUnbonding.Wrapf("pool %d: no pc to pay %s to", entry.PoolId, outToken)
+				return 0, types.ErrInvalidUnbonding.Wrapf("pool %d: no pc to pay %s to", entry.PoolId, outToken)
 			}
-			if _, _, err := k.shielded.MintNote(ctx, types.ModuleName, outToken, entry.Pc, entry.Ciphertext); err != nil {
-				return err
+			ps, err := k.shielded.MintNoteSplit(ctx, types.ModuleName, outToken, entry.Pc, entry.Ciphertext)
+			if err != nil {
+				return 0, err
 			}
+			notes += len(ps)
 		}
 		payout = sdk.NewCoins(outErth)
 	}
 	if !payout.IsZero() {
 		if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, sdk.AccAddress(addrBz), payout); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -259,6 +303,40 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 		sdk.NewAttribute("amount_b", outToken.String()),
 	)
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent("complete_unbond_liquidity", attrs...))
+	return notes, nil
+}
+
+// maxWithdrawalNoteLeg is the largest note leg a withdrawal may be worth when
+// it starts: a quarter of what MintNoteSplit pays at maturity, so the pool
+// can move 4x against the provider over the unbonding period (or be pushed
+// there in the maturity block) before the payout fails and is retried.
+var maxWithdrawalNoteLeg = math.NewIntFromUint64(shieldedtypes.MaxNoteValue).MulRaw(shieldedtypes.MaxSplitNotes / 4)
+
+// checkWithdrawalNoteLegs refuses a withdrawal of shares from pool whose
+// note legs (erth when erthNote, the token when tokenNote) are worth more
+// than maxWithdrawalNoteLeg at the pool as it stands: split it into smaller
+// withdrawals. total is the share supply the shares are part of.
+func (k Keeper) checkWithdrawalNoteLegs(pool types.Pool, shares, total math.Int, erthNote, tokenNote bool) error {
+	if !total.IsPositive() {
+		return nil
+	}
+	for _, leg := range []struct {
+		on      bool
+		reserve sdk.Coin
+	}{{erthNote, pool.ReserveErth}, {tokenNote, pool.ReserveToken}} {
+		if !leg.on || leg.reserve.Amount.IsNil() {
+			continue
+		}
+		v, err := mulDiv(shares, leg.reserve.Amount, total)
+		if err != nil {
+			return types.ErrInvalidAmount.Wrap(err.Error())
+		}
+		if v.GT(maxWithdrawalNoteLeg) {
+			return errorsmod.Wrapf(types.ErrInvalidAmount,
+				"the %s leg (%s) is above %s, the most one withdrawal pays as notes; withdraw in smaller parts",
+				leg.reserve.Denom, v, maxWithdrawalNoteLeg)
+		}
+	}
 	return nil
 }
 

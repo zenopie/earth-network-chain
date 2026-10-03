@@ -91,6 +91,12 @@ func (k msgServer) RemoveLiquidity(ctx context.Context, msg *types.MsgRemoveLiqu
 	default:
 		return nil, err
 	}
+	if k.isShieldedOnly(pool.ReserveToken.Denom) {
+		// The token leg is paid as notes: refuse what could not be.
+		if err := k.checkWithdrawalNoteLegs(pool, entry.Shares.Amount, k.totalShares(ctx, msg.PoolId).Amount, false, true); err != nil {
+			return nil, err
+		}
+	}
 	if err := k.setLpUnbonding(ctx, key, entry); err != nil {
 		return nil, err
 	}

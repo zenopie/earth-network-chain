@@ -227,7 +227,33 @@ const (
 	// over the cap is picked up by the next block; the ordered key means the
 	// backlog drains from the oldest entry first.
 	LpUnbondSweepLimit = 50
+
+	// LpUnbondNoteBudget caps the notes one sweep mints: a private leg above
+	// a note's u64 is paid as several notes (up to MaxSplitNotes each), so
+	// the entry count alone does not bound the tree appends. The entry that
+	// crosses the budget still pays; the next one waits for the next block.
+	LpUnbondNoteBudget = 256
+
+	// LpUnbondRetryBaseSeconds and LpUnbondRetryMaxShift: a payout that fails
+	// is retried, never dropped, at now + base << min(attempts-1, max shift):
+	// 1h, 2h, 4h, ... capped at 256h (about 10.7 days). A failing entry costs
+	// one sweep slot per retry, and the retries thin out geometrically.
+	LpUnbondRetryBaseSeconds = 3600
+	LpUnbondRetryMaxShift    = 8
 )
+
+// LpUnbondRetryDelay is how long after its attempts-th failure a payout is
+// retried.
+func LpUnbondRetryDelay(attempts uint32) int64 {
+	shift := uint32(0)
+	if attempts > 1 {
+		shift = attempts - 1
+	}
+	if shift > LpUnbondRetryMaxShift {
+		shift = LpUnbondRetryMaxShift
+	}
+	return int64(LpUnbondRetryBaseSeconds) << shift
+}
 
 // LPShareDenom returns the LP share coin denom for a given pool id.
 func LPShareDenom(poolID uint64) string {

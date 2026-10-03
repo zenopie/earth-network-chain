@@ -113,6 +113,31 @@ func (k Keeper) MintNote(ctx context.Context, fromModule string, coin sdk.Coin, 
 	return pos, cm, nil
 }
 
+// MintNoteSplit is MintNote for a value the chain decided that may exceed a
+// note's u64: coin is paid as types.SplitNoteValues(coin.Amount) notes, all
+// to pc with ciphertext, each with its own mint event (its amount at its
+// position). At most types.MaxSplitNotes; beyond that nothing is minted and
+// an error returned. For payouts the msg's sender could not size (an LP
+// withdrawal priced at maturity). Returns the positions.
+func (k Keeper) MintNoteSplit(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) ([]uint64, error) {
+	values, err := types.SplitNoteValues(coin.Amount)
+	if err != nil {
+		return nil, errorsmod.Wrapf(types.ErrInvalidNote, "%s: %v", coin.Denom, err)
+	}
+	if err := k.checkCapacity(ctx, uint64(len(values))); err != nil {
+		return nil, err
+	}
+	positions := make([]uint64, 0, len(values))
+	for _, v := range values {
+		pos, _, err := k.MintNote(ctx, fromModule, sdk.NewCoin(coin.Denom, math.NewIntFromUint64(v)), pc, ciphertext)
+		if err != nil {
+			return nil, err
+		}
+		positions = append(positions, pos)
+	}
+	return positions, nil
+}
+
 // MintOpenNote mints coin from fromModule as a note whose opening the chain
 // chose: pc = PC(owner_pk, rho, rcm) for a public recipient owner_pk, no
 // ciphertext. For a note whose recipient and amount are already public, so

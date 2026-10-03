@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math/bits"
 
+	sdkmath "cosmossdk.io/math"
+
 	"github.com/earth-network/earth/zk/privacy"
 )
 
@@ -31,6 +33,42 @@ func CheckBlindCiphertext(what string, ct []byte) error {
 		return fmt.Errorf("%s: an amount-blind ciphertext of exactly %d bytes is required, got %d", what, BlindCiphertextBytes, len(ct))
 	}
 	return nil
+}
+
+// A note's value is a u64 (the action circuit's range). MintNoteSplit pays a
+// value above it as ceil(v / MaxNoteValue) notes to one pc, each a full
+// MaxNoteValue but the last, at most MaxSplitNotes of them. Each note is its
+// own position, so its nullifier H(nk, rho, position) differs from its
+// siblings' even when their commitments are equal; the owner finds each by
+// its ciphertext (the same one) and the amount published at its position.
+const (
+	MaxNoteValue  = ^uint64(0)
+	MaxSplitNotes = 64
+)
+
+// SplitNoteValues splits v into note values: ceil(v / MaxNoteValue) of
+// them, every one MaxNoteValue but the last. It refuses a non-positive v or
+// one needing more than MaxSplitNotes notes.
+func SplitNoteValues(v sdkmath.Int) ([]uint64, error) {
+	if v.IsNil() || !v.IsPositive() {
+		return nil, fmt.Errorf("note value %s must be positive", v)
+	}
+	max := sdkmath.NewIntFromUint64(MaxNoteValue)
+	n := v.Add(max).SubRaw(1).Quo(max)
+	if !n.IsInt64() || n.Int64() > MaxSplitNotes {
+		return nil, fmt.Errorf("value %s needs more than %d notes of at most %d", v, MaxSplitNotes, MaxNoteValue)
+	}
+	out := make([]uint64, 0, n.Int64())
+	for rest := v; rest.IsPositive(); {
+		if rest.GT(max) {
+			out = append(out, MaxNoteValue)
+			rest = rest.Sub(max)
+			continue
+		}
+		out = append(out, rest.Uint64())
+		break
+	}
+	return out, nil
 }
 
 // One fee rule: every private msg pays its fee out of its bundles' uerth

@@ -79,12 +79,16 @@ func TestAudit4UnbondingPayoutOverflowNoHalt(t *testing.T) {
 		WithEventManager(sdk.NewEventManager())
 	require.NotPanics(t, func() { require.NoError(t, k.SweepMaturedUnbondings(later)) })
 
-	n := 0
-	require.NoError(t, k.LpUnbondings.Walk(later, nil, func(_ collections.Triple[int64, uint64, []byte], _ types.LpUnbonding) (bool, error) {
-		n++
+	// Audit 5 D1: kept (shares escrowed) and moved off the head of the queue
+	// to a later retry, not dropped and not retried every block.
+	var kept []types.LpUnbonding
+	require.NoError(t, k.LpUnbondings.Walk(later, nil, func(_ collections.Triple[int64, uint64, []byte], u types.LpUnbonding) (bool, error) {
+		kept = append(kept, u)
 		return false, nil
 	}))
-	require.Zero(t, n, "the entry is dropped, not retried every block")
+	require.Len(t, kept, 1)
+	require.Equal(t, uint32(1), kept[0].PayoutAttempts)
+	require.Greater(t, kept[0].CompletionTime, later.BlockTime().Unix())
 	failed := false
 	for _, e := range later.EventManager().Events() {
 		failed = failed || e.Type == "lp_unbond_payout_failed"
