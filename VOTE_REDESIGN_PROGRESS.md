@@ -13,5 +13,5 @@ only one of several open proposals (decoy-proposal attack).
 - [x] x/shielded CircuitVote; privacy-vks; genesis
 - [x] genesis export/import (insertion order, vote nullifiers, snapshot nf roots checked)
 - [x] app tests with real proofs; fixtures (TestStakeVoteConcurrentProposals, TestStakeVoteTally reworked; staking fixtures re-recorded, 145)
-- [ ] docs: ORCHARD_DESIGN §15, CHANGELOG (wallet format, indexer)
+- [x] docs: ORCHARD_DESIGN §15, CHANGELOG (wallet format, indexer)
 

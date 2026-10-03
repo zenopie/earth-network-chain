@@ -37,8 +37,7 @@ const (
 	// apart by its action count. Wallets pad with dummy actions.
 	MinActionsPerBundle = 2
 
-	// MaxBundlesPerMsg bounds how many bundles one private msg spends: a stake
-	// vote's (against the proposal's snapshot root) and its fee's.
+	// MaxBundlesPerMsg bounds how many bundles one private msg spends.
 	MaxBundlesPerMsg = 2
 
 	// ProofBytes is the exact length of every proof the chain verifies

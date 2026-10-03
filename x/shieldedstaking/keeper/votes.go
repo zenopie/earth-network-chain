@@ -21,13 +21,24 @@ import (
 // Stake votes.
 //
 // When a proposal enters voting this module snapshots the stake tree's latest
-// root and, per validator, the derth supply and rate. A derth/v stake note
-// that was in the tree then (and is unspent when it votes) votes by being
-// spent: MsgStakeVote's stake proof spends it against the snapshot root,
-// publishing its amount as the weight, and the chain records the vote and
-// mints the derth straight back to a new stake note of the same owner. The
-// spent nullifier stops a second vote, and the new note is not in the snapshot
-// root. A position created before the snapshot votes by its owner's proof.
+// root and the stake nullifier tree's (both as of the end of the last block
+// that changed them) and, lazily, per validator, the derth supply. A
+// derth/v stake note that was in the tree then and unspent then votes WITHOUT
+// being spent: MsgStakeVote's vote proof (circuits/vote) shows the note under
+// the snapshot's note root, its spend nullifier absent from the snapshot's
+// nullifier tree (a low leaf), and publishes a weight (at most its amount)
+// and its vote nullifier H(TAG_VNF, nk, rho, position, proposal), which the
+// chain refuses a second time on that proposal. The note stays where it is:
+// it votes on every other open proposal with another vote nullifier and is
+// spent as usual. Votes reveal no spend nullifier, so they are linked neither
+// to each other nor to the note's later spend (only by their public weight
+// and validator). A note minted after the snapshot (including a spend's
+// outputs) is not under its note root; a note spent before it cannot prove
+// its nullifier absent; a note spent after it still votes, and its outputs
+// do not, so every unit of derth at the snapshot votes at most once per
+// proposal. A position created before the snapshot votes by its owner's proof
+// (its locked notes were spent before the snapshot, so they cannot); one
+// created in or after the snapshot's block may not (its notes can).
 // The weight is public; the voter is not.
 //
 // The tally (StakeTally, x/gov's custom tally function) turns each validator's
@@ -39,9 +50,9 @@ import (
 // SDK's default tally) then votes whatever was not deducted: its self-bond,
 // the module's un-voted derth, and any delegator that did not vote.
 //
-// A vote outlives the stake that cast it (audit F6, by design): the notes a
-// stake vote spent are re-minted to their owner, who may then undelegate
-// them, and a position may unlock after voting; the vote still counts. The
+// A vote outlives the stake that cast it (audit F6, by design): a note may be
+// undelegated after it voted (or after the snapshot, and then vote), and a
+// position may unlock after voting; the vote still counts. The
 // chain cannot tell which derth left (the notes are private), so it counts
 // a vote as a fraction of the validator's snapshot supply applied to the
 // module's current shares: undelegations during the vote shrink every

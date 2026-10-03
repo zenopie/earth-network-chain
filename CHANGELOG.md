@@ -15,6 +15,40 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- x/shieldedstaking: **private stake votes no longer spend the note**
+  (ORCHARD_DESIGN.md section 15). One stake note can vote on every
+  concurrently open proposal (the decoy-proposal attack on spend-to-vote).
+  - The stake nullifier set is now an indexed (sorted) depth-32 Poseidon2
+    Merkle tree (zk/indexed); its root and size are recorded at EndBlock
+    and every proposal snapshot takes them (`ProposalSnapshot.nf_root`,
+    `nf_size`) with the note root.
+  - **Wallet format.** MsgStakeVote is `{bundle, proposal_id, validator,
+    options, weight, proof (8), vote_nullifier (9)}`; `stake` (7) and the
+    response's `position` are gone. `proof` is the new circuit `vote`
+    (verifying key `vote` in x/shielded params; genesis regenerated):
+    note under the snapshot root, its spend nullifier absent from the
+    snapshot nullifier tree (low leaf), `0 < weight <= amount`,
+    `vote_nullifier = H("earth.vnf", nk, rho, position, proposal_id)`.
+    Sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes),
+    weight, vote_nullifier. Nothing is spent or re-minted; a second vote of
+    the same note on a proposal is refused (code 1119). Wallets rebuild the
+    nullifier tree at the snapshot from the first nf_size-1 stake
+    nullifiers in insertion order (section 15 has the steps).
+  - New query `StakeNullifierTree{start, limit}` (values in insertion order,
+    size, current and latest roots); `StakeNullifier` also returns the leaf
+    index; `shieldedstaking_stake_nullifier` events carry `index`;
+    `shieldedstaking_stake_vote` carries `vote_nullifier`; the snapshot
+    event carries `nf_root`, `tree_size`, `nf_size`. **Indexers** must serve
+    stake nullifiers in insertion order with their index (failed txs
+    included).
+  - Gas: a stake vote is fixed at 250,000 + proof_verification_gas +
+    note_gas; every other stake msg pays two note writes per nullifier slot
+    (+2 x note_gas).
+  - Genesis: `stake_nullifiers` are in insertion order; InitGenesis rebuilds
+    the tree and checks each snapshot's nf_root. Invariant 7 checks the
+    tree's size.
+  - Positions unchanged (they never spent to vote).
+
 - Audit round 3 (see FIX_ROUND3_PROGRESS.md):
   - Node (F1): **the app mempool is always the no-op one.** app.New
     installs it last, overriding app.toml; a mempool.max-txs other than -1
@@ -53,11 +87,7 @@ like, because nodes running different versions cannot agree.
   - x/shielded (F4): InitGenesis checks every root record against the
     rebuilt note tree at its tree_size and refuses one dated after genesis
     time (a forged or future-dated anchor was accepted).
-  - Stake votes on concurrent proposals (C): not changed in this round. A
-    no-spend stake vote would reveal the same nullifier on every vote and at
-    the later spend; a separate change will replace stake voting with a
-    per-proposal vote nullifier and an indexed nullifier-tree
-    non-membership proof.
+  - Stake votes on concurrent proposals (C): fixed by the next entry.
   - `earthd gas-check` (M1): a key stored with an empty value (a revoked
     CSCA, any KeySet member) is now read as present. abci_query cannot tell
     it from an absent key, so an empty answer is asked again with

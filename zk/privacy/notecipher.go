@@ -282,7 +282,7 @@ func decryptBlind(salt []byte, version byte, ct []byte, ek [32]byte) (BlindNote,
 // ---- blind stake ciphertext ("earth stake v1") ------------------------------
 //
 // Every stake note the chain mints (derth at the live rate, an unbond claim,
-// a stake vote's re-mint, an unlocked position) has a value the chain
+// an unlocked position) has a value the chain
 // decides, so its owner's wallet cannot know cm in advance. The msg carries
 // the note's secrets encrypted to the owner, exactly as a v2 note does, under
 // its own salt and version byte so the two can never be confused:

@@ -194,7 +194,7 @@ textbook.
   per action: `base + N·(proof_verification_gas + 2·note_gas)`. The block
   cap should count actions, not txs (`max_private_actions_per_block`).
 - **Chain-minted notes** (`MintNote`: registration reward, ANML claims, swap
-  outputs, derth/unbond mints, stake-vote re-mints, LP refunds, gas grant)
+  outputs, derth/unbond mints, LP refunds, gas grant)
   have no cv: their value is public, they enter through the turnstile and
   go straight into the tree. Spending one later is an ordinary action. No
   bundle ever creates value, so negative balances are not needed.
@@ -393,7 +393,7 @@ Bytes(ct_0), Bytes(ct_1), spc_mint, otag`.
 | Restake (merge/split) | spends 1-2, creates 1-2 | — |
 | Undelegate {amount} | spends, v_out = amount, change | mints owner-locked unbond claim (value at rate) to spc_mint |
 | ClaimUnbonding {amount, pc, fee or fee_from_output} | spends claims, v_out = amount | mints ERTH (transferable) to pc in the pool; no bundle with fee_from_output |
-| StakeVote {weight} | anchor = snapshot stake root, v_out = weight, creates nothing | records vote, re-mints weight to spc_mint |
+| StakeVote {weight} | (superseded 2026-10-03, §15: vote proof, circuits/vote; nothing spent) | records vote |
 | LockPosition {amount} | spends, v_out = amount, change; otag | position stores otag |
 | Update/Unlock/PositionVote | spends nothing; otag must equal the position's | unlock mints derth to spc_mint |
 
@@ -555,7 +555,7 @@ notes), MsgRemoveLiquidityShielded (erth and token legs), MsgRemoveLiquidity
 (ANML leg), MsgClaimUnbonding. Pool notes use v2
 (`EncryptBlindNote`: salt "earth.note.v2", pt 0x02||rho||rcm||memo64);
 stake notes the chain mints (Delegate's derth, Undelegate's claim,
-StakeVote's re-mint, UnlockPosition's derth) use the new blind stake
+UnlockPosition's derth; StakeVote's re-mint until §15) use the new blind stake
 ciphertext `StakeProof.spc_ciphertext`:
 
     ct  = epk || ChaCha20-Poly1305(HKDF-SHA256(X25519(esk, ek_pub),
@@ -584,3 +584,148 @@ unshielded to its receiver), and MsgClaimUnbonding may instead pay
 `fee_from_output` out of the ERTH it claims, with no bundle. MsgNoteSwap's
 `fee_from_output` is gone (a holder of only ANML needs an ERTH note to pay a
 swap's fee).
+
+## 15. Stake votes without spending (2026-10-03)
+
+**Problem.** MsgStakeVote spent the voting note and re-minted it, so a note
+could vote on only one of several concurrently open proposals: a decoy
+proposal opened alongside the real one could soak up the votes of whoever
+voted on it first. Revealing the note's spend nullifier at each vote instead
+(no spend) was rejected: one nullifier on every vote links the votes to each
+other and to the note's later spend.
+
+**Design (user approved).** A vote proves its note was unspent at the
+snapshot by NON-membership of its spend nullifier in an indexed Merkle tree
+of stake nullifiers, and publishes a per-proposal vote nullifier instead.
+
+**Stake nullifier tree** (zk/indexed; x/shieldedstaking/keeper/nf_tree.go).
+Replaces the stake nullifier set. An indexed (sorted, Aztec-style) tree on
+the same depth-32 Poseidon2 Merkle tree as the note trees:
+
+    leaf_i   = H(TAG_SNFL, value, next_value, next_index)    TAG_SNFL "earth.snfl"
+    sentinel = leaf 0 = (0, smallest value, its index); written by the first insert
+    empty slot = 0 (no tagged hash equals 0, so it is never a leaf)
+    next_value = 0 (next_index 0) for the largest value
+
+Inserting nf (nonzero, not present): low = the leaf with the largest value <
+nf (the sentinel if none); append (nf, low.next_value, low.next_index) at the
+next index n; set low to (low.value, nf, n). Two O(32) path updates. nf is
+absent iff a leaf has value < nf and (nf < next_value or next_value = 0).
+Values are canonical field elements compared as integers (32-byte big-endian
+encodings sort the same way). Empty-tree root (sentinel alone, size 0 or 1):
+`indexed.EmptyRoot` = 0x18f5a2d2d3273f584793e90ac9bf77abf0ff2a05a101cd5943eaf7bbd0bd5b10.
+Stored: value -> leaf index (`StakeNullifiers`, the low-leaf lookup), leaf
+index -> value (`StakeNfValues`, insertion order), nodes, size (sentinel
+included); the root and size recorded at the end of every block that changed
+it (`StakeNfLatestRoot/Size`, beside the stake root). No root window: only
+snapshots prove against it.
+
+**Snapshot.** `ProposalSnapshot` gains `nf_root`, `nf_size`: the nullifier
+tree's latest recorded root and size, taken with the note tree's latest root
+(`root`, `tree_size`). Both are as of the end of the last block that changed
+them, so they describe one moment. A note under `root` is unspent then iff
+its nullifier is absent under `nf_root`.
+
+**Circuit `vote`** (mobile circuits/vote, 9,046 gates, 2^14, 23 tests incl. Go
+parity; privacy_core `nf_leaf`, `vote_nf`, `assert_not_in_indexed`).
+
+    private  nk, amount, rho, rcm, pos (u32), path[32],
+             low_value, low_next_value, low_next_index (u32), low_index (u32), low_path[32]
+    public   note_root, nf_root, asset, weight (u64), proposal_id (u64), vnf, sighash
+
+    cm  = H(TAG_STAKE, asset, amount, H(TAG_SPC, H(TAG_OWNER, nk), rho, rcm))
+    merkle_root(cm, pos, path) == note_root
+    nf  = H(TAG_SNF, nk, rho, pos)                       (the note's spend nullifier, private)
+    merkle_root(nf_leaf(low_*), low_index, low_path) == nf_root
+    low_value < nf;  low_next_value == 0 or nf < low_next_value
+    0 < weight <= amount
+    vnf = H(TAG_VNF, nk, rho, pos, proposal_id)          TAG_VNF "earth.vnf"
+    bind(sighash)
+
+`weight <= amount` (a refinement): a wallet may vote less than the note
+holds, e.g. a rounded weight, so the amount need not be published exactly.
+Negative tests: a nullifier inserted before the snapshot (by its predecessor,
+by its own leaf, by the pre-insertion low leaf), a forged low leaf, an empty
+slot as low leaf, a low leaf above nf, wrong proposal id, the spend nullifier
+or another position as vnf, weight above amount or zero, another owner's,
+validator's or post-snapshot note, a wrong nf root.
+
+**MsgStakeVote** (fields 7 `stake` and response field 1 reserved):
+
+    bundle (fee), proposal_id, validator, options, weight, proof (8), vote_nullifier (9)
+    public inputs: snapshot.root, snapshot.nf_root, AssetID(derth/<validator>),
+                   weight, proposal_id, vote_nullifier, sighash   (the chain fills all but vnf)
+    sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
+                    weight, vote_nullifier
+
+The chain refuses: no open snapshot, a snapshot without nf_root, weight above
+the validator's snapshot supply, or (proposal, vote_nullifier) already
+recorded (ErrVoteNullifierUsed, code 1119: final, no re-vote). It records the
+vote under key 0x00 || vnf at the validator, exactly as before (tally
+unchanged: weight at the snapshot rate, the module-share caps). Nothing is
+spent, nothing minted, no spend nullifier appears. Gas is fixed:
+gasVote (250,000) + proof_verification_gas + one note_gas, whatever the tree
+sizes. Event `shieldedstaking_stake_vote` carries `vote_nullifier`.
+
+**What this allows and refuses.** One note votes on every open proposal,
+each with its own vnf; its votes are unlinkable to each other and to its
+later spend (nk is needed to relate them), except by the public weight and
+validator. A note spent before the snapshot cannot vote; one minted after
+(including a spend's outputs) is not under the note root; one spent after
+the snapshot still votes (its nullifier went in after nf_root) and its
+outputs cannot: each unit of derth at the snapshot votes at most once per
+proposal. A note may now vote after it was undelegated (before, the
+undelegation spent it); this is the same diluted voice as "vote, then
+undelegate" (audit F6): the tally applies snapshot fractions to the module's
+current shares.
+
+**Positions** are unchanged: a position is a public object keyed by id, so
+MsgPositionVote never spent anything and already votes on every open
+proposal (and may replace its vote). The created-before-the-snapshot-block
+rule is exactly consistent with the new snapshot: a position locked in an
+earlier block has its notes' nullifiers under nf_root (the notes cannot
+vote, the position does); one locked in the snapshot's block or later may
+not vote, and its notes can.
+
+**Gas of every other stake msg.** An insert rewrites two paths, so each
+stake proof nullifier slot now prices two note writes: +2 x note_gas
+(+300,000 at defaults) for every stake msg.
+
+**Genesis.** `stake_nullifiers` is exported in insertion order; InitGenesis
+re-inserts them in order and checks every snapshot's nf_root against the
+tree at its nf_size (and votes keep their 0x00 || vnf keys). Validate refuses
+a zero or repeated nullifier, a malformed nf_root, an nf_size beyond the
+tree, a repeated or malformed vote key. Invariant 7 (O(1)): the tree size
+matches its last value's leaf index.
+
+**Wallet format (building a vote).**
+
+1. `Query/Snapshot(proposal_id)`: root, tree_size, nf_root, nf_size.
+2. The note's path in the stake note tree of the first tree_size leaves (the
+   wallet's stake tree, as for any stake proof at an old anchor). A note at
+   position >= tree_size cannot vote on this proposal.
+3. The nullifier tree at the snapshot: the first nf_size - 1 stake nullifiers
+   in insertion order (none if nf_size is 0), inserted in that order into an
+   indexed tree (rules above); its root must equal nf_root. Sources: `Query/
+   StakeNullifierTree{start, limit}` (values at leaf start+1.., up to 1000 a
+   page, with the current size and roots), or the
+   `shieldedstaking_stake_nullifier` events, which now carry `index` (the
+   leaf index; read failed txs too: a claim spends in the ante).
+4. Low leaf of nf = H(TAG_SNF, nk, rho, pos): the predecessor (largest value
+   < nf; else the sentinel: value 0, index 0) with next = nf's successor
+   (smallest value > nf; else 0, 0); low_index its leaf index, low_path its
+   siblings (leaf level first). If nf is in the tree the note was spent
+   before the snapshot and cannot vote.
+5. vnf = H(TAG_VNF, nk, rho, pos, proposal_id); weight in 1..amount.
+6. Prove circuits/vote (Prover.toml names as above), fill the fee bundle,
+   sighash as above. Remember (proposal, vnf) as voted; the note is untouched
+   (no re-mint, no spc_ciphertext, no stake proof for votes).
+
+Golden vectors (Go `zk/indexed` TestNoirParity = Noir `test_go_parity`):
+nf_leaf(1, 2, 3) = 0x0cdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276;
+vote_nf(0x5eed, 0xa1, 1, 7) = 0x1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f.
+
+**Indexer.** The backend must serve the stake nullifiers in insertion order
+with their leaf index (it already streams the nullifier events; add `index`,
+keep failed txs' events, and page by index), or proxy Query/
+StakeNullifierTree.
