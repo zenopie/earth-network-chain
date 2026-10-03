@@ -15,6 +15,101 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Audit round 3 (see FIX_ROUND3_PROGRESS.md):
+  - Node (F1): **the app mempool is always the no-op one.** app.New
+    installs it last, overriding app.toml; a mempool.max-txs other than -1
+    is logged ("ignoring app.toml mempool.max-txs") and has no effect.
+    Before this, a node with max-txs >= 0 failed every private tx in a
+    block after its ante wrote (its sender-nonce mempool refused a tx with
+    no signer) and forked off the network.
+  - Node (F5): PrepareProposal leaves out private txs past the block's
+    max_private_actions_per_block (they stay in the mempool for a later
+    block) instead of proposing txs certain to fail with ErrBlockCap.
+    Not checked in ProcessProposal.
+  - x/shieldedstaking (A): reward escrows move only their spendable coins.
+    An account someone created at a future validator's escrow address (a
+    permanently locked vesting account) no longer blocks compounding or the
+    retirement/removal release; the locked coins stay there. A failed
+    retirement release moves 24h back in its queue, and pending-release
+    retries rotate from a cursor, so entries that keep failing cannot
+    starve the bounded per-block/per-epoch budgets.
+  - x/shielded, x/shieldedstaking (B/F2): **wallet rule.** An unshield
+    (MsgSend remainder) to any module account the app declares is refused
+    in the ante ("receiver is the <module> module account"). Private
+    staking's account takes pool coins only through x/shielded's
+    ReleaseToModule for its own msgs; its invariant 1 stays exact.
+  - x/shieldedstaking (D): orphan unbond records are indexed; the epoch end
+    no longer walks a validator's whole record list (which grew with every
+    unclaimed matured record).
+  - x/shieldedstaking (F3): **wallet format rule.** Every vote option
+    weight in MsgStakeVote / MsgPositionVote must be the canonical
+    LegacyDec string (18 decimals, e.g. "1.000000000000000000",
+    "0.500000000000000000"); "1", "0.5", "00.50" are refused. The
+    sighash already bound the canonical form; proofs are unchanged.
+  - x/shieldedstaking: the module account has no Minter or Burner
+    permission. InitGenesis enforces the delegation rule on x/staking's
+    genesis (loaded without hooks): only the module and each operator's
+    self-bond delegate or unbond; no redelegations.
+  - x/shielded (F4): InitGenesis checks every root record against the
+    rebuilt note tree at its tree_size and refuses one dated after genesis
+    time (a forged or future-dated anchor was accepted).
+  - Stake votes on concurrent proposals (C): not changed in this round. A
+    no-spend stake vote would reveal the same nullifier on every vote and at
+    the later spend; a separate change will replace stake voting with a
+    per-proposal vote nullifier and an indexed nullifier-tree
+    non-membership proof.
+  - `earthd gas-check` (M1): a key stored with an empty value (a revoked
+    CSCA, any KeySet member) is now read as present. abci_query cannot tell
+    it from an absent key, so an empty answer is asked again with
+    prove=true and the ics23 proof decides. gas-check's node must serve
+    proofs at the pinned height (any IAVL node does); it fails closed
+    otherwise. Before this, gas-check approved registrations under a
+    revoked CSCA that the chain refuses.
+  - x/assembly (M2): a proposal's subjects stay fixed from entering voting
+    until x/gov ends its voting. An expedited proposal the chamber ratified
+    but stake did not pass (demoted by x/gov to a regular round) keeps
+    them; previously each vote re-classified it against the live trust
+    store. A voting proposal without fixed subjects is refused (error 1101,
+    "has no fixed subjects") instead of being classified per vote.
+  - x/personhood (L1, I1, L2): a landed registration's binding is held
+    until its proof's current_date + one year (the largest skew governance
+    may set) + a day, so raising current_date_max_skew_seconds never
+    reopens an A -> B -> A replay (a future-dated proof is covered too); a
+    current_date that is not a calendar date (250231) is refused. Genesis
+    gains pending_dsc_purges, dsc_rates, country_rates, network_rate (an
+    export mid-purge finishes it and keeps the day's caps) and lease_hold.
+  - x/personhood, x/assembly (L4/L5): activation bounds no longer follow
+    the live identity_root_window_seconds. Proposal and removal ballot
+    votes prove max_activation = opened_at - 86400 (MsgProposeRemoval:
+    start of today (UTC) - 86400; BallotInputs returns it); caretaker
+    splits and referrer bindings max_activation <= now - R - 86400 (R =
+    caretaker_vote_seconds). 86400 is the largest root window, so no
+    window change, either way, lets an identity and its switched-to
+    successor both vote or both hold a lease. A lowered
+    caretaker_vote_seconds keeps the old R in the bound until every lease
+    cast under it has lapsed (lease_hold). The window now only governs
+    root validity. New identities wait a day (was an hour) before they can
+    vote.
+  - x/personhood (L6): **wallet format change.** MsgBindReferrer binding
+    an address needs its owner's consent: referrer_pub_key (field 5,
+    33-byte compressed secp256k1 key whose address is `address`) and
+    referrer_signature (field 6, 64-byte low-S r||s, cosmos secp256k1 Sign
+    = ECDSA over SHA-256) over "earth.referrer.consent.v1" || u8
+    len(chain_id) || chain_id || membership.nullifier (32 bytes) || raw
+    address bytes. Both empty when clearing. Not sighash fields (proofs
+    unchanged). Refused with 1125 ErrNoReferrerConsent. +1000 gas.
+  - x/dex (L3): a deposit whose pool-ratio pull would take zero of either
+    leg is refused (ErrZeroShares) instead of minting shares against
+    nothing; MsgAddLiquidity and private (note) deposits alike.
+  - x/personhood (L7): one ANML buyback trade spends at most
+    buyback_max_trade_seconds of emission (new param, default 3600; 0 =
+    default; between buyback_twap_window_seconds and
+    buyback_max_accrual_seconds). A larger backlog (still capped at
+    buyback_max_accrual_seconds) is bought over the following windows.
+  - Personhood passport and app proof fixtures re-recorded (referral keys,
+    one-day activation margin); two x/shielded fixtures added (unshield to
+    a module account). Genesis regenerated: networks/genesis.json sha256
+    d5385d77cd1df472e049a78467bd896e143bd21009540b55fb578870e96154db.
 - Re-audit round 2 (see FIX_ROUND2_PROGRESS.md):
   - x/personhood (R1): a landed registration's binding (the proof's
     address input) is refused for reuse until registered_at +
