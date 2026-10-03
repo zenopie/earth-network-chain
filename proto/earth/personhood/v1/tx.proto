@@ -204,11 +204,19 @@ message MsgSetCaretakerResponse {
 // SHA-256 of the consent bytes (what cosmos-sdk's secp256k1 PrivKey.Sign
 // produces for them):
 //
-//   "earth.referrer.consent.v1" || u8 len(chain_id) || chain_id
-//     || membership.nullifier (32 bytes) || address (raw bytes)
+//   "earth.referrer.consent.v2" || u8 len(chain_id) || chain_id
+//     || membership.nullifier (32 bytes) || u64be(consent_expiry_height)
+//     || address (raw bytes)
 //
-// Both are empty when clearing (empty address). They are not sighash fields:
-// the consent itself binds the nullifier and the address.
+// consent_expiry_height is the last block height the consent may be used
+// at: a consent is refused once the chain is past it, and one whose expiry
+// is more than ReferrerConsentMaxBlocks ahead of the block is refused too,
+// so a signature the owner gave once cannot be replayed to rebind their
+// address long after (audit 4, C10). Wallets pick the current height plus
+// a margin for the proof and broadcast (a few hundred blocks).
+//
+// All three are empty/zero when clearing (empty address). They are not
+// sighash fields: the consent itself binds the nullifier and the address.
 //
 // sighash fields: Bytes(address bytes).
 message MsgBindReferrer {
@@ -221,6 +229,9 @@ message MsgBindReferrer {
   // (see above).
   bytes referrer_pub_key = 5;
   bytes referrer_signature = 6;
+  // consent_expiry_height: the last height the consent is valid at (see
+  // above).
+  uint64 consent_expiry_height = 7;
 }
 
 // MsgBindReferrerResponse reports when the binding lapses (unix seconds), 0

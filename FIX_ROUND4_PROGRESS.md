@@ -29,6 +29,27 @@ Each PoC is ported as a regression test asserting the safe outcome.
 - [ ] 3 personhood C3 genesis identity roots; assembly C6 ProposalSubjects
   export; C7 activation boundary >=; C8 caretaker weight checks lease expiry
   live; C10 referrer consent expiry height
+  - [x] C3: InitGenesis refuses an identity root that is not the rebuilt
+    tree's root at its tree_size (identityRootsAt: leaves [0, n), zero where
+    no registration) or is dated after genesis; Validate refuses tree_size
+    past the tree. Export keeps only verifiable roots (one from before a
+    leaf was zeroed is dropped: an anchor only). Tests:
+    x/personhood/keeper/audit4_genesis_root_test.go
+  - [x] C7: caretaker / referrer max_activation must be strictly before
+    now - lease - margin (wallet-facing: pick bound - 1 or earlier).
+    TestCaretakerActivationBound updated.
+  - [x] C8: x/allocation AdvanceIndexTo(stream, t); the caretaker sweep
+    settles the stream to each lapsed lease's expiry before clearing it,
+    and runs first on its own budget (types.CaretakerSweepLimit = 1000).
+    Test: x/allocation/keeper/audit4_advance_to_test.go;
+    TestLargePurgeDoesNotStarveOtherSweeps updated.
+  - [ ] C6: proto done (GenesisState.proposal_subjects = 6,
+    ProposalSubjectsEntry; pb.go regenerated) -- keeper export/import and
+    Validate not yet written
+  - [ ] C10: proto done (MsgBindReferrer.consent_expiry_height = 7; consent
+    bytes v2 documented in tx.proto) -- ReferrerConsentBytes v2,
+    checkReferrerConsent height checks, ReferrerConsentMaxBlocks, tests and
+    clients not yet written
 - [ ] 4 buyback C5 buyback_max_trade_seconds vs TWAP window
 - [ ] 5 core L1 timeout_height (private ante + PrepareProposal); I1 cap param
   doc; I3 recover in VerifyProofs workers, private ante panics consume gas
@@ -36,3 +57,9 @@ Each PoC is ported as a regression test asserting the safe outcome.
   I1 supply snapshot H-1, I2 open snapshots on import; hardening
   (PendingReleases, guarded OOG, gov EndBlocker Backing guard)
 - [ ] 7 fixtures, genesis, build/vet/test, genesis-check, privacy-vks-check
+
+## Stopped: disk below 10 GB
+
+2026-10-03: free space on /System/Volumes/Data fell to 9.3 GB (go build
+cache at ~/Library/Caches/go-build is 19 GB) after item 3's proto-gen.
+Builds stopped per instructions; resume after space is freed.

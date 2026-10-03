@@ -33,6 +33,19 @@ message GenesisState {
   // removal_cooldowns are the options a removal ballot closed on recently,
   // with the time a new ballot on each may open (types.RemovalCooldown).
   repeated RemovalCooldownEntry removal_cooldowns = 5 [(gogoproto.nullable) = false];
+
+  // proposal_subjects are the stored subjects of proposals in voting (see
+  // ProposalSubjects). Carried, not recomputed on import: they were fixed
+  // as each proposal entered voting, and recomputing them against the
+  // relaunch's trust store could change who may vote mid-vote. A proposal in
+  // voting with no entry is classified on import.
+  repeated ProposalSubjectsEntry proposal_subjects = 6 [(gogoproto.nullable) = false];
+}
+
+// ProposalSubjectsEntry is one proposal's stored subjects.
+message ProposalSubjectsEntry {
+  uint64 proposal_id = 1;
+  ProposalSubjects subjects = 2 [(gogoproto.nullable) = false];
 }
 
 // RemovalCooldownEntry is one option's removal cooldown.
