@@ -28,4 +28,8 @@ message GenesisState {
   repeated bytes stake_commitments = 9;
   repeated bytes stake_nullifiers = 10;
   repeated StakeRoot stake_roots = 11 [(gogoproto.nullable) = false];
+  // snapshot_seq is the last snapshot sequence number issued.
+  uint64 snapshot_seq = 12;
+  repeated SupplyCheckpoint supply_checkpoints = 13 [(gogoproto.nullable) = false];
+  EpochSweep epoch_sweep = 14;
 }

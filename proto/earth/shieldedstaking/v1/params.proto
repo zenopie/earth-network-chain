@@ -32,4 +32,15 @@ message Params {
   // an anchor (the latest never expires; a vote's snapshot root is accepted
   // for its proposal).
   uint64 stake_root_window_seconds = 4;
+
+  // min_delegation is the smallest private delegation, in uerth, and the
+  // least derth one may mint. It keeps validator books from being created
+  // for dust (every book is processed at epoch end) and bounds the rounding
+  // a donation to the validator's rewards pool can inflict on a delegator.
+  string min_delegation = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
 }
