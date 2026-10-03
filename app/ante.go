@@ -158,7 +158,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// gas already charged (audit 4, I3).
 		shieldedante.RecoverDecorator{},
 		wasmkeeper.NewLimitSimulationGasDecorator(options.WasmNodeConfig.SimulationGasLimit),
-		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
+		// The chamber's votes pass the breaker (chamberExemptBreaker).
+		circuitante.NewCircuitBreakerDecorator(chamberExemptBreaker{options.CircuitKeeper}),
 		shieldedante.ValidateTxDecorator{},
 		ante.NewTxTimeoutHeightDecorator(),
 		shieldedante.ExpiredTimeoutDecorator{},

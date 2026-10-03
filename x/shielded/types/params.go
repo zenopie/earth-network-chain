@@ -47,6 +47,17 @@ const (
 	// DefaultMaxActionsPerBundle bounds one bundle: a send of up to 15 notes
 	// plus change, and an ordinary block's worth of proofs at most.
 	DefaultMaxActionsPerBundle uint32 = 16
+
+	// MaxProofVerificationGas, MaxNoteGas and MaxBundleGas cap the gas prices
+	// governance may set (audit 5 L-AS2). Uncapped, a price set past the
+	// block gas limit makes every private tx unincludable, the chamber's votes
+	// included, and with them every later gov proposal (the fix too: the
+	// chamber must pass it). At the caps a chamber vote (one fee bundle of two
+	// actions and a membership proof with a few writes) costs about 40M gas,
+	// under the 100M block limit.
+	MaxProofVerificationGas uint64 = 10_000_000
+	MaxNoteGas              uint64 = 1_000_000
+	MaxBundleGas            uint64 = 1_000_000
 )
 
 // NewParams creates a new Params instance.
@@ -80,14 +91,14 @@ func (p Params) Validate() error {
 	if p.MinFee.IsNil() || p.MinFee.LT(math.OneInt()) {
 		return errors.New("min_fee must be at least 1")
 	}
-	if p.ProofVerificationGas == 0 {
-		return errors.New("proof_verification_gas must be positive")
+	if p.ProofVerificationGas == 0 || p.ProofVerificationGas > MaxProofVerificationGas {
+		return fmt.Errorf("proof_verification_gas must be 1..%d", MaxProofVerificationGas)
 	}
-	if p.NoteGas == 0 {
-		return errors.New("note_gas must be positive")
+	if p.NoteGas == 0 || p.NoteGas > MaxNoteGas {
+		return fmt.Errorf("note_gas must be 1..%d", MaxNoteGas)
 	}
-	if p.BundleGas == 0 {
-		return errors.New("bundle_gas must be positive")
+	if p.BundleGas == 0 || p.BundleGas > MaxBundleGas {
+		return fmt.Errorf("bundle_gas must be 1..%d", MaxBundleGas)
 	}
 	if p.RootWindowSeconds == 0 {
 		return errors.New("root_window_seconds must be positive")

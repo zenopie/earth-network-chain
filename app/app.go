@@ -328,6 +328,10 @@ func New(
 	// circuit breaker and redundant IBC relays. Must follow Build — the default
 	// is installed as a baseapp option during it — and must precede the first
 	// transaction, which Load is nowhere near. See app/ante.go.
+	// The msg router's breaker too (x/circuit set its keeper there during
+	// Build): chamber votes pass it (chamberExemptBreaker).
+	app.SetCircuitBreaker(chamberExemptBreaker{&app.CircuitBreakerKeeper})
+
 	if err := app.setAnteHandler(); err != nil {
 		panic(err)
 	}
