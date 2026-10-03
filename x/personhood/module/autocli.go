@@ -43,6 +43,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:       "caretaker-voter-count",
 					Short:     "Show how many caretaker splits currently count",
 				},
+				{
+					RpcMethod: "LeaseBounds",
+					Use:       "lease-bounds",
+					Short:     "Effective lease lengths and predecessor bounds (handle claim, caretaker cast) at this block",
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

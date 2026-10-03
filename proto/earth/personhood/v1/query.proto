@@ -61,6 +61,19 @@ service Query {
     option (google.api.http).get = "/earth/personhood/v1/handles";
   }
 
+  // LeaseBounds returns the lease lengths the predecessor bounds use, as the
+  // chain enforces them now, and the bounds themselves at this block. A
+  // wallet proving a handle claim (or a renewal of a handle that is not
+  // live) or a new caretaker split sets max_predecessor below the bound for
+  // its scope: floor_hour(block_time - lease_seconds - margin) style
+  // rounding computed from these lease lengths, never from Params, which
+  // may be shorter (handle_lease_seconds after a cut; the longest ever
+  // still bounds handles; a cut caretaker_vote_seconds keeps bounding
+  // splits until every lease cast under the old one has lapsed).
+  rpc LeaseBounds(QueryLeaseBoundsRequest) returns (QueryLeaseBoundsResponse) {
+    option (google.api.http).get = "/earth/personhood/v1/lease_bounds";
+  }
+
   // RegistrationCountries returns the registration count per issuing country.
   rpc RegistrationCountries(QueryRegistrationCountriesRequest) returns (QueryRegistrationCountriesResponse) {
     option (google.api.http).get = "/earth/personhood/v1/registration_countries";
@@ -77,6 +90,38 @@ message QueryParamsResponse {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+}
+
+// QueryLeaseBoundsRequest is the request type for Query/LeaseBounds.
+message QueryLeaseBoundsRequest {}
+
+// QueryLeaseBoundsResponse: the effective lease lengths (seconds) and the
+// predecessor bounds they give at block_time. A msg's max_predecessor must be
+// strictly less than its scope's bound when it lands; the bounds only move
+// forward with time, so a value below the bound now stays below it.
+message QueryLeaseBoundsResponse {
+  // block_time is the time (unix seconds) the bounds are computed at.
+  int64 block_time = 1;
+  // activation_margin_seconds is the margin both bounds subtract.
+  int64 activation_margin_seconds = 2;
+  // handle_lease_seconds: the longest handle lease ever in force
+  // (max(params.handle_lease_seconds, handle_lease_max)).
+  int64 handle_lease_seconds = 3;
+  // handle_claim_bound = block_time - handle_lease_seconds -
+  // activation_margin_seconds: MsgBindHandle's max_predecessor bound for a
+  // claim, or a renewal or change of a handle that is not live.
+  int64 handle_claim_bound = 4;
+  // caretaker_lease_seconds: params.caretaker_vote_seconds, or a longer
+  // lease length governance lowered it from while leases cast under that
+  // may still run (lease_hold).
+  int64 caretaker_lease_seconds = 5;
+  // caretaker_cast_bound = block_time - caretaker_lease_seconds -
+  // activation_margin_seconds: MsgSetCaretaker's max_predecessor bound for a
+  // new split (one the prover does not hold live).
+  int64 caretaker_cast_bound = 6;
+  // caretaker_lease_hold_until: when the held longer lease stops counting
+  // (0 when none is held).
+  int64 caretaker_lease_hold_until = 7;
 }
 
 // QueryRegistrationRequest names a passport nullifier, hex-encoded.

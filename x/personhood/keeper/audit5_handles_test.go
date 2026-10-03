@@ -76,3 +76,37 @@ func TestAudit5LapsedUnsweptSplitNeedsTheBound(t *testing.T) {
 	_, err = k.caretakerStatement(lapsed, m)
 	require.ErrorIs(t, err, types.ErrInvalidMsg, "lapsed, unswept: bounded")
 }
+
+// Audit 5 P3: the lease lengths the bounds use are queryable. After
+// governance cuts both leases, LeaseBounds keeps reporting the longer ones the
+// chain still enforces, and its bounds are what the statements check.
+func TestAudit5LeaseBoundsQuery(t *testing.T) {
+	k, _, ctx := caretakerKeepers(t)
+	old, err := k.Params.Get(ctx)
+	require.NoError(t, err)
+	old.HandleLeaseSeconds = 5000
+	old.CaretakerVoteSeconds = 4000
+	require.NoError(t, k.noteHandleLease(ctx, old))
+	require.NoError(t, k.Params.Set(ctx, old))
+	next := old
+	next.HandleLeaseSeconds = 1000
+	next.CaretakerVoteSeconds = 1000
+	require.NoError(t, k.holdLeaseSeconds(ctx, old, next))
+	require.NoError(t, k.noteHandleLease(ctx, next))
+	require.NoError(t, k.Params.Set(ctx, next))
+
+	res, err := NewQueryServerImpl(k).LeaseBounds(ctx, &types.QueryLeaseBoundsRequest{})
+	require.NoError(t, err)
+	now := ctx.BlockTime().Unix()
+	require.Equal(t, now, res.BlockTime)
+	require.Equal(t, int64(5000), res.HandleLeaseSeconds)
+	require.Equal(t, int64(4000), res.CaretakerLeaseSeconds)
+	require.Equal(t, now+4000, res.CaretakerLeaseHoldUntil)
+	hb, err := k.handleClaimBound(ctx)
+	require.NoError(t, err)
+	require.Equal(t, hb, res.HandleClaimBound)
+	cb, err := k.LeaseActivationBound(ctx)
+	require.NoError(t, err)
+	require.Equal(t, cb, res.CaretakerCastBound)
+	require.Equal(t, now-4000-types.ActivationMarginSeconds, res.CaretakerCastBound)
+}

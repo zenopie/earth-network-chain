@@ -317,10 +317,9 @@ func (a handleAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.Priv
 	return a.k.MembershipActionGas(ctx, 4)
 }
 
-// handleClaimBound is the latest predecessor_at a leaf may carry to claim a
-// handle while holding none: now - the longest handle lease ever in force -
-// the activation margin.
-func (k Keeper) handleClaimBound(ctx context.Context) (int64, error) {
+// handleLeaseSeconds is the handle lease length the claim bound uses: the
+// longest ever in force (Query/LeaseBounds).
+func (k Keeper) handleLeaseSeconds(ctx context.Context) (int64, error) {
 	params, err := k.Params.Get(ctx)
 	if err != nil {
 		return 0, err
@@ -329,6 +328,17 @@ func (k Keeper) handleClaimBound(ctx context.Context) (int64, error) {
 	if m, err := k.HandleLeaseMax.Get(ctx); err == nil && m > lease {
 		lease = m
 	} else if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return 0, err
+	}
+	return lease, nil
+}
+
+// handleClaimBound is the latest predecessor_at a leaf may carry to claim a
+// handle while holding none: now - the longest handle lease ever in force -
+// the activation margin.
+func (k Keeper) handleClaimBound(ctx context.Context) (int64, error) {
+	lease, err := k.handleLeaseSeconds(ctx)
+	if err != nil {
 		return 0, err
 	}
 	return sdk.UnwrapSDKContext(ctx).BlockTime().Unix() - lease - types.ActivationMarginSeconds, nil
