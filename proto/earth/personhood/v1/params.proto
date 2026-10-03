@@ -233,7 +233,8 @@ message Params {
   // once any split its predecessor cast has lapsed (activated at most
   // now - R - one day; a lowered R keeps the old one in that bound until the
   // splits cast under it have lapsed). Zero falls back to the default
-  // (30 days).
+  // (365 days). Nothing renews a split on its own: its owner casts again (a
+  // refresh or a change).
   uint64 caretaker_vote_seconds = 24;
 
   // buyback_max_trade_seconds caps one buyback trade at this many seconds of
@@ -251,4 +252,12 @@ message Params {
   // handle is released and anyone may claim it. Zero falls back to the
   // default (30 days); at most a year.
   uint64 handle_renewal_seconds = 26;
+
+  // handle_lease_seconds is a handle's lease: a claim or renewal holds it
+  // until now + this. Zero falls back to the default (365 days); at most two
+  // years. The claim bound for an identity with a predecessor uses the
+  // longest value ever set (GenesisState.handle_lease_max), so lowering it
+  // never lets a successor claim beside a handle its predecessor still
+  // holds.
+  uint64 handle_lease_seconds = 27;
 }

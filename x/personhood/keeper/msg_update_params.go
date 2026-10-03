@@ -31,6 +31,9 @@ func (k msgServer) UpdateParams(ctx context.Context, req *types.MsgUpdateParams)
 	if err := k.holdLeaseSeconds(ctx, old, req.Params); err != nil {
 		return nil, err
 	}
+	if err := k.noteHandleLease(ctx, req.Params); err != nil {
+		return nil, err
+	}
 	if err := k.Params.Set(ctx, req.Params); err != nil {
 		return nil, err
 	}

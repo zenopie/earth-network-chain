@@ -71,11 +71,9 @@ func (q queryServer) BallotInputs(ctx context.Context, req *types.QueryBallotInp
 }
 
 func inputsResponse(st personhoodtypes.MembershipStatement, round, ballot uint64) *types.QueryBallotInputsResponse {
-	maxAct := uint64(0)
-	if st.MaxActivation > 0 {
-		maxAct = uint64(st.MaxActivation)
-	}
+	maxAct := personhoodtypes.BoundInput(st.MaxActivation)
 	return &types.QueryBallotInputsResponse{
+		MaxPredecessor:  personhoodtypes.BoundInput(st.MaxPredecessor),
 		Scope:           privacy.FieldBytes(st.Scope),
 		ExcludedDsc:     privacy.FieldBytes(st.ExcludedDsc),
 		ExcludedCountry: privacy.FieldBytes(st.ExcludedCountry),

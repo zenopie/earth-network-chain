@@ -37,6 +37,9 @@ func (gs GenesisState) Validate() error {
 		}
 		seenNullifier[n] = struct{}{}
 
+		if reg.PredecessorAt < 0 {
+			return fmt.Errorf("registration %s: negative predecessor_at", n)
+		}
 		if reg.LeafIndex >= gs.IdentityTreeSize {
 			return fmt.Errorf("registration %s: leaf %d is outside the identity tree (size %d)", n, reg.LeafIndex, gs.IdentityTreeSize)
 		}
@@ -99,6 +102,26 @@ func (gs GenesisState) Validate() error {
 
 	if err := validateHandles(gs.Handles); err != nil {
 		return err
+	}
+	for what, list := range map[string][][]byte{"passports_seen": gs.PassportsSeen, "handle_moved_out": gs.HandleMovedOut, "caretaker_moved_out": gs.CaretakerMovedOut} {
+		seen := map[string]bool{}
+		for _, nf := range list {
+			if what == "passports_seen" {
+				// Passport nullifiers, as registrations carry them.
+				if len(nf) == 0 || len(nf) > 32 {
+					return fmt.Errorf("%s: a nullifier is 1..32 bytes", what)
+				}
+			} else if _, err := privacy.FieldFromBytes(nf); err != nil {
+				return fmt.Errorf("%s: %w", what, err)
+			}
+			if seen[string(nf)] {
+				return fmt.Errorf("%s: %x listed twice", what, nf)
+			}
+			seen[string(nf)] = true
+		}
+	}
+	if gs.HandleLeaseMax < 0 {
+		return fmt.Errorf("handle_lease_max is negative")
 	}
 
 	seenUsed := map[string]struct{}{}

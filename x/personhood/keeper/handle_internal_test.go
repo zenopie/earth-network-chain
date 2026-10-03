@@ -15,6 +15,7 @@ import (
 
 	personhoodtest "github.com/earth-network/earth/x/personhood/testutil"
 	"github.com/earth-network/earth/x/personhood/types"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
@@ -27,9 +28,10 @@ func handleKeeper(t *testing.T) (Keeper, sdk.Context) {
 	k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac, authtypes.NewModuleAddress(types.GovModuleName),
 		&countingBank{}, stubDex{}, nil, stubAllocation{}, &burnLog{}, stubShielded{})
 	ctx := base.WithBlockTime(time.Unix(1_800_000_000, 0).UTC())
+	ctx = shieldedtypes.WithTxFields(ctx, shieldedtypes.TxFields{}) // as the private ante records them
 	p := types.DefaultParams()
-	p.CaretakerVoteSeconds = 1000 // the lease
-	p.HandleRenewalSeconds = 500  // the owner-only renewal period
+	p.HandleLeaseSeconds = 1000  // the lease
+	p.HandleRenewalSeconds = 500 // the owner-only renewal period
 	require.NoError(t, k.Params.Set(ctx, p))
 	return k, ctx
 }
@@ -152,4 +154,50 @@ func TestHandleLifecycle(t *testing.T) {
 	require.Equal(t, 2, n, "alice and amy (claimed in the same block, same lease)")
 	_, err = k.Handles.Get(gone, "alice")
 	require.Error(t, err)
+}
+
+// A claim by a nullifier holding no handle bounds the predecessor (now -
+// the longest lease ever - margin); holders renew or change under any
+// bound; a move hands the handle on and bars the mover from claiming again.
+func TestHandlePredecessorAndMove(t *testing.T) {
+	k, ctx := handleKeeper(t)
+	require.NoError(t, k.noteHandleLease(ctx, types.DefaultParams())) // a longer lease once in force
+	p, err := k.Params.Get(ctx)
+	require.NoError(t, err)
+	require.NoError(t, k.noteHandleLease(ctx, p)) // lowered back: the max stays
+	bound, err := k.handleClaimBound(ctx)
+	require.NoError(t, err)
+	require.Equal(t, ctx.BlockTime().Unix()-types.DefaultHandleLeaseSeconds-types.ActivationMarginSeconds, bound)
+
+	nfA := privacy.FieldBytes(privacy.U64(1))
+	nfA2 := privacy.FieldBytes(privacy.U64(2))
+	addr := personhoodtest.ShieldedAddress("A")
+	claim := func(nf []byte, h string, maxPred int64) error {
+		_, err := k.handleStatement(ctx, &types.MsgBindHandle{Fee: feeStub(), Handle: h, Address: addr.Encode(),
+			MaxPredecessor: uint64(maxPred), Membership: types.Membership{Nullifier: nf}})
+		return err
+	}
+	require.NoError(t, claim(nfA, "alice", 0), "a fresh registrant claims at once")
+	require.NoError(t, claim(nfA, "alice", bound-1))
+	require.ErrorIs(t, claim(nfA, "alice", bound), types.ErrInvalidMsg, "a predecessor too recent")
+	_, err = k.applyBindHandle(ctx, nfA, "alice", addr)
+	require.NoError(t, err)
+	require.NoError(t, claim(nfA, "alice", types.NoBound), "renewing: any bound")
+	require.NoError(t, claim(nfA, "alice-2", types.NoBound), "changing: any bound")
+
+	// Move to A2: lease kept; A may never claim again; A2 renews at once.
+	before, err := k.Handles.Get(ctx, "alice")
+	require.NoError(t, err)
+	require.NoError(t, k.applyMoveHandle(ctx, nfA, "alice", nfA2))
+	after, err := k.Handles.Get(ctx, "alice")
+	require.NoError(t, err)
+	require.Equal(t, before.ExpiresAt, after.ExpiresAt)
+	require.Equal(t, nfA2, after.Nullifier)
+	require.ErrorIs(t, claim(nfA, "other", 0), types.ErrHandleMovedOut)
+	require.NoError(t, claim(nfA2, "alice", types.NoBound))
+	require.ErrorIs(t, k.applyMoveHandle(ctx, nfA2, "alice", nfA), types.ErrHandleMovedOut, "nor receive one")
+	nfB := privacy.FieldBytes(privacy.U64(3))
+	_, err = k.applyBindHandle(ctx, nfB, "bob", personhoodtest.ShieldedAddress("B"))
+	require.NoError(t, err)
+	require.ErrorIs(t, k.applyMoveHandle(ctx, nfA2, "alice", nfB), types.ErrHandleTaken, "the new owner holds one")
 }

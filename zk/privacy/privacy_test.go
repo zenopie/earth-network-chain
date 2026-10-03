@@ -117,9 +117,13 @@ func TestCountryField(t *testing.T) {
 			t.Errorf("CountryField(%q) is not 0 (unknown)", cc)
 		}
 	}
-	a, b := IdentityLeaf(U64(1), U64(2), CountryField("DE"), 3), IdentityLeaf(U64(1), U64(2), CountryField("FR"), 3)
+	a, b := IdentityLeaf(U64(1), U64(2), CountryField("DE"), 3, 0), IdentityLeaf(U64(1), U64(2), CountryField("FR"), 3, 0)
 	if a.Equal(&b) {
 		t.Fatal("the leaf does not commit to the country")
+	}
+	c := IdentityLeaf(U64(1), U64(2), CountryField("DE"), 3, 4)
+	if a.Equal(&c) {
+		t.Fatal("the leaf does not commit to predecessor_at")
 	}
 }
 

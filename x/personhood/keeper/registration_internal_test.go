@@ -39,6 +39,9 @@ func (stubAllocation) AdvanceIndexTo(context.Context, allocationtypes.StreamId, 
 func (stubAllocation) ClearVoter(context.Context, allocationtypes.StreamId, []byte) error {
 	return nil
 }
+func (stubAllocation) MoveVoter(context.Context, allocationtypes.StreamId, []byte, []byte) error {
+	return nil
+}
 func (stubAllocation) ValidateSplit(context.Context, allocationtypes.StreamId, []allocationtypes.AllocationWeight) error {
 	return nil
 }
@@ -215,7 +218,7 @@ func TestRegistrationBinding(t *testing.T) {
 	_, err = checkAndVerify(kC, ctxC, mC)
 	require.ErrorIs(t, err, types.ErrNoReferrer)
 	params := leanParams(t)
-	params.CaretakerVoteSeconds = 600 // a short lease, inside the proof's date skew
+	params.HandleLeaseSeconds = 600 // a short lease, inside the proof's date skew
 	require.NoError(t, kC.Params.Set(ctxC, params))
 	nf := privacy.FieldBytes(personhoodtest.Det("handle-nf", 0))
 	exp, err := kC.applyBindHandle(ctxC, nf, "amy", personhoodtest.ShieldedAddress("A"))

@@ -109,8 +109,29 @@ Each PoC is ported as a regression test asserting the safe outcome.
     refused to another identity, unknown refused, C2 and D1 referral
     notes minted, address change, handle change frees the old one,
     directory, genesis round trip). Passports and app fixtures re-recorded.
+- [x] 7b predecessor-aware activation, handle and caretaker moves (user
+  decisions)
+  - circuits (mobile-orch 313f9c8): leaf H(TAG_LEAF, idc, dsc, country,
+    activated_at, predecessor_at); membership public input max_predecessor
+    after max_activation; new vk (make privacy-vks), privacy-parity passes.
+  - Registration.predecessor_at: switch or re-entry time (PassportsSeen),
+    0 for a fresh passport. Statements: caretaker / handle claim bound the
+    predecessor (now - lease - margin), no activation bound; ballots and
+    removal proposals bound the predecessor (opened/today - margin), no
+    activation bound (fresh registrants vote on open ballots: no
+    predecessor that could have voted); claims unchanged.
+  - Handle lease param (365 days), max-ever lease for the claim bound;
+    caretaker_vote_seconds default 365 days; renewals manual.
+  - MsgMoveHandle, MsgMoveCaretaker (x/allocation MoveVoter); moved-out
+    nullifiers may never claim / cast again.
+  - Tests: keeper TestHandlePredecessorAndMove, TestCaretakerPredecessorBound;
+    app TestPrivatePersonhood (fresh A1 casts and claims at once; A1 moves
+    split and handle to A2 before the switch; A1 then refused; A2 refreshes
+    both with no wait; A2 cannot vote on the ballot A1 voted on; C2
+    re-entry refused a new split and a handle; change frees the old handle
+    and fresh D1 claims it in the same block). App fixtures re-recorded.
 - [x] 8 fixtures (dex note paths; personhood passports + app), make
   genesis, go build/vet/test ./... pass, make genesis-check passes (sha256
-  24f883576256fd96dc4fdf3b49297fa0ac2f4f3bdac7fd19057720c1253bba99), make
-  privacy-vks-check CIRCUITS=../mobile-orch/circuits passes (vks
-  unchanged). Genesis changed only by the new empty genesis fields.
+  b201c96b7530cd58bcb7c9eb54d984c1ead9e59f1434313ff565a6bee2b65cd0), make
+  privacy-vks-check CIRCUITS=../mobile-orch/circuits passes (membership vk
+  regenerated for the predecessor change).

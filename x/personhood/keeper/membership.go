@@ -21,11 +21,8 @@ func (k Keeper) CheckMembership(ctx context.Context, m types.Membership) error {
 
 // VerifyMembership verifies m against st with the pool's membership key.
 func (k Keeper) VerifyMembership(ctx context.Context, m types.Membership, st MembershipStatement) error {
-	maxAct := uint64(0)
-	if st.MaxActivation > 0 {
-		maxAct = uint64(st.MaxActivation)
-	}
-	pub := types.MembershipPublicInputs(m, st.Scope, st.Signal, st.ExcludedDsc, st.ExcludedCountry, maxAct)
+	pub := types.MembershipPublicInputs(m, st.Scope, st.Signal, st.ExcludedDsc, st.ExcludedCountry,
+		types.BoundInput(st.MaxActivation), types.BoundInput(st.MaxPredecessor))
 	if err := k.shieldedKeeper.VerifyCircuit(ctx, shieldedtypes.CircuitMembership, m.Proof, pub); err != nil {
 		return errorsmod.Wrap(types.ErrInvalidMembership, err.Error())
 	}

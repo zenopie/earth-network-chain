@@ -31,14 +31,25 @@ import (
 // Lifecycle, for a record {handle, address, nullifier, expires_at}:
 //
 //   - live while now < expires_at: it resolves. Its owner renews it (a new
-//     lease, now + caretaker_vote_seconds) by binding it again.
+//     lease, now + handle_lease_seconds) by binding it again; nothing renews
+//     it on its own.
 //   - renewal period while expires_at <= now < expires_at +
 //     handle_renewal_seconds: it does not resolve (registrations naming it
 //     are refused; wallets warn), and only the same nullifier may renew it.
 //   - free after that: swept, anyone may claim it.
 //
 // A change to another handle frees the old one at once (no reservation),
-// in the same msg that claims the new one; a release frees it at once.
+// in the same msg that claims the new one; a release frees it at once. A
+// move (MsgMoveHandle) hands it, lease and all, to another handle nullifier:
+// how an identity switch keeps its handle.
+//
+// One live handle per passport, across identity switches: a claim by a
+// nullifier holding none needs a leaf whose predecessor_at (the switch or
+// re-entry that made it; 0 for a passport never registered) is before now -
+// the longest lease ever in force - the activation margin, so anything the
+// predecessor identity held has lapsed. A fresh registrant claims at once. A
+// nullifier that moved its handle away may never claim again (its identity
+// handed its one handle on).
 //
 // Nobody's consent is needed to bind an address: naming someone else's
 // shielded address only sends the binder's referrals to them.
@@ -177,7 +188,7 @@ func (k Keeper) applyBindHandle(ctx sdk.Context, nf []byte, handle string, addr 
 	if err != nil {
 		return 0, err
 	}
-	expiresAt := ctx.BlockTime().Unix() + params.CaretakerVoteSecondsOrDefault()
+	expiresAt := ctx.BlockTime().Unix() + params.HandleLeaseSecondsOrDefault()
 	if err := k.putHandle(ctx, types.Handle{
 		Handle: handle, OwnerPk: privacy.FieldBytes(addr.OwnerPK), EkPub: addr.EKPub[:],
 		Nullifier: nf, ExpiresAt: expiresAt,
@@ -304,22 +315,62 @@ func (a handleAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.Priv
 	return a.k.MembershipActionGas(ctx, 4)
 }
 
-// handleStatement: scope handle, and the caretaker activation rule (see
-// caretakerStatement): max_activation strictly before now - R - margin.
+// handleClaimBound is the latest predecessor_at a leaf may carry to claim a
+// handle while holding none: now - the longest handle lease ever in force -
+// the activation margin.
+func (k Keeper) handleClaimBound(ctx context.Context) (int64, error) {
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return 0, err
+	}
+	lease := params.HandleLeaseSecondsOrDefault()
+	if m, err := k.HandleLeaseMax.Get(ctx); err == nil && m > lease {
+		lease = m
+	} else if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return 0, err
+	}
+	return sdk.UnwrapSDKContext(ctx).BlockTime().Unix() - lease - types.ActivationMarginSeconds, nil
+}
+
+// noteHandleLease records params' handle lease if it is the longest yet.
+func (k Keeper) noteHandleLease(ctx context.Context, params types.Params) error {
+	l := params.HandleLeaseSecondsOrDefault()
+	if m, err := k.HandleLeaseMax.Get(ctx); err == nil && m >= l {
+		return nil
+	} else if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	return k.HandleLeaseMax.Set(ctx, l)
+}
+
+// handleStatement: scope handle, any activation; the predecessor bound only
+// for a claim by a nullifier holding no handle (see handleClaimBound).
 func (k Keeper) handleStatement(ctx context.Context, m *types.MsgBindHandle) (MembershipStatement, error) {
 	signal, err := k.SignalOf(ctx, m)
 	if err != nil {
 		return MembershipStatement{}, err
 	}
-	bound, err := k.LeaseActivationBound(ctx)
+	nf := m.Membership.Nullifier
+	holds, err := k.HandleByNf.Has(ctx, nf)
 	if err != nil {
 		return MembershipStatement{}, err
 	}
-	if bound <= 0 || m.MaxActivation >= uint64(bound) {
-		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg,
-			"max_activation %d is not before %d (now - lease length - activation margin)", m.MaxActivation, bound)
+	if m.Handle != "" && !holds {
+		if moved, err := k.HandleMovedOut.Has(ctx, nf); err != nil {
+			return MembershipStatement{}, err
+		} else if moved {
+			return MembershipStatement{}, types.ErrHandleMovedOut
+		}
+		bound, err := k.handleClaimBound(ctx)
+		if err != nil {
+			return MembershipStatement{}, err
+		}
+		if err := checkPredecessorBound(m.MaxPredecessor, bound); err != nil {
+			return MembershipStatement{}, err
+		}
 	}
-	return MembershipStatement{Scope: privacy.HandleScope(), Signal: signal, MaxActivation: int64(m.MaxActivation)}, nil
+	return MembershipStatement{Scope: privacy.HandleScope(), Signal: signal,
+		MaxActivation: types.NoBound, MaxPredecessor: int64(m.MaxPredecessor)}, nil
 }
 
 func (k Keeper) checkBindHandle(ctx context.Context, m *types.MsgBindHandle) (MembershipStatement, error) {
@@ -372,6 +423,111 @@ func (k msgServer) BindHandle(goCtx context.Context, msg *types.MsgBindHandle) (
 		))
 	}
 	return &types.MsgBindHandleResponse{ExpiresAt: expiresAt}, nil
+}
+
+// --- MsgMoveHandle ---------------------------------------------------------
+
+type moveHandleAction struct{ k Keeper }
+
+func (a moveHandleAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.PrivateMsg) (uint64, error) {
+	return a.k.MembershipActionGas(ctx, 4)
+}
+
+// checkMoveHandle: the prover holds handle (live or in its renewal period),
+// and new_owner holds none and never moved one away. Any activation and
+// predecessor: a move creates no handle.
+func (k Keeper) checkMoveHandle(ctx context.Context, m *types.MsgMoveHandle) (MembershipStatement, error) {
+	cur, err := k.HandleByNf.Get(ctx, m.Membership.Nullifier)
+	if errors.Is(err, collections.ErrNotFound) || (err == nil && cur != m.Handle) {
+		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg, "the prover does not hold %q", m.Handle)
+	} else if err != nil {
+		return MembershipStatement{}, err
+	}
+	rec, err := k.Handles.Get(ctx, m.Handle)
+	if err != nil {
+		return MembershipStatement{}, err
+	}
+	if st, _, err := k.handleStatus(ctx, rec); err != nil {
+		return MembershipStatement{}, err
+	} else if st == HandleFree {
+		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg, "%q is past its renewal period", m.Handle)
+	}
+	if err := k.checkNewHandleOwner(ctx, m.NewOwner); err != nil {
+		return MembershipStatement{}, err
+	}
+	if err := k.CheckMembership(ctx, m.Membership); err != nil {
+		return MembershipStatement{}, err
+	}
+	signal, err := k.SignalOf(ctx, m)
+	if err != nil {
+		return MembershipStatement{}, err
+	}
+	return MembershipStatement{Scope: privacy.HandleScope(), Signal: signal,
+		MaxActivation: types.NoBound, MaxPredecessor: types.NoBound}, nil
+}
+
+func (k Keeper) checkNewHandleOwner(ctx context.Context, owner []byte) error {
+	if has, err := k.HandleByNf.Has(ctx, owner); err != nil {
+		return err
+	} else if has {
+		return errorsmod.Wrap(types.ErrHandleTaken, "new_owner already holds a handle")
+	}
+	if moved, err := k.HandleMovedOut.Has(ctx, owner); err != nil {
+		return err
+	} else if moved {
+		return types.ErrHandleMovedOut
+	}
+	return nil
+}
+
+// applyMoveHandle hands handle (held by nf) to owner; nf may never claim
+// again.
+func (k Keeper) applyMoveHandle(ctx context.Context, nf []byte, handle string, owner []byte) error {
+	if err := k.checkNewHandleOwner(ctx, owner); err != nil {
+		return err
+	}
+	rec, err := k.Handles.Get(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if string(rec.Nullifier) != string(nf) {
+		return errorsmod.Wrapf(types.ErrInvalidMsg, "the prover does not hold %q", handle)
+	}
+	if err := k.HandleByNf.Remove(ctx, nf); err != nil {
+		return err
+	}
+	rec.Nullifier = owner
+	if err := k.putHandle(ctx, rec); err != nil {
+		return err
+	}
+	return k.HandleMovedOut.Set(ctx, nf)
+}
+
+func (a moveHandleAction) CheckPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg) (any, error) {
+	return a.k.checkMoveHandle(ctx, msg.(*types.MsgMoveHandle))
+}
+
+func (a moveHandleAction) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, prepared any) error {
+	return a.k.VerifyMembership(ctx, msg.(*types.MsgMoveHandle).Membership, prepared.(MembershipStatement))
+}
+
+// ReleasedDenoms: a move only pays a fee.
+func (moveHandleAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string { return nil }
+
+// MoveHandle hands the prover's handle to new_owner.
+func (k msgServer) MoveHandle(goCtx context.Context, msg *types.MsgMoveHandle) (*types.MsgMoveHandleResponse, error) {
+	ctx, _, err := authorized[MembershipStatement](goCtx, msg)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.applyMoveHandle(ctx, msg.Membership.Nullifier, msg.Handle, msg.NewOwner); err != nil {
+		return nil, err
+	}
+	ctx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeHandleMoved,
+		sdk.NewAttribute(types.AttributeKeyHandle, msg.Handle),
+		sdk.NewAttribute(types.AttributeKeyNullifier, hexOf(msg.NewOwner)),
+	))
+	return &types.MsgMoveHandleResponse{}, nil
 }
 
 // importHandles loads genesis handles.

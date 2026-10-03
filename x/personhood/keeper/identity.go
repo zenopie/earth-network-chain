@@ -68,7 +68,7 @@ func (k Keeper) identityTree(ctx context.Context) (*merkle.Tree, error) {
 // IdentityLeaf computes the leaf a registration writes. country is the
 // registration's recorded issuing country (see privacy.CountryField: "" and
 // anything not an alpha-2 code are 0, unknown).
-func IdentityLeaf(idc, dscKey []byte, country string, activatedAt int64) (fr.Element, error) {
+func IdentityLeaf(idc, dscKey []byte, country string, activatedAt, predecessorAt int64) (fr.Element, error) {
 	idcEl, err := types.Field("idc", idc)
 	if err != nil {
 		return fr.Element{}, err
@@ -77,7 +77,10 @@ func IdentityLeaf(idc, dscKey []byte, country string, activatedAt int64) (fr.Ele
 	if err != nil {
 		return fr.Element{}, err
 	}
-	return privacy.IdentityLeaf(idcEl, dsc, privacy.CountryField(country), uint64(activatedAt)), nil
+	if predecessorAt < 0 {
+		predecessorAt = 0
+	}
+	return privacy.IdentityLeaf(idcEl, dsc, privacy.CountryField(country), uint64(activatedAt), uint64(predecessorAt)), nil
 }
 
 // appendLeaf writes a new identity leaf and returns its index.

@@ -24,6 +24,8 @@ func (k Keeper) RegisterPrivateActions(sk types.ShieldedKeeper) {
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgClaimAnml{}), claimAction{k})
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgSetCaretaker{}), caretakerAction{k})
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgBindHandle{}), handleAction{k})
+	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgMoveHandle{}), moveHandleAction{k})
+	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgMoveCaretaker{}), moveCaretakerAction{k})
 }
 
 // --- MsgRegister ---------------------------------------------------------
@@ -72,9 +74,10 @@ func (k Keeper) claimStatement(ctx context.Context, m *types.MsgClaimAnml) (Memb
 		return MembershipStatement{}, err
 	}
 	return MembershipStatement{
-		Scope:         privacy.ClaimScope(m.Day),
-		Signal:        signal,
-		MaxActivation: (int64(m.Day) - 1) * types.SecondsPerDay,
+		Scope:          privacy.ClaimScope(m.Day),
+		Signal:         signal,
+		MaxActivation:  (int64(m.Day) - 1) * types.SecondsPerDay,
+		MaxPredecessor: types.NoBound,
 	}, nil
 }
 
@@ -114,12 +117,14 @@ func (a caretakerAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.P
 	return a.k.MembershipActionGas(ctx, 4)
 }
 
-// caretakerStatement: scope caretaker, and an identity activated by the msg's
-// max_activation, which must be at most LeaseActivationBound: R (or a held,
-// longer R) + the activation margin ago. A split lasts R, and a zeroed leaf
-// keeps proving for one root window (<= the margin), so by the time a
-// switched-to identity may cast a split, every split its predecessor could
-// have cast has lapsed, whatever governance did to either parameter.
+// caretakerStatement: scope caretaker, any activation, and a predecessor (the
+// switch or re-entry that made the leaf) by the msg's max_predecessor, which
+// must be strictly before LeaseActivationBound: R (or a held, longer R) + the
+// activation margin ago. A split lasts R, and a zeroed leaf keeps proving for
+// one root window (<= the margin), so by the time an identity that replaced
+// another may cast a split, every split its predecessor could have cast has
+// lapsed, whatever governance did to either parameter. A fresh registrant
+// (predecessor_at 0) has no predecessor and casts at once.
 func (k Keeper) caretakerStatement(ctx context.Context, m *types.MsgSetCaretaker) (MembershipStatement, error) {
 	signal, err := k.SignalOf(ctx, m)
 	if err != nil {
@@ -132,15 +137,40 @@ func (k Keeper) caretakerStatement(ctx context.Context, m *types.MsgSetCaretaker
 	// Strictly before the bound (audit 4, C7): at max_activation == bound a
 	// successor activated at the bound could file a lease in the very block
 	// its predecessor's last lease lapses, both counted until the sweep.
-	if bound <= 0 || m.MaxActivation >= uint64(bound) {
-		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg,
-			"max_activation %d is not before %d (now - lease length - activation margin)", m.MaxActivation, bound)
+	// Only a new split is bounded: refreshing, changing or clearing one the
+	// prover holds (cast, or moved to it) creates none.
+	nf := m.Membership.Nullifier
+	holds, err := k.CaretakerVotes.Has(ctx, nf)
+	if err != nil {
+		return MembershipStatement{}, err
+	}
+	if !holds && len(m.Percentages) > 0 {
+		if moved, err := k.CaretakerMovedOut.Has(ctx, nf); err != nil {
+			return MembershipStatement{}, err
+		} else if moved {
+			return MembershipStatement{}, types.ErrCaretakerMovedOut
+		}
+		if err := checkPredecessorBound(m.MaxPredecessor, bound); err != nil {
+			return MembershipStatement{}, err
+		}
 	}
 	return MembershipStatement{
-		Scope:         privacy.CaretakerScope(),
-		Signal:        signal,
-		MaxActivation: int64(m.MaxActivation),
+		Scope:          privacy.CaretakerScope(),
+		Signal:         signal,
+		MaxActivation:  types.NoBound,
+		MaxPredecessor: int64(m.MaxPredecessor),
 	}, nil
+}
+
+// checkPredecessorBound refuses a msg's max_predecessor at or after bound
+// (strictly before: at the bound a successor could file in the very block
+// its predecessor's last lease lapses, both counted until the sweep).
+func checkPredecessorBound(maxPredecessor uint64, bound int64) error {
+	if bound <= 0 || maxPredecessor >= uint64(bound) {
+		return errorsmod.Wrapf(types.ErrInvalidMsg,
+			"max_predecessor %d is not before %d (now - lease length - activation margin)", maxPredecessor, bound)
+	}
+	return nil
 }
 
 func (k Keeper) checkCaretaker(ctx context.Context, m *types.MsgSetCaretaker) (MembershipStatement, error) {

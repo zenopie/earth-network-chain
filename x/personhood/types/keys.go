@@ -228,8 +228,8 @@ const (
 	DefaultIdentityRootWindowSeconds = 60 * 60
 
 	// DefaultCaretakerVoteSeconds (R) is how long a caretaker split counts
-	// once cast: 30 days. The wallet refreshes it automatically.
-	DefaultCaretakerVoteSeconds = 30 * 24 * 60 * 60
+	// once cast: a year. Its owner renews it by casting again.
+	DefaultCaretakerVoteSeconds = 365 * 24 * 60 * 60
 
 	// SecondsPerDay is the UTC day the ANML claim is keyed by.
 	SecondsPerDay = 86400
@@ -344,6 +344,14 @@ var (
 	HandlesKey       = collections.NewPrefix("handles")
 	HandleByNfKey    = collections.NewPrefix("handle_by_nf")
 	HandleReleaseKey = collections.NewPrefix("handle_release")
+	// HandleMovedOutKey: handle nullifiers that moved their handle away;
+	// HandleLeaseMaxKey: the longest handle lease ever in force.
+	HandleMovedOutKey = collections.NewPrefix("handle_moved_out")
+	HandleLeaseMaxKey = collections.NewPrefix("handle_lease_max")
+	// CaretakerMovedOutKey: caretaker nullifiers that moved their split away.
+	CaretakerMovedOutKey = collections.NewPrefix("caretaker_moved_out")
+	// PassportsSeenKey: passport nullifiers ever registered.
+	PassportsSeenKey = collections.NewPrefix("passports_seen")
 
 	// UsedBindingsKey maps a landed registration's binding to when it may be
 	// forgotten; UsedBindingExpiryKey orders them by that for the sweep.

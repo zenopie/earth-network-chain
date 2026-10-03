@@ -42,6 +42,11 @@ message QueryBallotInputsResponse {
   // excluded_country is zk/privacy.CountryField of the excluded country, 32
   // bytes (zero for none).
   bytes excluded_country = 6;
+  // max_predecessor is the membership proof's max_predecessor (the
+  // double-vote bound: an identity that replaced another after the ballot
+  // opened, less the activation margin, may not vote). max_activation is
+  // NoBound (2^63 - 1) for ballots.
+  uint64 max_predecessor = 7;
 }
 
 message QueryProposalTallyRequest {

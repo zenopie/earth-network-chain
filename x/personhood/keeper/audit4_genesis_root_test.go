@@ -21,7 +21,7 @@ import (
 // root at its size, dated no later than genesis, is accepted.
 func TestAudit4ForgedFutureIdentityRootRefused(t *testing.T) {
 	reg := genesisReg(0, 1_700_000_000)
-	leaf, err := keeper.IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt)
+	leaf, err := keeper.IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt, reg.PredecessorAt)
 	require.NoError(t, err)
 	real := realRootOf(t, leaf)
 	forged := privacy.FieldBytes(privacy.U64(0xdeadbeef))

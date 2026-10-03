@@ -74,6 +74,21 @@ message GenesisState {
   // handles are the handle directory: live, and in their renewal period
   // (see Handle).
   repeated Handle handles = 16 [(gogoproto.nullable) = false];
+
+  // passports_seen are the passport nullifiers ever registered: a
+  // re-registration of one is a re-entry (its leaf's predecessor_at is set).
+  repeated bytes passports_seen = 17;
+
+  // handle_moved_out are the handle nullifiers that moved their handle away
+  // (MsgMoveHandle): they may never claim one again.
+  repeated bytes handle_moved_out = 18;
+
+  // handle_lease_max is the longest handle_lease_seconds ever in force.
+  int64 handle_lease_max = 19;
+
+  // caretaker_moved_out are the caretaker nullifiers that moved their split
+  // away (MsgMoveCaretaker): they may never cast one again.
+  repeated bytes caretaker_moved_out = 20;
 }
 
 // DscRateCounter is one Document Signer's rate counter.

@@ -74,10 +74,12 @@ func IDC(idSecret fr.Element) fr.Element { return H(TagID, idSecret) }
 // OwnerPK is H(TAG_OWNER, nk).
 func OwnerPK(nk fr.Element) fr.Element { return H(TagOwner, nk) }
 
-// IdentityLeaf is H(TAG_LEAF, idc, dsc_key, country, activated_at), computed
-// by the chain. country is CountryField of the registration's issuing country.
-func IdentityLeaf(idc, dscKey, country fr.Element, activatedAt uint64) fr.Element {
-	return H(TagLeaf, idc, dscKey, country, U64(activatedAt))
+// IdentityLeaf is H(TAG_LEAF, idc, dsc_key, country, activated_at,
+// predecessor_at), computed by the chain. country is CountryField of the
+// registration's issuing country; predecessor_at the time of the switch or
+// re-entry that created the leaf, 0 for a passport never registered before.
+func IdentityLeaf(idc, dscKey, country fr.Element, activatedAt, predecessorAt uint64) fr.Element {
+	return H(TagLeaf, idc, dscKey, country, U64(activatedAt), U64(predecessorAt))
 }
 
 // CountryField encodes an ISO 3166-1 alpha-2 code for the identity leaf and

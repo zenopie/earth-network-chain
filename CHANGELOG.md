@@ -43,38 +43,66 @@ like, because nodes running different versions cannot agree.
     or below the last committed height; PrepareProposal drops expired txs
     before counting the private cap; a verifier panic in a proof worker is
     an action error; a panic in the private ante keeps the gas it charged.
-  - **Wallet-facing:** MsgSetCaretaker / MsgBindHandle `max_activation`
-    must be strictly below now - lease length - one day (the bound itself
-    is refused).
+- **Predecessor-aware activation** (membership circuit change: new
+  `membership` verifying key; genesis regenerated).
+  - Identity leaf: `H("earth.leaf", idc, dsc_key, country, activated_at,
+    predecessor_at)`; `predecessor_at` is the time of the switch or re-entry
+    that made the leaf, 0 for a passport never registered before
+    (`Registration.predecessor_at` = 8; genesis `passports_seen` = 17).
+  - Membership public inputs: root, scope, nullifier, signal, excluded_dsc,
+    excluded_country, max_activation, **max_predecessor** (the circuit checks
+    predecessor_at <= max_predecessor). "No bound" is 2^63 - 1.
+  - Bounds: caretaker split and handle claim (by a prover holding none):
+    max_predecessor < now - lease - 86400, max_activation no bound (a fresh
+    registrant acts at once); ballots and removal proposals: max_predecessor
+    = opened (or today's start) - 86400, max_activation no bound
+    (`QueryBallotInputsResponse.max_predecessor` = 7); ANML claims
+    unchanged (max_activation = start of yesterday, max_predecessor no
+    bound); moves, renewals and changes: no bound.
+  - MsgSetCaretaker: `max_activation` (4) replaced by `max_predecessor` (5).
+    caretaker_vote_seconds default **365 days**; renewal is manual.
+  - **MsgMoveCaretaker** `{fee, membership (caretaker scope, no bounds),
+    new_owner (32-byte caretaker-scope nullifier)}`, sighash [new_owner]:
+    hands the live split and its expiry to the new identity; the mover may
+    never cast again (ErrCaretakerMovedOut 1126); genesis
+    `caretaker_moved_out` (20).
 - **Handles replace public referrer addresses** (x/personhood). A
   registered human claims a handle (lowercase a-z, 0-9, -; 3-32 chars; no
   leading/trailing dash) naming their shielded address; the chain is a
   public directory, and payments to a handle are wallet-side (look it up,
   pay its address privately). Referrals are paid as notes.
   - `MsgBindReferrer` is gone (with its consent signature and the
-    transparent referral payout); **`MsgBindHandle`** `{fee (1), membership
-    (2), handle (3), address (4, "erthz1..." shielded address), max_activation
-    (5)}`, membership scope `Scope("handle")`, sighash fields Bytes(handle),
-    owner_pk, Bytes(ek_pub). Handle and address: claim, renew (lease
-    caretaker_vote_seconds), change address, or change handle (the old one
-    is freed at once); both empty: release at once. One per human.
+    transparent referral payout). **`MsgBindHandle`** `{fee (1), membership
+    (2, scope Scope("handle")), handle (3), address (4, "erthz1..."),
+    max_predecessor (6)}`, sighash fields Bytes(handle), owner_pk,
+    Bytes(ek_pub). Holding a handle: renew it (lease now +
+    `handle_lease_seconds`, param 27, default **365 days**; address may
+    change) or change to another (the old one is freed at once). Holding
+    none: claim (predecessor bound with the longest lease ever in force,
+    genesis `handle_lease_max` = 19). Both empty: release at once. A
+    handle held by another nullifier: ErrHandleTaken (1122).
+  - **MsgMoveHandle** `{fee, membership (handle scope, no bounds), handle,
+    new_owner (32-byte handle-scope nullifier)}`, sighash [Bytes(handle),
+    new_owner]: hands the handle (lease unchanged) to the new identity; the
+    mover may never claim again (ErrHandleMovedOut 1125); genesis
+    `handle_moved_out` (18).
   - Lifecycle: live until `expires_at` (resolves); then for
-    `handle_renewal_seconds` (new param 26, default 30 days) reserved to its
-    owner and not resolving; then free (swept).
+    `handle_renewal_seconds` (param 26, default 30 days) reserved to its
+    owner, not resolving; then free (swept). Nothing renews automatically.
   - **MsgRegister:** `affiliate` (13) and the transparent payout are gone;
     `affiliate_handle` (15), `affiliate_pc` (11), `affiliate_ciphertext`
     (12, 177-byte blind) name a live handle and the referral note the
     registrant's wallet made to its address; the chain mints the referrer's
     half there. Binding affiliate field: 0 for none, else
-    H(TAG_AFFILIATE, Bytes(handle), affiliate_pc, Bytes(affiliate_ciphertext)),
-    TAG_AFFILIATE = "earth.affiliate". Unknown or lapsed handle:
-    ErrNoReferrer (1121); taken: ErrHandleTaken (1122).
+    H("earth.affiliate", Bytes(handle), affiliate_pc,
+    Bytes(affiliate_ciphertext)). Unknown or lapsed handle: ErrNoReferrer
+    (1121).
   - Queries `Handle` (`/earth/personhood/v1/handle/{handle}`) and `Handles`
     (`/earth/personhood/v1/handles?start=&limit=`, the whole directory in
     order) return `{handle, address, status (live | renewal | free),
     expires_at, renewal_until}`; `Referrer` is gone. Events `handle_bound`,
-    `handle_released`. Genesis: `handles` (16); `referrer_bindings` (8)
-    removed.
+    `handle_moved`, `handle_released`, `move_caretaker`. Genesis: `handles`
+    (16); `referrer_bindings` (8) removed.
 
 - x/shieldedstaking: **private stake votes no longer spend the note**
   (ORCHARD_DESIGN.md section 15). One stake note can vote on every

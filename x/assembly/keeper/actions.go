@@ -100,7 +100,13 @@ func (k Keeper) proposalInputs(ctx context.Context, proposal v1.Proposal) (perso
 	st.Scope = privacy.ProposalScope(proposal.Id, round)
 	st.ExcludedDsc = excludedDsc
 	st.ExcludedCountry = excludedCountry
-	st.MaxActivation = openedAt - personhoodtypes.ActivationMarginSeconds
+	// The double-vote bound is on the predecessor, not the activation: an
+	// identity that replaced another (switch or re-entry) after the round
+	// opened, less the margin, may not vote (its predecessor may have); one
+	// whose passport was never registered before has no predecessor and
+	// votes even if it registered after the round opened.
+	st.MaxActivation = personhoodtypes.NoBound
+	st.MaxPredecessor = openedAt - personhoodtypes.ActivationMarginSeconds
 	return st, round, nil
 }
 
@@ -115,7 +121,8 @@ func (k Keeper) removalInputs(ctx context.Context, optionID uint64) (personhoodt
 		return st, ballot, err
 	}
 	st.Scope = privacy.RemovalScope(ballot.BallotId)
-	st.MaxActivation = ballot.OpenedAt - personhoodtypes.ActivationMarginSeconds
+	st.MaxActivation = personhoodtypes.NoBound
+	st.MaxPredecessor = ballot.OpenedAt - personhoodtypes.ActivationMarginSeconds
 	return st, ballot, nil
 }
 
@@ -194,12 +201,14 @@ func (a proposeRemovalAction) CheckPrivateAction(ctx context.Context, msg shield
 		return nil, err
 	}
 	// Fixed per UTC day, not per block, so a wallet knows the statement it
-	// proves before its tx lands: an identity activated the activation margin
-	// (a day) before today began.
+	// proves before its tx lands: an identity with no predecessor since the
+	// activation margin (a day) before today began (one proposal per person
+	// per option per day, across a switch).
 	day := sdk.UnwrapSDKContext(ctx).BlockTime().Unix() / personhoodtypes.SecondsPerDay
 	st := personhoodtypes.MembershipStatement{
-		Scope:         privacy.ProposeRemovalScope(m.OptionId, uint64(day)),
-		MaxActivation: day*personhoodtypes.SecondsPerDay - personhoodtypes.ActivationMarginSeconds,
+		Scope:          privacy.ProposeRemovalScope(m.OptionId, uint64(day)),
+		MaxActivation:  personhoodtypes.NoBound,
+		MaxPredecessor: day*personhoodtypes.SecondsPerDay - personhoodtypes.ActivationMarginSeconds,
 	}
 	var err error
 	if st.Signal, err = a.k.personhood.SignalOf(ctx, m); err != nil {

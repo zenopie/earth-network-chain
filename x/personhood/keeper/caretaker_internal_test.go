@@ -130,25 +130,56 @@ func TestCaretakerLeaseAndSweep(t *testing.T) {
 	require.Zero(t, used)
 }
 
-// The caretaker statement refuses a max_activation at or after now - R -
-// activation margin: a switched-to identity cannot vote beside a
-// predecessor's live split.
-func TestCaretakerActivationBound(t *testing.T) {
+// A new caretaker split refuses a max_predecessor at or after now - R -
+// activation margin (an identity that replaced another cannot vote beside
+// its predecessor's live split); activation is not bounded (a fresh
+// registrant casts at once). A prover holding a split (cast, or moved to
+// it) refreshes it under any max_predecessor; one that moved its split
+// away may not cast again.
+func TestCaretakerPredecessorBound(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
 	now := ctx.BlockTime().Unix()
 	bound := now - 1000 - types.ActivationMarginSeconds
-	m := &types.MsgSetCaretaker{Fee: feeStub(), MaxActivation: uint64(bound - 1)}
+	nf := privacy.FieldBytes(privacy.U64(77))
+	split := []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 100}}
+	m := &types.MsgSetCaretaker{Fee: feeStub(), MaxPredecessor: uint64(bound - 1), Percentages: split,
+		Membership: types.Membership{Nullifier: nf}}
 	st, err := k.caretakerStatement(ctx, m)
 	require.NoError(t, err)
-	require.Equal(t, bound-1, st.MaxActivation)
+	require.Equal(t, bound-1, st.MaxPredecessor)
+	require.Equal(t, types.NoBound, st.MaxActivation)
 	require.Equal(t, privacy.CaretakerScope(), st.Scope)
 	// The bound itself is refused (audit 4, C7), and anything later.
-	m.MaxActivation++
+	m.MaxPredecessor++
 	_, err = k.caretakerStatement(ctx, m)
 	require.ErrorIs(t, err, types.ErrInvalidMsg)
-	m.MaxActivation++
+	// Holding a split: any bound.
+	require.NoError(t, k.setCaretakerVote(ctx, nf, split, now+1000))
+	m.MaxPredecessor = uint64(types.NoBound)
 	_, err = k.caretakerStatement(ctx, m)
-	require.ErrorIs(t, err, types.ErrInvalidMsg)
+	require.NoError(t, err)
+
+	// A move hands the split (and expiry) to the new owner; the mover may
+	// never cast again; the new owner refreshes with no wait.
+	owner := privacy.FieldBytes(privacy.U64(78))
+	exp, err := k.applyMoveCaretaker(ctx, nf, owner)
+	require.NoError(t, err)
+	require.Equal(t, now+1000, exp)
+	has, err := k.CaretakerVotes.Has(ctx, nf)
+	require.NoError(t, err)
+	require.False(t, has)
+	m.MaxPredecessor = 0
+	_, err = k.caretakerStatement(ctx, m)
+	require.ErrorIs(t, err, types.ErrCaretakerMovedOut)
+	_, err = k.applyMoveCaretaker(ctx, owner, nf)
+	require.ErrorIs(t, err, types.ErrCaretakerMovedOut, "nor receive one")
+	mo := &types.MsgSetCaretaker{Fee: feeStub(), MaxPredecessor: uint64(types.NoBound), Percentages: split,
+		Membership: types.Membership{Nullifier: owner}}
+	_, err = k.caretakerStatement(ctx, mo)
+	require.NoError(t, err)
+	n, err := k.getCaretakerCount(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), n, "moved, not added")
 }
 
 // A claim is for today only, once per nullifier, with an identity activated
@@ -194,7 +225,7 @@ func TestClaimChecksAndPrune(t *testing.T) {
 // latest always; a zeroed leaf therefore stops proving one window after.
 func TestIdentityRootWindow(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
-	leaf, err := IdentityLeaf(privacy.FieldBytes(privacy.U64(1)), nil, "", 5)
+	leaf, err := IdentityLeaf(privacy.FieldBytes(privacy.U64(1)), nil, "", 5, 0)
 	require.NoError(t, err)
 	_, err = k.appendLeaf(ctx, leaf)
 	require.NoError(t, err)

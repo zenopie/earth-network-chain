@@ -13,16 +13,24 @@ import (
 	"github.com/earth-network/earth/x/personhood/types"
 
 	"github.com/earth-network/earth/internal/safeexec"
+
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
+
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // The caretaker stream's voters are anonymous. A split is filed in
 // x/allocation under its caster's caretaker nullifier (one per identity
 // secret, the same every time, so a refresh replaces it) at one fixed weight,
 // and this module holds its lease: it counts until expires_at, R after it was
-// cast, and the sweep then clears it. The chain cannot tell whose split it is,
-// so it cannot clear it when a registration lapses or switches; the lease is
-// the bound instead, and caretakerStatement's activation bound keeps a
-// switched-to identity from voting beside a predecessor's live split.
+// cast, and the sweep then clears it. Nothing renews it on its own: its owner
+// casts again (a refresh or a change). The chain cannot tell whose split it
+// is, so it cannot clear it when a registration lapses or switches; the
+// lease is the bound instead. caretakerStatement's predecessor bound keeps an
+// identity that replaced another (switch or re-entry: the leaf's
+// predecessor_at) from casting a new split beside its predecessor's live
+// one; a fresh registrant casts at once; and a switch that wants to keep its
+// split moves it to the new identity's nullifier (MsgMoveCaretaker).
 
 // SetCaretaker casts, refreshes or (empty split) clears a caretaker split.
 func (k msgServer) SetCaretaker(goCtx context.Context, msg *types.MsgSetCaretaker) (*types.MsgSetCaretakerResponse, error) {
@@ -230,4 +238,111 @@ func (k Keeper) holdLeaseSeconds(ctx context.Context, old, next types.Params) er
 		return err
 	}
 	return k.LeaseHold.Set(ctx, h)
+}
+
+// --- MsgMoveCaretaker -----------------------------------------------------
+
+type moveCaretakerAction struct{ k Keeper }
+
+func (a moveCaretakerAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.PrivateMsg) (uint64, error) {
+	// Two leases and expiry entries, and the allocation resync of both
+	// voters, priced as six note writes.
+	return a.k.MembershipActionGas(ctx, 6)
+}
+
+// checkMoveCaretaker: the prover holds a live split, and new_owner holds
+// none and never moved one away. Any activation and predecessor: a move
+// creates no split.
+func (k Keeper) checkMoveCaretaker(ctx context.Context, m *types.MsgMoveCaretaker) (MembershipStatement, error) {
+	exp, err := k.CaretakerVotes.Get(ctx, m.Membership.Nullifier)
+	if errors.Is(err, collections.ErrNotFound) {
+		return MembershipStatement{}, types.ErrInvalidMsg.Wrap("the prover holds no caretaker split")
+	} else if err != nil {
+		return MembershipStatement{}, err
+	}
+	if exp <= sdk.UnwrapSDKContext(ctx).BlockTime().Unix() {
+		return MembershipStatement{}, types.ErrInvalidMsg.Wrap("the prover's caretaker split has lapsed")
+	}
+	if err := k.checkNewCaretakerOwner(ctx, m.NewOwner); err != nil {
+		return MembershipStatement{}, err
+	}
+	if err := k.CheckMembership(ctx, m.Membership); err != nil {
+		return MembershipStatement{}, err
+	}
+	signal, err := k.SignalOf(ctx, m)
+	if err != nil {
+		return MembershipStatement{}, err
+	}
+	return MembershipStatement{Scope: privacy.CaretakerScope(), Signal: signal,
+		MaxActivation: types.NoBound, MaxPredecessor: types.NoBound}, nil
+}
+
+func (k Keeper) checkNewCaretakerOwner(ctx context.Context, owner []byte) error {
+	if has, err := k.CaretakerVotes.Has(ctx, owner); err != nil {
+		return err
+	} else if has {
+		return types.ErrInvalidMsg.Wrap("new_owner already holds a caretaker split")
+	}
+	if moved, err := k.CaretakerMovedOut.Has(ctx, owner); err != nil {
+		return err
+	} else if moved {
+		return types.ErrCaretakerMovedOut
+	}
+	return nil
+}
+
+// applyMoveCaretaker hands nf's split (and its expiry) to owner; nf may
+// never cast again. Returns the expiry.
+func (k Keeper) applyMoveCaretaker(ctx context.Context, nf, owner []byte) (int64, error) {
+	if err := k.checkNewCaretakerOwner(ctx, owner); err != nil {
+		return 0, err
+	}
+	exp, err := k.CaretakerVotes.Get(ctx, nf)
+	if err != nil {
+		return 0, err
+	}
+	if err := k.allocationKeeper.MoveVoter(ctx, types.AllocationStream, nf, owner); err != nil {
+		return 0, err
+	}
+	if err := k.CaretakerExpiry.Remove(ctx, collections.Join(exp, nf)); err != nil {
+		return 0, err
+	}
+	if err := k.CaretakerVotes.Remove(ctx, nf); err != nil {
+		return 0, err
+	}
+	if err := k.CaretakerVotes.Set(ctx, owner, exp); err != nil {
+		return 0, err
+	}
+	if err := k.CaretakerExpiry.Set(ctx, collections.Join(exp, owner)); err != nil {
+		return 0, err
+	}
+	return exp, k.CaretakerMovedOut.Set(ctx, nf)
+}
+
+func (a moveCaretakerAction) CheckPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg) (any, error) {
+	return a.k.checkMoveCaretaker(ctx, msg.(*types.MsgMoveCaretaker))
+}
+
+func (a moveCaretakerAction) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, prepared any) error {
+	return a.k.VerifyMembership(ctx, msg.(*types.MsgMoveCaretaker).Membership, prepared.(MembershipStatement))
+}
+
+// ReleasedDenoms: a move only pays a fee.
+func (moveCaretakerAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string { return nil }
+
+// MoveCaretaker hands the prover's split to new_owner.
+func (k msgServer) MoveCaretaker(goCtx context.Context, msg *types.MsgMoveCaretaker) (*types.MsgMoveCaretakerResponse, error) {
+	ctx, _, err := authorized[MembershipStatement](goCtx, msg)
+	if err != nil {
+		return nil, err
+	}
+	exp, err := k.applyMoveCaretaker(ctx, msg.Membership.Nullifier, msg.NewOwner)
+	if err != nil {
+		return nil, err
+	}
+	ctx.EventManager().EmitEvent(sdk.NewEvent("move_caretaker",
+		sdk.NewAttribute("nullifier", hexOf(msg.NewOwner)),
+		sdk.NewAttribute("expires_at", strconv.FormatInt(exp, 10)),
+	))
+	return &types.MsgMoveCaretakerResponse{ExpiresAt: exp}, nil
 }

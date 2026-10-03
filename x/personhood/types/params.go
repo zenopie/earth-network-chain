@@ -38,6 +38,7 @@ func DefaultParams() Params {
 	p.IdentityRootWindowSeconds = DefaultIdentityRootWindowSeconds
 	p.CaretakerVoteSeconds = DefaultCaretakerVoteSeconds
 	p.HandleRenewalSeconds = DefaultHandleRenewalSeconds
+	p.HandleLeaseSeconds = DefaultHandleLeaseSeconds
 	return p
 }
 
@@ -164,6 +165,14 @@ func (p Params) CaretakerVoteSecondsOrDefault() int64 {
 	return int64(p.CaretakerVoteSeconds)
 }
 
+// HandleLeaseSecondsOrDefault is a handle's lease.
+func (p Params) HandleLeaseSecondsOrDefault() int64 {
+	if p.HandleLeaseSeconds == 0 {
+		return DefaultHandleLeaseSeconds
+	}
+	return int64(p.HandleLeaseSeconds)
+}
+
 // HandleRenewalSecondsOrDefault is a lapsed handle's owner-only renewal
 // period.
 func (p Params) HandleRenewalSecondsOrDefault() int64 {
@@ -275,6 +284,9 @@ func (p Params) Validate() error {
 	}
 	if p.HandleRenewalSeconds > 365*SecondsPerDay {
 		return fmt.Errorf("handle_renewal_seconds must be at most a year")
+	}
+	if p.HandleLeaseSeconds > 2*365*SecondsPerDay {
+		return fmt.Errorf("handle_lease_seconds must be at most two years")
 	}
 	if p.BuybackMaxDeviationBps >= BpsDenominator {
 		return fmt.Errorf(

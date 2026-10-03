@@ -320,7 +320,8 @@ func TestDeclinedExpeditedProposalIsDemotedNotKilled(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), in.Round)
 	require.Equal(t, privacy.FieldBytes(privacy.ProposalScope(1, 1)), in.Scope)
-	require.Equal(t, uint64(e.ctx.BlockTime().Unix()-personhoodtypes.ActivationMarginSeconds), in.MaxActivation)
+	require.Equal(t, uint64(e.ctx.BlockTime().Unix()-personhoodtypes.ActivationMarginSeconds), in.MaxPredecessor)
+	require.Equal(t, uint64(personhoodtypes.NoBound), in.MaxActivation)
 
 	// And the second round runs under ordinary rules: two thirds now suffices.
 	e.voteAll(t, 1, types.VOTE_OPTION_YES, "dave", "erin")

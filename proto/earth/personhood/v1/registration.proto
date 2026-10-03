@@ -36,6 +36,13 @@ message Registration {
   // idc is the identity commitment H(TAG_ID, id_secret) the leaf was made
   // from. Public in MsgRegister already; kept so genesis can rebuild the tree.
   bytes idc = 7;
+  // predecessor_at is the time of the switch or re-entry that created this
+  // registration's leaf (unix seconds), 0 for a passport never registered
+  // before. The leaf commits to it, and a membership proof bounds it
+  // (max_predecessor): an identity that replaced another waits, per scope,
+  // until anything its predecessor could hold there has lapsed; a fresh one
+  // does not.
+  int64 predecessor_at = 8;
 }
 
 // RateCounter is a self-resetting daily counter, used to bound how many

@@ -17,6 +17,9 @@ const (
 	// after a handle's lease ends (Params.handle_renewal_seconds).
 	DefaultHandleRenewalSeconds = 30 * 24 * 60 * 60
 
+	// DefaultHandleLeaseSeconds is the default lease (Params.handle_lease_seconds).
+	DefaultHandleLeaseSeconds = 365 * 24 * 60 * 60
+
 	// HandleSweepLimit bounds the released handles one block deletes.
 	HandleSweepLimit = 200
 
@@ -90,6 +93,7 @@ func validateHandles(hs []Handle) error {
 const (
 	EventTypeHandleBound    = "handle_bound"
 	EventTypeHandleReleased = "handle_released"
+	EventTypeHandleMoved    = "handle_moved"
 	AttributeKeyHandle      = "handle"
 	AttributeKeyAddress     = "address"
 	AttributeKeyNullifier   = "nullifier"

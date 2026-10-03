@@ -72,7 +72,20 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		return nil, err
 	}
 
-	leaf, err := IdentityLeaf(msg.Idc, p.dsc.key, p.dsc.country, now)
+	// predecessor_at: the switch or re-entry that made this leaf, or 0 for a
+	// passport never registered before. A re-entry (the passport's earlier
+	// registration lapsed or was purged) has a predecessor too: whatever it
+	// held may still be live.
+	predecessorAt := int64(0)
+	if seen, err := k.PassportsSeen.Has(ctx, p.nullifier); err != nil {
+		return nil, err
+	} else if seen || switched {
+		predecessorAt = now
+	}
+	if err := k.PassportsSeen.Set(ctx, p.nullifier); err != nil {
+		return nil, err
+	}
+	leaf, err := IdentityLeaf(msg.Idc, p.dsc.key, p.dsc.country, now, predecessorAt)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +94,14 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		return nil, err
 	}
 	if err := k.addRegistration(ctx, types.Registration{
-		Nullifier:    p.nullifier,
-		LeafIndex:    index,
-		RegisteredAt: now,
-		ActivatedAt:  now,
-		DscKey:       p.dsc.key,
-		Country:      p.dsc.country,
-		Idc:          msg.Idc,
+		Nullifier:     p.nullifier,
+		LeafIndex:     index,
+		RegisteredAt:  now,
+		ActivatedAt:   now,
+		PredecessorAt: predecessorAt,
+		DscKey:        p.dsc.key,
+		Country:       p.dsc.country,
+		Idc:           msg.Idc,
 	}); err != nil {
 		return nil, err
 	}

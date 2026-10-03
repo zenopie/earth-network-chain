@@ -40,9 +40,12 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		return err
 	}
 	for _, reg := range genState.Registrations {
-		leaf, err := IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt)
+		leaf, err := IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt, reg.PredecessorAt)
 		if err != nil {
 			return fmt.Errorf("registration %x: %w", reg.Nullifier, err)
+		}
+		if err := k.PassportsSeen.Set(ctx, reg.Nullifier); err != nil {
+			return err
 		}
 		if err := t.Update(reg.LeafIndex, leaf); err != nil {
 			return err
@@ -102,6 +105,28 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		return err
 	}
 	if err := k.importHandles(ctx, genState.Handles); err != nil {
+		return err
+	}
+	for _, nf := range genState.PassportsSeen {
+		if err := k.PassportsSeen.Set(ctx, nf); err != nil {
+			return err
+		}
+	}
+	for _, nf := range genState.HandleMovedOut {
+		if err := k.HandleMovedOut.Set(ctx, nf); err != nil {
+			return err
+		}
+	}
+	for _, nf := range genState.CaretakerMovedOut {
+		if err := k.CaretakerMovedOut.Set(ctx, nf); err != nil {
+			return err
+		}
+	}
+	leaseMax := genState.HandleLeaseMax
+	if l := genState.Params.HandleLeaseSecondsOrDefault(); l > leaseMax {
+		leaseMax = l
+	}
+	if err := k.HandleLeaseMax.Set(ctx, leaseMax); err != nil {
 		return err
 	}
 	for _, u := range genState.UsedBindings {
@@ -221,6 +246,27 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}); err != nil {
 		return nil, err
 	}
+	if err := k.PassportsSeen.Walk(ctx, nil, func(nf []byte) (bool, error) {
+		genesis.PassportsSeen = append(genesis.PassportsSeen, nf)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.HandleMovedOut.Walk(ctx, nil, func(nf []byte) (bool, error) {
+		genesis.HandleMovedOut = append(genesis.HandleMovedOut, nf)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.CaretakerMovedOut.Walk(ctx, nil, func(nf []byte) (bool, error) {
+		genesis.CaretakerMovedOut = append(genesis.CaretakerMovedOut, nf)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if genesis.HandleLeaseMax, err = k.HandleLeaseMax.Get(ctx); err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
 	if err := k.UsedBindings.Walk(ctx, nil, func(b []byte, until int64) (bool, error) {
 		genesis.UsedBindings = append(genesis.UsedBindings, types.UsedRegistrationBinding{Binding: b, ExpiresAt: until})
 		return false, nil
@@ -271,7 +317,7 @@ func identityRootsAt(regs []types.Registration, sizes map[uint64]bool) (map[uint
 		if reg.LeafIndex >= top {
 			continue
 		}
-		leaf, err := IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt)
+		leaf, err := IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt, reg.PredecessorAt)
 		if err != nil {
 			return nil, fmt.Errorf("registration %x: %w", reg.Nullifier, err)
 		}

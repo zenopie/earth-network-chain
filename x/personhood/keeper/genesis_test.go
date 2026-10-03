@@ -48,7 +48,7 @@ func TestGenesisRoundTripsPopulatedState(t *testing.T) {
 	require.True(t, l.IsZero())
 	l, err = f.keeper.IdentityLeafAt(f.ctx, 2)
 	require.NoError(t, err)
-	require.Equal(t, privacy.IdentityLeaf(privacy.U64(3), privacy.U64(77), privacy.CountryField("US"), 1_700_000_500), l)
+	require.Equal(t, privacy.IdentityLeaf(privacy.U64(3), privacy.U64(77), privacy.CountryField("US"), 1_700_000_500, 0), l)
 	// The rebuilt root is the latest anchor.
 	root, err := f.keeper.CurrentIdentityRoot(f.ctx)
 	require.NoError(t, err)
