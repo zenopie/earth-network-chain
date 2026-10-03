@@ -53,6 +53,12 @@ func privateCapPrepareProposal(sk shieldedkeeper.Keeper, dec sdk.TxDecoder) func
 					if used+n > limit {
 						continue
 					}
+					// An anchor that has lapsed by this block's time fails the
+					// tx in its ante, after it took block space and the cap
+					// (audit 5 L-SH1).
+					if !sk.AnchorsValidAt(ctx, tx.GetMsgs()[0].(shieldedtypes.PrivateMsg), req.Time.Unix()) {
+						continue
+					}
 					used += n
 				}
 				out = append(out, bz)

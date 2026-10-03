@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strconv"
+	"time"
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -123,14 +124,52 @@ func (k Keeper) Anchor(ctx context.Context, root []byte) (valid bool, rec types.
 	return sdk.UnwrapSDKContext(ctx).BlockTime().Unix() <= expiresAt, rec, expiresAt, nil
 }
 
-// checkAnchor refuses a root that is not a valid anchor.
+// AnchorCheckTxMarginSeconds: in CheckTx and ReCheckTx an anchor must stay
+// valid at least this long past the last committed block (audit 5 L-SH1). A
+// tx whose anchor lapses before it lands would pass CheckTx, be proposed and
+// then fail its ante in the block, paying nothing while taking block gas and
+// the private-action cap; with the margin it leaves the mempool first.
+// Wallets pick an anchor with more than this left (the window is two weeks).
+const AnchorCheckTxMarginSeconds = 120
+
+// checkAnchor refuses a root that is not a valid anchor (in CheckTx and
+// ReCheckTx: one lapsing within AnchorCheckTxMarginSeconds).
 func (k Keeper) checkAnchor(ctx context.Context, root []byte) error {
-	ok, _, _, err := k.Anchor(ctx, root)
+	ok, _, expiresAt, err := k.Anchor(ctx, root)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return types.ErrUnknownRoot.Wrapf("%X", root)
 	}
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	if (sdkCtx.IsCheckTx() || sdkCtx.IsReCheckTx()) && expiresAt != 0 &&
+		expiresAt < sdkCtx.BlockTime().Unix()+AnchorCheckTxMarginSeconds {
+		return types.ErrUnknownRoot.Wrapf("%X expires at %d, within %ds of the last block: pick a newer anchor",
+			root, expiresAt, AnchorCheckTxMarginSeconds)
+	}
 	return nil
+}
+
+// AnchorsValidAt reports whether every action anchor of msg is a valid
+// anchor at time t (unix seconds), as a block at t would see it. For
+// PrepareProposal, which leaves out a private tx certain to fail on a lapsed
+// anchor.
+func (k Keeper) AnchorsValidAt(ctx sdk.Context, msg types.PrivateMsg, t int64) bool {
+	at := ctx.WithBlockTime(time.Unix(t, 0))
+	seen := map[string]bool{}
+	for _, b := range msg.PrivateBundles() {
+		for j := range b.Actions {
+			root := b.Actions[j].Anchor
+			if seen[string(root)] {
+				continue
+			}
+			ok, _, _, err := k.Anchor(at, root)
+			if err != nil || !ok {
+				return false
+			}
+			seen[string(root)] = true
+		}
+	}
+	return true
 }
