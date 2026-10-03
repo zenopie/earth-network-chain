@@ -601,26 +601,37 @@ func (k Keeper) orphanUnbonding(ctx context.Context, valoper string, maxEpoch ui
 	if err := k.UnbondRecords.Set(ctx, key, r); err != nil {
 		return err
 	}
+	if err := k.OrphanRecords.Set(ctx, key); err != nil {
+		return err
+	}
 	return k.MaturityQueue.Set(ctx, collections.Join3(r.CompletionTime, valoper, maxEpoch))
 }
 
+// hasOrphanRecords reads the orphan index, never v's whole record list (which
+// grows with every matured record nobody has claimed yet: audit 3 D).
 func (k Keeper) hasOrphanRecords(ctx context.Context, valoper string) (bool, error) {
 	found := false
-	err := k.UnbondRecords.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](valoper),
-		func(_ collections.Pair[string, uint64], r types.UnbondRecord) (bool, error) {
-			found = r.Requested.IsZero()
-			return found, nil
+	err := k.OrphanRecords.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](valoper),
+		func(collections.Pair[string, uint64]) (bool, error) {
+			found = true
+			return true, nil
 		})
 	return found, err
 }
 
 // sweepOrphanRecords sends the payout of v's matured orphan records (no note
 // was ever minted against them) to the community pool, and forgets them.
+// It walks only the orphan index (one orphan per epoch at most, each gone
+// once matured), not v's records.
 func (k Keeper) sweepOrphanRecords(ctx context.Context, valoper string) error {
 	var done []types.UnbondRecord
-	if err := k.UnbondRecords.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](valoper),
-		func(_ collections.Pair[string, uint64], r types.UnbondRecord) (bool, error) {
-			if r.Status == types.UNBOND_STATUS_MATURED && r.Requested.IsZero() {
+	if err := k.OrphanRecords.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](valoper),
+		func(key collections.Pair[string, uint64]) (bool, error) {
+			r, err := k.UnbondRecords.Get(ctx, key)
+			if err != nil {
+				return true, err
+			}
+			if r.Status == types.UNBOND_STATUS_MATURED {
 				done = append(done, r)
 			}
 			return false, nil
@@ -638,6 +649,9 @@ func (k Keeper) sweepOrphanRecords(ctx context.Context, valoper string) error {
 			))
 		}
 		if err := k.UnbondRecords.Remove(ctx, collections.Join(r.Validator, r.Epoch)); err != nil {
+			return err
+		}
+		if err := k.OrphanRecords.Remove(ctx, collections.Join(r.Validator, r.Epoch)); err != nil {
 			return err
 		}
 	}

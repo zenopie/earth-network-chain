@@ -45,6 +45,11 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		if err := k.UnbondRecords.Set(ctx, key, r); err != nil {
 			return err
 		}
+		if r.Requested.IsZero() {
+			if err := k.OrphanRecords.Set(ctx, key); err != nil {
+				return err
+			}
+		}
 		switch r.Status {
 		case types.UNBOND_STATUS_PENDING:
 			if err := k.PendingRecords.Set(ctx, key); err != nil {

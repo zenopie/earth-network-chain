@@ -125,6 +125,11 @@ var (
 	// end retried: retries rotate through the set, so entries that keep
 	// failing cannot starve the rest of the per-epoch budget.
 	PendingReleaseCursorKey = collections.NewPrefix(31)
+	// OrphanRecordsKey indexes the orphan unbond records (requested zero:
+	// no note claims them; epoch.go), so the epoch end finds a validator's
+	// orphans without walking all its records (which grow with every
+	// unclaimed matured record).
+	OrphanRecordsKey = collections.NewPrefix(32)
 )
 
 // DerthDenom is validator's delegation token.

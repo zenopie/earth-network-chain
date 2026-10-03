@@ -59,6 +59,9 @@ type Keeper struct {
 	// PendingRecords indexes the records still waiting for their SDK
 	// undelegation.
 	PendingRecords collections.KeySet[collections.Pair[string, uint64]]
+	// OrphanRecords indexes the orphan records (requested zero), per
+	// validator, until sweepOrphanRecords forgets them.
+	OrphanRecords collections.KeySet[collections.Pair[string, uint64]]
 	// SlashedValidators are this block's slashed validators (valoper), for
 	// EndBlock's re-weigh of their positions (reweighSlashed).
 	SlashedValidators collections.KeySet[string]
@@ -158,6 +161,8 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key), codec.CollValue[types.UnbondRecord](cdc)),
 		SlashedValidators: collections.NewKeySet(sb, types.SlashedValidatorsKey, "slashed_validators", collections.StringKey),
 		PendingRecords: collections.NewKeySet(sb, types.PendingRecordsKey, "pending_records",
+			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key)),
+		OrphanRecords: collections.NewKeySet(sb, types.OrphanRecordsKey, "orphan_records",
 			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key)),
 		MaturityQueue: collections.NewKeySet(sb, types.MaturityQueueKey, "maturity_queue",
 			collections.TripleKeyCodec(collections.Int64Key, collections.StringKey, collections.Uint64Key)),

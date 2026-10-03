@@ -32,7 +32,13 @@ ported as a regression test asserting the safe outcome.
   a configured mempool.max-txs != -1 is logged and ignored. Test:
   app/audit3_mempool_test.go TestAudit3AppMempoolForcedNoOp (SenderNonce
   option given -> still no-op, same tx result).
-- [ ] 7 unbond record growth
+- [x] 7 unbond record growth: orphan records indexed (OrphanRecords,
+  prefix 32; rebuilt at InitGenesis from requested == 0); sweepOrphanRecords
+  and hasOrphanRecords walk only the index. Open records were already
+  indexed (PendingRecords, MaturityQueue). No per-validator record walk is
+  left at the epoch end. Test: app/audit3_unbond_records_test.go (epoch-end
+  gas identical with 1,100 and 6,100 unclaimed matured records; was
+  1.67M vs 6.11M).
 - [x] 8 vote weight canonical strings: ValidateOptions requires
   weight == LegacyDec.String() (18 decimals). Test:
   x/shieldedstaking/types/audit3_weights_test.go
