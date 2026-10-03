@@ -323,7 +323,17 @@ func (e *testEnv) openProposal(t *testing.T, id uint64, endsAt time.Time) v1.Pro
 	}
 	require.NoError(t, e.gov.SetProposal(e.ctx, proposal))
 	require.NoError(t, e.gov.ActiveProposalsQueue.Set(e.ctx, collections.Join(endsAt, id), id))
+	// Entering voting fixes its subjects, as x/gov's deposit hook does.
+	require.NoError(t, e.k.GovHooks().AfterProposalDeposit(e.ctx, id, nil))
 	return proposal
+}
+
+// enterVoting re-fixes a proposal's subjects after a test edited its
+// messages: as though it entered voting with them.
+func (e *testEnv) enterVoting(t *testing.T, id uint64) {
+	t.Helper()
+	require.NoError(t, e.k.Subjects.Remove(e.ctx, id))
+	require.NoError(t, e.k.GovHooks().AfterProposalDeposit(e.ctx, id, nil))
 }
 
 // openExpedited is the same, on x/gov's fast track.

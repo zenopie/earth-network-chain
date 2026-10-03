@@ -110,9 +110,10 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 			if err := k.ProposalRound.Remove(ctx, id); err != nil {
 				return err
 			}
-			if err := k.forgetSubjects(ctx, id); err != nil {
-				return err
-			}
+			// Subjects are kept: x/gov tallies the proposal next, and if it
+			// is expedited and stake does not pass it, x/gov demotes it to a
+			// regular round, still voting. AfterProposalVotingPeriodEnded
+			// forgets them once x/gov has really ended its voting.
 			continue
 		}
 
@@ -299,23 +300,35 @@ func (k Keeper) closeOrphanedBallots(ctx context.Context, limit int) error {
 		return err
 	}
 	// A cancelled proposal nobody voted on has no ballot, only its subjects.
+	// Subjects of a proposal x/gov ended are normally forgotten by
+	// AfterProposalVotingPeriodEnded; x/gov swallows a hook error, so one
+	// left behind is dropped here.
 	checked = 0
+	var ended []uint64
 	err = k.Subjects.Walk(ctx, nil, func(proposalID uint64, _ types.ProposalSubjects) (bool, error) {
 		if checked >= limit {
 			return true, nil
 		}
 		checked++
-		has, err := k.gov.Proposals.Has(ctx, proposalID)
-		if err != nil {
-			return true, err
-		}
-		if !has {
+		p, err := k.gov.Proposals.Get(ctx, proposalID)
+		switch {
+		case errors.Is(err, collections.ErrNotFound):
 			orphans = append(orphans, proposalID)
+		case errors.Is(err, collections.ErrEncoding):
+		case err != nil:
+			return true, err
+		case p.Status != v1.StatusVotingPeriod:
+			ended = append(ended, proposalID)
 		}
 		return false, nil
 	})
 	if err != nil {
 		return err
+	}
+	for _, id := range ended {
+		if err := k.forgetSubjects(ctx, id); err != nil {
+			return err
+		}
 	}
 	for _, id := range orphans {
 		if err := k.forgetSubjects(ctx, id); err != nil {

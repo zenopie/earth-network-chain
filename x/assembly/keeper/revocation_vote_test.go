@@ -73,6 +73,7 @@ func TestRevocationProposalExcludesItsSubjects(t *testing.T) {
 		p := e.openProposal(t, id, end)
 		p.Messages = msgs
 		require.NoError(t, e.gov.SetProposal(e.ctx, p))
+		e.enterVoting(t, id)
 		return id
 	}
 	last := func() (string, string) {
@@ -126,7 +127,7 @@ func TestProposalSubjectsFixedAtVotingStart(t *testing.T) {
 	p := e.openProposal(t, 1, e.ctx.BlockTime().Add(time.Hour))
 	p.Messages = []*codectypes.Any{revA, revB}
 	require.NoError(t, e.gov.SetProposal(e.ctx, p))
-	require.NoError(t, e.k.GovHooks().AfterProposalDeposit(e.ctx, 1, nil))
+	e.enterVoting(t, 1)
 
 	e.pki.dsc[string(fixtureDer(t, "B", "dsc.der"))] = "FR"
 	_, v := e.addr(t, "voter", "n")
@@ -183,7 +184,7 @@ func TestRevocationMixedOrNestedIsRefused(t *testing.T) {
 		p := e.openProposal(t, id, end)
 		p.Messages = msgs
 		require.NoError(t, e.gov.SetProposal(e.ctx, p))
-		require.NoError(t, e.k.GovHooks().AfterProposalDeposit(e.ctx, id, nil))
+		e.enterVoting(t, id)
 		s, err := e.k.Subjects.Get(e.ctx, id)
 		require.NoError(t, err)
 		require.NotEmpty(t, s.Refusal, "case %d", i)
@@ -199,6 +200,7 @@ func TestRevocationMixedOrNestedIsRefused(t *testing.T) {
 	p := e.openProposal(t, 100, end)
 	p.Messages = []*codectypes.Any{send, execSendAny}
 	require.NoError(t, e.gov.SetProposal(e.ctx, p))
+	e.enterVoting(t, 100)
 	_, err = e.ms.VoteProposal(e.ctx, &types.MsgVoteProposal{Membership: voter(bystander), ProposalId: 100, Option: types.VOTE_OPTION_YES})
 	require.NoError(t, err)
 }

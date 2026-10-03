@@ -234,17 +234,18 @@ func (k Keeper) classifyProposal(ctx context.Context, proposal v1.Proposal) erro
 	return k.Subjects.Set(ctx, proposal.Id, s)
 }
 
-// subjectsOf is a proposal's stored subjects, classifying it now when it has
-// none stored (only a proposal that entered voting before this module saw it).
+// subjectsOf is a proposal's stored subjects. They are fixed once, as the
+// proposal enters voting (AfterProposalDeposit) or is imported mid-vote
+// (InitGenesis), and kept until it leaves voting. A voting proposal without
+// them is refused rather than classified per vote: that would move its
+// exclusions with the live trust store mid-vote, and redo the pki walk for
+// every attempt (CheckTx included, before any proof is checked).
 func (k Keeper) subjectsOf(ctx context.Context, proposal v1.Proposal) (types.ProposalSubjects, error) {
 	s, err := k.Subjects.Get(ctx, proposal.Id)
-	if err == nil {
-		return s, nil
+	if errors.Is(err, collections.ErrNotFound) {
+		return s, errorsmod.Wrapf(types.ErrProposalNotVoting, "proposal %d has no fixed subjects", proposal.Id)
 	}
-	if !errors.Is(err, collections.ErrNotFound) {
-		return s, err
-	}
-	return k.subjectsFor(ctx, proposal)
+	return s, err
 }
 
 // forgetSubjects drops a proposal's subjects once its voting is over.
@@ -298,4 +299,21 @@ func (h GovHooks) AfterProposalDeposit(ctx context.Context, proposalID uint64, _
 func (GovHooks) AfterProposalSubmission(context.Context, uint64) error           { return nil }
 func (GovHooks) AfterProposalVote(context.Context, uint64, sdk.AccAddress) error { return nil }
 func (GovHooks) AfterProposalFailedMinDeposit(context.Context, uint64) error     { return nil }
-func (GovHooks) AfterProposalVotingPeriodEnded(context.Context, uint64) error    { return nil }
+// AfterProposalVotingPeriodEnded forgets a proposal's subjects once x/gov
+// has ended its voting (passed, rejected, failed). x/gov calls it for every
+// proposal it tallies, including an expedited one it demotes to a regular
+// round: that one is still voting, and keeps the subjects fixed when it first
+// entered voting.
+func (h GovHooks) AfterProposalVotingPeriodEnded(ctx context.Context, proposalID uint64) error {
+	p, err := h.k.gov.Proposals.Get(ctx, proposalID)
+	if errors.Is(err, collections.ErrNotFound) {
+		return h.k.forgetSubjects(ctx, proposalID)
+	}
+	if err != nil {
+		return err
+	}
+	if p.Status == v1.StatusVotingPeriod {
+		return nil
+	}
+	return h.k.forgetSubjects(ctx, proposalID)
+}
