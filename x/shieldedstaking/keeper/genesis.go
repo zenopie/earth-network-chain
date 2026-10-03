@@ -16,6 +16,9 @@ import (
 // InitGenesis loads the books. It runs after bank, staking and shielded, and
 // checks the books against them.
 func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
+	if err := k.checkGenesisValidators(ctx, gs); err != nil {
+		return err
+	}
 	if err := k.Params.Set(ctx, gs.Params); err != nil {
 		return err
 	}
@@ -79,6 +82,46 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	return k.AssertInvariants(ctx)
+}
+
+// checkGenesisValidators refuses a genesis whose books, records, positions,
+// snapshots or votes name a validator by any string but its canonical
+// encoding under this chain's validator codec (keeper.valAddr).
+func (k Keeper) checkGenesisValidators(_ context.Context, gs types.GenesisState) error {
+	check := func(what, v string) error {
+		if _, err := k.valAddr(v); err != nil {
+			return fmt.Errorf("genesis %s: %w", what, err)
+		}
+		return nil
+	}
+	for _, v := range gs.Validators {
+		if err := check("book", v.Validator); err != nil {
+			return err
+		}
+	}
+	for _, r := range gs.UnbondRecords {
+		if err := check("unbond record", r.Validator); err != nil {
+			return err
+		}
+	}
+	for _, p := range gs.Positions {
+		if err := check("position", p.Validator); err != nil {
+			return err
+		}
+	}
+	for _, s := range gs.Snapshots {
+		for _, vs := range s.Validators {
+			if err := check("snapshot", vs.Validator); err != nil {
+				return err
+			}
+		}
+	}
+	for _, v := range gs.Votes {
+		if err := check("vote", v.Validator); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // initStakeTree rebuilds the stake note tree from its leaves, its nullifier

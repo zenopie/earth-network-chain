@@ -184,10 +184,21 @@ func (k Keeper) logger(ctx context.Context) log.Logger {
 	return sdk.UnwrapSDKContext(ctx).Logger().With("module", "x/"+types.ModuleName)
 }
 
+// valAddr decodes a validator operator string, refusing any but the
+// canonical encoding of its bytes: this module keys its books by the string,
+// x/staking by the bytes, so an alias (an uppercase bech32 string decodes to
+// the same bytes) would be a second book over the same delegation.
 func (k Keeper) valAddr(valoper string) (sdk.ValAddress, error) {
 	bz, err := k.staking.ValidatorAddressCodec().StringToBytes(valoper)
 	if err != nil {
 		return nil, types.ErrValidator.Wrapf("%s: %v", valoper, err)
+	}
+	canon, err := k.staking.ValidatorAddressCodec().BytesToString(bz)
+	if err != nil {
+		return nil, types.ErrValidator.Wrapf("%s: %v", valoper, err)
+	}
+	if canon != valoper {
+		return nil, types.ErrValidator.Wrapf("%q is not canonical (%s)", valoper, canon)
 	}
 	return bz, nil
 }

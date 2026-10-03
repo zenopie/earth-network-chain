@@ -260,6 +260,9 @@ func (k Keeper) checkUndelegate(ctx context.Context, m *types.MsgUndelegate) (ma
 
 // checkClaim returns the record and the ERTH the claim pays.
 func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (types.UnbondRecord, math.Int, error) {
+	if _, err := k.valAddr(m.Validator); err != nil {
+		return types.UnbondRecord{}, math.Int{}, err
+	}
 	r, err := k.UnbondRecords.Get(ctx, collections.Join(m.Validator, m.Epoch))
 	if errors.Is(err, collections.ErrNotFound) {
 		return r, math.Int{}, types.ErrUnknownRecord.Wrapf("%s/%d", m.Validator, m.Epoch)
@@ -288,6 +291,9 @@ func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (typ
 // then, and one minted since, including a vote's own re-mint, cannot vote),
 // and the weight fits the validator's snapshot supply.
 func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (math.Int, error) {
+	if _, err := k.valAddr(m.Validator); err != nil {
+		return math.Int{}, err
+	}
 	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
 		return math.Int{}, err

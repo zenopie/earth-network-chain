@@ -33,6 +33,9 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicate validator %s", v.Validator)
 		}
 		vals[v.Validator] = true
+		if err := CanonicalValoper(v.Validator); err != nil {
+			return fmt.Errorf("book: %w", err)
+		}
 		if err := nonNeg("pending_delegation", v.PendingDelegation); err != nil {
 			return err
 		}
@@ -53,6 +56,9 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicate unbond record %s", key)
 		}
 		recs[key] = true
+		if err := CanonicalValoper(r.Validator); err != nil {
+			return fmt.Errorf("unbond record: %w", err)
+		}
 		for what, x := range map[string]math.Int{
 			"requested": r.Requested, "target": r.Target, "undelegated": r.Undelegated,
 			"payout": r.Payout, "outstanding": r.Outstanding, "paid": r.Paid,
@@ -71,6 +77,9 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("position %d duplicated or not below next_position_id", p.Id)
 		}
 		ids[p.Id] = true
+		if err := CanonicalValoper(p.Validator); err != nil {
+			return fmt.Errorf("position %d: %w", p.Id, err)
+		}
 		if p.Derth.IsNil() || !p.Derth.IsPositive() {
 			return fmt.Errorf("position %d is invalid", p.Id)
 		}
@@ -84,10 +93,18 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicate snapshot %d", s.ProposalId)
 		}
 		snaps[s.ProposalId] = true
+		for _, vs := range s.Validators {
+			if err := CanonicalValoper(vs.Validator); err != nil {
+				return fmt.Errorf("snapshot %d: %w", s.ProposalId, err)
+			}
+		}
 	}
 	for _, v := range gs.Votes {
 		if !snaps[v.ProposalId] {
 			return fmt.Errorf("vote on proposal %d without a snapshot", v.ProposalId)
+		}
+		if err := CanonicalValoper(v.Validator); err != nil {
+			return fmt.Errorf("vote on proposal %d: %w", v.ProposalId, err)
 		}
 		if err := ValidateOptions(v.Options); err != nil {
 			return err

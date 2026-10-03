@@ -40,6 +40,9 @@ func (q queryServer) Validator(ctx context.Context, req *types.QueryValidatorReq
 	if req == nil || req.Validator == "" {
 		return nil, status.Error(codes.InvalidArgument, "validator required")
 	}
+	if _, err := q.k.valAddr(req.Validator); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	vs, err := q.k.ValidatorState(ctx, req.Validator)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -54,6 +57,9 @@ func (q queryServer) Validator(ctx context.Context, req *types.QueryValidatorReq
 func (q queryServer) UnbondRecord(ctx context.Context, req *types.QueryUnbondRecordRequest) (*types.QueryUnbondRecordResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+	if _, err := q.k.valAddr(req.Validator); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	r, err := q.k.UnbondRecords.Get(ctx, collections.Join(req.Validator, req.Epoch))
 	if err != nil {
