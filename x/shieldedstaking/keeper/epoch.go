@@ -200,7 +200,9 @@ func (k Keeper) sweepBooks(ctx context.Context, sweep types.EpochSweep, maxEpoch
 }
 
 // reportInvariants runs AssertInvariants at the epoch end, bounded (skipped,
-// with an event, past InvariantBookLimit books or unbond records) and
+// with an event, past InvariantBookLimit books, unbond records, positions and
+// validators (counted by their reward escrows, twice: invariant 5 walks
+// both)) and
 // guarded: it reports a broken invariant or a panic, it never halts EndBlock.
 func (k Keeper) reportInvariants(ctx context.Context) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -220,6 +222,15 @@ func (k Keeper) reportInvariants(ctx context.Context) {
 		// count against the same bound.
 		_ = k.Positions.Walk(ctx, nil, func(uint64, types.Position) (bool, error) {
 			n++
+			return n > types.InvariantBookLimit, nil
+		})
+	}
+	if n <= types.InvariantBookLimit {
+		// Invariant 5 walks every x/staking validator and every reward
+		// escrow (one per validator; validators are permissionless): the
+		// escrows count against the same bound, standing in for both.
+		_ = k.RewardEscrows.Walk(ctx, nil, func(_, _ []byte) (bool, error) {
+			n += 2
 			return n > types.InvariantBookLimit, nil
 		})
 	}

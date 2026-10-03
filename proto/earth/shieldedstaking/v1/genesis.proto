@@ -32,4 +32,20 @@ message GenesisState {
   uint64 snapshot_seq = 12;
   repeated SupplyCheckpoint supply_checkpoints = 13 [(gogoproto.nullable) = false];
   EpochSweep epoch_sweep = 14;
+  // pending_releases are removed validators (operator address bytes) whose
+  // reward escrow release failed; InitGenesis records their escrows again and
+  // the epoch end retries the release. Without them an exported chain would
+  // forget the escrow, and its balance with it.
+  repeated bytes pending_releases = 15;
+  // retiring_escrows are the scheduled retirements of operators that removed
+  // their whole self-bond (escrow.go), kept at their original release time.
+  repeated RetiringEscrow retiring_escrows = 16 [(gogoproto.nullable) = false];
+}
+
+// RetiringEscrow is a scheduled reward-escrow retirement: validator's escrow
+// is paid out at release_at (unix nanoseconds) if its operator has not bonded
+// again.
+message RetiringEscrow {
+  int64 release_at = 1;
+  bytes validator = 2;
 }

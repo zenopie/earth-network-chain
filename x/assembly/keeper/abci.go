@@ -402,7 +402,19 @@ func (k Keeper) resolveDueRemovals(ctx context.Context) error {
 		if err := k.closeRemovalBallot(ctx, key, optionID); err != nil {
 			return err
 		}
-		if err := k.RemovalCooldown.Set(ctx, optionID, now+types.RemovalCooldown); err != nil {
+		// The cooldown lets a declined removal stand. Only a declined one:
+		// a strike that carried has removed the option (nothing left to
+		// protect, so no entry is left behind), and one that carried but
+		// failed to apply must not shield the option from the next ballot for
+		// thirty days. A declined ballot opened by the option's own
+		// beneficiaries does buy it a cooldown, but only by surviving a
+		// public seven-day vote anyone can join: the ballot itself is the
+		// defence, and an opener cannot keep it from being carried.
+		if approved := types.Approves(ballot.Tally.Yes, ballot.Tally.No); approved {
+			if err := k.RemovalCooldown.Remove(ctx, optionID); err != nil {
+				return err
+			}
+		} else if err := k.RemovalCooldown.Set(ctx, optionID, now+types.RemovalCooldown); err != nil {
 			return err
 		}
 

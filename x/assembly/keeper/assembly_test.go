@@ -484,3 +484,31 @@ func TestHandlerRefusesWithoutTheAnte(t *testing.T) {
 	_, err := NewMsgServerImpl(e.k).VoteProposal(e.ctx, &types.MsgVoteProposal{Membership: voter("x"), ProposalId: 1, Option: types.VOTE_OPTION_YES})
 	require.ErrorIs(t, err, shieldedtypes.ErrUnauthorized)
 }
+
+// A ballot that carried grants no cooldown: a struck option leaves no entry
+// behind, and one whose strike failed to apply may be balloted again at once
+// (the chamber said remove; thirty days' shelter would undo that).
+func TestCarriedRemovalGrantsNoCooldown(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		e := newTestEnv(t)
+		e.allocation.removable[7] = true
+		if fail {
+			e.allocation.failWith = errors.New("strike failed")
+		}
+		_, alice := e.addr(t, "alice", "null-alice")
+		opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
+		require.NoError(t, err)
+		_, err = e.ms.VoteRemoval(e.ctx, &types.MsgVoteRemoval{Membership: voter(alice), OptionId: 7, Option: types.VOTE_OPTION_YES})
+		require.NoError(t, err)
+		e.ctx = e.ctx.WithBlockTime(time.Unix(opened.ClosesAt+1, 0))
+		require.NoError(t, e.k.EndBlocker(e.ctx))
+		has, err := e.k.RemovalCooldown.Has(e.ctx, 7)
+		require.NoError(t, err)
+		require.False(t, has, "fail=%v", fail)
+		if fail {
+			e.allocation.failWith = nil
+			_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
+			require.NoError(t, err, "a failed strike may be balloted again at once")
+		}
+	}
+}

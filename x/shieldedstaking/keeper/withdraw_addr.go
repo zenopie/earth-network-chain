@@ -123,8 +123,10 @@ func (k Keeper) setOperatorEscrow(ctx context.Context, val sdk.ValAddress, refus
 // escrow, refusing a genesis in which one has a withdraw address elsewhere
 // (x/distribution's delegator_withdraw_infos). Runs after staking,
 // distribution and genutil; an exported genesis already carries the
-// escrows (x/distribution exports them).
-func (k Keeper) initGenesisEscrows(ctx context.Context) error {
+// escrows (x/distribution exports them). retiring names the validators whose
+// retirement genesis already schedules (retiring_escrows): they keep that
+// time rather than restart a full unbonding time from now.
+func (k Keeper) initGenesisEscrows(ctx context.Context, retiring map[string]bool) error {
 	vals, err := k.staking.GetAllValidators(ctx)
 	if err != nil {
 		return err
@@ -142,6 +144,9 @@ func (k Keeper) initGenesisEscrows(ctx context.Context) error {
 		}
 		// An operator already without a self-bond retires a full
 		// unbonding time from now (escrow.go).
+		if retiring[string(bz)] {
+			continue
+		}
 		if _, err := k.staking.GetDelegation(ctx, sdk.AccAddress(bz), bz); errors.Is(err, stakingtypes.ErrNoDelegation) {
 			if err := k.scheduleRetirement(ctx, bz); err != nil {
 				return err

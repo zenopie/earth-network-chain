@@ -166,5 +166,19 @@ func (gs GenesisState) Validate() error {
 	if len(gs.StakeCommitments) > 0 && len(gs.StakeRoots) == 0 {
 		return fmt.Errorf("a stake tree with no recorded root")
 	}
+	pending := map[string]bool{}
+	for _, v := range gs.PendingReleases {
+		if len(v) == 0 || pending[string(v)] {
+			return fmt.Errorf("pending release %x is empty or repeated", v)
+		}
+		pending[string(v)] = true
+	}
+	retiring := map[string]bool{}
+	for _, r := range gs.RetiringEscrows {
+		if len(r.Validator) == 0 || r.ReleaseAt <= 0 || retiring[string(r.Validator)] {
+			return fmt.Errorf("retiring escrow %x is malformed or repeated", r.Validator)
+		}
+		retiring[string(r.Validator)] = true
+	}
 	return nil
 }

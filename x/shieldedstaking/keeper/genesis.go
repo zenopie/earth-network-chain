@@ -107,8 +107,26 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.initStakeTree(ctx, gs); err != nil {
 		return err
 	}
-	if err := k.initGenesisEscrows(ctx); err != nil {
+	retiring := map[string]bool{}
+	for _, r := range gs.RetiringEscrows {
+		if err := k.RetiringEscrows.Set(ctx, collections.Join(r.ReleaseAt, r.Validator)); err != nil {
+			return err
+		}
+		retiring[string(r.Validator)] = true
+	}
+	if err := k.initGenesisEscrows(ctx, retiring); err != nil {
 		return err
+	}
+	// Removed validators whose escrow release failed: x/staking no longer
+	// lists them, so their escrows are recorded again here, for the epoch
+	// end's retry (retryEscrowReleases) to find.
+	for _, v := range gs.PendingReleases {
+		if err := k.RewardEscrows.Set(ctx, types.RewardEscrowAddress(v), v); err != nil {
+			return err
+		}
+		if err := k.PendingReleases.Set(ctx, v); err != nil {
+			return err
+		}
 	}
 	return k.AssertInvariants(ctx)
 }
@@ -331,6 +349,18 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}
 	if last != nil {
 		gs.StakeRoots = append(gs.StakeRoots, *last)
+	}
+	if err := k.PendingReleases.Walk(ctx, nil, func(v []byte) (bool, error) {
+		gs.PendingReleases = append(gs.PendingReleases, v)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.RetiringEscrows.Walk(ctx, nil, func(key collections.Pair[int64, []byte]) (bool, error) {
+		gs.RetiringEscrows = append(gs.RetiringEscrows, types.RetiringEscrow{ReleaseAt: key.K1(), Validator: key.K2()})
+		return false, nil
+	}); err != nil {
+		return nil, err
 	}
 	return gs, nil
 }
