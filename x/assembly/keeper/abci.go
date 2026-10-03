@@ -129,7 +129,24 @@ func (k Keeper) resolveDueProposal(ctx context.Context, id uint64) error {
 	}
 
 	if approved {
-		if err := k.ProposalRound.Remove(ctx, id); err != nil {
+		if proposal.Expedited {
+			// x/gov tallies it next and, if stake does not pass it on the
+			// expedited track, demotes it to a regular round, still voting.
+			// That round is a new ballot scope (audit 5 L-AS1): left at round
+			// 0, each voter's nullifier would repeat across the two rounds and
+			// link an anonymous voter's two votes. It opens now, as a
+			// chamber demotion's does. If x/gov ends the proposal instead,
+			// AfterProposalVotingPeriodEnded drops the round.
+			round, _, err := k.proposalRound(ctx, proposal)
+			if err != nil {
+				return err
+			}
+			if err := k.ProposalRound.Set(ctx, id, types.ProposalRound{
+				Round: round + 1, OpenedAt: sdk.UnwrapSDKContext(ctx).BlockTime().Unix(),
+			}); err != nil {
+				return err
+			}
+		} else if err := k.ProposalRound.Remove(ctx, id); err != nil {
 			return err
 		}
 		// Subjects are kept: x/gov tallies the proposal next, and if it
@@ -333,30 +350,57 @@ func (k Keeper) failProposal(ctx context.Context, proposal v1.Proposal, tally ty
 	return nil
 }
 
-// closeOrphanedBallots closes the ballot of any proposal x/gov no longer has.
+// closeOrphanedBallots closes the ballot of any proposal x/gov no longer has,
+// or no longer has in its voting period.
 //
 // A proposal cancelled in its voting period is deleted by x/gov outright: it
 // leaves the active queue, so resolveDueProposals never reaches it, and x/gov
 // has no hook for cancellation. Its ballot stayed open for good, and every
-// vote on it with it — including the index entries each retirement walks.
+// vote on it with it — including the index entries each retirement walks. A
+// ballot of a proposal that ended without this module closing it (state no
+// block writes: an imported genesis) is closed too (audit 5 L-AS4).
+//
+// The walk resumes where the last one stopped (OrphanSweepCursor) and wraps,
+// so every ballot is looked at in turn, however many live ones sort first.
 func (k Keeper) closeOrphanedBallots(ctx context.Context, limit int) error {
 	var orphans []uint64
 	checked := 0
-	err := k.ProposalBallot.Walk(ctx, nil, func(proposalID, _ uint64) (bool, error) {
+	cursor, err := k.OrphanSweepCursor.Get(ctx)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	var rng collections.Ranger[uint64]
+	if cursor > 0 {
+		rng = new(collections.Range[uint64]).StartExclusive(cursor)
+	}
+	last := uint64(0)
+	err = k.ProposalBallot.Walk(ctx, rng, func(proposalID, _ uint64) (bool, error) {
 		if checked >= limit {
 			return true, nil
 		}
 		checked++
-		has, err := k.gov.Proposals.Has(ctx, proposalID)
-		if err != nil {
+		last = proposalID
+		p, err := k.gov.Proposals.Get(ctx, proposalID)
+		switch {
+		case errors.Is(err, collections.ErrNotFound):
+			orphans = append(orphans, proposalID)
+		case errors.Is(err, collections.ErrEncoding):
+			// x/gov's to fail; resolveDueProposal closes it then.
+		case err != nil:
 			return true, err
-		}
-		if !has {
+		case p.Status != v1.StatusVotingPeriod:
 			orphans = append(orphans, proposalID)
 		}
 		return false, nil
 	})
 	if err != nil {
+		return err
+	}
+	next := last
+	if checked < limit {
+		next = 0 // reached the end: start over next block
+	}
+	if err := k.OrphanSweepCursor.Set(ctx, next); err != nil {
 		return err
 	}
 	// A cancelled proposal nobody voted on has no ballot, only its subjects.

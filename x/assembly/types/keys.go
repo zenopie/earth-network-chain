@@ -132,6 +132,10 @@ var (
 	// RemovalCooldownKey is, per option, the earliest time a new removal
 	// ballot on it may open (RemovalCooldown after its last one closed).
 	RemovalCooldownKey = collections.NewPrefix("removal_cooldown") // option id -> unix seconds
+
+	// OrphanSweepCursorKey is the proposal id closeOrphanedBallots last
+	// looked at (0: start over). Derived; not exported.
+	OrphanSweepCursorKey = collections.NewPrefix("orphan_sweep_cursor")
 )
 
 // ClosedVotePurgeLimit caps how many votes of closed ballots one block clears.

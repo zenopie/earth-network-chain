@@ -315,5 +315,10 @@ func (h GovHooks) AfterProposalVotingPeriodEnded(ctx context.Context, proposalID
 	if p.Status == v1.StatusVotingPeriod {
 		return nil
 	}
+	// A next round set for a chamber-approved expedited proposal that x/gov
+	// then ended rather than demoted (see resolveDueProposal) goes too.
+	if err := h.k.ProposalRound.Remove(ctx, proposalID); err != nil {
+		return err
+	}
 	return h.k.forgetSubjects(ctx, proposalID)
 }

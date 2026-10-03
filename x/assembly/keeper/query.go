@@ -23,10 +23,13 @@ func (q queryServer) ProposalTally(ctx context.Context, req *types.QueryProposal
 	if err != nil {
 		return nil, err
 	}
-	return &types.QueryProposalTallyResponse{
-		Tally:    tally,
-		Approved: types.Approves(tally.Yes, tally.No),
-	}, nil
+	// The proposal's own bar, as EndBlock applies it: three quarters on the
+	// expedited track, two thirds otherwise (audit 5 L-AS3).
+	approved := types.Approves(tally.Yes, tally.No)
+	if p, err := q.k.gov.Proposals.Get(ctx, req.ProposalId); err == nil && p.Expedited {
+		approved = types.ApprovesExpedited(tally.Yes, tally.No)
+	}
+	return &types.QueryProposalTallyResponse{Tally: tally, Approved: approved}, nil
 }
 
 // RemovalBallots lists the open removal ballots. Unpaginated: only one ballot

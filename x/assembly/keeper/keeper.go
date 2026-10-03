@@ -52,6 +52,8 @@ type Keeper struct {
 	// RemovalCooldown is, per option, the earliest unix time a new removal
 	// ballot on it may open. See types.RemovalCooldown.
 	RemovalCooldown collections.Map[uint64, int64]
+	// OrphanSweepCursor: where closeOrphanedBallots resumes.
+	OrphanSweepCursor collections.Item[uint64]
 }
 
 func NewKeeper(
@@ -98,6 +100,8 @@ func NewKeeper(
 			collections.Uint64Key, codec.CollValue[types.ProposalSubjects](cdc)),
 		RemovalCooldown: collections.NewMap(sb, types.RemovalCooldownKey, "removal_cooldown",
 			collections.Uint64Key, collections.Int64Value),
+		OrphanSweepCursor: collections.NewItem(sb, types.OrphanSweepCursorKey, "orphan_sweep_cursor",
+			collections.Uint64Value),
 	}
 
 	schema, err := sb.Build()

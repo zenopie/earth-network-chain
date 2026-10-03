@@ -21,7 +21,21 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.BallotSeq.Set(ctx, gs.BallotSeq); err != nil {
 		return err
 	}
+	// Rounds and votes of a proposal x/gov (initialised first) does not have
+	// in its voting period are dead: nothing would ever close their ballot
+	// (audit 5 L-AS4). They are not imported.
+	voting := func(id uint64) (bool, error) {
+		if k.gov == nil {
+			return true, nil
+		}
+		return k.gov.VotingPeriodProposals.Has(ctx, id)
+	}
 	for _, r := range gs.ProposalRounds {
+		if ok, err := voting(r.ProposalId); err != nil {
+			return err
+		} else if !ok {
+			continue
+		}
 		if err := k.ProposalRound.Set(ctx, r.ProposalId, r.Round); err != nil {
 			return err
 		}
@@ -29,6 +43,11 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	// Each proposal's votes go on a fresh ballot, and recordVote rebuilds its
 	// tally from them one vote at a time.
 	for _, v := range gs.ProposalVotes {
+		if ok, err := voting(v.ProposalId); err != nil {
+			return err
+		} else if !ok {
+			continue
+		}
 		ballot, ok, err := k.proposalBallot(ctx, v.ProposalId)
 		if err != nil {
 			return err

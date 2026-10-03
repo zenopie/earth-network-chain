@@ -238,6 +238,7 @@ func TestGenesisRoundTrip(t *testing.T) {
 	require.NoError(t, exported.Validate())
 
 	fresh := newTestEnv(t)
+	fresh.openProposal(t, 1, end) // x/gov initialises first
 	require.NoError(t, fresh.k.InitGenesis(fresh.ctx, *exported))
 
 	tally, err := fresh.k.proposalTally(fresh.ctx, 1)
