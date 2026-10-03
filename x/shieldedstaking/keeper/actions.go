@@ -265,6 +265,15 @@ func (k Keeper) checkUndelegate(ctx context.Context, m *types.MsgUndelegate) (ma
 	if err != nil {
 		return math.Int{}, err
 	}
+	// This epoch's record must still be open (the epoch-end sweep only
+	// settles records of ended epochs; never reached, but cheap to refuse).
+	if epoch, err := k.Epoch.Get(ctx); err != nil {
+		return math.Int{}, err
+	} else if r, err := k.UnbondRecords.Get(ctx, collections.Join(m.Validator, epoch.Number)); err == nil && r.Status != types.UNBOND_STATUS_PENDING {
+		return math.Int{}, types.ErrNotMatured.Wrapf("%s/%d is already %s", m.Validator, epoch.Number, r.Status)
+	} else if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return math.Int{}, err
+	}
 	d := math.NewIntFromUint64(m.Amount)
 	if d.GT(s) {
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "more derth than exists")

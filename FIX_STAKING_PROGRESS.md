@@ -9,7 +9,7 @@ app/audit_regression_test.go (each now asserts the fail-safe outcome).
 - [x] 3 MED-HIGH gov snapshot gas, AssertInvariants bound/guard
 - [x] 4 MEDIUM zero-height export
 - [x] 5 Lows (F4 donation, F5 orphan, positions, F6, F7, F8, F9)
-- [ ] fixtures regenerated, build/vet/test, genesis-check
+- [x] build/vet/test ./..., make genesis-check (genesis.json rebuilt: min_delegation, min_position 100 ERTH, new fields). Staking fixtures: not regenerated, every proof the tests use is unchanged (app suite passes on the committed cache).
 
 ## Log
 - F0 canonical valoper: types.CanonicalValoper (bech32, chain valoper prefix,
@@ -65,3 +65,5 @@ app/audit_regression_test.go (each now asserts the fail-safe outcome).
   canonical (tx-hash malleability by relayers). Not changed: app
   genesis_withdraw.go foreign map and export.go jail allow-list (operator
   tooling, validation only).
+- Undelegate refuses if this epoch's record is no longer PENDING
+  (defensive: the sweep never settles the current epoch's records).
