@@ -57,6 +57,8 @@ type DistrKeeper interface {
 	CalculateDelegationRewards(ctx context.Context, val stakingtypes.ValidatorI, del stakingtypes.DelegationI, endingPeriod uint64) (sdk.DecCoins, error)
 	FundCommunityPool(ctx context.Context, amount sdk.Coins, sender sdk.AccAddress) error
 	GetDelegatorWithdrawAddr(ctx context.Context, delAddr sdk.AccAddress) (sdk.AccAddress, error)
+	// GetWithdrawAddrEnabled is x/distribution's withdraw_addr_enabled.
+	GetWithdrawAddrEnabled(ctx context.Context) (bool, error)
 	// DeleteDelegatorWithdrawAddr resets delAddr's withdraw address to
 	// itself (the default when none is stored).
 	DeleteDelegatorWithdrawAddr(ctx context.Context, delAddr, withdrawAddr sdk.AccAddress) error

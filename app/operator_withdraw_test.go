@@ -44,12 +44,18 @@ func TestOperatorWithdrawAddrRefused(t *testing.T) {
 	p, err := e.app.DistrKeeper.Params.Get(e.ctx())
 	require.NoError(t, err)
 	require.False(t, p.WithdrawAddrEnabled)
+	// The ante and the app's router refuse it with this chain's error;
+	// x/distribution itself (baseapp's router, past the ante) with its own.
 	fb := e.run(e.signedTx(e.user, 300_000, 5_000, setWA(user, opB)))
-	require.Equal(t, distrtypes.ErrSetWithdrawAddrDisabled.ABCICode(), fb.Code, fb.Log)
-	for _, m := range []sdk.Msg{setWA(user, opB), setWA(opB, user)} {
+	require.Equal(t, sstypes.ErrOperatorWithdraw.ABCICode(), fb.Code, fb.Log)
+	require.Contains(t, fb.Log, "withdraw addresses cannot be changed")
+	for _, m := range []sdk.Msg{setWA(user, opB), setWA(opB, user), setWA(user, user)} {
 		cc, _ := e.ctx().CacheContext()
 		_, err := e.app.MsgServiceRouter().Handler(m)(cc, m)
 		require.ErrorIs(t, err, distrtypes.ErrSetWithdrawAddrDisabled)
+		cc, _ = e.ctx().CacheContext()
+		_, err = e.app.rewardsRouter.Handler(m)(cc, m)
+		require.ErrorIs(t, err, sstypes.ErrOperatorWithdraw)
 	}
 
 	// --- governance re-enables withdraw addresses.
@@ -231,4 +237,61 @@ func TestOperatorRewardClaimRefused(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, sstypes.ErrOperatorRewardClaim)
 	e.invariants()
+}
+
+// Every SDK msg this chain blocks fails with a registered error whose text
+// says why and what to do instead, the same text whether the ante refuses it
+// or the staking hook / app router does. An operator's own undelegation
+// (the 21-day exit) is not blocked.
+func TestBlockedMsgErrors(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, vBKey := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.next(time.Hour)
+	opB := sdk.AccAddress(vB)
+	user, valoper := e.bech(e.userAddr()), e.valoper(vB)
+	amt := sdk.NewInt64Coin("uerth", ssErth)
+	staking := sstypes.ErrTransparentStaking
+	const stakingText = "delegation is private on Earth: stake with the Earth Wallet (shielded staking)"
+	const claimText = "validator rewards and commission auto-compound into self-bond and cannot be withdrawn"
+	const waText = "withdraw addresses cannot be changed"
+	for _, c := range []struct {
+		signer bool // false: the user signs; true: the operator
+		m      sdk.Msg
+		err    error
+		text   string
+	}{
+		{false, stakingtypes.NewMsgDelegate(user, valoper, amt), staking, stakingText},
+		{false, stakingtypes.NewMsgUndelegate(user, valoper, amt), staking, stakingText},
+		{false, stakingtypes.NewMsgCancelUnbondingDelegation(user, valoper, 1, amt), staking, stakingText},
+		{true, stakingtypes.NewMsgBeginRedelegate(e.bech(opB), valoper, e.valoper(e.genesisValidator()), amt), staking, stakingText},
+		{false, distrtypes.NewMsgSetWithdrawAddress(e.userAddr(), opB), sstypes.ErrOperatorWithdraw, waText},
+		{true, distrtypes.NewMsgSetWithdrawAddress(opB, e.userAddr()), sstypes.ErrOperatorWithdraw, waText},
+		{true, distrtypes.NewMsgWithdrawDelegatorReward(e.bech(opB), valoper), sstypes.ErrOperatorRewardClaim, claimText},
+		{true, distrtypes.NewMsgWithdrawValidatorCommission(valoper), sstypes.ErrOperatorRewardClaim, claimText},
+	} {
+		key := e.user
+		if c.signer {
+			key = vBKey
+		}
+		res := e.checkTx(e.signedTx(key, 400_000, 5_000, c.m))
+		require.Equal(t, c.err.(interface{ ABCICode() uint32 }).ABCICode(), res.Code, "%T: %s", c.m, res.Log)
+		require.Contains(t, res.Log, c.text, "%T", c.m)
+	}
+
+	// Past the ante, the in-module refusals carry the same text: the staking
+	// hook (x/staking itself) and the app's router.
+	cc, _ := e.ctx().CacheContext()
+	m := stakingtypes.NewMsgDelegate(user, valoper, amt)
+	_, err := e.app.MsgServiceRouter().Handler(m)(cc, m)
+	require.ErrorIs(t, err, staking)
+	require.Contains(t, err.Error(), stakingText)
+	cc, _ = e.ctx().CacheContext()
+	mc := distrtypes.NewMsgWithdrawValidatorCommission(valoper)
+	_, err = e.app.rewardsRouter.Handler(mc)(cc, mc)
+	require.Contains(t, err.Error(), claimText)
+
+	// The operator's exit: undelegating its own self-bond still works.
+	fb := e.run(e.signedTx(vBKey, 400_000, 5_000, stakingtypes.NewMsgUndelegate(e.bech(opB), valoper, amt)))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
 }

@@ -8,11 +8,6 @@ import (
 
 // x/assembly sentinel errors
 var (
-	// ErrNotRegistered means the signer holds no live proof-of-personhood
-	// registration. Weight in this chamber is a person, so there is nothing to
-	// scale down to: an unregistered account does not vote at all.
-	ErrNotRegistered = errors.Register(ModuleName, 1100, "signer holds no live personhood registration")
-
 	// ErrProposalNotVoting means the named x/gov proposal does not exist or is
 	// not in its voting period.
 	ErrProposalNotVoting = errors.Register(ModuleName, 1101, "proposal is not in its voting period")
@@ -30,10 +25,6 @@ var (
 	// it does not exist, it is not on the groundworks stream, or it has already
 	// been removed.
 	ErrNotRemovable = errors.Register(ModuleName, 1105, "option is not removable by the assembly")
-
-	// ErrVoterIsSubject means the proposal revokes the Document Signer the
-	// voter's own registration was made under.
-	ErrVoterIsSubject = errors.Register(ModuleName, 1106, "registration is under a Document Signer this proposal revokes")
 
 	// ErrTooManySubjects means the proposal's revocations cannot be excluded
 	// from its vote by one membership proof, which excludes one Document

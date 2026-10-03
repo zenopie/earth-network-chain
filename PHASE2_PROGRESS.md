@@ -86,3 +86,25 @@ Phase 2 complete (incl. the user's three additions). Plan file updated.
   after hooks), so left liquid. Non-uerth rewards/commission stay liquid in
   the operator account. Tests: TestOperatorRewardClaimRefused,
   TestSelfBondCompounds (commission compounded).
+- Dead-code cleanup (fresh genesis): unused registered errors removed —
+  allocation ErrUnknownKind; assembly ErrNotRegistered, ErrVoterIsSubject;
+  personhood ErrRegExpired, ErrInvalidAffiliate; pki ErrDuplicateDsc,
+  ErrUnknownDsc, ErrCertTooLarge; shieldedstaking ErrNoteSpent; the
+  ErrInvalidTransfer (1101) placeholder comment. MsgUnregister was already
+  gone. NOT done (blocked by the permission classifier, left for the user):
+  dropping the proto `reserved` statements (shieldedstaking Position 5/6,
+  assembly RemovalBallot 2, dex MsgAddLiquidityShielded 2/4, personhood
+  MsgRegister 11/12 + Params 2/8/9, pki Params 1/2); live field numbers are
+  unchanged either way.
+- Blocked SDK msgs say why and what to do (same registered error and text
+  in the ante, the staking hook and app.OperatorRewardsRouter):
+  ErrTransparentStaking 1110 (MsgDelegate/MsgUndelegate/
+  MsgCancelUnbondingDelegation by a non-operator, every MsgBeginRedelegate:
+  "delegation is private on Earth: stake with the Earth Wallet ..."),
+  ErrOperatorWithdraw 1116 (every MsgSetWithdrawAddress while
+  withdraw_addr_enabled=false, an operator's foreign one always: "withdraw
+  addresses cannot be changed on Earth ..."), ErrOperatorRewardClaim 1117
+  (operator MsgWithdrawDelegatorReward, MsgWithdrawValidatorCommission:
+  "validator rewards and commission auto-compound into self-bond and cannot
+  be withdrawn: to take them out, undelegate the self-bond ..."). Operators'
+  self-bond undelegation stays allowed. Test: TestBlockedMsgErrors.

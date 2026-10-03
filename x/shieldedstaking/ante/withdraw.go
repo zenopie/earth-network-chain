@@ -21,9 +21,11 @@ type WithdrawChecker interface {
 	CheckRewardWithdraw(ctx context.Context, del sdk.AccAddress) error
 }
 
-// CheckOperatorRewardsMsg refuses, for a validator operator,
-// MsgSetWithdrawAddress to another account and MsgWithdrawDelegatorReward,
-// and refuses every MsgWithdrawValidatorCommission: a validator's self-bond
+// CheckOperatorRewardsMsg refuses MsgSetWithdrawAddress from anyone while
+// x/distribution's withdraw addresses are disabled (genesis) and, for a
+// validator operator, to another account always; an operator's
+// MsgWithdrawDelegatorReward; and every MsgWithdrawValidatorCommission: a
+// validator's self-bond
 // rewards and commission compound into its self-bond at the epoch end, so
 // they stay with distribution until then and land in the operator account.
 // An operator's only exit for either is unbonding its self-bond. Other msgs

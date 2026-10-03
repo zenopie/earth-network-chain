@@ -54,9 +54,19 @@ func (k Keeper) IsOperator(ctx context.Context, acc sdk.AccAddress) (bool, error
 	return err == nil, err
 }
 
-// CheckWithdrawAddr refuses del setting its withdraw address to withdraw
-// when del is a validator operator and withdraw is another account.
+// CheckWithdrawAddr refuses del setting its withdraw address to withdraw:
+// for every account while x/distribution's withdraw_addr_enabled is false
+// (genesis; x/distribution would refuse it too, with a less helpful error),
+// and otherwise when del is a validator operator and withdraw is another
+// account.
 func (k Keeper) CheckWithdrawAddr(ctx context.Context, del, withdraw sdk.AccAddress) error {
+	enabled, err := k.distr.GetWithdrawAddrEnabled(ctx)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return types.ErrOperatorWithdraw
+	}
 	if del.Equals(withdraw) {
 		return nil
 	}
