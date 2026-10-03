@@ -25,7 +25,9 @@ func TestWeightedVoter(t *testing.T) {
 		require.NoError(t, err)
 		return o.AmountAllocated
 	}
-	ow := func(id uint64, w int64) types.OptionWeight { return types.OptionWeight{OptionId: id, Weight: math.NewInt(w)} }
+	ow := func(id uint64, w int64) types.OptionWeight {
+		return types.OptionWeight{OptionId: id, Weight: math.NewInt(w)}
+	}
 
 	require.NoError(t, k.SetWeightedVoter(ctx, gw, vkey, []types.OptionWeight{ow(1, 7), ow(3, 1_000_003), ow(2, 0)}))
 	v, err := k.Voters.Get(ctx, voterKey(gw, vkey))
@@ -77,7 +79,9 @@ func TestWeightedVoter(t *testing.T) {
 }
 
 func TestWeightedVoterGenesisValidation(t *testing.T) {
-	ow := func(id uint64, w int64) types.OptionWeight { return types.OptionWeight{OptionId: id, Weight: math.NewInt(w)} }
+	ow := func(id uint64, w int64) types.OptionWeight {
+		return types.OptionWeight{OptionId: id, Weight: math.NewInt(w)}
+	}
 	for name, v := range map[string]types.Voter{
 		"both":      {Percentages: []types.AllocationWeight{{OptionId: 1, Percent: 100}}, OptionWeights: []types.OptionWeight{ow(1, 1)}, Weight: math.NewInt(1)},
 		"bad sum":   {OptionWeights: []types.OptionWeight{ow(1, 1), ow(2, 2)}, Weight: math.NewInt(4)},

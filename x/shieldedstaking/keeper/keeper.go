@@ -188,7 +188,7 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey)),
 		SnapshotsBySeq: collections.NewKeySet(sb, types.SnapshotsBySeqKey, "snapshots_by_seq",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key)),
-		EpochSweep:    collections.NewItem(sb, types.EpochSweepKey, "epoch_sweep", codec.CollValue[types.EpochSweep](cdc)),
+		EpochSweep: collections.NewItem(sb, types.EpochSweepKey, "epoch_sweep", codec.CollValue[types.EpochSweep](cdc)),
 		GwTotals: collections.NewMap(sb, types.GwTotalsKey, "gw_totals",
 			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key), sdk.IntValue),
 		GwEpoch: collections.NewMap(sb, types.GwEpochKey, "gw_epoch", collections.StringKey, collections.Uint64Value),
