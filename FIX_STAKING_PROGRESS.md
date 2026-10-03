@@ -54,3 +54,14 @@ app/audit_regression_test.go (each now asserts the fail-safe outcome).
   epoch end, invariant 5 aware.
 - F9: UpdatePosition requires weight>0 with splits. Test
   TestAuditUpdatePositionNeedsWeight.
+- Other modules (bech32 alias sweep): nothing exploitable (live state keyed
+  by bytes). Hardened: allocation stores canonical recipient/claimer and
+  compares the claimer by bytes (an uppercase stored claimer locked out the
+  real one); genesis dedupe by lowercase for allocation voters, dex bids and
+  LP unbondings, personhood referrer addresses (case pairs overwrote one
+  another at InitGenesis, stranding weight/bids/shares); dex stores the
+  canonical bidder / LP-unbonding address; proof-bound address strings
+  (MsgSend.receiver, MsgRegister.affiliate, MsgBindReferrer.address) must be
+  canonical (tx-hash malleability by relayers). Not changed: app
+  genesis_withdraw.go foreign map and export.go jail allow-list (operator
+  tooling, validation only).

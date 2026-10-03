@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 
@@ -36,8 +37,16 @@ func (k msgServer) ClaimAllocation(ctx context.Context, msg *types.MsgClaimAlloc
 	// A claimer, when set, restricts who may trigger the claim; when empty anyone
 	// may. Either way the payout goes to opt.Recipient, so a permissionless
 	// trigger cannot redirect funds — it only spends the triggerer's gas.
-	if opt.Claimer != "" && msg.Creator != opt.Claimer {
-		return nil, errorsmod.Wrap(types.ErrInvalidSigner, "only the option claimer can claim")
+	// By bytes: bech32 spells one address two ways (lower and upper case).
+	if opt.Claimer != "" {
+		creator, err := k.addressCodec.StringToBytes(msg.Creator)
+		if err != nil {
+			return nil, errorsmod.Wrap(err, "invalid creator address")
+		}
+		claimer, err := k.addressCodec.StringToBytes(opt.Claimer)
+		if err != nil || !bytes.Equal(creator, claimer) {
+			return nil, errorsmod.Wrap(types.ErrInvalidSigner, "only the option claimer can claim")
+		}
 	}
 
 	if err := k.AdvanceIndex(ctx, msg.Stream); err != nil {

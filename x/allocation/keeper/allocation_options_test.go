@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 	"time"
 
@@ -518,5 +519,36 @@ func TestStreamsAreIndependent(t *testing.T) {
 	}
 	if !capitalTotal.Equal(math.NewInt(5_000)) {
 		t.Fatalf("capital total weight = %s, want 5000 (bonded stake, not a flat vote)", capitalTotal)
+	}
+}
+
+// TestAddressOptionCanonicalAddresses: bech32 spells an address in lower or
+// upper case. The option stores the canonical (lowercase) spelling, and the
+// claimer check compares bytes, so the claimer may sign with either.
+func TestAddressOptionCanonicalAddresses(t *testing.T) {
+	e := newTestEnv(t)
+	k, ctx := e.k, e.ctx
+	if err := k.InitGenesis(ctx, *types.DefaultGenesis()); err != nil {
+		t.Fatal(err)
+	}
+	ms := NewMsgServerImpl(k)
+	_, recipient := e.addr("recipient")
+	_, claimer := e.addr("claimer")
+	stream := types.STREAM_ID_CARETAKER
+	res, err := ms.AddAddressOption(ctx, &types.MsgAddAddressOption{
+		Submitter: recipient, Stream: stream, Recipient: strings.ToUpper(recipient),
+		Claimer: strings.ToUpper(claimer), Description: "upper",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, _ := k.Options.Get(ctx, optionKey(stream, res.Id))
+	if o.Recipient != recipient || o.Claimer != claimer {
+		t.Fatalf("stored %q / %q, want canonical %q / %q", o.Recipient, o.Claimer, recipient, claimer)
+	}
+	for _, c := range []string{claimer, strings.ToUpper(claimer)} {
+		if _, err := ms.ClaimAllocation(ctx, &types.MsgClaimAllocation{Creator: c, Stream: stream, OptionId: res.Id}); err != nil {
+			t.Fatalf("claimer as %q: %v", c, err)
+		}
 	}
 }

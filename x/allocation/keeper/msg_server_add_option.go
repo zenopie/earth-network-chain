@@ -96,13 +96,25 @@ func (k msgServer) AddAddressOption(ctx context.Context, msg *types.MsgAddAddres
 		return nil, errorsmod.Wrap(types.ErrInvalidSigner,
 			"expected authority to add an address option to the groundworks stream")
 	}
-	if _, err := k.addressCodec.StringToBytes(msg.Recipient); err != nil {
+	// Stored canonical (the lowercase re-encoding of the bytes): the claim
+	// compares the claimer, and queries and events echo both.
+	recipientBz, err := k.addressCodec.StringToBytes(msg.Recipient)
+	if err != nil {
 		return nil, errorsmod.Wrap(err, "invalid recipient address")
 	}
+	recipient, err := k.addressCodec.BytesToString(recipientBz)
+	if err != nil {
+		return nil, err
+	}
 	// An empty claimer is the permissionless default: anyone may trigger the claim.
+	claimer := ""
 	if msg.Claimer != "" {
-		if _, err := k.addressCodec.StringToBytes(msg.Claimer); err != nil {
+		claimerBz, err := k.addressCodec.StringToBytes(msg.Claimer)
+		if err != nil {
 			return nil, errorsmod.Wrap(err, "invalid claimer address")
+		}
+		if claimer, err = k.addressCodec.BytesToString(claimerBz); err != nil {
+			return nil, err
 		}
 	}
 
@@ -136,8 +148,8 @@ func (k msgServer) AddAddressOption(ctx context.Context, msg *types.MsgAddAddres
 	id, err := k.appendOption(ctx, msg.Stream, types.AllocationOption{
 		Description: msg.Description,
 		Kind:        types.ALLOCATION_KIND_ADDRESS,
-		Recipient:   msg.Recipient,
-		Claimer:     msg.Claimer,
+		Recipient:   recipient,
+		Claimer:     claimer,
 	})
 	if err != nil {
 		return nil, err

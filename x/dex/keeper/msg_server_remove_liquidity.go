@@ -76,8 +76,12 @@ func (k msgServer) RemoveLiquidity(ctx context.Context, msg *types.MsgRemoveLiqu
 		}
 		entry.Shares = entry.Shares.Add(msg.Shares)
 	case errors.Is(err, collections.ErrNotFound):
+		canon, err := k.addressCodec.BytesToString(creatorBz)
+		if err != nil {
+			return nil, err
+		}
 		entry = types.LpUnbonding{
-			Address:        msg.Creator,
+			Address:        canon,
 			PoolId:         msg.PoolId,
 			Shares:         msg.Shares,
 			CompletionTime: completion,
