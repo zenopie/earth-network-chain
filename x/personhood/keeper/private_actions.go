@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 
 	"cosmossdk.io/collections"
 	errorsmod "cosmossdk.io/errors"
@@ -137,11 +138,16 @@ func (k Keeper) caretakerStatement(ctx context.Context, m *types.MsgSetCaretaker
 	// Strictly before the bound (audit 4, C7): at max_activation == bound a
 	// successor activated at the bound could file a lease in the very block
 	// its predecessor's last lease lapses, both counted until the sweep.
-	// Only a new split is bounded: refreshing, changing or clearing one the
-	// prover holds (cast, or moved to it) creates none.
+	// Only a new split is bounded: refreshing, changing or clearing a live
+	// one the prover holds (cast, or moved to it) creates none. A lapsed
+	// split the sweep has not reached yet is not held (audit 5 P2, the
+	// handle's switch-and-switch-back: refreshing it unbounded would revive
+	// it beside a successor's).
 	nf := m.Membership.Nullifier
-	holds, err := k.CaretakerVotes.Has(ctx, nf)
-	if err != nil {
+	holds := false
+	if exp, err := k.CaretakerVotes.Get(ctx, nf); err == nil {
+		holds = exp > sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	} else if !errors.Is(err, collections.ErrNotFound) {
 		return MembershipStatement{}, err
 	}
 	if !holds && len(m.Percentages) > 0 {

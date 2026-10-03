@@ -36,7 +36,8 @@ import (
 //     it on its own.
 //   - renewal period while expires_at <= now < expires_at +
 //     handle_renewal_seconds: it does not resolve (registrations naming it
-//     are refused; wallets warn), and only the same nullifier may renew it.
+//     are refused; wallets warn), only the same nullifier may renew it, and
+//     only under the claim bound (as a claim), and it cannot be moved.
 //   - free after that: swept, anyone may claim it.
 //
 // A change to another handle frees the old one at once (no reservation),
@@ -344,34 +345,55 @@ func (k Keeper) noteHandleLease(ctx context.Context, params types.Params) error 
 	return k.HandleLeaseMax.Set(ctx, l)
 }
 
-// handleStatement: scope handle, any activation; the predecessor bound only
-// for a claim by a nullifier holding no handle (see handleClaimBound).
+// handleStatement: scope handle, any activation; the predecessor bound (see
+// handleClaimBound) for every bind that makes a handle live: a claim by a
+// nullifier holding none, and a renewal or change by one whose handle is not
+// live (its renewal period, or free but unswept). Only a nullifier holding a
+// live handle renews or changes it unbounded: that handle was live all along,
+// so the bind adds none. Audit 5 P2: a held handle in its renewal period was
+// renewed unbounded, so an identity that switched away (B claims a second
+// handle once its own bound passed) and back revived its first one: two live
+// handles per passport.
 func (k Keeper) handleStatement(ctx context.Context, m *types.MsgBindHandle) (MembershipStatement, error) {
 	signal, err := k.SignalOf(ctx, m)
 	if err != nil {
 		return MembershipStatement{}, err
 	}
-	nf := m.Membership.Nullifier
-	holds, err := k.HandleByNf.Has(ctx, nf)
-	if err != nil {
-		return MembershipStatement{}, err
-	}
-	if m.Handle != "" && !holds {
-		if moved, err := k.HandleMovedOut.Has(ctx, nf); err != nil {
-			return MembershipStatement{}, err
-		} else if moved {
-			return MembershipStatement{}, types.ErrHandleMovedOut
-		}
-		bound, err := k.handleClaimBound(ctx)
+	if m.Handle != "" {
+		nf := m.Membership.Nullifier
+		holdsLive, err := k.holdsLiveHandle(ctx, nf)
 		if err != nil {
 			return MembershipStatement{}, err
 		}
-		if err := checkPredecessorBound(m.MaxPredecessor, bound); err != nil {
-			return MembershipStatement{}, err
+		if !holdsLive {
+			if moved, err := k.HandleMovedOut.Has(ctx, nf); err != nil {
+				return MembershipStatement{}, err
+			} else if moved {
+				return MembershipStatement{}, types.ErrHandleMovedOut
+			}
+			bound, err := k.handleClaimBound(ctx)
+			if err != nil {
+				return MembershipStatement{}, err
+			}
+			if err := checkPredecessorBound(m.MaxPredecessor, bound); err != nil {
+				return MembershipStatement{}, err
+			}
 		}
 	}
 	return MembershipStatement{Scope: privacy.HandleScope(), Signal: signal,
 		MaxActivation: types.NoBound, MaxPredecessor: int64(m.MaxPredecessor)}, nil
+}
+
+// holdsLiveHandle reports whether nf holds a handle that resolves now.
+func (k Keeper) holdsLiveHandle(ctx context.Context, nf []byte) (bool, error) {
+	cur, err := k.HandleByNf.Get(ctx, nf)
+	if errors.Is(err, collections.ErrNotFound) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	_, live, err := k.liveHandle(ctx, cur)
+	return live, err
 }
 
 func (k Keeper) checkBindHandle(ctx context.Context, m *types.MsgBindHandle) (MembershipStatement, error) {
@@ -434,9 +456,11 @@ func (a moveHandleAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.
 	return a.k.MembershipActionGas(ctx, 4)
 }
 
-// checkMoveHandle: the prover holds handle (live or in its renewal period),
-// and new_owner holds none and never moved one away. Any activation and
-// predecessor: a move creates no handle.
+// checkMoveHandle: the prover holds handle and it is live, and new_owner
+// holds none and never moved one away. Any activation and predecessor: a move
+// creates no live handle. A handle in its renewal period does not move (audit
+// 5 P2): the new owner could renew it unbounded, reviving a handle a switched
+// identity had let lapse.
 func (k Keeper) checkMoveHandle(ctx context.Context, m *types.MsgMoveHandle) (MembershipStatement, error) {
 	cur, err := k.HandleByNf.Get(ctx, m.Membership.Nullifier)
 	if errors.Is(err, collections.ErrNotFound) || (err == nil && cur != m.Handle) {
@@ -450,8 +474,8 @@ func (k Keeper) checkMoveHandle(ctx context.Context, m *types.MsgMoveHandle) (Me
 	}
 	if st, _, err := k.handleStatus(ctx, rec); err != nil {
 		return MembershipStatement{}, err
-	} else if st == HandleFree {
-		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg, "%q is past its renewal period", m.Handle)
+	} else if st != HandleLive {
+		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg, "%q is not live (%s): renew it before moving it", m.Handle, st)
 	}
 	if err := k.checkNewHandleOwner(ctx, m.NewOwner); err != nil {
 		return MembershipStatement{}, err
