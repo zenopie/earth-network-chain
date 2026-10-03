@@ -52,6 +52,10 @@ const (
 	// and hash into its sighash.
 	MaxCiphertextBytes = 1024
 
+	// CheckTxProofCacheSize is how many verified proofs a node remembers for
+	// CheckTx (ultrahonk.VerifiedCache): a few blocks' worth of actions.
+	CheckTxProofCacheSize = 8192
+
 	// RootPruneLimit caps how many expired roots EndBlock deletes per block.
 	// One root is recorded per block at most, so any cap >= 1 keeps up; the
 	// slack drains a backlog (after a params change shortening the window).

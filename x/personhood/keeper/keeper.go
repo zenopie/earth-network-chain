@@ -11,6 +11,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
+	"github.com/earth-network/earth/zk/ultrahonk"
 )
 
 // Keeper is proof of personhood: the registered passports, the identity tree
@@ -97,6 +98,10 @@ type Keeper struct {
 	// pkiKeeper verifies the Document Signer behind each registration. Nil
 	// only in tests.
 	pkiKeeper types.PkiKeeper
+
+	// checkTxProofs remembers passport proofs that verified in CheckTx (never
+	// consulted in a block). See ultrahonk.VerifiedCache.
+	checkTxProofs *ultrahonk.VerifiedCache
 }
 
 func NewKeeper(
@@ -168,6 +173,8 @@ func NewKeeper(
 
 		UsedBindings:      collections.NewMap(sb, types.UsedBindingsKey, "used_bindings", collections.BytesKey, collections.Int64Value),
 		UsedBindingExpiry: collections.NewKeySet(sb, types.UsedBindingExpiryKey, "used_binding_expiry", timeBytes),
+
+		checkTxProofs: ultrahonk.NewVerifiedCache(256),
 
 		LastBuyback:     collections.NewItem(sb, types.LastBuybackKey, "last_buyback", collections.Int64Value),
 		TwapObservation: collections.NewItem(sb, types.TwapObservationKey, "twap_observation", sdk.LegacyDecValue),

@@ -48,8 +48,8 @@ func (a registerAction) CheckPrivateAction(ctx context.Context, msg shieldedtype
 	return a.k.checkRegistration(ctx, msg.(*types.MsgRegister))
 }
 
-func (a registerAction) VerifyPrivateAction(_ context.Context, msg shieldedtypes.PrivateMsg, prepared any) error {
-	return verifyRegistrationProof(msg.(*types.MsgRegister), prepared.(preparedRegistration))
+func (a registerAction) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, prepared any) error {
+	return a.k.verifyRegistrationProofIn(ctx, msg.(*types.MsgRegister), prepared.(preparedRegistration))
 }
 
 // --- MsgClaimAnml --------------------------------------------------------

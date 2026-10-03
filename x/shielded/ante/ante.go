@@ -54,8 +54,10 @@
 // is no filter (anyone can sign a forged balance over unproven value
 // commitments), so CheckTx orders the work cheapest first (shape, anchors,
 // nullifiers, assets, the release map, the action's state checks, binding
-// signatures) and verifies proofs one at a time, stopping at the first
-// failure: a junk tx costs a node at most one proof verification. Public
+// signatures) and verifies proofs one at a time, the msg's own action proofs
+// before its bundles', stopping at the first failure, and remembers every
+// proof it saw verify: a junk tx costs a node at most one verification of a
+// proof it has not already seen verify. Public
 // nodes should still rate-limit CheckTx per peer (sentry nodes in front of
 // validators, as for any free mempool spam). In a block, every proof is paid
 // for before any is verified: the fixed private gas charge is consumed first
@@ -248,9 +250,10 @@ func requireCanonicalEncoding(ctx sdk.Context, p *txtypes.Tx) error {
 //     min-gas-price x gas in CheckTx;
 //  4. the stateful checks (anchors, nullifiers, assets, room, the release
 //     map), then the action's;
-//  5. verify every binding signature, then every action proof (in parallel
-//     in a block; one at a time, stopping at the first failure, in CheckTx),
-//     then the action's proofs (skipped on recheck, where neither the proofs
+//  5. verify the action's proofs, then every binding signature, then every
+//     action proof (in parallel in a block; one at a time, stopping at the
+//     first failure, in CheckTx, where proofs seen to verify are cached)
+//     (skipped on recheck, where neither the proofs
 //     nor their public inputs can have changed; charged but not required in
 //     simulate, so a wallet can estimate a tx before proving over its final
 //     fee);
@@ -341,13 +344,21 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	}
 
 	if !ctx.IsReCheckTx() && !simulate {
-		if err := d.K.VerifyPrivateMsg(pool, prepared); err != nil {
-			return ctx, err
-		}
+		// The action's own proofs first: a fee bundle is reusable until it
+		// lands (its nullifiers unspent), so a valid bundle next to a junk
+		// action proof would otherwise cost every bundle proof before the junk
+		// one, on every attempt. Action first, and in CheckTx every proof that
+		// verifies is remembered (ultrahonk.VerifiedCache), so a junk tx costs
+		// a node at most one new verification beyond proofs it already saw
+		// verify. In a block the order changes nothing but which error a doubly
+		// invalid tx reports.
 		if hasAction {
 			if err := action.VerifyPrivateAction(pool, msg, actionPrepared); err != nil {
 				return ctx, err
 			}
+		}
+		if err := d.K.VerifyPrivateMsg(pool, prepared); err != nil {
+			return ctx, err
 		}
 	}
 

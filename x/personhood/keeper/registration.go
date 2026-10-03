@@ -197,10 +197,26 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		dsc: facts, switched: switched, affiliate: affiliate}, nil
 }
 
+// verifyRegistrationProofIn is verifyRegistrationProof, through the CheckTx
+// cache of proofs that verified when ctx is CheckTx (never in a block).
+func (k Keeper) verifyRegistrationProofIn(ctx context.Context, msg *types.MsgRegister, p preparedRegistration) error {
+	verify := ultrahonk.Verify
+	if sdk.UnwrapSDKContext(ctx).IsCheckTx() && k.checkTxProofs != nil {
+		verify = func(vk, proof []byte, in [][]byte) (bool, error) {
+			return k.checkTxProofs.Verify(ultrahonk.Verify, vk, proof, in)
+		}
+	}
+	return verifyRegistrationProofWith(verify, msg, p)
+}
+
 // verifyRegistrationProof verifies the passport proof checkRegistration
 // prepared.
 func verifyRegistrationProof(msg *types.MsgRegister, p preparedRegistration) error {
-	valid, err := ultrahonk.Verify(p.vk, msg.Proof, p.pubInputs)
+	return verifyRegistrationProofWith(ultrahonk.Verify, msg, p)
+}
+
+func verifyRegistrationProofWith(verify func(vk, proof []byte, in [][]byte) (bool, error), msg *types.MsgRegister, p preparedRegistration) error {
+	valid, err := verify(p.vk, msg.Proof, p.pubInputs)
 	if err != nil {
 		return types.ErrInvalidProof.Wrap(err.Error())
 	}

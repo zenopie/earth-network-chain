@@ -180,7 +180,7 @@ func (k Keeper) VerifyPrivateMsg(ctx context.Context, p PreparedPrivateMsg) erro
 			return errorsmod.Wrapf(types.ErrInvalidBindingSig, "bundle %d: %v", i, err)
 		}
 	}
-	verify := func(proof []byte, in [][]byte) (bool, error) { return k.proofVerifier(vk, proof, in) }
+	verify := func(proof []byte, in [][]byte) (bool, error) { return k.verifyProof(ctx, vk, proof, in) }
 	if sdk.UnwrapSDKContext(ctx).IsCheckTx() {
 		err = orchard.VerifyProofsSequential(p.Bundles, p.Sighash, verify)
 	} else {
@@ -302,7 +302,7 @@ func (k Keeper) VerifyCircuit(ctx context.Context, circuit string, proof []byte,
 	if err := types.CheckProofLength(proof); err != nil {
 		return errorsmod.Wrap(types.ErrInvalidProof, err.Error())
 	}
-	ok, err := k.proofVerifier(vk, proof, publicInputs)
+	ok, err := k.verifyProof(ctx, vk, proof, publicInputs)
 	if err != nil {
 		return errorsmod.Wrap(types.ErrInvalidProof, err.Error())
 	}
@@ -310,6 +310,24 @@ func (k Keeper) VerifyCircuit(ctx context.Context, circuit string, proof []byte,
 		return types.ErrInvalidProof
 	}
 	return nil
+}
+
+// CheckTxVerifications is how many proof verifications CheckTx has run on
+// this node (proofs answered from its cache not counted).
+func (k Keeper) CheckTxVerifications() uint64 {
+	if k.checkTxProofs == nil {
+		return 0
+	}
+	return k.checkTxProofs.Runs()
+}
+
+// verifyProof is proofVerifier, through the CheckTx cache of proofs that
+// verified when ctx is CheckTx; in a block it always verifies.
+func (k Keeper) verifyProof(ctx context.Context, vk, proof []byte, publicInputs [][]byte) (bool, error) {
+	if sdk.UnwrapSDKContext(ctx).IsCheckTx() && k.checkTxProofs != nil {
+		return k.checkTxProofs.Verify(k.proofVerifier, vk, proof, publicInputs)
+	}
+	return k.proofVerifier(vk, proof, publicInputs)
 }
 
 // PrivateGasPrices is what the pool charges for one proof verification and

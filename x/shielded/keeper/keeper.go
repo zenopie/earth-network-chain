@@ -31,6 +31,9 @@ type Keeper struct {
 
 	// proofVerifier is zk/ultrahonk.Verify (tests count calls through it).
 	proofVerifier func(vk, proof []byte, publicInputs [][]byte) (bool, error)
+	// checkTxProofs remembers proofs that verified in CheckTx (never
+	// consulted in a block). See ultrahonk.VerifiedCache.
+	checkTxProofs *ultrahonk.VerifiedCache
 
 	poolAddr sdk.AccAddress
 	// shieldedOnly are the denoms that may only move to shieldedOnlyTo.
@@ -99,6 +102,7 @@ func NewKeeper(
 		authKeeper:            authKeeper,
 		bankKeeper:            bankKeeper,
 		proofVerifier:         ultrahonk.Verify,
+		checkTxProofs:         ultrahonk.NewVerifiedCache(types.CheckTxProofCacheSize),
 		poolAddr:              authtypes.NewModuleAddress(types.ModuleName),
 		shieldedOnly:          map[string]bool{},
 		shieldedOnlyTo:        map[string]bool{},

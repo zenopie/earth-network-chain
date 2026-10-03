@@ -10,7 +10,7 @@ as a regression test asserting the safe outcome.
   x/personhood/keeper/registration_replay_internal_test.go, app TestPrivatePersonhood.
   Also: registration_sweep_limit validated (0 = default, else 5..10000),
   current_date_max_skew_seconds <= 1 year.
-- [ ] R2 CheckTx bypass
+- [~] R2 CheckTx bypass: action proofs verified before bundle proofs; CheckTx-only ultrahonk.VerifiedCache (shielded keeper: bundle + VerifyCircuit; personhood: passport proof). Test: app/reaudit_round2_test.go TestCheckTxValidBundleJunkActionProofCostsOne (NOT YET RUN: disk full)
 - [ ] R3 vesting validators
 - [ ] R4 tally attribution
 - [ ] R5 GwEpoch leak
