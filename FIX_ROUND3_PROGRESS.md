@@ -47,4 +47,13 @@ ported as a regression test asserting the safe outcome.
   for one size. Tests: x/shielded/keeper/audit3_genesis_test.go
 - [ ] 10 personhood L1/L2/L4/L5/L6/I1
 - [ ] 11 dex L3 rounding / L7 buyback cap
-- [ ] 12 info: shieldedstaking perms, genesis delegation rule, F5
+- [x] 12 info:
+  - shieldedstaking module account has no Minter/Burner (it never mints or
+    burns: stake notes live in its tree; payouts move by MintNote).
+  - x/shieldedstaking InitGenesis enforces the delegation rule on what
+    x/staking loaded without hooks: delegations and unbonding delegations
+    only module or operator self-bond; no redelegations. Test:
+    app/audit3_genesis_delegations_test.go.
+  - F5: PrepareProposal wraps the SDK default (no-op mempool) and leaves out
+    private txs past max_private_actions_per_block (conservative count; not
+    checked in ProcessProposal). Test: app/audit3_prepare_proposal_test.go.

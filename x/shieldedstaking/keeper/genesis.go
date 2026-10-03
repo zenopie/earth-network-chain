@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 	"github.com/earth-network/earth/zk/privacy"
@@ -22,6 +24,9 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	if err := k.checkUnbondingEntries(ctx, gs.Params); err != nil {
+		return err
+	}
+	if err := k.checkGenesisDelegations(ctx); err != nil {
 		return err
 	}
 	if err := k.Params.Set(ctx, gs.Params); err != nil {
@@ -368,4 +373,60 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return nil, err
 	}
 	return gs, nil
+}
+
+// checkGenesisDelegations enforces the delegation rule on what x/staking
+// loaded (it runs no hooks for an exported genesis): every delegation and
+// unbonding delegation is this module's or an operator's on its own
+// validator, and there is no redelegation at all (a self-bond moved to
+// another validator stops being one; the module never redelegates).
+func (k Keeper) checkGenesisDelegations(ctx context.Context) error {
+	dels, err := k.staking.GetAllDelegations(ctx)
+	if err != nil {
+		return err
+	}
+	for _, d := range dels {
+		del, val, err := k.delegationAddrs(d.DelegatorAddress, d.ValidatorAddress)
+		if err != nil {
+			return err
+		}
+		if !k.AllowedDelegator(del, val) {
+			return errorsmod.Wrapf(types.ErrTransparentStaking, "genesis delegation %s -> %s", d.DelegatorAddress, d.ValidatorAddress)
+		}
+	}
+	var bad error
+	if err := k.staking.IterateUnbondingDelegations(ctx, func(_ int64, u stakingtypes.UnbondingDelegation) bool {
+		del, val, err := k.delegationAddrs(u.DelegatorAddress, u.ValidatorAddress)
+		if err != nil {
+			bad = err
+		} else if !k.AllowedDelegator(del, val) {
+			bad = errorsmod.Wrapf(types.ErrTransparentStaking, "genesis unbonding delegation %s -> %s", u.DelegatorAddress, u.ValidatorAddress)
+		}
+		return bad != nil
+	}); err != nil {
+		return err
+	}
+	if bad != nil {
+		return bad
+	}
+	if err := k.staking.IterateRedelegations(ctx, func(_ int64, r stakingtypes.Redelegation) bool {
+		bad = errorsmod.Wrapf(types.ErrTransparentStaking, "genesis redelegation %s: %s -> %s",
+			r.DelegatorAddress, r.ValidatorSrcAddress, r.ValidatorDstAddress)
+		return true
+	}); err != nil {
+		return err
+	}
+	return bad
+}
+
+func (k Keeper) delegationAddrs(del, val string) (sdk.AccAddress, sdk.ValAddress, error) {
+	d, err := k.addressCodec.StringToBytes(del)
+	if err != nil {
+		return nil, nil, fmt.Errorf("genesis delegator %q: %w", del, err)
+	}
+	v, err := k.valAddr(val)
+	if err != nil {
+		return nil, nil, fmt.Errorf("genesis validator %q: %w", val, err)
+	}
+	return d, v, nil
 }

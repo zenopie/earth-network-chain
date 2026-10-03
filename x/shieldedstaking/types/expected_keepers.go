@@ -58,6 +58,12 @@ type StakingKeeper interface {
 	// retirement (escrow.go).
 	UnbondingTime(ctx context.Context) (time.Duration, error)
 	MaxEntries(ctx context.Context) (uint32, error)
+	// The genesis check of the delegation rule (only this module and each
+	// operator's self-bond delegate; nobody redelegates): x/staking loads an
+	// exported genesis's delegations without running the hooks.
+	GetAllDelegations(ctx context.Context) ([]stakingtypes.Delegation, error)
+	IterateRedelegations(ctx context.Context, fn func(index int64, red stakingtypes.Redelegation) (stop bool)) error
+	IterateUnbondingDelegations(ctx context.Context, fn func(index int64, ubd stakingtypes.UnbondingDelegation) (stop bool)) error
 }
 
 // DistrKeeper is x/distribution: rewards and the community pool.

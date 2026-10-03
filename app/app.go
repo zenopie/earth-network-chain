@@ -308,6 +308,9 @@ func New(
 		}
 	}
 	baseAppOptions = append(baseAppOptions, baseapp.SetMempool(mempool.NoOpMempool{}))
+	// Proposals leave out private txs past the block's private action cap
+	// (app/prepare_proposal.go).
+	baseAppOptions = append(baseAppOptions, privateCapPrepareProposal(app.ShieldedKeeper, app.txConfig.TxDecoder()))
 
 	// build app
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)

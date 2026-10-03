@@ -108,13 +108,15 @@ var (
 		// coins only enter by a shield or module mint and leave by a spend).
 		{Account: shieldedmoduletypes.ModuleName},
 		// Private staking: the only delegator besides validators' self-bonds.
-		// Mints and burns derth/<valoper> and unbond/<valoper>/<epoch>. No
+		// No Minter or Burner: derth and unbond claims are stake notes in its
+		// own tree, never bank coins, and the ERTH it pays out moves into the
+		// pool by MintNote (a transfer). No
 		// Staking permission (the SDK checks it only on the bonded pools) and,
 		// like the pool, NOT blocked: x/distribution pays its rewards with
 		// SendCoinsFromModuleToAccount, which refuses blocked recipients, on
 		// every delegation change. Its own send restriction takes the
 		// blocked list's place (x/shieldedstaking/keeper/send_restriction.go).
-		{Account: shieldedstakingmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		{Account: shieldedstakingmoduletypes.ModuleName},
 		{Account: dexmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		// x/allocation mints an option's accrued ERTH when it is claimed and burns
 		// the fee for adding one. x/personhood mints ANML and the registration
