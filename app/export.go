@@ -86,6 +86,12 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 		panic(err)
 	}
 
+	// Private staking books its rewards into its validators' queues before
+	// they are withdrawn: withdrawn below, they would land unbooked.
+	if err := app.ShieldedStakingKeeper.BookRewardsForZeroHeight(ctx); err != nil {
+		panic(err)
+	}
+
 	// withdraw all delegator rewards
 	dels, err := app.StakingKeeper.GetAllDelegations(ctx)
 	if err != nil {
@@ -199,6 +205,12 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 		return false
 	})
 	if err != nil {
+		panic(err)
+	}
+
+	// Private staking's unbonding records name their entries' creation
+	// heights, reset above; its other heights move below the new chain's.
+	if err := app.ShieldedStakingKeeper.ResetHeightsForZeroHeight(ctx, height); err != nil {
 		panic(err)
 	}
 

@@ -470,8 +470,14 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 	if err := k.Validators.Set(ctx, valoper, vs); err != nil {
 		return err
 	}
-	if !s.IsPositive() && vs.PendingDelegation.IsZero() && vs.PendingUndelegation.IsZero() && !b.IsPositive() && len(all) == len(records) {
-		// Nothing left to account for at v.
+	orphans, err := k.hasOrphanRecords(ctx, valoper)
+	if err != nil {
+		return err
+	}
+	if !s.IsPositive() && vs.PendingDelegation.IsZero() && vs.PendingUndelegation.IsZero() && !b.IsPositive() &&
+		len(all) == len(records) && !orphans {
+		// Nothing left to account for at v (an orphan record keeps the book
+		// until its payout is swept).
 		if err := k.Validators.Remove(ctx, valoper); err != nil {
 			return err
 		}
@@ -512,6 +518,16 @@ func (k Keeper) orphanUnbonding(ctx context.Context, valoper string, maxEpoch ui
 		return err
 	}
 	return k.MaturityQueue.Set(ctx, collections.Join3(r.CompletionTime, valoper, maxEpoch))
+}
+
+func (k Keeper) hasOrphanRecords(ctx context.Context, valoper string) (bool, error) {
+	found := false
+	err := k.UnbondRecords.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](valoper),
+		func(_ collections.Pair[string, uint64], r types.UnbondRecord) (bool, error) {
+			found = r.Requested.IsZero()
+			return found, nil
+		})
+	return found, err
 }
 
 // sweepOrphanRecords sends the payout of v's matured orphan records (no note

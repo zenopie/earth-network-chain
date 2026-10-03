@@ -6,9 +6,19 @@ package app
 
 import (
 	"cosmossdk.io/collections"
+	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
 	"encoding/json"
 	"fmt"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	dbm "github.com/cosmos/cosmos-db"
+	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
+	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"sort"
 	"strings"
 	"testing"
@@ -220,4 +230,222 @@ func must[T any](v T, err error) T {
 		panic(err)
 	}
 	return v
+}
+
+// F3: zero-height export withdrew the module's rewards unbooked and zeroed
+// the SDK unbonding entries' creation heights under the module's records,
+// so the exported genesis failed x/shieldedstaking's InitGenesis invariants.
+// Now the rewards are booked into the queues first and the records follow
+// the reset: the export re-imports, and the unbonding still pays.
+func TestAuditZeroHeightExportBreaksInvariants(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(10_000 * ssErth)
+	v, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	res := e.auditDelegate(v, uint64(1_000*ssErth), "z")
+	e.next(25 * time.Hour)
+	// an unbonding in flight across the export
+	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth / 4,
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/z", 1))}}
+	_, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Undelegate(e.fakeAuthorized(u), u)
+	require.NoError(t, err)
+	e.next(25 * time.Hour)
+	for i := 0; i < 20; i++ {
+		e.next(5 * time.Second)
+	}
+	require.True(t, e.pendingRewards(v).IsPositive())
+	require.NoError(t, e.app.ShieldedStakingKeeper.AssertInvariants(e.ctx()))
+
+	// prep alone keeps the books whole
+	ctx, _ := e.ctx().CacheContext()
+	e.app.prepForZeroHeightGenesis(ctx, nil)
+	require.NoError(t, e.app.ShieldedStakingKeeper.AssertInvariants(ctx))
+
+	// and the export re-imports
+	exported, err := e.app.ExportAppStateAndValidators(true, nil, nil)
+	require.NoError(t, err)
+	var appState map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(exported.AppState, &appState))
+	fresh := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
+		baseapp.SetChainID(ssChainID))
+	fctx := fresh.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: 1, Time: e.now})
+	_, err = fresh.ModuleManager.InitGenesis(fctx, fresh.AppCodec(), appState)
+	require.NoError(t, err, "InitGenesis runs AssertInvariants")
+	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
+	var rec sstypes.UnbondRecord
+	require.NoError(t, fresh.ShieldedStakingKeeper.UnbondRecords.Walk(fctx, nil,
+		func(_ collections.Pair[string, uint64], r sstypes.UnbondRecord) (bool, error) {
+			rec = r
+			return true, nil
+		}))
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, rec.Status)
+	require.Zero(t, rec.CreationHeight)
+	gs, err := fresh.ShieldedStakingKeeper.ExportGenesis(fctx)
+	require.NoError(t, err)
+	q := math.ZeroInt()
+	for _, b := range gs.Validators {
+		q = q.Add(b.PendingDelegation)
+	}
+	require.True(t, q.IsPositive(), "the withdrawn rewards are queued")
+}
+
+// F5: a book whose last derth left kept the rewards its delegation earned
+// after the last notes were minted (and any donation), with no derth against
+// them: the next delegator minted at rate 1 and took them. Now a delegation
+// to such a book is refused until the epoch end settles it: the last records
+// take the whole delegation, and what is left queued goes to the community
+// pool; the book empties and is removed.
+func TestAuditOrphanBackingNotCaptured(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(10_000 * ssErth)
+	v, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	res := e.auditDelegate(v, uint64(100*ssErth), "o")
+	e.next(25 * time.Hour)
+	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
+	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth,
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/o", 1))}}
+	ures, err := srv.Undelegate(e.fakeAuthorized(u), u)
+	require.NoError(t, err)
+	for i := 0; i < 10; i++ {
+		e.next(5 * time.Second)
+	}
+	b, s, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	require.True(t, s.IsZero())
+	require.True(t, b.IsPositive(), "rewards accrued after the last notes were minted")
+	m := auditDelegateMsg(e.valoper(v), uint64(ssErth), "late")
+	_, err = srv.Delegate(e.fakeAuthorized(m), m)
+	require.ErrorContains(t, err, "settling")
+
+	e.next(25 * time.Hour) // the epoch end settles the book
+	require.True(t, e.modDelegation(v).IsZero(), "the whole delegation went out with the last record")
+	has, err := e.app.ShieldedStakingKeeper.Validators.Has(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	require.False(t, has, "the book is gone")
+	var rec sstypes.UnbondRecord
+	require.NoError(t, e.app.ShieldedStakingKeeper.UnbondRecords.Walk(e.ctx(), nil,
+		func(_ collections.Pair[string, uint64], r sstypes.UnbondRecord) (bool, error) {
+			rec = r
+			return true, nil
+		}))
+	require.Equal(t, math.NewIntFromUint64(ures.Value), rec.Requested)
+	require.True(t, rec.Undelegated.GT(rec.Requested), "the last holders take what their stake earned")
+	e.invariants()
+
+	// a new delegator starts at rate 1 with nothing to capture
+	e.auditDelegate(v, uint64(ssErth), "fresh")
+	b, s, err = e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	require.Equal(t, b, s)
+}
+
+// F7: an operator that removed its whole self-bond had its reward escrow
+// frozen for as long as any private derth stayed delegated to its validator
+// (x/staking keeps the validator until no delegation is left). Now the
+// escrow is paid out once the unbonding time has passed.
+func TestAuditEscrowReleasedOnRetirement(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(10_000 * ssErth)
+	vB, vBKey := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.auditDelegate(vB, uint64(10*ssErth), "dust-forever")
+	e.next(25 * time.Hour)
+	opB, escB, valoper := sdk.AccAddress(vB), sstypes.RewardEscrowAddress(vB), e.valoper(vB)
+	bal := func(a sdk.AccAddress) math.Int { return e.app.BankKeeper.GetBalance(e.ctx(), a, "uerth").Amount }
+	d, err := e.app.StakingKeeper.GetDelegation(e.ctx(), opB, vB)
+	require.NoError(t, err)
+	val, err := e.app.StakingKeeper.GetValidator(e.ctx(), vB)
+	require.NoError(t, err)
+	e.next(time.Hour)
+	fb := e.run(e.signedTx(vBKey, 400_000, 5_000, stakingtypes.NewMsgUndelegate(e.bech(opB), valoper,
+		sdk.NewCoin("uerth", val.TokensFromShares(d.Shares).TruncateInt()))))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
+	held := bal(escB)
+	require.True(t, held.IsPositive())
+	op0 := bal(opB)
+	var released bool
+	for i := 0; i < 25 && !released; i++ {
+		r := e.next(24 * time.Hour)
+		for _, ev := range eventsOf(r.Events, sstypes.EventTypeEscrowReleased) {
+			released = released || ev["validator"] == valoper
+		}
+	}
+	require.True(t, released, "escrow released after retirement")
+	_, err = e.app.StakingKeeper.GetValidator(e.ctx(), vB)
+	require.NoError(t, err, "the validator lives on: private derth is still delegated to it")
+	require.True(t, bal(escB).IsZero())
+	require.True(t, bal(opB).Sub(op0).GTE(held), "paid to the operator")
+	has, err := e.app.ShieldedStakingKeeper.RewardEscrows.Has(e.ctx(), escB)
+	require.NoError(t, err)
+	require.True(t, has, "still recorded: the validator exists")
+	e.invariants()
+}
+
+// F9: UpdatePosition accepted a split on a position with no weight
+// (LockPosition refused it).
+func TestAuditUpdatePositionNeedsWeight(t *testing.T) {
+	e := initStakeEnv(t)
+	k := e.app.ShieldedStakingKeeper
+	gov := authtypes.NewModuleAddress("gov")
+	_, err := allocationkeeper.NewMsgServerImpl(e.app.AllocationKeeper).AddAddressOption(e.ctx(), &allocationtypes.MsgAddAddressOption{
+		Submitter: e.bech(gov), Stream: allocationtypes.STREAM_ID_GROUNDWORKS, Description: "a public good", Recipient: e.bech(e.userAddr()),
+	})
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	ctx := e.ctx()
+	v := e.valoper(e.genesisValidator())
+	vs, err := k.ValidatorState(ctx, v)
+	require.NoError(t, err)
+	vs.EpochRate = math.LegacyNewDecWithPrec(1, 18) // weight floors to zero
+	require.NoError(t, k.Validators.Set(ctx, v, vs))
+	tag := privacy.FieldBytes(ssDet("audit-owner", 0))
+	require.NoError(t, k.Positions.Set(ctx, 7, sstypes.Position{Id: 7, Validator: v, Derth: math.NewInt(ssErth),
+		OwnerTag: tag, Weight: math.ZeroInt()}))
+	m := &sstypes.MsgUpdatePosition{PositionId: 7, Splits: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 100}},
+		Stake: sstypes.StakeProof{OwnerTag: tag}}
+	_, err = sskeeper.NewActionHandler(k).CheckPrivateAction(ctx, m)
+	require.ErrorIs(t, err, allocationtypes.ErrNoWeight)
+}
+
+// F5, legacy books: a delegation with no derth and no record against it (as
+// the old epoch end could leave) is undelegated into an orphan record, whose
+// payout goes to the community pool when it matures; the book is removed.
+func TestAuditOrphanDelegationToCommunityPool(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(10_000 * ssErth)
+	v, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.auditDelegate(v, uint64(5*ssErth), "legacy")
+	e.next(25 * time.Hour)
+	k := e.app.ShieldedStakingKeeper
+	ctx := e.ctx()
+	vs, err := k.ValidatorState(ctx, e.valoper(v))
+	require.NoError(t, err)
+	vs.DerthSupply = math.ZeroInt() // nobody holds derth/v any more
+	require.NoError(t, k.Validators.Set(ctx, e.valoper(v), vs))
+	orphan := e.modDelegation(v)
+	require.True(t, orphan.IsPositive())
+
+	e.next(25 * time.Hour)
+	require.True(t, e.modDelegation(v).IsZero())
+	pool0, err := e.app.DistrKeeper.FeePool.Get(e.ctx())
+	require.NoError(t, err)
+	e.invariants()
+	for i := 0; i < 23; i++ {
+		e.next(24 * time.Hour)
+	}
+	e.invariants()
+	n := 0
+	require.NoError(t, k.UnbondRecords.Walk(e.ctx(), nil, func(collections.Pair[string, uint64], sstypes.UnbondRecord) (bool, error) {
+		n++
+		return false, nil
+	}))
+	require.Zero(t, n, "the orphan record was swept")
+	has, err := k.Validators.Has(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	require.False(t, has)
+	pool1, err := e.app.DistrKeeper.FeePool.Get(e.ctx())
+	require.NoError(t, err)
+	require.True(t, pool1.CommunityPool.AmountOf("uerth").Sub(pool0.CommunityPool.AmountOf("uerth")).GTE(math.LegacyNewDecFromInt(orphan)))
 }
