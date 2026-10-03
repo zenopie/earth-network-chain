@@ -67,6 +67,16 @@ func Verify(vk, proof []byte, publicInputs [][]byte) (bool, error) {
 		return false, fmt.Errorf("proof is %d bytes, want %d", len(proof), ProofSize)
 	}
 	modulus := fr.Modulus()
+	// Every 32-byte element of the proof is read by bb as a scalar field
+	// element (commitments travel as limbs), reduced mod r on the way in: an
+	// element x and x+r (both under 2^256) verify alike, so one proof had up to
+	// 2^458 spellings, each a different tx hash. Only the canonical one is
+	// accepted.
+	for off := 0; off < len(proof); off += FieldSize {
+		if new(big.Int).SetBytes(proof[off:off+FieldSize]).Cmp(modulus) >= 0 {
+			return false, fmt.Errorf("proof element %d is not a canonical field element", off/FieldSize)
+		}
+	}
 	for i, in := range publicInputs {
 		if len(in) != FieldSize {
 			return false, fmt.Errorf("public input %d is %d bytes, want %d", i, len(in), FieldSize)
