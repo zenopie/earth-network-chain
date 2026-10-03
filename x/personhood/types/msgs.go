@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/big"
 
@@ -334,12 +335,14 @@ func (m *MsgBindReferrer) ValidateBasic() error {
 		return errorsmod.Wrapf(ErrInvalidMsg, "address exceeds %d bytes", MaxAddressBytes)
 	}
 	if m.Address == "" {
-		if len(m.ReferrerPubKey) != 0 || len(m.ReferrerSignature) != 0 {
+		if len(m.ReferrerPubKey) != 0 || len(m.ReferrerSignature) != 0 || m.ConsentExpiryHeight != 0 {
 			return errorsmod.Wrap(ErrInvalidMsg, "clearing a binding carries no consent")
 		}
 	} else if len(m.ReferrerPubKey) != ReferrerPubKeyBytes || len(m.ReferrerSignature) != ReferrerSignatureBytes {
 		return errorsmod.Wrapf(ErrNoReferrerConsent, "referrer_pub_key must be %d bytes and referrer_signature %d",
 			ReferrerPubKeyBytes, ReferrerSignatureBytes)
+	} else if m.ConsentExpiryHeight == 0 {
+		return errorsmod.Wrap(ErrNoReferrerConsent, "consent_expiry_height must be set")
 	}
 	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
@@ -353,18 +356,29 @@ const (
 	ReferrerSignatureBytes = 64
 )
 
-// ReferrerConsentDomain prefixes the bytes a referrer address signs.
-const ReferrerConsentDomain = "earth.referrer.consent.v1"
+// ReferrerConsentDomain prefixes the bytes a referrer address signs. v2
+// added the consent's expiry height (audit 4, C10): a v1 consent never
+// lapsed, so a signature its owner gave once could rebind the address to
+// that identity at any later time.
+const ReferrerConsentDomain = "earth.referrer.consent.v2"
+
+// ReferrerConsentMaxBlocks is how far past the current block a consent's
+// expiry height may be: a consent is a short-lived authorisation for one
+// bind, not a standing one (about three and a half days at 6 s blocks).
+const ReferrerConsentMaxBlocks = 50_000
 
 // ReferrerConsentBytes is what the owner of addr signs (secp256k1 ECDSA over
 // its SHA-256) to let the identity behind nullifier bind addr as its
-// referral address on chainID.
-func ReferrerConsentBytes(chainID string, nullifier, addr []byte) []byte {
-	out := make([]byte, 0, len(ReferrerConsentDomain)+1+len(chainID)+len(nullifier)+len(addr))
+// referral address on chainID, at any height up to expiryHeight:
+//
+//	domain || u8 len(chainID) || chainID || nullifier || u64be(expiryHeight) || addr
+func ReferrerConsentBytes(chainID string, nullifier []byte, expiryHeight uint64, addr []byte) []byte {
+	out := make([]byte, 0, len(ReferrerConsentDomain)+1+len(chainID)+len(nullifier)+8+len(addr))
 	out = append(out, ReferrerConsentDomain...)
 	out = append(out, byte(len(chainID)))
 	out = append(out, chainID...)
 	out = append(out, nullifier...)
+	out = binary.BigEndian.AppendUint64(out, expiryHeight)
 	return append(out, addr...)
 }
 

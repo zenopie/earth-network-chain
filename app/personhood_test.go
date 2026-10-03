@@ -389,8 +389,9 @@ func (e *phEnv) bindReferrer(name, reg, human string, maxAct int64) *personhoodt
 	if human != "" {
 		// The address owner's consent, for the nullifier the proof revealed.
 		key := personhoodtest.ReferralKey(human)
+		msg.ConsentExpiryHeight = uint64(e.ctx().BlockHeight()) + 100
 		sig, err := key.Sign(personhoodtypes.ReferrerConsentBytes(shieldedtest.ChainID, msg.Membership.Nullifier,
-			personhoodtest.ReferralAddress(human)))
+			msg.ConsentExpiryHeight, personhoodtest.ReferralAddress(human)))
 		require.NoError(e.t, err)
 		msg.ReferrerPubKey, msg.ReferrerSignature = key.PubKey().Bytes(), sig
 	}
@@ -662,7 +663,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	res = e.checkTx(e.tx(e.caretaker("A-early", "A1", a1.ActivatedAt, split)))
 	require.Equal(t, personhoodtypes.ErrInvalidMsg.ABCICode(), res.Code, res.Log)
 	e.at(time.Unix(a1.ActivatedAt+phR+phDay+3600+60, 0).UTC())
-	ok2 := e.caretaker("A", "A1", e.now.Unix()/3600*3600-phR-phDay, split)
+	ok2 := e.caretaker("A", "A1", e.now.Unix()/3600*3600-phR-phDay-1, split)
 	fb = e.mustDeliver(ok2)
 	require.Equal(t, uint64(1), e.caretakers())
 	voter, err := e.app.AllocationKeeper.Voters.Get(ctxNow(),
@@ -674,7 +675,7 @@ func TestPrivatePersonhood(t *testing.T) {
 
 	// A binds a referral address under the same activation rule. C1 cannot
 	// take an address A holds.
-	maxAct := e.now.Unix()/3600*3600 - phR - phDay
+	maxAct := e.now.Unix()/3600*3600 - phR - phDay - 1 // strictly before the bound (audit 4 C7)
 	e.mustDeliver(e.bindReferrer("A1", "A1", "A", maxAct))
 	require.True(t, e.referrerLive("A"))
 	res = e.checkTx(e.tx(e.bindReferrer("C1-taken", "C1", "A", maxAct)))
@@ -764,7 +765,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Equal(t, personhoodtypes.ErrNoReferrer.ABCICode(), res.Code, res.Log)
 	// A2 (switched in on day 2) binds A's address again; C2 then pays A's
 	// half to it in transparent ERTH, and the registrant's half as a note.
-	e.mustDeliver(e.bindReferrer("A2", "A2", "A", e.now.Unix()/3600*3600-phR-phDay))
+	e.mustDeliver(e.bindReferrer("A2", "A2", "A", e.now.Unix()/3600*3600-phR-phDay-1))
 	require.True(t, e.referrerLive("A"))
 	aAddr := sdk.AccAddress(personhoodtest.ReferralAddress("A"))
 	before := e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount
@@ -780,7 +781,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.True(t, hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), rewardC2.Uint64(), personhoodtest.Registrations["C2"].ErthPC())))
 	// Rebinding the same nullifier moves the binding.
 	e.at(e.now.Add(time.Minute))
-	e.mustDeliver(e.bindReferrer("A2-move", "A2", "A-alt", e.now.Unix()/3600*3600-phR-phDay))
+	e.mustDeliver(e.bindReferrer("A2-move", "A2", "A-alt", e.now.Unix()/3600*3600-phR-phDay-1))
 	require.False(t, e.referrerLive("A"))
 	require.True(t, e.referrerLive("A-alt"))
 	cnt, _ = k.RegCount.Get(ctxNow())

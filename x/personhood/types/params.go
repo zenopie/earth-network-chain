@@ -268,17 +268,28 @@ func (p Params) Validate() error {
 			"buyback_max_deviation_bps must be below %d: %d admits any price the pool can be pushed to",
 			BpsDenominator, p.BuybackMaxDeviationBps)
 	}
-	// A per-trade cap below one window would let the backlog grow faster than
-	// it is bought; above the accrual cap it bounds nothing.
-	if p.BuybackMaxTradeSeconds != 0 {
-		if int64(p.BuybackMaxTradeSeconds) < p.BuybackTwapWindowSecondsOrDefault() {
-			return fmt.Errorf("buyback_max_trade_seconds must be at least buyback_twap_window_seconds (%d)",
-				p.BuybackTwapWindowSecondsOrDefault())
-		}
-		if int64(p.BuybackMaxTradeSeconds) > p.BuybackMaxAccrualSecondsOrDefault() {
-			return fmt.Errorf("buyback_max_trade_seconds must be at most buyback_max_accrual_seconds (%d)",
-				p.BuybackMaxAccrualSecondsOrDefault())
-		}
+	// window <= per-trade cap <= accrual cap, on the values in force (each
+	// zero means its default). A per-trade cap below one window would let
+	// the backlog grow faster than it is bought; above the accrual cap it
+	// bounds nothing. Checked on the effective values, not only when
+	// buyback_max_trade_seconds is set: a zero cap (default one hour) with a
+	// window raised past an hour was accepted (audit 4, C5), and so was a
+	// window longer than the accrual cap.
+	//
+	// The trade fires in the first block after the window fills, a moment
+	// anyone can compute; the TWAP gate (spot within max deviation of the
+	// window's average) is what makes that moment unprofitable to trade
+	// against, not its secrecy. Randomising the block from the block hash was
+	// considered and not done: the proposer chooses the hash's inputs, so it
+	// would hand the proposer the timing it is meant to hide.
+	window := p.BuybackTwapWindowSecondsOrDefault()
+	trade := p.BuybackMaxTradeSecondsOrDefault()
+	accrual := p.BuybackMaxAccrualSecondsOrDefault()
+	if trade < window {
+		return fmt.Errorf("buyback_max_trade_seconds (%d) must be at least buyback_twap_window_seconds (%d)", trade, window)
+	}
+	if trade > accrual {
+		return fmt.Errorf("buyback_max_trade_seconds (%d) must be at most buyback_max_accrual_seconds (%d)", trade, accrual)
 	}
 	// A share at or above 100% of the network's registrations is not a bound at
 	// all: one signer could account for everything and still be under it. Zero is

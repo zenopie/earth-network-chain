@@ -198,18 +198,27 @@ const ReferrerConsentGas = 1000
 
 // checkReferrerConsent refuses a binding of addr its owner did not sign for:
 // the pubkey must be addr's, and its signature must verify over
-// ReferrerConsentBytes for this chain, this nullifier and this address. So
-// nobody can squat an address they do not control (and keep its owner from
-// binding it for a lease length at a time).
-func checkReferrerConsent(chainID string, m *types.MsgBindReferrer, addr []byte) error {
+// ReferrerConsentBytes for this chain, this nullifier, the consent's expiry
+// height and this address. So nobody can squat an address they do not
+// control (and keep its owner from binding it for a lease length at a
+// time). The consent must not have expired (height <= expiry) and its expiry
+// may be at most ReferrerConsentMaxBlocks ahead (audit 4, C10).
+func checkReferrerConsent(chainID string, height int64, m *types.MsgBindReferrer, addr []byte) error {
 	if len(m.ReferrerPubKey) != types.ReferrerPubKeyBytes || len(m.ReferrerSignature) != types.ReferrerSignatureBytes {
 		return types.ErrNoReferrerConsent.Wrap("consent missing")
+	}
+	if height < 0 || m.ConsentExpiryHeight < uint64(height) {
+		return types.ErrNoReferrerConsent.Wrapf("consent expired at height %d (now %d)", m.ConsentExpiryHeight, height)
+	}
+	if m.ConsentExpiryHeight-uint64(height) > types.ReferrerConsentMaxBlocks {
+		return types.ErrNoReferrerConsent.Wrapf("consent expiry %d is more than %d blocks ahead of %d",
+			m.ConsentExpiryHeight, types.ReferrerConsentMaxBlocks, height)
 	}
 	pk := &secp256k1.PubKey{Key: m.ReferrerPubKey}
 	if !bytes.Equal(pk.Address(), addr) {
 		return types.ErrNoReferrerConsent.Wrap("referrer_pub_key is not the address's key")
 	}
-	if !pk.VerifySignature(types.ReferrerConsentBytes(chainID, m.Membership.Nullifier, addr), m.ReferrerSignature) {
+	if !pk.VerifySignature(types.ReferrerConsentBytes(chainID, m.Membership.Nullifier, m.ConsentExpiryHeight, addr), m.ReferrerSignature) {
 		return types.ErrNoReferrerConsent.Wrap("consent signature does not verify")
 	}
 	return nil
@@ -250,7 +259,8 @@ func (k Keeper) checkBindReferrer(ctx context.Context, m *types.MsgBindReferrer)
 		if k.bankKeeper.BlockedAddr(addr) {
 			return MembershipStatement{}, errorsmod.Wrap(types.ErrInvalidMsg, "a module account cannot be a referrer")
 		}
-		if err := checkReferrerConsent(sdk.UnwrapSDKContext(ctx).ChainID(), m, addr); err != nil {
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		if err := checkReferrerConsent(sdkCtx.ChainID(), sdkCtx.BlockHeight(), m, addr); err != nil {
 			return MembershipStatement{}, err
 		}
 		if holder, err := k.ReferrerByAddr.Get(ctx, addr); err == nil && string(holder) != string(m.Membership.Nullifier) {

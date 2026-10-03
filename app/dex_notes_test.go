@@ -331,7 +331,8 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	depErth := erthIn - refE.value
 	wantDep := wantShares.Mul(pool.ReserveErth.Amount).Quo(total).Uint64()
 	require.InDelta(t, float64(wantDep), float64(depErth), float64(wantDep)/1e6+2)
-	depTok := wantShares.Mul(pool.ReserveToken.Amount).Quo(total).Uint64()
+	// Each pulled leg is rounded up (audit 4, C2).
+	depTok := wantShares.Mul(pool.ReserveToken.Amount).Add(total).SubRaw(1).Quo(total).Uint64()
 	if anml.value > depTok {
 		refT = e.minted(res, refT)
 		require.Equal(t, anml.value-depTok, refT.value)
