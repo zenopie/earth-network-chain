@@ -15,6 +15,54 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Re-audit round 2 (see FIX_ROUND2_PROGRESS.md):
+  - x/personhood (R1): a landed registration's binding (the proof's
+    address input) is refused for reuse until registered_at +
+    current_date_max_skew_seconds + 1 day (new error 1124
+    ErrBindingUsed), by the ante and by `earthd gas-check registration`
+    alike; an A -> B -> A replay of a public proof is refused. Genesis
+    gains `used_bindings`. registration_sweep_limit must be 0 (default) or
+    5..10000; current_date_max_skew_seconds at most a year.
+  - x/shielded (R2): CheckTx verifies the msg's own action proofs before
+    its bundles' and remembers proofs it saw verify (CheckTx only, never in
+    a block): a valid bundle reused next to a junk proof costs one
+    verification.
+  - zk/ultrahonk (R6): every 32-byte proof element must be below the BN254
+    scalar modulus (bb reduced x and x+r alike).
+  - Private txs (R7): **wallet format rule.** A private tx is refused unless
+    its bytes are exactly TxRaw{body_bytes, auth_info_bytes} with each part
+    (and the msg inside the body) the canonical protobuf encoding of what it
+    decodes to: fields in field-number order, minimal varints, no default
+    (zero) scalars, no unknown or non-critical extension fields; and
+    AuthInfo.tip must be unset. CosmJS/protobufjs and gogoproto encoders
+    produce this already.
+  - x/shieldedstaking (R3): a vesting account cannot operate a validator
+    (new error 1118 ErrVestingOperator, at MsgCreateValidator and in
+    genesis); compounding is undone if it would move an operator's
+    spendable balance.
+  - x/shieldedstaking (R4): each private stake vote's deduction is capped at
+    what the voted derth is worth now, so stake delegated after the snapshot
+    follows the validator's own vote.
+  - x/shieldedstaking (R5): a validator's Groundworks index entry goes with
+    its last position, and voters re-weigh with the bounded book sweep
+    (EpochValidatorLimit a block) instead of one walk at the epoch end.
+  - x/shieldedstaking (R8): the epoch end reports a violated unbonding floor
+    (epoch_failure stage `unbonding_floor`) and defers an undelegation whose
+    max_entries are full (event `shieldedstaking_unbonding_deferred`); its
+    records stay PENDING.
+  - x/shieldedstaking: genesis exports `pending_releases` and
+    `retiring_escrows`; a slash never raises a validator's epoch rate; the
+    epoch-end invariant check counts validators (by reward escrow) against
+    its bound.
+  - x/shieldedstaking: **wallet format rule.** `StakeProof.ciphertexts` has
+    exactly two entries, entry i empty iff `commitments[i]` is zero (an
+    unused output slot sends an empty ciphertext, not none).
+  - x/assembly: a removal ballot that carried grants no cooldown (a struck
+    option leaves no entry; a strike that failed to apply may be balloted
+    again at once). A declined ballot still grants 30 days, even one opened
+    by the option's own beneficiaries: the ballot is public for seven days
+    and anyone can carry it.
+
 - x/shielded (audit M1): **wallet format change.** Every private msg's
   sighash binds the tx's memo, timeout_height and gas_limit:
   `H(TAG_SIGNAL, Bytes(type_url), Bytes(chain_id), K, digests…,
