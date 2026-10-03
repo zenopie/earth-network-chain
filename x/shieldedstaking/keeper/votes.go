@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -172,6 +173,12 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 	} else if !errors.Is(err, collections.ErrNotFound) {
 		return err
 	}
+	// The nullifier tree as of the end of the same block as the note root
+	// (both recorded at EndBlock): a note in snap.Root is unspent at the
+	// snapshot iff its nullifier is not under snap.NfRoot.
+	if snap.NfRoot, snap.NfSize, err = k.latestNfRoot(ctx); err != nil {
+		return err
+	}
 	seq, err := k.SnapshotSeq.Next(ctx)
 	if err != nil {
 		return err
@@ -189,6 +196,9 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeSnapshot,
 		sdk.NewAttribute(types.AttributeKeyProposal, strconv.FormatUint(proposalID, 10)),
 		sdk.NewAttribute(types.AttributeKeyRoot, fmt.Sprintf("%x", snap.Root)),
+		sdk.NewAttribute(types.AttributeKeyNfRoot, fmt.Sprintf("%x", snap.NfRoot)),
+		sdk.NewAttribute(types.AttributeKeyTreeSize, strconv.FormatUint(snap.TreeSize, 10)),
+		sdk.NewAttribute(types.AttributeKeyNfSize, strconv.FormatUint(snap.NfSize, 10)),
 	))
 	return nil
 }
@@ -315,12 +325,16 @@ func (k Keeper) putVote(ctx context.Context, v types.StakeVote) error {
 	if err := k.Votes.Set(ctx, key, v); err != nil {
 		return err
 	}
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeStakeVote,
+	attrs := []sdk.Attribute{
 		sdk.NewAttribute(types.AttributeKeyProposal, strconv.FormatUint(v.ProposalId, 10)),
 		sdk.NewAttribute(types.AttributeKeyValidator, v.Validator),
 		sdk.NewAttribute(types.AttributeKeyDerth, v.Derth.String()),
 		sdk.NewAttribute(types.AttributeKeyOptions, v1.WeightedVoteOptions(v.Options).String()),
-	))
+	}
+	if !v.Position && len(v.Key) == 33 {
+		attrs = append(attrs, sdk.NewAttribute(types.AttributeKeyVoteNF, hex.EncodeToString(v.Key[1:])))
+	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeStakeVote, attrs...))
 	return nil
 }
 

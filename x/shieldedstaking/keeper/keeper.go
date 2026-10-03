@@ -82,12 +82,21 @@ type Keeper struct {
 	Tallies collections.Map[collections.Pair[uint64, string], types.VoteTally]
 
 	// The stake note tree (stake_tree.go).
-	StakeTreeNodes   collections.Map[collections.Pair[uint32, uint64], []byte]
-	StakeTreeSize    collections.Item[uint64]
-	StakeNullifiers  collections.KeySet[[]byte]
+	StakeTreeNodes collections.Map[collections.Pair[uint32, uint64], []byte]
+	StakeTreeSize  collections.Item[uint64]
+	// StakeNullifiers maps each spent stake nullifier to its leaf index in
+	// the stake nullifier tree (nf_tree.go).
+	StakeNullifiers  collections.Map[[]byte, uint64]
 	StakeRoots       collections.Map[[]byte, types.StakeRoot]
 	StakeRootsByTime collections.KeySet[collections.Pair[int64, []byte]]
 	StakeLatestRoot  collections.Item[[]byte]
+
+	// The stake nullifier indexed tree (nf_tree.go).
+	StakeNfValues     collections.Map[uint64, []byte]
+	StakeNfNodes      collections.Map[collections.Pair[uint32, uint64], []byte]
+	StakeNfSize       collections.Item[uint64]
+	StakeNfLatestRoot collections.Item[[]byte]
+	StakeNfLatestSize collections.Item[uint64]
 
 	// RewardEscrows maps each validator's reward escrow account to the
 	// validator's address (escrow.go). Rebuilt from x/staking at genesis.
@@ -182,7 +191,13 @@ func NewKeeper(
 		StakeTreeNodes: collections.NewMap(sb, types.StakeTreeNodesKey, "stake_tree_nodes",
 			collections.PairKeyCodec(collections.Uint32Key, collections.Uint64Key), collections.BytesValue),
 		StakeTreeSize:   collections.NewItem(sb, types.StakeTreeSizeKey, "stake_tree_size", collections.Uint64Value),
-		StakeNullifiers: collections.NewKeySet(sb, types.StakeNullifiersKey, "stake_nullifiers", collections.BytesKey),
+		StakeNullifiers: collections.NewMap(sb, types.StakeNullifiersKey, "stake_nullifiers", collections.BytesKey, collections.Uint64Value),
+		StakeNfValues:   collections.NewMap(sb, types.StakeNfValuesKey, "stake_nf_values", collections.Uint64Key, collections.BytesValue),
+		StakeNfNodes: collections.NewMap(sb, types.StakeNfNodesKey, "stake_nf_nodes",
+			collections.PairKeyCodec(collections.Uint32Key, collections.Uint64Key), collections.BytesValue),
+		StakeNfSize:       collections.NewItem(sb, types.StakeNfSizeKey, "stake_nf_size", collections.Uint64Value),
+		StakeNfLatestRoot: collections.NewItem(sb, types.StakeNfLatestRootKey, "stake_nf_latest_root", collections.BytesValue),
+		StakeNfLatestSize: collections.NewItem(sb, types.StakeNfLatestSizeKey, "stake_nf_latest_size", collections.Uint64Value),
 		StakeRoots: collections.NewMap(sb, types.StakeRootsKey, "stake_roots", collections.BytesKey,
 			codec.CollValue[types.StakeRoot](cdc)),
 		StakeRootsByTime: collections.NewKeySet(sb, types.StakeRootsByTimeKey, "stake_roots_by_time",

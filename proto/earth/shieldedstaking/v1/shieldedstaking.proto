@@ -210,6 +210,12 @@ message ProposalSnapshot {
   repeated ValidatorSnapshot validators = 6 [(gogoproto.nullable) = false];
   // seq is this snapshot's sequence number (1, 2, ...); 0 for the legacy form.
   uint64 seq = 7;
+  // nf_root is the stake nullifier tree's latest recorded root at that moment
+  // (the end of the same block as root), nf_size its leaf count (the
+  // sentinel included; 0 = nothing inserted, root indexed.EmptyRoot). A
+  // stake vote proves its note unspent against it (circuits/vote).
+  bytes nf_root = 8;
+  uint64 nf_size = 9;
 }
 
 // ValidatorSnapshot is one validator's derth supply and rate at a snapshot.

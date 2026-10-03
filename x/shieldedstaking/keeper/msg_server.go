@@ -229,33 +229,26 @@ func (k Keeper) executeClaim(ctx sdk.Context, m *types.MsgClaimUnbonding) (*type
 	return &types.MsgClaimUnbondingResponse{Amount: note.Uint64(), Position: pos}, nil
 }
 
-// StakeVote records the spent notes' vote and mints their derth straight back
-// to a new stake note of the same owner. Final: the spent nullifiers are
-// spent, and the new note is not in the snapshot root.
+// StakeVote records a stake note's vote. Nothing is spent or minted: the
+// vote nullifier (checked unused by checkStakeVote) stops the note voting on
+// this proposal again, and nothing else.
 func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*types.MsgStakeVoteResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
 		return nil, err
 	}
-	d, err := k.checkStakeVote(ctx, m)
+	_, d, err := k.checkStakeVote(ctx, m)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
-		return nil, err
-	}
 	v := types.StakeVote{
-		ProposalId: m.ProposalId, Key: append([]byte{0}, m.Stake.SpentNullifiers()[0]...), Validator: m.Validator,
+		ProposalId: m.ProposalId, Key: noteVoteKey(m.VoteNullifier), Validator: m.Validator,
 		Derth: d, Options: m.Options,
 	}
 	if err := k.putVote(ctx, v); err != nil {
 		return nil, err
 	}
-	pos, err := k.mintStake(ctx, types.DerthDenom(m.Validator), d, m.Stake.SpcMint, m.Stake.SpcCiphertext)
-	if err != nil {
-		return nil, err
-	}
-	return &types.MsgStakeVoteResponse{Position: pos}, nil
+	return &types.MsgStakeVoteResponse{}, nil
 }
 
 // LockPosition moves amount of the owner's derth from notes into a new

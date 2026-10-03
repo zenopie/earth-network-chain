@@ -8,9 +8,11 @@ only one of several open proposals (decoy-proposal attack).
 ## Steps
 - [x] circuits: privacy_core nf_leaf/vote_nf/assert_not_in_indexed; circuits/vote (9,046 gates, 22 tests) — mobile acb398a
 - [x] zk/indexed: Go indexed tree + privacy.NFLeaf/VoteNF; parity vectors with Noir (mobile: test_go_parity)
-- [ ] x/shieldedstaking: nullifier set -> indexed tree (value index, index->value, nodes, size, latest root at end block); snapshot nf root/size
-- [ ] MsgStakeVote v2 (vote proof, vnf; no spend, no re-mint); gas; sighash
+- [x] x/shieldedstaking: nullifier set -> indexed tree (value index, index->value, nodes, size, latest root at end block); snapshot nf root/size
+- [x] MsgStakeVote v2 (vote proof, vnf; no spend, no re-mint); gas; sighash
 - [ ] x/shielded CircuitVote; privacy-vks; genesis
-- [ ] genesis export/import (insertion order, vote nullifiers, snapshot nf roots checked)
+- [x] genesis export/import (insertion order, vote nullifiers, snapshot nf roots checked)
 - [ ] app tests with real proofs; fixtures
 - [ ] docs: ORCHARD_DESIGN §15, CHANGELOG (wallet format, indexer)
+
+Next: app tests (app/shieldedstaking_test.go stakeVoteMsg etc. still use the old Stake field).

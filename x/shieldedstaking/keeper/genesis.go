@@ -231,10 +231,8 @@ func (k Keeper) initStakeTree(ctx context.Context, gs types.GenesisState) error 
 	if err := k.StakeTreeSize.Set(ctx, t.Size()); err != nil {
 		return err
 	}
-	for _, nf := range gs.StakeNullifiers {
-		if err := k.StakeNullifiers.Set(ctx, nf); err != nil {
-			return err
-		}
+	if err := k.initNfTree(ctx, gs); err != nil {
+		return err
 	}
 	for i, r := range gs.StakeRoots {
 		if err := k.putStakeRoot(ctx, r, i == len(gs.StakeRoots)-1); err != nil {
@@ -256,6 +254,72 @@ func (k Keeper) initStakeTree(ctx context.Context, gs types.GenesisState) error 
 		return fmt.Errorf("the stake tree's root %X is not its latest recorded root %X", privacy.FieldBytes(root), latest)
 	}
 	return nil
+}
+
+// initNfTree rebuilds the stake nullifier tree by inserting the nullifiers in
+// their exported (insertion) order, and checks every snapshot's nf_root
+// against the tree as it stood at the snapshot's nf_size. The rebuilt root is
+// the latest recorded one (genesis is the end of a block).
+func (k Keeper) initNfTree(ctx context.Context, gs types.GenesisState) error {
+	want := map[uint64][][]byte{} // nf_size -> the nf_roots snapshots took there
+	for _, s := range gs.Snapshots {
+		if len(s.NfRoot) > 0 {
+			want[s.NfSize] = append(want[s.NfSize], s.NfRoot)
+		}
+	}
+	t, err := k.nfTree(ctx)
+	if err != nil {
+		return err
+	}
+	check := func() error {
+		roots, ok := want[t.Size()]
+		if !ok {
+			return nil
+		}
+		root, err := t.Root()
+		if err != nil {
+			return err
+		}
+		for _, r := range roots {
+			if !bytes.Equal(r, privacy.FieldBytes(root)) {
+				return fmt.Errorf("a snapshot's stake nullifier root %X is not the tree's at size %d (%X)", r, t.Size(), privacy.FieldBytes(root))
+			}
+		}
+		delete(want, t.Size())
+		return nil
+	}
+	if err := check(); err != nil { // size 0: the empty root
+		return err
+	}
+	for i, nf := range gs.StakeNullifiers {
+		v, err := privacy.FieldFromBytes(nf)
+		if err != nil {
+			return fmt.Errorf("stake nullifier %d: %w", i, err)
+		}
+		if _, err := t.Insert(v); err != nil {
+			return fmt.Errorf("stake nullifier %d: %w", i, err)
+		}
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	if len(want) > 0 {
+		return fmt.Errorf("%d snapshot stake nullifier root(s) at sizes the tree never had", len(want))
+	}
+	if err := k.StakeNfSize.Set(ctx, t.Size()); err != nil {
+		return err
+	}
+	if t.Size() == 0 {
+		return nil
+	}
+	root, err := t.Root()
+	if err != nil {
+		return err
+	}
+	if err := k.StakeNfLatestRoot.Set(ctx, privacy.FieldBytes(root)); err != nil {
+		return err
+	}
+	return k.StakeNfLatestSize.Set(ctx, t.Size())
 }
 
 // ExportGenesis exports the books.
@@ -330,7 +394,9 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		}
 		gs.StakeCommitments = append(gs.StakeCommitments, privacy.FieldBytes(l))
 	}
-	if err := k.StakeNullifiers.Walk(ctx, nil, func(nf []byte) (bool, error) {
+	// Nullifiers in insertion order (leaf 1, 2, ...): InitGenesis re-inserts
+	// them so, rebuilding the same tree.
+	if err := k.StakeNfValues.Walk(ctx, nil, func(_ uint64, nf []byte) (bool, error) {
 		gs.StakeNullifiers = append(gs.StakeNullifiers, nf)
 		return false, nil
 	}); err != nil {

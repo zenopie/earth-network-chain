@@ -28,6 +28,9 @@ const (
 	CircuitMembership = "membership"
 	// CircuitStake is x/shieldedstaking's owner-locked stake note circuit.
 	CircuitStake = "stake"
+	// CircuitVote is x/shieldedstaking's stake vote circuit: a stake note
+	// votes on a proposal without being spent.
+	CircuitVote = "vote"
 
 	// MinActionsPerBundle is the padding rule: every bundle carries at least
 	// two actions, so a one-note spend (the commonest shape) is not told

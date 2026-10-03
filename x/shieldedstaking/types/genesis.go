@@ -100,13 +100,30 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicate snapshot %d", s.ProposalId)
 		}
 		snaps[s.ProposalId] = true
+		if len(s.NfRoot) > 0 {
+			if _, err := privacy.FieldFromBytes(s.NfRoot); err != nil {
+				return fmt.Errorf("snapshot %d nf_root: %w", s.ProposalId, err)
+			}
+			if s.NfSize == 1 || s.NfSize > uint64(len(gs.StakeNullifiers))+1 {
+				return fmt.Errorf("snapshot %d: nf_size %d, the nullifier tree has %d leaves", s.ProposalId, s.NfSize, len(gs.StakeNullifiers)+1)
+			}
+		}
 		for _, vs := range s.Validators {
 			if err := CanonicalValoper(vs.Validator); err != nil {
 				return fmt.Errorf("snapshot %d: %w", s.ProposalId, err)
 			}
 		}
 	}
+	voteKeys := map[string]bool{}
 	for _, v := range gs.Votes {
+		if k := fmt.Sprintf("%d/%x", v.ProposalId, v.Key); voteKeys[k] {
+			return fmt.Errorf("vote %s repeated", k)
+		} else {
+			voteKeys[k] = true
+		}
+		if len(v.Key) == 0 || (v.Key[0] == 0) == v.Position || (v.Key[0] == 0 && len(v.Key) != 33) || (v.Key[0] == 1 && len(v.Key) != 9) {
+			return fmt.Errorf("vote on proposal %d: malformed key %x", v.ProposalId, v.Key)
+		}
 		if !snaps[v.ProposalId] {
 			return fmt.Errorf("vote on proposal %d without a snapshot", v.ProposalId)
 		}
@@ -148,7 +165,7 @@ func (gs GenesisState) Validate() error {
 	}
 	nfs := map[string]bool{}
 	for i, nf := range gs.StakeNullifiers {
-		if _, err := privacy.FieldFromBytes(nf); err != nil || nfs[string(nf)] {
+		if v, err := privacy.FieldFromBytes(nf); err != nil || v.IsZero() || nfs[string(nf)] {
 			return fmt.Errorf("stake nullifier %d is malformed or repeated", i)
 		}
 		nfs[string(nf)] = true

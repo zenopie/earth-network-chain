@@ -50,6 +50,13 @@ service Query {
   rpc StakeNullifier(QueryStakeNullifierRequest) returns (QueryStakeNullifierResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/stake_nullifiers/{nullifier}";
   }
+  // StakeNullifierTree pages the stake nullifier tree's values in insertion
+  // order (leaf index start+1, start+2, ...; leaf 0 is the sentinel), with its
+  // size and roots: what a wallet replays to build a vote's non-membership
+  // witness at a snapshot (ProposalSnapshot.nf_size).
+  rpc StakeNullifierTree(QueryStakeNullifierTreeRequest) returns (QueryStakeNullifierTreeResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/stake_nullifier_tree";
+  }
 }
 
 // QueryParamsRequest is the request type for Query/Params.
@@ -161,7 +168,27 @@ message QueryStakeNullifierRequest {
   string nullifier = 1;
 }
 
-// QueryStakeNullifierResponse says whether it is spent.
+// QueryStakeNullifierResponse says whether it is spent, and if so its leaf
+// index in the stake nullifier tree.
 message QueryStakeNullifierResponse {
   bool spent = 1;
+  uint64 index = 2;
+}
+
+// QueryStakeNullifierTreeRequest asks for up to limit (at most 1000; 0 =
+// 1000) values from leaf index start+1 on (start = 0: from the first).
+message QueryStakeNullifierTreeRequest {
+  uint64 start = 1;
+  uint64 limit = 2;
+}
+
+// QueryStakeNullifierTreeResponse: values[i] is the value at leaf
+// start+1+i. size is the leaf count (sentinel included; 0 before the first
+// insert), root the current root and latest_root the root recorded at the
+// end of the last block that changed it (what a snapshot takes).
+message QueryStakeNullifierTreeResponse {
+  repeated bytes values = 1;
+  uint64 size = 2;
+  bytes root = 3;
+  bytes latest_root = 4;
 }

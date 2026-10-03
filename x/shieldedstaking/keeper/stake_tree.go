@@ -25,14 +25,13 @@ import (
 // append-only depth-32 Poseidon2 tree like the shielded pool's, with its own
 // nullifier set and root window, proven against by circuits/stake. Its notes
 // are owner-locked (see the circuit): a stake note can be merged, split,
-// undelegated, voted or locked by its owner, never handed to anyone else.
+// undelegated, locked or voted (without spending it, circuits/vote) by its owner, never handed to anyone else.
 //
 //	spc = H(TAG_SPC, owner_pk, rho, rcm)   cm = H(TAG_STAKE, asset, amount, spc)
 //	nf  = H(TAG_SNF, nk, rho, position)     asset = AssetID(stake denom)
 //
 // Notes a msg's proof creates carry hidden amounts; notes the chain mints
-// (a delegation's derth, an undelegation's claim, a vote's re-mint, an
-// unlocked position) carry public ones, emitted with the stake pc.
+// (a delegation's derth, an undelegation's claim, an unlocked position) carry public ones, emitted with the stake pc.
 
 // stakeNodeStore backs zk/merkle's tree with StakeTreeNodes.
 type stakeNodeStore struct {
@@ -179,13 +178,10 @@ func (k Keeper) applyStakeProof(ctx context.Context, p *types.StakeProof) ([]uin
 	if err := k.checkStakeNullifiers(ctx, nfs); err != nil {
 		return nil, err
 	}
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	for _, nf := range nfs {
-		if err := k.StakeNullifiers.Set(ctx, nf); err != nil {
+		if err := k.insertStakeNullifier(ctx, nf); err != nil {
 			return nil, err
 		}
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeStakeNullifier,
-			sdk.NewAttribute(types.AttributeKeyNullifier, hex.EncodeToString(nf))))
 	}
 	cms, cts := p.Outputs()
 	out := make([]uint64, len(cms))

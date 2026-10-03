@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"google.golang.org/grpc/codes"
@@ -119,9 +120,36 @@ func (q queryServer) StakeNullifier(ctx context.Context, req *types.QueryStakeNu
 	if err != nil || len(nf) != 32 {
 		return nil, status.Error(codes.InvalidArgument, "nullifier must be 32 bytes, hex")
 	}
-	spent, err := q.k.StakeNullifiers.Has(ctx, nf)
+	idx, err := q.k.StakeNullifiers.Get(ctx, nf)
+	if errors.Is(err, collections.ErrNotFound) {
+		return &types.QueryStakeNullifierResponse{}, nil
+	} else if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QueryStakeNullifierResponse{Spent: true, Index: idx}, nil
+}
+
+// StakeNullifierTree pages the nullifier tree's values in insertion order.
+func (q queryServer) StakeNullifierTree(ctx context.Context, req *types.QueryStakeNullifierTreeRequest) (*types.QueryStakeNullifierTreeResponse, error) {
+	if req == nil {
+		req = &types.QueryStakeNullifierTreeRequest{}
+	}
+	limit := req.Limit
+	if limit == 0 || limit > 1000 {
+		limit = 1000
+	}
+	size, root, latest, err := q.k.StakeNullifierTree(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &types.QueryStakeNullifierResponse{Spent: spent}, nil
+	res := &types.QueryStakeNullifierTreeResponse{Size_: size, Root: root, LatestRoot: latest}
+	rng := new(collections.Range[uint64]).StartInclusive(req.Start + 1)
+	err = q.k.StakeNfValues.Walk(ctx, rng, func(_ uint64, v []byte) (bool, error) {
+		res.Values = append(res.Values, v)
+		return uint64(len(res.Values)) >= limit, nil
+	})
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return res, nil
 }

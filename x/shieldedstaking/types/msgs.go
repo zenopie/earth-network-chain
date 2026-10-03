@@ -355,7 +355,6 @@ var (
 	_ StakeMsg = (*MsgRestake)(nil)
 	_ StakeMsg = (*MsgUndelegate)(nil)
 	_ StakeMsg = (*MsgClaimUnbonding)(nil)
-	_ StakeMsg = (*MsgStakeVote)(nil)
 	_ StakeMsg = (*MsgLockPosition)(nil)
 	_ StakeMsg = (*MsgUpdatePosition)(nil)
 	_ StakeMsg = (*MsgUnlockPosition)(nil)
@@ -523,23 +522,24 @@ func (m *MsgClaimUnbonding) ValidateBasic() error {
 
 // ---- MsgStakeVote ---------------------------------------------------------
 
+// VoteProofInputs is the vote circuit's public input count.
+const VoteProofInputs = 7
+
 func (m *MsgStakeVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgStakeVote) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
-func (m *MsgStakeVote) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgStakeVote) StakeDenom() string                      { return DerthDenom(m.Validator) }
-func (m *MsgStakeVote) VOut() uint64                            { return m.Weight }
 
-// SighashFields: StakeFields, proposal_id, Bytes(validator),
-// Bytes(OptionsBytes(options)), weight.
+// SighashFields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
+// weight, vote_nullifier.
 func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
-	return withStake(&m.Stake, privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
-		privacy.Bytes(OptionsBytes(m.Options)), privacy.U64(m.Weight)), nil
+	vnf, err := field("vote_nullifier", m.VoteNullifier)
+	if err != nil {
+		return nil, err
+	}
+	return []fr.Element{privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
+		privacy.Bytes(OptionsBytes(m.Options)), privacy.U64(m.Weight), vnf}, nil
 }
 
 func (m *MsgStakeVote) ValidateBasic() error {
-	if err := m.Stake.mints(true); err != nil {
-		return err
-	}
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
@@ -549,10 +549,28 @@ func (m *MsgStakeVote) ValidateBasic() error {
 	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
-	if err := m.Stake.shape(1, false); err != nil {
+	if err := shieldedtypes.CheckProofLength(m.Proof); err != nil {
+		return errorsmod.Wrapf(ErrInvalidMsg, "vote proof: %v", err)
+	}
+	vnf, err := field("vote_nullifier", m.VoteNullifier)
+	if err != nil {
 		return err
 	}
+	if vnf.IsZero() {
+		return errorsmod.Wrap(ErrInvalidMsg, "vote_nullifier must be non-zero")
+	}
 	return ValidateOptions(m.Options)
+}
+
+// VotePublicInputs lays out the vote circuit's public inputs: note_root,
+// nf_root (the proposal's snapshot roots), asset = AssetID(derth/<validator>),
+// weight, proposal_id, vote_nullifier, sighash. Call after ValidateBasic.
+func (m *MsgStakeVote) VotePublicInputs(noteRoot, nfRoot []byte, sighash fr.Element) [][]byte {
+	return [][]byte{
+		noteRoot, nfRoot, privacy.FieldBytes(privacy.AssetID(DerthDenom(m.Validator))),
+		privacy.FieldBytes(privacy.U64(m.Weight)), privacy.FieldBytes(privacy.U64(m.ProposalId)),
+		m.VoteNullifier, privacy.FieldBytes(sighash),
+	}
 }
 
 // ---- positions ------------------------------------------------------------

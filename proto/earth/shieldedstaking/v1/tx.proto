@@ -96,7 +96,7 @@ message StakeProof {
   // spc_ciphertext is the amount-blind stake ciphertext (zk/privacy
   // EncryptBlindStakeNote: rho, rcm, memo of spc_mint's note), exactly 177
   // bytes, for the note the chain mints to spc_mint: required by the msgs
-  // that mint one (Delegate, Undelegate, StakeVote, UnlockPosition), empty
+  // that mint one (Delegate, Undelegate, UnlockPosition), empty
   // otherwise. The owner recomputes spc and cm from the denom and amount the
   // chain publishes with the note.
   bytes spc_ciphertext = 8;
@@ -203,18 +203,22 @@ message MsgClaimUnbondingResponse {
   uint64 position = 2;
 }
 
-// MsgStakeVote votes stake on proposal_id by spending it (spend-to-vote): the
-// proof spends the owner's derth/<validator> notes against the proposal's
-// snapshot stake root (anchor == ProposalSnapshot.root; accepted after it
-// leaves the window), creates nothing, and weight of them leaves (v_out): the
-// vote's weight, public with the validator. The chain records the vote and
-// re-mints weight as a new stake note of the same owner to stake.spc_mint.
-// The spent nullifiers stop the notes voting again, and the new note is not
-// in the snapshot root, so it cannot vote on this proposal either. Final.
+// MsgStakeVote votes one derth/<validator> stake note on proposal_id without
+// spending it. proof (circuits/vote) shows, against the proposal's snapshot
+// (ProposalSnapshot.root and .nf_root), that the note was in the stake tree
+// and unspent when voting began, that 0 < weight <= its amount, and that
+// vote_nullifier = H(TAG_VNF, nk, rho, position, proposal_id). The chain
+// refuses a vote nullifier already used on the proposal (final: no
+// re-vote) and records weight at the validator. Nothing is spent or minted:
+// the note can vote on every other open proposal and be spent as usual.
 // bundle pays the fee against the shielded pool's current roots.
 //
-// sighash fields: StakeFields(stake), proposal_id, Bytes(validator),
-// Bytes(OptionsBytes(options)), weight.
+// Public inputs (the chain supplies all but the proof and vote_nullifier):
+// note_root, nf_root, asset = AssetID(derth/<validator>), weight,
+// proposal_id, vote_nullifier, sighash.
+//
+// sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
+// weight, vote_nullifier.
 message MsgStakeVote {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 proposal_id = 2;
@@ -224,12 +228,20 @@ message MsgStakeVote {
   // fee (6): the fee is the bundle's uerth balance.
   reserved 6;
   reserved "fee";
-  StakeProof stake = 7 [(gogoproto.nullable) = false];
+  // stake (7): the spend-to-vote stake proof, replaced by proof.
+  reserved 7;
+  reserved "stake";
+  // proof is the bb v5.0.0 UltraHonk proof of circuits/vote.
+  bytes proof = 8;
+  // vote_nullifier is 32 bytes, one per note and proposal.
+  bytes vote_nullifier = 9;
 }
 
-// MsgStakeVoteResponse returns the re-minted note's position.
+// MsgStakeVoteResponse is empty (nothing is minted).
 message MsgStakeVoteResponse {
-  uint64 position = 1;
+  // position (1): the re-minted note's position; nothing is re-minted.
+  reserved 1;
+  reserved "position";
 }
 
 // MsgLockPosition: the proof spends the owner's derth/<validator> notes,

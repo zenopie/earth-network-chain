@@ -61,4 +61,8 @@ const (
 	AttributeKeyCiphertext   = "ciphertext"
 	AttributeKeyTreeSize     = "tree_size"
 	AttributeKeyWithdrawAddr = "withdraw_address"
+	AttributeKeyIndex        = "index"
+	AttributeKeyNfRoot       = "nf_root"
+	AttributeKeyNfSize       = "nf_size"
+	AttributeKeyVoteNF       = "vote_nullifier"
 )

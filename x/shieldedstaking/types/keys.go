@@ -90,8 +90,10 @@ var (
 	SlashedValidatorsKey = collections.NewPrefix(13)
 	// The stake note tree: its nodes and size, its nullifier set, and its
 	// recorded roots (by root, and by time for pruning).
-	StakeTreeNodesKey   = collections.NewPrefix(14)
-	StakeTreeSizeKey    = collections.NewPrefix(15)
+	StakeTreeNodesKey = collections.NewPrefix(14)
+	StakeTreeSizeKey  = collections.NewPrefix(15)
+	// StakeNullifiersKey maps each spent stake nullifier to its leaf index in
+	// the stake nullifier tree (nf_tree.go), ordered by value.
 	StakeNullifiersKey  = collections.NewPrefix(16)
 	StakeRootsKey       = collections.NewPrefix(17)
 	StakeRootsByTimeKey = collections.NewPrefix(18)
@@ -130,6 +132,14 @@ var (
 	// orphans without walking all its records (which grow with every
 	// unclaimed matured record).
 	OrphanRecordsKey = collections.NewPrefix(32)
+	// The stake nullifier indexed tree (nf_tree.go): values by leaf index
+	// (insertion order), its nodes and size, and the root and size recorded
+	// at the end of the last block that changed it (what a snapshot takes).
+	StakeNfValuesKey     = collections.NewPrefix(33)
+	StakeNfNodesKey      = collections.NewPrefix(34)
+	StakeNfSizeKey       = collections.NewPrefix(35)
+	StakeNfLatestRootKey = collections.NewPrefix(36)
+	StakeNfLatestSizeKey = collections.NewPrefix(37)
 )
 
 // DerthDenom is validator's delegation token.

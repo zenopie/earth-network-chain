@@ -23,8 +23,10 @@ message GenesisState {
   uint64 next_position_id = 6;
   repeated ProposalSnapshot snapshots = 7 [(gogoproto.nullable) = false];
   repeated StakeVote votes = 8 [(gogoproto.nullable) = false];
-  // The stake note tree: every leaf in order, the spent nullifiers, and the
-  // roots still in the window (the latest last).
+  // The stake note tree: every leaf in order, the spent nullifiers in the
+  // order they were inserted into the stake nullifier tree (InitGenesis
+  // re-inserts them in that order, rebuilding the same tree and root), and
+  // the note roots still in the window (the latest last).
   repeated bytes stake_commitments = 9;
   repeated bytes stake_nullifiers = 10;
   repeated StakeRoot stake_roots = 11 [(gogoproto.nullable) = false];

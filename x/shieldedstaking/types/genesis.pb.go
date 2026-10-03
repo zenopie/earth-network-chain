@@ -36,8 +36,10 @@ type GenesisState struct {
 	NextPositionId uint64             `protobuf:"varint,6,opt,name=next_position_id,json=nextPositionId,proto3" json:"next_position_id,omitempty"`
 	Snapshots      []ProposalSnapshot `protobuf:"bytes,7,rep,name=snapshots,proto3" json:"snapshots"`
 	Votes          []StakeVote        `protobuf:"bytes,8,rep,name=votes,proto3" json:"votes"`
-	// The stake note tree: every leaf in order, the spent nullifiers, and the
-	// roots still in the window (the latest last).
+	// The stake note tree: every leaf in order, the spent nullifiers in the
+	// order they were inserted into the stake nullifier tree (InitGenesis
+	// re-inserts them in that order, rebuilding the same tree and root), and
+	// the note roots still in the window (the latest last).
 	StakeCommitments [][]byte    `protobuf:"bytes,9,rep,name=stake_commitments,json=stakeCommitments,proto3" json:"stake_commitments,omitempty"`
 	StakeNullifiers  [][]byte    `protobuf:"bytes,10,rep,name=stake_nullifiers,json=stakeNullifiers,proto3" json:"stake_nullifiers,omitempty"`
 	StakeRoots       []StakeRoot `protobuf:"bytes,11,rep,name=stake_roots,json=stakeRoots,proto3" json:"stake_roots"`

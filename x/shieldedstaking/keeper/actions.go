@@ -21,9 +21,11 @@ import (
 // Private actions: what the x/shielded ante runs for this module's msgs
 // before it spends their bundles (see x/shielded/types.PrivateActionHandler).
 // Every msg carries a stake proof (circuits/stake) over this module's stake
-// note tree; the ante runs Check (state: the proof's shape for the msg, its
-// nullifiers unspent, its anchor, the msg's own checks) and Verify (the
-// proof, against the msg's sighash) before it spends the fee bundle.
+// note tree, except MsgStakeVote, which carries a vote proof (circuits/vote)
+// against its proposal's snapshot; the ante runs Check (state: the proof's
+// shape for the msg, its nullifiers unspent, its anchor, the msg's own
+// checks) and Verify (the proof, against the msg's sighash) before it spends
+// the fee bundle.
 //
 // Check refuses everything the msg's handler would refuse, because the ante's
 // spend stands even when the handler fails: a refused Delegate after the ante
@@ -52,6 +54,13 @@ const (
 	gasUnlock     uint64 = 300_000
 	gasPosVote    uint64 = 250_000
 )
+
+// preparedVote is what Check derived for a stake vote: the sighash and the
+// snapshot roots the vote proof is verified against.
+type preparedVote struct {
+	sighash          fr.Element
+	noteRoot, nfRoot []byte
+}
 
 // prepared is what Check derived: the sighash the stake proof binds, its
 // public asset and v_out. Handlers recompute what else they need.
@@ -93,13 +102,19 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	if err != nil {
 		return 0, err
 	}
+	// A stake vote: the proof and one write (the vote and its nullifier),
+	// whatever the tree sizes.
+	if _, ok := msg.(*types.MsgStakeVote); ok {
+		return gasVote + proof + note, nil
+	}
 	sm, ok := msg.(types.StakeMsg)
 	if !ok {
 		return 0, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
-	// The proof, and a write per nullifier and output it carries, plus one
-	// for a note the chain mints.
-	writes := uint64(len(sm.StakeProofOf().Nullifiers)+len(sm.StakeProofOf().Commitments)) + 1
+	// The proof, two writes per nullifier slot (an insert into the indexed
+	// nullifier tree rewrites two paths: the low leaf's and the new leaf's),
+	// one per output, plus one for a note the chain mints.
+	writes := uint64(2*len(sm.StakeProofOf().Nullifiers)+len(sm.StakeProofOf().Commitments)) + 1
 	var base uint64
 	switch msg.(type) {
 	case *types.MsgDelegate:
@@ -110,8 +125,6 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 		base = gasUndelegate
 	case *types.MsgClaimUnbonding:
 		base = gasClaim
-	case *types.MsgStakeVote:
-		base = gasVote
 	case *types.MsgLockPosition:
 		base = gasLock
 	case *types.MsgUpdatePosition:
@@ -128,6 +141,17 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 
 func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg) (any, error) {
 	k := h.k
+	if m, ok := msg.(*types.MsgStakeVote); ok {
+		snap, _, err := k.checkStakeVote(ctx, m)
+		if err != nil {
+			return nil, err
+		}
+		sighash, err := shieldedtypes.SighashOf(ctx, msg, k.addressCodec)
+		if err != nil {
+			return nil, err
+		}
+		return preparedVote{sighash: sighash, noteRoot: snap.Root, nfRoot: snap.NfRoot}, nil
+	}
 	sm, ok := msg.(types.StakeMsg)
 	if !ok {
 		return nil, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
@@ -142,8 +166,6 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 		_, err = k.checkUndelegate(ctx, m)
 	case *types.MsgClaimUnbonding:
 		_, _, err = k.checkClaim(ctx, m)
-	case *types.MsgStakeVote:
-		_, err = k.checkStakeVote(ctx, m)
 	case *types.MsgLockPosition:
 		err = k.checkLock(ctx, m)
 	case *types.MsgUpdatePosition:
@@ -160,10 +182,9 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	if err := k.checkStakeNullifiers(ctx, p.SpentNullifiers()); err != nil {
 		return nil, err
 	}
-	// A stake vote's anchor is its proposal's snapshot root (checked in
-	// checkStakeVote); every other proof that spends proves against the
-	// window. A proof that spends nothing proves no membership.
-	if _, vote := msg.(*types.MsgStakeVote); !vote && len(p.SpentNullifiers()) > 0 {
+	// Every proof that spends proves against the window. A proof that
+	// spends nothing proves no membership.
+	if len(p.SpentNullifiers()) > 0 {
 		if err := k.checkStakeAnchor(ctx, p.Anchor); err != nil {
 			return nil, err
 		}
@@ -179,8 +200,16 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	return prepared{sighash: sighash, asset: types.StakeAsset(sm.StakeDenom()), vOut: sm.VOut()}, nil
 }
 
-// VerifyPrivateAction verifies the stake proof against the msg's sighash.
+// VerifyPrivateAction verifies the stake proof (a vote's vote proof, against
+// its proposal's snapshot roots) against the msg's sighash.
 func (h ActionHandler) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, pr any) error {
+	if m, ok := msg.(*types.MsgStakeVote); ok {
+		p := pr.(preparedVote)
+		if err := h.k.shielded.VerifyCircuit(ctx, shieldedtypes.CircuitVote, m.Proof, m.VotePublicInputs(p.noteRoot, p.nfRoot, p.sighash)); err != nil {
+			return errorsmod.Wrap(types.ErrInvalidStakeProof, err.Error())
+		}
+		return nil
+	}
 	sm := msg.(types.StakeMsg)
 	p := pr.(prepared)
 	sp := sm.StakeProofOf()
@@ -322,27 +351,38 @@ func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (typ
 	return r, pay, nil
 }
 
-// checkStakeVote: the proposal is open to stake votes and the stake proof
-// spends against its snapshot stake root (so every note it spends existed
-// then, and one minted since, including a vote's own re-mint, cannot vote),
-// and the weight fits the validator's snapshot supply.
-func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (math.Int, error) {
+// checkStakeVote: the proposal is open to stake votes with both snapshot
+// roots, the weight fits the validator's snapshot supply, and the vote
+// nullifier has not voted on it. The vote proof (verified by the ante
+// against the snapshot's roots) shows the note was in the stake tree and
+// unspent when voting began: one minted since, or spent before, cannot vote;
+// one spent since still can (its later spend is not in nf_root).
+func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (types.ProposalSnapshot, math.Int, error) {
 	if _, err := k.valAddr(m.Validator); err != nil {
-		return math.Int{}, err
+		return types.ProposalSnapshot{}, math.Int{}, err
 	}
 	snap, supply, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
-		return math.Int{}, err
+		return snap, math.Int{}, err
 	}
-	if !bytes.Equal(m.Stake.Anchor, snap.Root) {
-		return math.Int{}, types.ErrNoVoting.Wrapf("a stake vote on proposal %d spends against its snapshot root", m.ProposalId)
+	if len(snap.NfRoot) == 0 {
+		return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d's snapshot has no stake nullifier root", m.ProposalId)
 	}
 	d := math.NewIntFromUint64(m.Weight)
 	if d.GT(supply) {
-		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
+		return snap, math.Int{}, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
 	}
-	return d, nil
+	if used, err := k.Votes.Has(ctx, collections.Join(m.ProposalId, noteVoteKey(m.VoteNullifier))); err != nil {
+		return snap, math.Int{}, err
+	} else if used {
+		return snap, math.Int{}, types.ErrVoteNullifierUsed.Wrapf("proposal %d, vote nullifier %X", m.ProposalId, m.VoteNullifier)
+	}
+	return snap, d, nil
 }
+
+// noteVoteKey is a note vote's key under its proposal: 0x00 || vote nullifier
+// (position votes are 0x01 || id).
+func noteVoteKey(vnf []byte) []byte { return append([]byte{0}, vnf...) }
 
 func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
 	if _, err := k.valAddr(m.Validator); err != nil {
