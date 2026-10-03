@@ -38,9 +38,13 @@ const (
 	// vote's (against the proposal's snapshot root) and its fee's.
 	MaxBundlesPerMsg = 2
 
-	// MaxProofBytes bounds a proof's size before anything parses it. bb v5.0.0
-	// UltraHonk proofs are 14,656 bytes whatever the circuit.
-	MaxProofBytes = 32 * 1024
+	// ProofBytes is the exact length of every proof the chain verifies
+	// (zk/ultrahonk.ProofSize): bb v5.0.0 UltraHonk ZK-flavor proofs are
+	// padded to a constant 458 field elements whatever the circuit (action,
+	// stake, membership, passport). bb's verifier ignores trailing bytes, so
+	// anything longer would verify as the same proof under another tx hash;
+	// anything else is refused before it is parsed.
+	ProofBytes = 14_656
 
 	// MaxCiphertextBytes bounds one note ciphertext. A note plaintext (asset,
 	// value, rho, rcm, memo) plus an ephemeral key and tag fits in far less;

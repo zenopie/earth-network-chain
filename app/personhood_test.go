@@ -242,9 +242,9 @@ type member struct {
 func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f *shieldedtest.Plan, m *member) {
 	e.t.Helper()
 	ac := e.app.AuthKeeper.AddressCodec()
-	signal, err := shieldedtypes.Sighash(msg, shieldedtest.ChainID, ac)
+	signal, err := shieldedtypes.Sighash(msg, shieldedtest.ChainID, phTx, ac)
 	require.NoError(e.t, err)
-	require.NoError(e.t, shieldedtest.ProveMsg(msg, shieldedtest.ChainID, ac, []*shieldedtest.Plan{f}, e.actions.TryProve), name)
+	require.NoError(e.t, shieldedtest.ProveMsg(msg, shieldedtest.ChainID, phTx, ac, []*shieldedtest.Plan{f}, e.actions.TryProve), name)
 	if m == nil {
 		return
 	}
@@ -321,6 +321,9 @@ func (e *phEnv) bundle(f *shieldedtest.Plan) shieldedtypes.Bundle {
 }
 
 func (e *phEnv) tx(msg sdk.Msg) []byte { return e.privateTx(phGas, nil, msg) }
+
+// phTx is the tx every private msg here is proven for (e.tx's: gas phGas).
+var phTx = shieldedtypes.TxFields{GasLimit: phGas}
 
 // register builds registration name's MsgRegister, fully proven.
 func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {

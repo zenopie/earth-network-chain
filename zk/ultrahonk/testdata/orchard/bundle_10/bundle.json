@@ -1,6 +1,11 @@
 {
   "msg_type": "/earth.orchard.fixture",
   "chain_id": "earth-1",
+  "tx": {
+    "memo": "orchard fixture",
+    "timeout_height": 1000000,
+    "gas_limit": 3000000
+  },
   "actions": [
     {
       "anchor": "0x305f123ac1c5475301f07eeda3001211123354042d9345b6436136314a1d6d91",
@@ -80,6 +85,6 @@
       "value": 10000
     }
   ],
-  "binding_sig": "0e37ac91a97c2f43a1465be2b162a63611e2b37b742029897d66adfc862f794d10889aeb90be9404f23e3c2d5ab32d31c9640930cfd90fa7f2414ec3fbc329820d11a0962514864ca3f14d60812025d7459cae45ca137af59e465874ef547b50",
-  "sighash": "0x1a55fe4cf74e0187ba15a956ddb6086f8f6c33e027ee8d65c76d27524429a072"
+  "binding_sig": "2fdda9f2ed5f516b1b99aa8ca87e46a5aaf39289187af63b985b004c7d9890db0e1fcbe38a0ebb8269b5c41f9be0673d582e5aa194133757f4e72069118bebe106517a2d6967b899cfdaff329de9ec4f522f3e9548524486ac4c0935645f63bd",
+  "sighash": "0x02dea0143e36c10c6aa096b25c493cbe9cd46142879467a0c0db04379bf6a809"
 }

@@ -163,7 +163,7 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	if err := k.checkStakeCapacity(ctx, uint64(len(cms))+1); err != nil {
 		return nil, err
 	}
-	sighash, err := shieldedtypes.Sighash(msg, sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
+	sighash, err := shieldedtypes.SighashOf(ctx, msg, k.addressCodec)
 	if err != nil {
 		return nil, err
 	}

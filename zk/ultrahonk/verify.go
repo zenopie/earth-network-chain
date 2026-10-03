@@ -16,13 +16,32 @@ package ultrahonk
 import (
 	"fmt"
 	"math/big"
+	"os"
 
 	bb "github.com/burnt-labs/barretenberg-go/barretenberg"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
 
+// init lowers Barretenberg's log level below info unless BB_VERBOSE is set:
+// at info, every proof that fails prints "UltraVerifier: verification failed
+// ..." to stderr, so anyone sending junk proofs (each refused, most for free
+// in CheckTx) could fill a node's logs.
+func init() {
+	if os.Getenv("BB_VERBOSE") == "" {
+		bb.SetLogLevel(bb.LogLevelWarn)
+	}
+}
+
 // FieldSize is the byte length of a BN254 field element.
 const FieldSize = 32
+
+// ProofSize is the length of every bb v5.0.0 UltraHonk (ZK flavor) proof,
+// whatever the circuit: the sumcheck is padded to a constant log size, so a
+// proof is always 458 field elements. Verify refuses any other length. bb
+// itself does not: it reads the elements it needs and ignores what follows,
+// so a proof with a byte appended verified as the same proof, one tx
+// re-spelled under another hash.
+const ProofSize = 14_656
 
 // PairingPointInputs is how many public inputs a bb v5.0.0 UltraHonk
 // verifying key counts beyond the circuit's own: the aggregated pairing point
@@ -35,7 +54,8 @@ const PairingPointInputs = 8
 // proof is valid. A malformed vk/proof yields an error; a well-formed but
 // invalid proof yields (false, nil).
 //
-// Each input must be exactly FieldSize bytes holding a value below the BN254
+// The proof must be exactly ProofSize bytes. Each input must be exactly
+// FieldSize bytes holding a value below the BN254
 // scalar modulus, and there must be exactly as many as the key declares. The
 // library checks neither. A value of p or more is reduced mod p inside the
 // verifier, so p+x verifies wherever x does — two encodings of one input, and
@@ -43,6 +63,9 @@ const PairingPointInputs = 8
 // comparing the wrong thing. The count went unchecked on the Go side and was
 // left to the native code to notice.
 func Verify(vk, proof []byte, publicInputs [][]byte) (bool, error) {
+	if len(proof) != ProofSize {
+		return false, fmt.Errorf("proof is %d bytes, want %d", len(proof), ProofSize)
+	}
 	modulus := fr.Modulus()
 	for i, in := range publicInputs {
 		if len(in) != FieldSize {

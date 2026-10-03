@@ -270,7 +270,7 @@ func (e *stakeEnv) proveStake(msg sstypes.StakeMsg, sp *stakePlan) {
 // tryProveStake is proveStake returning the prover's error
 // (shieldedtest.ErrWitnessRefused when the circuit refuses the witness).
 func (e *stakeEnv) tryProveStake(msg sstypes.StakeMsg, sp *stakePlan) ([]byte, error) {
-	sighash, err := shieldedtypes.Sighash(msg, ssChainID, e.app.AuthKeeper.AddressCodec())
+	sighash, err := shieldedtypes.Sighash(msg, ssChainID, ssTx, e.app.AuthKeeper.AddressCodec())
 	require.NoError(e.t, err)
 	toml, pub := e.stakeWitness(msg, sp, sighash)
 	return e.stakeProver().TryProve(toml, pub)

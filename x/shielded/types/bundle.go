@@ -34,8 +34,8 @@ func (b *Bundle) ValidateBasic() error {
 	seen := make(map[string]bool, n)
 	for i := range b.Actions {
 		a := &b.Actions[i]
-		if len(a.Proof) == 0 || len(a.Proof) > MaxProofBytes {
-			return errorsmod.Wrapf(ErrInvalidBundle, "action %d: proof must be 1..%d bytes", i, MaxProofBytes)
+		if err := CheckProofLength(a.Proof); err != nil {
+			return errorsmod.Wrapf(ErrInvalidBundle, "action %d: %v", i, err)
 		}
 		if err := checkField(fmt.Sprintf("action %d anchor", i), a.Anchor); err != nil {
 			return err

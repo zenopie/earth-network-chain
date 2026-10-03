@@ -191,8 +191,8 @@ func StakeAsset(denom string) fr.Element {
 // fields, exactly two nullifiers and two commitments (zero for none), the
 // spent ones distinct, at most a ciphertext per commitment.
 func (p *StakeProof) ValidateBasic() error {
-	if len(p.Proof) == 0 || len(p.Proof) > shieldedtypes.MaxProofBytes {
-		return errorsmod.Wrapf(ErrInvalidMsg, "stake proof must be 1..%d bytes", shieldedtypes.MaxProofBytes)
+	if err := shieldedtypes.CheckProofLength(p.Proof); err != nil {
+		return errorsmod.Wrapf(ErrInvalidMsg, "stake proof: %v", err)
 	}
 	if _, err := field("stake anchor", p.Anchor); err != nil {
 		return err

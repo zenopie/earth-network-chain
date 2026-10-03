@@ -14,12 +14,16 @@ import (
 	"github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/privacy"
+	"github.com/earth-network/earth/zk/ultrahonk"
 )
+
+// placeholderProof is a proof of the right length: shape only.
+func placeholderProof(string, [][]byte) []byte { return make([]byte, types.ProofBytes) }
 
 // validSend is the scenario's unshield2 with placeholder proofs: shape only.
 func validSend(t *testing.T) *types.MsgSend {
 	t.Helper()
-	m, err := shieldedtest.Default().Msg(shieldedtest.Unshield2, "earth1receiver", func(string, [][]byte) []byte { return []byte("proof") })
+	m, err := shieldedtest.Default().Msg(shieldedtest.Unshield2, "earth1receiver", types.TxFields{}, placeholderProof)
 	require.NoError(t, err)
 	return m
 }
@@ -45,7 +49,10 @@ func TestMsgSendValidateBasic(t *testing.T) {
 			}
 		},
 		"no proof":             func(m *types.MsgSend) { m.Bundle.Actions[0].Proof = nil },
-		"huge proof":           func(m *types.MsgSend) { m.Bundle.Actions[1].Proof = make([]byte, types.MaxProofBytes+1) },
+		"huge proof":           func(m *types.MsgSend) { m.Bundle.Actions[1].Proof = make([]byte, 32*1024) },
+		"proof one byte long":  func(m *types.MsgSend) { m.Bundle.Actions[1].Proof = append(m.Bundle.Actions[1].Proof, 0) },
+		"proof one byte short": func(m *types.MsgSend) { m.Bundle.Actions[1].Proof = m.Bundle.Actions[1].Proof[:types.ProofBytes-1] },
+		"proof a field long":   func(m *types.MsgSend) { m.Bundle.Actions[1].Proof = make([]byte, types.ProofBytes+32) },
 		"short anchor":         func(m *types.MsgSend) { m.Bundle.Actions[0].Anchor = m.Bundle.Actions[0].Anchor[:31] },
 		"non-canonical anchor": func(m *types.MsgSend) { m.Bundle.Actions[1].Anchor = nonCanonical },
 		"non-canonical nf":     func(m *types.MsgSend) { m.Bundle.Actions[1].Nullifier = nonCanonical },
@@ -102,31 +109,52 @@ func TestRemainders(t *testing.T) {
 	require.Equal(t, uint64(530_001), types.TotalFee(m).Uint64())
 }
 
-// The sighash covers the msg type, chain id, bundle and the msg's fields.
+// The sighash covers the msg type, chain id, bundle, the tx's memo, timeout
+// height and gas limit, and the msg's fields.
 func TestSighash(t *testing.T) {
 	ac := addresscodec.NewBech32Codec("earth")
 	s := shieldedtest.Default()
-	m, err := s.Msg(shieldedtest.Unshield2, "", func(string, [][]byte) []byte { return []byte("proof") })
+	tx := types.TxFields{Memo: "deposit 42", TimeoutHeight: 900, GasLimit: 1_234_567}
+	m, err := s.Msg(shieldedtest.Unshield2, "", tx, placeholderProof)
 	require.NoError(t, err)
 	m.Receiver, err = ac.BytesToString(shieldedtest.Receiver)
 	require.NoError(t, err)
-	got, err := types.Sighash(m, shieldedtest.ChainID, ac)
+	got, err := types.Sighash(m, shieldedtest.ChainID, tx, ac)
 	require.NoError(t, err)
 	b, err := s.Bundle(shieldedtest.Unshield2)
 	require.NoError(t, err)
-	want, err := s.Sighash(shieldedtest.Unshield2, b)
+	want, err := s.Sighash(shieldedtest.Unshield2, b, tx)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 	// Proofs and the binding signature are not bound (they are made over it).
 	m.Bundle.Actions[0].Proof = []byte("other")
 	m.Bundle.BindingSig = make([]byte, 96)
-	again, err := types.Sighash(m, shieldedtest.ChainID, ac)
+	again, err := types.Sighash(m, shieldedtest.ChainID, tx, ac)
 	require.NoError(t, err)
 	require.Equal(t, got, again)
+	for name, other := range map[string]types.TxFields{
+		"memo":           {Memo: "deposit 43", TimeoutHeight: 900, GasLimit: 1_234_567},
+		"no memo":        {TimeoutHeight: 900, GasLimit: 1_234_567},
+		"timeout height": {Memo: "deposit 42", GasLimit: 1_234_567},
+		"gas limit":      {Memo: "deposit 42", TimeoutHeight: 900, GasLimit: 1_234_568},
+	} {
+		h, err := types.Sighash(m, shieldedtest.ChainID, other, ac)
+		require.NoError(t, err)
+		require.NotEqual(t, got, h, name)
+	}
 	m.Fee++
-	moved, err := types.Sighash(m, shieldedtest.ChainID, ac)
+	moved, err := types.Sighash(m, shieldedtest.ChainID, tx, ac)
 	require.NoError(t, err)
 	require.NotEqual(t, got, moved)
+}
+
+// ProofBytes is the verifier's proof size.
+func TestProofBytes(t *testing.T) {
+	require.Equal(t, ultrahonk.ProofSize, types.ProofBytes)
+	require.NoError(t, types.CheckProofLength(make([]byte, types.ProofBytes)))
+	for _, n := range []int{0, 1, types.ProofBytes - 32, types.ProofBytes - 1, types.ProofBytes + 1, types.ProofBytes + 32} {
+		require.Error(t, types.CheckProofLength(make([]byte, n)), n)
+	}
 }
 
 func TestPrivateMsgGas(t *testing.T) {

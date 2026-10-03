@@ -12,6 +12,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	"github.com/earth-network/earth/x/shielded/types"
+	"github.com/earth-network/earth/zk/ultrahonk"
 )
 
 // Keeper is the shielded pool: the note tree, the spent set, the root
@@ -27,6 +28,9 @@ type Keeper struct {
 
 	authKeeper types.AuthKeeper
 	bankKeeper types.BankKeeper
+
+	// proofVerifier is zk/ultrahonk.Verify (tests count calls through it).
+	proofVerifier func(vk, proof []byte, publicInputs [][]byte) (bool, error)
 
 	poolAddr sdk.AccAddress
 	// shieldedOnly are the denoms that may only move to shieldedOnlyTo.
@@ -94,6 +98,7 @@ func NewKeeper(
 		authority:             authority,
 		authKeeper:            authKeeper,
 		bankKeeper:            bankKeeper,
+		proofVerifier:         ultrahonk.Verify,
 		poolAddr:              authtypes.NewModuleAddress(types.ModuleName),
 		shieldedOnly:          map[string]bool{},
 		shieldedOnlyTo:        map[string]bool{},

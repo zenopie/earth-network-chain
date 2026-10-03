@@ -31,6 +31,11 @@ type orchardFixture struct {
 	} `json:"balances"`
 	BindingSig string `json:"binding_sig"`
 	Sighash    string `json:"sighash"`
+	Tx         struct {
+		Memo          string `json:"memo"`
+		TimeoutHeight uint64 `json:"timeout_height"`
+		GasLimit      uint64 `json:"gas_limit"`
+	} `json:"tx"`
 }
 
 func fhex(t testing.TB, s string) fr.Element {
@@ -90,7 +95,7 @@ func loadBundle(t testing.TB, n int) (*orchard.Bundle, fr.Element, []byte) {
 	for _, x := range f.Balances {
 		b.Balances = append(b.Balances, orchard.Balance{Asset: fhex(t, x.Asset), Value: x.Value})
 	}
-	sighash := orchard.Sighash(f.MsgType, f.ChainID, []*orchard.Bundle{b})
+	sighash := orchard.Sighash(f.MsgType, f.ChainID, orchard.TxFields(f.Tx), []*orchard.Bundle{b})
 	if sighash != fhex(t, f.Sighash) {
 		t.Fatal("recomputed sighash differs from the fixture's")
 	}
@@ -118,7 +123,7 @@ func TestOrchardBundles(t *testing.T) {
 			}
 			// A proof moved to another tx (a different sighash) fails, even
 			// if its binding signature were somehow re-made.
-			other := orchard.Sighash("/earth.orchard.fixture", "earth-2", []*orchard.Bundle{b})
+			other := orchard.Sighash("/earth.orchard.fixture", "earth-2", orchard.TxFields{}, []*orchard.Bundle{b})
 			ok, err := Verify(vk, b.Actions[0].Proof, b.PublicInputs(0, other))
 			if err != nil || ok {
 				t.Fatalf("proof under another sighash: ok=%v err=%v", ok, err)
@@ -185,7 +190,8 @@ func BenchmarkOrchardBundle(b *testing.B) {
 			v := verifier(vk)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				sighash := orchard.Sighash("/earth.orchard.fixture", "earth-1", []*orchard.Bundle{bun})
+				sighash := orchard.Sighash("/earth.orchard.fixture", "earth-1",
+					orchard.TxFields{Memo: "orchard fixture", TimeoutHeight: 1_000_000, GasLimit: 3_000_000}, []*orchard.Bundle{bun})
 				if err := bun.Verify(sighash, orchard.CanonicalBase, v); err != nil {
 					b.Fatal(err)
 				}

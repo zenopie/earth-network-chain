@@ -62,8 +62,8 @@ func checkCiphertext(what string, b []byte) error {
 
 // ValidateBasic checks a membership proof's shape.
 func (m Membership) ValidateBasic() error {
-	if len(m.Proof) == 0 || len(m.Proof) > shieldedtypes.MaxProofBytes {
-		return errorsmod.Wrapf(ErrInvalidMembership, "proof must be 1..%d bytes", shieldedtypes.MaxProofBytes)
+	if err := shieldedtypes.CheckProofLength(m.Proof); err != nil {
+		return errorsmod.Wrap(ErrInvalidMembership, err.Error())
 	}
 	if _, err := Field("membership root", m.Root); err != nil {
 		return err
@@ -206,8 +206,8 @@ func (m *MsgRegister) ValidateBasic() error {
 	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
 	}
-	if len(m.Proof) == 0 || len(m.Proof) > shieldedtypes.MaxProofBytes {
-		return errorsmod.Wrapf(ErrInvalidMsg, "proof must be 1..%d bytes", shieldedtypes.MaxProofBytes)
+	if err := shieldedtypes.CheckProofLength(m.Proof); err != nil {
+		return errorsmod.Wrap(ErrInvalidMsg, err.Error())
 	}
 	if len(m.PublicSignals) == 0 || len(m.PublicSignals) > MaxPublicSignals {
 		return errorsmod.Wrapf(ErrInvalidMsg, "need 1..%d public signals", MaxPublicSignals)

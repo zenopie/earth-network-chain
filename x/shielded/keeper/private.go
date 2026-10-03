@@ -13,7 +13,6 @@ import (
 
 	"github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/orchard"
-	"github.com/earth-network/earth/zk/ultrahonk"
 )
 
 // The private ante (x/shielded/ante) drives a private msg through these, in
@@ -92,7 +91,7 @@ func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (Prep
 	if err := k.checkReleaseMap(ctx, msg); err != nil {
 		return PreparedPrivateMsg{}, err
 	}
-	sighash, err := types.Sighash(msg, sdk.UnwrapSDKContext(ctx).ChainID(), k.addressCodec)
+	sighash, err := types.SighashOf(ctx, msg, k.addressCodec)
 	if err != nil {
 		return PreparedPrivateMsg{}, err
 	}
@@ -138,8 +137,14 @@ func (k Keeper) checkReleaseMap(ctx context.Context, msg types.PrivateMsg) error
 
 // VerifyPrivateMsg verifies, under the msg's one sighash, each bundle's
 // binding signature (cheap: the value balance) and then every action proof
-// of every bundle, the proofs in parallel. The first failure in bundle and
-// action order is reported, whatever finished first.
+// of every bundle. In a block (and simulate) the proofs run in parallel and
+// the first failure in bundle and action order is reported, whatever
+// finished first. In CheckTx they run one at a time and the first failure
+// stops the rest: a mempool tx is free (a tx failing CheckTx pays nothing),
+// and anyone can make a binding signature over a forged balance, so a junk
+// tx must cost the node one proof verification, not one per action. (Block
+// verification is bounded by block gas: every proof is paid for by the
+// private gas charge before any is verified, failed txs included.)
 func (k Keeper) VerifyPrivateMsg(ctx context.Context, p PreparedPrivateMsg) error {
 	params, err := k.Params.Get(ctx)
 	if err != nil {
@@ -154,9 +159,12 @@ func (k Keeper) VerifyPrivateMsg(ctx context.Context, p PreparedPrivateMsg) erro
 			return errorsmod.Wrapf(types.ErrInvalidBindingSig, "bundle %d: %v", i, err)
 		}
 	}
-	err = orchard.VerifyProofs(p.Bundles, p.Sighash, func(proof []byte, in [][]byte) (bool, error) {
-		return ultrahonk.Verify(vk, proof, in)
-	})
+	verify := func(proof []byte, in [][]byte) (bool, error) { return k.proofVerifier(vk, proof, in) }
+	if sdk.UnwrapSDKContext(ctx).IsCheckTx() {
+		err = orchard.VerifyProofsSequential(p.Bundles, p.Sighash, verify)
+	} else {
+		err = orchard.VerifyProofs(p.Bundles, p.Sighash, verify)
+	}
 	if err != nil {
 		return errorsmod.Wrap(types.ErrInvalidProof, err.Error())
 	}
@@ -270,10 +278,10 @@ func (k Keeper) VerifyCircuit(ctx context.Context, circuit string, proof []byte,
 	if len(vk) == 0 {
 		return types.ErrMissingVerifyingKey.Wrap(circuit)
 	}
-	if len(proof) == 0 || len(proof) > types.MaxProofBytes {
-		return errorsmod.Wrapf(types.ErrInvalidProof, "proof must be 1..%d bytes", types.MaxProofBytes)
+	if err := types.CheckProofLength(proof); err != nil {
+		return errorsmod.Wrap(types.ErrInvalidProof, err.Error())
 	}
-	ok, err := ultrahonk.Verify(vk, proof, publicInputs)
+	ok, err := k.proofVerifier(vk, proof, publicInputs)
 	if err != nil {
 		return errorsmod.Wrap(types.ErrInvalidProof, err.Error())
 	}

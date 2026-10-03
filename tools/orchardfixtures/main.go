@@ -67,10 +67,18 @@ type spec struct {
 type BundleJSON struct {
 	MsgType    string        `json:"msg_type"`
 	ChainID    string        `json:"chain_id"`
+	Tx         TxJSON        `json:"tx"`
 	Actions    []ActionJSON  `json:"actions"`
 	Balances   []BalanceJSON `json:"balances"`
 	BindingSig string        `json:"binding_sig"`
 	Sighash    string        `json:"sighash"`
+}
+
+// TxJSON is the tx fields the sighash binds (orchard.TxFields).
+type TxJSON struct {
+	Memo          string `json:"memo"`
+	TimeoutHeight uint64 `json:"timeout_height"`
+	GasLimit      uint64 `json:"gas_limit"`
 }
 
 type ActionJSON struct {
@@ -187,13 +195,14 @@ func main() {
 	b.Balances = []orchard.Balance{{Asset: erth, Value: uint64(bal[erth])}}
 
 	const msgType, chainID = "/earth.orchard.fixture", "earth-1"
-	sighash := orchard.Sighash(msgType, chainID, []*orchard.Bundle{b})
+	tx := orchard.TxFields{Memo: "orchard fixture", TimeoutHeight: 1_000_000, GasLimit: 3_000_000}
+	sighash := orchard.Sighash(msgType, chainID, tx, []*orchard.Bundle{b})
 	sig, err := orchard.SignBinding(orchard.BindingSigningKey(rcvs), sighash, bytes.NewReader(make([]byte, 32)))
 	must(err)
 	b.BindingSig = sig
 	must(b.CheckBalance(sighash, orchard.CanonicalBase))
 
-	bj := BundleJSON{MsgType: msgType, ChainID: chainID, BindingSig: hex.EncodeToString(sig), Sighash: h(sighash)}
+	bj := BundleJSON{MsgType: msgType, ChainID: chainID, Tx: TxJSON(tx), BindingSig: hex.EncodeToString(sig), Sighash: h(sighash)}
 	for i, s := range ss {
 		a := b.Actions[i]
 		dir := filepath.Join(out, fmt.Sprintf("action_%d", i))

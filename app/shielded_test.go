@@ -287,7 +287,7 @@ func (e *shieldedEnv) fee(amt int64) sdk.Coins { return sdk.NewCoins(sdk.NewInt6
 // sendMsg is the scenario's send i, proven (from the proof cache).
 func (e *shieldedEnv) sendMsg(s shieldedtest.Scenario, i int) *shieldedtypes.MsgSend {
 	e.t.Helper()
-	m, err := s.Msg(i, e.bech(shieldedtest.Receiver), func(toml string, pub [][]byte) []byte {
+	m, err := s.Msg(i, e.bech(shieldedtest.Receiver), shieldedtypes.TxFields{GasLimit: shGas(len(s.Sends[i].Actions))}, func(toml string, pub [][]byte) []byte {
 		return e.prover.Prove(e.t, toml, pub)
 	})
 	require.NoError(e.t, err)

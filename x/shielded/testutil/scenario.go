@@ -291,14 +291,15 @@ func (sd Send) SighashFields() []fr.Element {
 	return []fr.Element{privacy.Bytes(sd.Receiver), privacy.U64(sd.Fee)}
 }
 
-// Sighash is send i's MsgSend sighash on ChainID, computed from the
-// scenario's own values (the chain recomputes it from the msg).
-func (s Scenario) Sighash(i int, b *types.Bundle) (fr.Element, error) {
+// Sighash is send i's MsgSend sighash on ChainID in a tx with fields tx,
+// computed from the scenario's own values (the chain recomputes it from the
+// msg and the tx).
+func (s Scenario) Sighash(i int, b *types.Bundle, tx types.TxFields) (fr.Element, error) {
 	ob, err := b.ToOrchard()
 	if err != nil {
 		return fr.Element{}, err
 	}
-	return orchard.Sighash(MsgSendType, ChainID, []*orchard.Bundle{ob}, s.Sends[i].SighashFields()...), nil
+	return orchard.Sighash(MsgSendType, ChainID, tx, []*orchard.Bundle{ob}, s.Sends[i].SighashFields()...), nil
 }
 
 // ActionWitness is action j of send i under sighash: its Prover.toml for the
@@ -385,15 +386,15 @@ func (s Scenario) Bsk(i int) []fr.Element {
 	return rcvs
 }
 
-// Msg builds send i as a proven, signed MsgSend. receiver is the bech32 of
-// Receiver (or "" when the send unshields nothing); prove supplies each
-// action's proof from its witness.
-func (s Scenario) Msg(i int, receiver string, prove func(toml string, pub [][]byte) []byte) (*types.MsgSend, error) {
+// Msg builds send i as a proven, signed MsgSend for a tx with fields tx.
+// receiver is the bech32 of Receiver (or "" when the send unshields
+// nothing); prove supplies each action's proof from its witness.
+func (s Scenario) Msg(i int, receiver string, tx types.TxFields, prove func(toml string, pub [][]byte) []byte) (*types.MsgSend, error) {
 	b, err := s.Bundle(i)
 	if err != nil {
 		return nil, err
 	}
-	sighash, err := s.Sighash(i, b)
+	sighash, err := s.Sighash(i, b, tx)
 	if err != nil {
 		return nil, err
 	}

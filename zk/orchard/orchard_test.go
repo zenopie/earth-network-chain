@@ -181,7 +181,7 @@ func bundleOf(t *testing.T, as []action, bals []Balance) (*Bundle, []fr.Element)
 }
 
 func sign(t *testing.T, b *Bundle, rcvs []fr.Element) fr.Element {
-	sighash := Sighash("/test", "earth-1", []*Bundle{b})
+	sighash := Sighash("/test", "earth-1", TxFields{}, []*Bundle{b})
 	sig, err := SignBinding(BindingSigningKey(rcvs), sighash, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestBundleBalance(t *testing.T) {
 		}
 	})
 	t.Run("sighash changed after signing", func(t *testing.T) {
-		other := Sighash("/test", "earth-2", []*Bundle{b})
+		other := Sighash("/test", "earth-2", TxFields{}, []*Bundle{b})
 		if err := b.CheckBalance(other, CanonicalBase); !errors.Is(err, ErrBadBindingSig) {
 			t.Fatalf("got %v", err)
 		}
@@ -329,15 +329,21 @@ func TestSighashBindsBundlesAndFields(t *testing.T) {
 	erth := privacy.AssetID("uerth")
 	b1, _ := bundleOf(t, []action{{erth, 5, erth, 3, randField(t)}}, []Balance{{erth, 2}})
 	b2, _ := bundleOf(t, []action{{erth, 9, erth, 9, randField(t)}}, nil)
-	base := Sighash("/m", "c", []*Bundle{b1, b2}, privacy.U64(7))
+	tx := TxFields{Memo: "m", TimeoutHeight: 5, GasLimit: 400_000}
+	base := Sighash("/m", "c", tx, []*Bundle{b1, b2}, privacy.U64(7))
 	for name, other := range map[string]fr.Element{
-		"msg type":       Sighash("/n", "c", []*Bundle{b1, b2}, privacy.U64(7)),
-		"chain id":       Sighash("/m", "d", []*Bundle{b1, b2}, privacy.U64(7)),
-		"bundle order":   Sighash("/m", "c", []*Bundle{b2, b1}, privacy.U64(7)),
-		"bundle dropped": Sighash("/m", "c", []*Bundle{b1}, privacy.U64(7)),
-		"field":          Sighash("/m", "c", []*Bundle{b1, b2}, privacy.U64(8)),
+		"msg type":       Sighash("/n", "c", tx, []*Bundle{b1, b2}, privacy.U64(7)),
+		"chain id":       Sighash("/m", "d", tx, []*Bundle{b1, b2}, privacy.U64(7)),
+		"bundle order":   Sighash("/m", "c", tx, []*Bundle{b2, b1}, privacy.U64(7)),
+		"bundle dropped": Sighash("/m", "c", tx, []*Bundle{b1}, privacy.U64(7)),
+		"field":          Sighash("/m", "c", tx, []*Bundle{b1, b2}, privacy.U64(8)),
 		// A bundle's digest moved into the fields: the count tells them apart.
-		"count": Sighash("/m", "c", []*Bundle{b1}, b2.Digest(), privacy.U64(7)),
+		"count": Sighash("/m", "c", tx, []*Bundle{b1}, b2.Digest(), privacy.U64(7)),
+		// The tx fields a relayer of an unsigned tx could otherwise rewrite.
+		"memo":           Sighash("/m", "c", TxFields{Memo: "M", TimeoutHeight: 5, GasLimit: 400_000}, []*Bundle{b1, b2}, privacy.U64(7)),
+		"memo dropped":   Sighash("/m", "c", TxFields{TimeoutHeight: 5, GasLimit: 400_000}, []*Bundle{b1, b2}, privacy.U64(7)),
+		"timeout height": Sighash("/m", "c", TxFields{Memo: "m", TimeoutHeight: 0, GasLimit: 400_000}, []*Bundle{b1, b2}, privacy.U64(7)),
+		"gas limit":      Sighash("/m", "c", TxFields{Memo: "m", TimeoutHeight: 5, GasLimit: 400_001}, []*Bundle{b1, b2}, privacy.U64(7)),
 	} {
 		if other == base {
 			t.Fatalf("%s not bound", name)

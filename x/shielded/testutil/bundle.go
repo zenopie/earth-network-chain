@@ -168,13 +168,15 @@ func (p *Plan) Prove(b *types.Bundle, sighash fr.Element, prove ProveFunc) error
 }
 
 // ProveMsg proves every bundle of msg, plans[i] for msg.PrivateBundles()[i],
-// under msg's sighash on chainID. Every other field of msg must be final.
-func ProveMsg(msg types.PrivateMsg, chainID string, ac address.Codec, plans []*Plan, prove ProveFunc) error {
+// under msg's sighash on chainID in a tx with fields tx (the memo, timeout
+// height and gas limit the tx will carry). Every other field of msg must be
+// final.
+func ProveMsg(msg types.PrivateMsg, chainID string, tx types.TxFields, ac address.Codec, plans []*Plan, prove ProveFunc) error {
 	bs := msg.PrivateBundles()
 	if len(bs) != len(plans) {
 		return fmt.Errorf("%d bundles, %d plans", len(bs), len(plans))
 	}
-	sighash, err := types.Sighash(msg, chainID, ac)
+	sighash, err := types.Sighash(msg, chainID, tx, ac)
 	if err != nil {
 		return err
 	}

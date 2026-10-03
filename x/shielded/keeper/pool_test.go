@@ -103,7 +103,7 @@ func TestScenarioBundles(t *testing.T) {
 	single := f.scenarioMsg(s, shieldedtest.SingleAction)
 	ob, err := single.Bundle.ToOrchard()
 	require.NoError(t, err)
-	sighash, err := types.Sighash(single, shieldedtest.ChainID, f.ac)
+	sighash, err := types.Sighash(single, shieldedtest.ChainID, testTx, f.ac)
 	require.NoError(t, err)
 	require.NoError(t, ob.Verify(sighash, orchard.CanonicalBase, func(p []byte, in [][]byte) (bool, error) {
 		return f.k.VerifyCircuit(f.ctx, types.CircuitAction, p, in) == nil, nil
@@ -119,11 +119,11 @@ func TestSighashMatchesWallet(t *testing.T) {
 	f := initFixture(t)
 	for i := range s.Sends {
 		msg := f.scenarioMsg(s, i)
-		got, err := types.Sighash(msg, shieldedtest.ChainID, f.ac)
+		got, err := types.Sighash(msg, shieldedtest.ChainID, testTx, f.ac)
 		require.NoError(t, err)
 		b, err := s.Bundle(i)
 		require.NoError(t, err)
-		want, err := s.Sighash(i, b)
+		want, err := s.Sighash(i, b, testTx)
 		require.NoError(t, err)
 		require.Equal(t, want, got, s.Sends[i].Name)
 	}
@@ -158,7 +158,7 @@ func TestSighashBindsEverything(t *testing.T) {
 			require.ErrorIs(t, f.verify(f.ctx, m), types.ErrInvalidBindingSig)
 			// Re-signed over the new sighash with the true bsk: the
 			// balance holds, the proofs do not.
-			sh, err := types.Sighash(m, shieldedtest.ChainID, f.ac)
+			sh, err := types.Sighash(m, shieldedtest.ChainID, testTx, f.ac)
 			require.NoError(t, err)
 			m.Bundle.BindingSig, err = orchard.SignBinding(orchard.BindingSigningKey(s.Bsk(i)), sh, bytes.NewReader(make([]byte, 32)))
 			require.NoError(t, err)
@@ -191,7 +191,7 @@ func TestInflationRefused(t *testing.T) {
 	i := shieldedtest.Unshield2
 
 	resign := func(m *types.MsgSend) {
-		sh, err := types.Sighash(m, shieldedtest.ChainID, f.ac)
+		sh, err := types.Sighash(m, shieldedtest.ChainID, testTx, f.ac)
 		require.NoError(t, err)
 		m.Bundle.BindingSig, err = orchard.SignBinding(orchard.BindingSigningKey(s.Bsk(i)), sh, bytes.NewReader(make([]byte, 32)))
 		require.NoError(t, err)
@@ -274,7 +274,7 @@ func TestNegatedBaseInflationNeedsAnImpossibleProof(t *testing.T) {
 	out3.Rho, out3.Denom, out3.Value = shieldedtest.Det("forge/rho", 2), types.FeeDenom, 1
 	m.Bundle.Actions = append(m.Bundle.Actions, types.Action{Anchor: privacy.FieldBytes(root),
 		Nullifier: privacy.FieldBytes(privacy.NF(shieldedtest.Alice.NK, rho3, 0)), Commitment: privacy.FieldBytes(out3.CM()), Cv: orchard.PointBytes(cv3)})
-	sighash, err := types.Sighash(m, shieldedtest.ChainID, f.ac)
+	sighash, err := types.Sighash(m, shieldedtest.ChainID, testTx, f.ac)
 	require.NoError(t, err)
 	m.Bundle.BindingSig, err = orchard.SignBinding(orchard.BindingSigningKey([]fr.Element{r1, r2, r3}), sighash, bytes.NewReader(make([]byte, 32)))
 	require.NoError(t, err)
@@ -319,7 +319,7 @@ func mustOrchard(t *testing.T, m *types.MsgSend) []*orchard.Bundle {
 }
 
 func mustSighash(t *testing.T, f *fixture, m *types.MsgSend) fr.Element {
-	sh, err := types.Sighash(m, shieldedtest.ChainID, f.ac)
+	sh, err := types.Sighash(m, shieldedtest.ChainID, testTx, f.ac)
 	require.NoError(t, err)
 	return sh
 }

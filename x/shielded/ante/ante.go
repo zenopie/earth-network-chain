@@ -42,6 +42,8 @@
 package ante
 
 import (
+	stdmath "math"
+
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
@@ -124,6 +126,11 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 		// in SigVerificationDecorator, which private txs never reach.
 		return ctx, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "private txs cannot be unordered")
 	}
+	if p.Body.TimeoutTimestamp != nil {
+		// Not bound by the sighash (TxFields): a relayer could add, move or
+		// strip it. A private tx expires by timeout_height, which is bound.
+		return ctx, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "private txs take no timeout_timestamp; use timeout_height")
+	}
 	// The declared fee must be exactly what the bundles pay, in uerth, so
 	// explorers, CometBFT and anything reading AuthInfo.Fee see the real fee.
 	declared := sdk.Coins(fee.Amount)
@@ -168,6 +175,15 @@ type PrivateMsgDecorator struct {
 
 func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
 	msg := tx.GetMsgs()[0].(types.PrivateMsg)
+	// The tx fields every sighash below binds (types.SighashOf): an unsigned
+	// tx's relayer cannot rewrite its memo, timeout height or gas limit.
+	p := tx.(protoTxGetter).GetProtoTx()
+	if p.Body == nil || p.AuthInfo == nil || p.AuthInfo.Fee == nil {
+		return ctx, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "missing body, auth info or fee")
+	}
+	ctx = types.WithTxFields(ctx, types.TxFields{
+		Memo: p.Body.Memo, TimeoutHeight: p.Body.TimeoutHeight, GasLimit: p.AuthInfo.Fee.GasLimit,
+	})
 	params, err := d.K.Params.Get(ctx)
 	if err != nil {
 		return ctx, err
@@ -262,7 +278,13 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	ctx = keeper.CarryAuthorization(ctx, pool)
 	ctx.EventManager().EmitEvent(sdk.NewEvent(sdk.EventTypeTx, sdk.NewAttribute(sdk.AttributeKeyFee, feeTx.GetFee().String())))
 	if gas > 0 {
-		ctx = ctx.WithPriority(amt.Quo(math.NewIntFromUint64(gas)).Int64())
+		// fee/gas, capped: a fee near 2^65 at gas 1 does not fit an int64
+		// (Int64 would panic).
+		prio := amt.Quo(math.NewIntFromUint64(gas))
+		if !prio.IsInt64() {
+			prio = math.NewInt(stdmath.MaxInt64)
+		}
+		ctx = ctx.WithPriority(prio.Int64())
 	}
 	return next(ctx, tx, simulate)
 }

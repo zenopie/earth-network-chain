@@ -66,12 +66,13 @@ type UnshieldMsg interface {
 	UnshieldReceiver(ac address.Codec) ([]byte, error)
 }
 
-// Sighash is msg's sighash on chainID (zk/orchard.Sighash): the msg type URL,
-// the chain id, every bundle's digest in order, then the msg's own fields.
-// Every action proof binds it, every binding signature signs it, and any
-// other proof the msg carries (membership, passport) binds it as its signal.
-// Call after ValidateBundles.
-func Sighash(msg PrivateMsg, chainID string, ac address.Codec) (fr.Element, error) {
+// Sighash is msg's sighash on chainID in a tx with fields tx
+// (zk/orchard.Sighash): the msg type URL, the chain id, every bundle's digest
+// in order, the tx's memo, timeout height and gas limit, then the msg's own
+// fields. Every action proof binds it, every binding signature signs it, and
+// any other proof the msg carries (membership, passport) binds it as its
+// signal. Call after ValidateBundles.
+func Sighash(msg PrivateMsg, chainID string, tx TxFields, ac address.Codec) (fr.Element, error) {
 	bs := msg.PrivateBundles()
 	ob := make([]*orchard.Bundle, len(bs))
 	for i, b := range bs {
@@ -85,7 +86,7 @@ func Sighash(msg PrivateMsg, chainID string, ac address.Codec) (fr.Element, erro
 	if err != nil {
 		return fr.Element{}, err
 	}
-	return orchard.Sighash(sdk.MsgTypeURL(msg), chainID, ob, fields...), nil
+	return orchard.Sighash(sdk.MsgTypeURL(msg), chainID, tx, ob, fields...), nil
 }
 
 // ValidateBundles checks a private msg's bundles together: 1..MaxBundlesPerMsg

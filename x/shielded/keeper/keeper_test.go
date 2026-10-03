@@ -98,6 +98,9 @@ type fixture struct {
 
 const personhood = "personhood"
 
+// testTx is the tx every keeper test's private msg is proven for.
+var testTx = types.TxFields{Memo: "keeper test", GasLimit: 2_500_000}
+
 // initFixture builds a keeper over a fresh store with default genesis, the
 // action verifying key set, and the scenario's chain id.
 func initFixture(t *testing.T) *fixture {
@@ -119,6 +122,8 @@ func initFixtureEmpty(t *testing.T, bank *fakeBank) *fixture {
 		WithChainID(shieldedtest.ChainID).
 		WithBlockHeight(1).
 		WithBlockTime(time.Unix(1_800_000_000, 0).UTC())
+	// As the private ante records them for a tx (keeper tests run no ante).
+	ctx = types.WithTxFields(ctx, testTx)
 	k := keeper.NewKeeper(runtime.NewKVStoreService(key), encCfg.Codec, ac,
 		authtypes.NewModuleAddress(types.GovModuleName), fakeAuth{ac}, bank,
 		[]string{types.AnmlDenom}, []string{personhood})
@@ -187,7 +192,7 @@ func (f *fixture) runPrivate(msg *types.MsgSend) (*types.MsgSendResponse, error)
 // scenarioMsg is send i of s, proven (from the proof cache).
 func (f *fixture) scenarioMsg(s shieldedtest.Scenario, i int) *types.MsgSend {
 	f.t.Helper()
-	msg, err := s.Msg(i, f.bech(shieldedtest.Receiver), func(toml string, pub [][]byte) []byte {
+	msg, err := s.Msg(i, f.bech(shieldedtest.Receiver), testTx, func(toml string, pub [][]byte) []byte {
 		return f.prover.Prove(f.t, toml, pub)
 	})
 	require.NoError(f.t, err)

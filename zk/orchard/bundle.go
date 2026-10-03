@@ -76,22 +76,41 @@ func (b *Bundle) Digest() fr.Element {
 	return privacy.H(in...)
 }
 
+// TxFields are the fields of the enclosing tx (outside the msg) that every
+// private msg's sighash binds. A private tx is unsigned, so whoever relays it
+// could otherwise rewrite them: the memo (an exchange's deposit tag), the
+// timeout height (remove the wallet's expiry) and the gas limit (lower it so
+// the msg's handler runs out of gas after the ante has spent the notes).
+type TxFields struct {
+	// Memo is the tx body's memo.
+	Memo string
+	// TimeoutHeight is the tx body's timeout_height (0: none).
+	TimeoutHeight uint64
+	// GasLimit is the auth info's fee.gas_limit.
+	GasLimit uint64
+}
+
 // Sighash is what every action proof of a msg binds as its public
 // `sighash`, what any other proof in the msg (membership, passport) binds as
 // its signal, and what each bundle's binding signature signs:
 //
 //	sighash = zk/privacy.Signal(msg_type_url, chain_id,
 //	                            K, digest(bundle_0), ..., digest(bundle_K-1),
+//	                            Bytes(memo), timeout_height, gas_limit,
 //	                            msg fields...)
-//	        = H(TAG_SIGNAL, Bytes(msg_type_url), Bytes(chain_id), K, D_0, ..., fields...)
+//	        = H(TAG_SIGNAL, Bytes(msg_type_url), Bytes(chain_id), K, D_0, ...,
+//	            Bytes(memo), timeout_height, gas_limit, fields...)
 //
-// The msg type URL fixes how many fields follow and what they mean.
-func Sighash(msgType, chainID string, bundles []*Bundle, fields ...fr.Element) fr.Element {
-	f := make([]fr.Element, 0, 1+len(bundles)+len(fields))
+// Bytes(memo) is over the memo's UTF-8 bytes; timeout_height and gas_limit
+// are u64 field elements. The msg type URL fixes how many fields follow and
+// what they mean.
+func Sighash(msgType, chainID string, tx TxFields, bundles []*Bundle, fields ...fr.Element) fr.Element {
+	f := make([]fr.Element, 0, 4+len(bundles)+len(fields))
 	f = append(f, privacy.U64(uint64(len(bundles))))
 	for _, b := range bundles {
 		f = append(f, b.Digest())
 	}
+	f = append(f, privacy.Bytes([]byte(tx.Memo)), privacy.U64(tx.TimeoutHeight), privacy.U64(tx.GasLimit))
 	return privacy.Signal(msgType, chainID, append(f, fields...)...)
 }
 
@@ -246,6 +265,24 @@ func VerifyProofs(bundles []*Bundle, sighash fr.Element, verify ProofVerifier) e
 	for _, e := range errs {
 		if e != nil {
 			return e
+		}
+	}
+	return nil
+}
+
+// VerifyProofsSequential verifies the same proofs as VerifyProofs, one at a
+// time in bundle and action order, and stops at the first that fails. For a
+// mempool (CheckTx), where a tx whose first proof is junk must cost one
+// verification, not one per action: the binding signature is no filter there,
+// since anyone can sign a forged balance over unproven value commitments.
+// Same result as VerifyProofs; only the work done on failure differs.
+func VerifyProofsSequential(bundles []*Bundle, sighash fr.Element, verify ProofVerifier) error {
+	for i, b := range bundles {
+		for j := range b.Actions {
+			ok, err := verify(b.Actions[j].Proof, b.PublicInputs(j, sighash))
+			if err != nil || !ok {
+				return &ActionError{Bundle: i, Action: j, Err: err}
+			}
 		}
 	}
 	return nil

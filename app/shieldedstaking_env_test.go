@@ -328,6 +328,9 @@ func (e *stakeEnv) signedTx(key *secp256k1.PrivKey, gas uint64, fee int64, msgs 
 	return bz
 }
 
+// ssTx is the tx every private msg here is proven for (privateTx's).
+var ssTx = shieldedtypes.TxFields{GasLimit: ssGas}
+
 // privateTx encodes an unsigned private tx whose declared fee is its msg's.
 func (e *stakeEnv) privateTx(msg shieldedtypes.PrivateMsg) []byte {
 	e.t.Helper()
@@ -649,7 +652,7 @@ func (e *stakeEnv) prove(msg shieldedtypes.PrivateMsg, ps ...*pendingBundle) {
 		script = "scripts/dex-fixtures.sh"
 	}
 	pr := shieldedtest.ForDir(e.t, e.proofDir, script)
-	require.NoError(e.t, shieldedtest.ProveMsg(msg, ssChainID, e.app.AuthKeeper.AddressCodec(), plans, pr.TryProve))
+	require.NoError(e.t, shieldedtest.ProveMsg(msg, ssChainID, ssTx, e.app.AuthKeeper.AddressCodec(), plans, pr.TryProve))
 }
 
 // unproven fills msg's bundles (and stake proof) with placeholder proofs and
