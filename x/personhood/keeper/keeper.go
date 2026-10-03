@@ -84,6 +84,11 @@ type Keeper struct {
 	ReferrerByAddr   collections.Map[[]byte, []byte]
 	ReferrerExpiry   collections.KeySet[collections.Pair[int64, []byte]]
 
+	// Registration bindings that have landed, refused for reuse until their
+	// expiry, and the expiry order. See registration.go.
+	UsedBindings      collections.Map[[]byte, int64]
+	UsedBindingExpiry collections.KeySet[collections.Pair[int64, []byte]]
+
 	// buyback-and-burn clock
 	LastBuyback     collections.Item[int64]
 	TwapObservation collections.Item[math.LegacyDec]
@@ -160,6 +165,9 @@ func NewKeeper(
 			codec.CollValue[types.ReferrerBinding](cdc)),
 		ReferrerByAddr: collections.NewMap(sb, types.ReferrerByAddrKey, "referrer_by_addr", collections.BytesKey, collections.BytesValue),
 		ReferrerExpiry: collections.NewKeySet(sb, types.ReferrerExpiryKey, "referrer_expiry", timeBytes),
+
+		UsedBindings:      collections.NewMap(sb, types.UsedBindingsKey, "used_bindings", collections.BytesKey, collections.Int64Value),
+		UsedBindingExpiry: collections.NewKeySet(sb, types.UsedBindingExpiryKey, "used_binding_expiry", timeBytes),
 
 		LastBuyback:     collections.NewItem(sb, types.LastBuybackKey, "last_buyback", collections.Int64Value),
 		TwapObservation: collections.NewItem(sb, types.TwapObservationKey, "twap_observation", sdk.LegacyDecValue),

@@ -102,3 +102,16 @@ message ReferrerBinding {
   string address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   int64 expires_at = 3;
 }
+
+// UsedRegistrationBinding is a registration binding (the proof's address
+// input: Poseidon2 of idc, the reward notes, their ciphertexts and the
+// affiliate) that has been registered, refused for reuse until expires_at.
+// A passport proof is public once it lands; without this record anyone could
+// replay a holder's earlier registration (A -> B -> A) as a switch back to A
+// while its current_date is still inside the skew. expires_at is the
+// registration time plus current_date_max_skew_seconds plus a day, past which
+// the date check refuses the proof anyway.
+message UsedRegistrationBinding {
+  bytes binding = 1;
+  int64 expires_at = 2;
+}

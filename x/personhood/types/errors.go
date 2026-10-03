@@ -30,4 +30,7 @@ var (
 	// ErrRegistrationReplay: a switch to the identity commitment the live
 	// registration already holds (a replayed MsgRegister).
 	ErrRegistrationReplay = errors.Register(ModuleName, 1123, "passport is already registered to this identity commitment")
+	// ErrBindingUsed: this registration (its exact binding: idc, notes,
+	// ciphertexts, affiliate) has landed before. A replay of a public proof.
+	ErrBindingUsed = errors.Register(ModuleName, 1124, "this registration has already been used")
 )

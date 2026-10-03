@@ -204,6 +204,18 @@ func (p Params) Validate() error {
 	if p.CurrentDateMaxSkewSeconds == 0 {
 		return errors.New("current_date_max_skew_seconds must be positive: 0 leaves passport expiry unenforced")
 	}
+	// Bounded so now + skew (the used-binding expiry) cannot overflow, and
+	// because a skew of more than a year is no expiry check at all.
+	if p.CurrentDateMaxSkewSeconds > 365*SecondsPerDay {
+		return fmt.Errorf("current_date_max_skew_seconds must be at most a year")
+	}
+	// Zero takes the default. Otherwise at least one per sweep (runSweeps
+	// reserves each later sweep a share; below this some get none) and at
+	// most what one BeginBlock, on an infinite gas meter, can afford.
+	if l := p.RegistrationSweepLimit; l != 0 && (l < MinRegistrationSweepLimit || l > MaxRegistrationSweepLimit) {
+		return fmt.Errorf("registration_sweep_limit must be 0 (default) or in %d..%d, got %d",
+			MinRegistrationSweepLimit, MaxRegistrationSweepLimit, l)
+	}
 	if p.RegistrationValiditySeconds == 0 || p.RegistrationValiditySeconds > MaxRegistrationValiditySeconds {
 		return fmt.Errorf("registration_validity_seconds must be in 1..%d, got %d",
 			uint64(MaxRegistrationValiditySeconds), p.RegistrationValiditySeconds)

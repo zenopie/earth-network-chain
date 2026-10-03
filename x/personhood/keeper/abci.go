@@ -41,10 +41,10 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 
 // sweepReserveDivisor sets each later sweep's guaranteed share of the block's
 // retirement budget: budget/sweepReserveDivisor (at least 1) apiece for the
-// expiry, caretaker and referrer sweeps.
+// expiry, caretaker, referrer and used-binding sweeps.
 const sweepReserveDivisor = 8
 
-// runSweeps shares one block's retirement budget among the four sweeps.
+// runSweeps shares one block's retirement budget among the five sweeps.
 //
 // The revoked-signer purge comes first and gets the largest share (see
 // purgeRevokedDscs for why it outranks expiry), but not all of it: the expiry,
@@ -67,12 +67,17 @@ func (k Keeper) runSweeps(ctx context.Context, budget int) error {
 		k.sweepExpiredRegistrations,
 		k.sweepCaretakerVotes,
 		k.sweepReferrerBindings,
+		k.sweepUsedBindings,
 	}
 	reserve := budget / sweepReserveDivisor
 	if reserve == 0 && budget >= len(sweeps) {
 		reserve = 1
 	}
-	shares := []int{budget - reserve*(len(sweeps)-1), reserve, reserve, reserve}
+	shares := make([]int, len(sweeps))
+	shares[0] = budget - reserve*(len(sweeps)-1)
+	for i := 1; i < len(shares); i++ {
+		shares[i] = reserve
+	}
 
 	remaining := budget
 	carry := 0

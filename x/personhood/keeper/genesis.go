@@ -80,6 +80,11 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 	}
+	for _, u := range genState.UsedBindings {
+		if err := k.putUsedBinding(ctx, u.Binding, u.ExpiresAt); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -141,6 +146,12 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}
 	if err := k.ReferrerBindings.Walk(ctx, nil, func(_ []byte, b types.ReferrerBinding) (bool, error) {
 		genesis.ReferrerBindings = append(genesis.ReferrerBindings, b)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.UsedBindings.Walk(ctx, nil, func(b []byte, until int64) (bool, error) {
+		genesis.UsedBindings = append(genesis.UsedBindings, types.UsedRegistrationBinding{Binding: b, ExpiresAt: until})
 		return false, nil
 	}); err != nil {
 		return nil, err

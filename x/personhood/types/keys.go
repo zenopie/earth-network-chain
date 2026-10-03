@@ -80,6 +80,11 @@ const (
 	// a dozen store operations per retirement, 100 is a small fraction of a
 	// block and drains a large cohort in minutes.
 	DefaultRegistrationSweepLimit = 100
+	// MinRegistrationSweepLimit and MaxRegistrationSweepLimit bound a
+	// governance-set limit: at least one per sweep sharing it, and at most
+	// what a block can afford to do on an infinite gas meter.
+	MinRegistrationSweepLimit = 5
+	MaxRegistrationSweepLimit = 10_000
 
 	// DefaultDscDailyRegistrationFloor is the minimum daily registration
 	// allowance for one Document Signer, whatever the network's size.
@@ -325,4 +330,15 @@ var (
 	ReferrerBindingsKey = collections.NewPrefix("referrer_bindings")
 	ReferrerByAddrKey   = collections.NewPrefix("referrer_by_addr")
 	ReferrerExpiryKey   = collections.NewPrefix("referrer_expiry")
+
+	// UsedBindingsKey maps a landed registration's binding to when it may be
+	// forgotten; UsedBindingExpiryKey orders them by that for the sweep.
+	UsedBindingsKey      = collections.NewPrefix("used_bindings")
+	UsedBindingExpiryKey = collections.NewPrefix("used_binding_expiry")
 )
+
+// UsedBindingGraceSeconds is added to current_date_max_skew_seconds for how
+// long a landed registration's binding is refused: current_date is a day
+// granular, so a proof dated today stays inside the skew up to a day longer
+// than the skew alone.
+const UsedBindingGraceSeconds = 24 * 60 * 60

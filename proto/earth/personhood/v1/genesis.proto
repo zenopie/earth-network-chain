@@ -48,4 +48,8 @@ message GenesisState {
 
   // referrer_bindings are the live referral addresses.
   repeated ReferrerBinding referrer_bindings = 8 [(gogoproto.nullable) = false];
+
+  // used_bindings are the registration bindings still refused for reuse
+  // (see UsedRegistrationBinding).
+  repeated UsedRegistrationBinding used_bindings = 9 [(gogoproto.nullable) = false];
 }

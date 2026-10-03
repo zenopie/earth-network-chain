@@ -546,6 +546,12 @@ func TestPrivatePersonhood(t *testing.T) {
 	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(ctxNow(), lifted.Fee.Actions[0].Nullifier)
 	require.NoError(t, err)
 	require.False(t, spent)
+	// Replaying the registration under a fresh fee: its binding has landed
+	// and is refused for reuse (the A -> B -> A replay, re-audit R1).
+	refeed := *regA1
+	refeed.Fee = lifted.Fee
+	res = e.checkTx(e.tx(&refeed))
+	require.Equal(t, personhoodtypes.ErrBindingUsed.ABCICode(), res.Code, res.Log)
 
 	// B and C1.
 	e.mustDeliver(e.register("B"))

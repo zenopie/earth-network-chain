@@ -112,6 +112,20 @@ func (gs GenesisState) Validate() error {
 		seenAddr[strings.ToLower(b.Address)] = struct{}{}
 	}
 
+	seenUsed := map[string]struct{}{}
+	for _, u := range gs.UsedBindings {
+		if _, err := privacy.FieldFromBytes(u.Binding); err != nil {
+			return fmt.Errorf("used binding: %w", err)
+		}
+		if _, dup := seenUsed[string(u.Binding)]; dup {
+			return fmt.Errorf("used binding %x listed twice", u.Binding)
+		}
+		seenUsed[string(u.Binding)] = struct{}{}
+		if u.ExpiresAt <= 0 {
+			return fmt.Errorf("used binding %x has no expiry", u.Binding)
+		}
+	}
+
 	if gs.LastBuyback < 0 {
 		return fmt.Errorf("last_buyback must not be negative")
 	}

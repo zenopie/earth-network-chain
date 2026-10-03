@@ -32,6 +32,7 @@ type preparedRegistration struct {
 	vk        []byte
 	pubInputs [][]byte
 	nullifier []byte
+	binding   []byte // the address input, recorded as used once it lands
 	dsc       dscFacts
 	// switched is decided here, before anything is written: a live
 	// registration under the same passport makes this a switch, which is
@@ -85,9 +86,21 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	if err != nil {
 		return preparedRegistration{}, err
 	}
-	if !bytes.Equal(pubInputs[params.AddressIndex], privacy.FieldBytes(binding)) {
+	bindingBytes := privacy.FieldBytes(binding)
+	if !bytes.Equal(pubInputs[params.AddressIndex], bindingBytes) {
 		return preparedRegistration{}, types.ErrBadPublicInputs.Wrap(
 			"proof is bound to a different identity and notes than this msg names")
+	}
+	// A registration that has landed is public, proof and all. Replaying it
+	// later (after the holder switched elsewhere: A -> B -> A) would pass every
+	// other check while its current_date is in the skew, so each landed
+	// binding is refused for as long as that can be (see UsedBindings). A
+	// fresh registration has fresh notes, so a fresh binding: a holder never
+	// meets this refusal for a registration they made anew.
+	if used, err := k.UsedBindings.Has(ctx, bindingBytes); err != nil {
+		return preparedRegistration{}, err
+	} else if used {
+		return preparedRegistration{}, types.ErrBindingUsed
 	}
 
 	// Pin the prover-supplied current_date to the block time: the circuit
@@ -180,7 +193,8 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 			return preparedRegistration{}, err
 		}
 	}
-	return preparedRegistration{vk: vk, pubInputs: pubInputs, nullifier: nullifier, dsc: facts, switched: switched, affiliate: affiliate}, nil
+	return preparedRegistration{vk: vk, pubInputs: pubInputs, nullifier: nullifier, binding: bindingBytes,
+		dsc: facts, switched: switched, affiliate: affiliate}, nil
 }
 
 // verifyRegistrationProof verifies the passport proof checkRegistration
@@ -367,4 +381,53 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int,
 		))
 	}
 	return len(expired), nil
+}
+
+// markBindingUsed records a landed registration's binding, refused for reuse
+// until now + current_date_max_skew_seconds + a day: past that, the proof's
+// current_date is out of the skew and the date check refuses it anyway.
+// A later skew increase by governance does not extend existing entries; the
+// next registration under the new skew gets the new window.
+func (k Keeper) markBindingUsed(ctx context.Context, binding []byte) error {
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return err
+	}
+	until := sdk.UnwrapSDKContext(ctx).BlockTime().Unix() + int64(params.CurrentDateMaxSkewSeconds) + types.UsedBindingGraceSeconds
+	return k.putUsedBinding(ctx, binding, until)
+}
+
+func (k Keeper) putUsedBinding(ctx context.Context, binding []byte, until int64) error {
+	if err := k.UsedBindings.Set(ctx, binding, until); err != nil {
+		return err
+	}
+	return k.UsedBindingExpiry.Set(ctx, collections.Join(until, binding))
+}
+
+// sweepUsedBindings forgets bindings past their expiry, at most budget of
+// them. One of runSweeps' sweeps.
+func (k Keeper) sweepUsedBindings(ctx context.Context, budget int) (int, error) {
+	if budget <= 0 {
+		return 0, nil
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	var lapsed []collections.Pair[int64, []byte]
+	if err := k.UsedBindingExpiry.Walk(ctx, nil, func(key collections.Pair[int64, []byte]) (bool, error) {
+		if key.K1() > now {
+			return true, nil
+		}
+		lapsed = append(lapsed, key)
+		return len(lapsed) >= budget, nil
+	}); err != nil {
+		return 0, err
+	}
+	for _, key := range lapsed {
+		if err := k.UsedBindingExpiry.Remove(ctx, key); err != nil {
+			return 0, err
+		}
+		if err := k.UsedBindings.Remove(ctx, key.K2()); err != nil {
+			return 0, err
+		}
+	}
+	return len(lapsed), nil
 }

@@ -68,6 +68,10 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		return nil, types.ErrInvalidMsg.Wrap("registration state changed since the ante")
 	}
 
+	if err := k.markBindingUsed(ctx, p.binding); err != nil {
+		return nil, err
+	}
+
 	leaf, err := IdentityLeaf(msg.Idc, p.dsc.key, p.dsc.country, now)
 	if err != nil {
 		return nil, err
