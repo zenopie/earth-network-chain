@@ -313,8 +313,11 @@ func (q queryServer) Handles(ctx context.Context, req *types.QueryHandlesRequest
 type handleAction struct{ k Keeper }
 
 func (a handleAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.PrivateMsg) (uint64, error) {
-	// The record, its two indexes, and a released handle's removal.
-	return a.k.MembershipActionGas(ctx, 4)
+	// The worst case, priced as nine note writes (audit 5 L-P5): a change
+	// deletes the held record and its two indexes, evicts a free unswept
+	// record of the wanted handle (three more), and writes the new record and
+	// its two indexes.
+	return a.k.MembershipActionGas(ctx, 9)
 }
 
 // handleLeaseSeconds is the handle lease length the claim bound uses: the

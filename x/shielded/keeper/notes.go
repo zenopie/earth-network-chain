@@ -188,7 +188,14 @@ func (k Keeper) MintOpenNote(ctx context.Context, fromModule string, coin sdk.Co
 }
 
 // Shield moves coin from sender into the pool as one note (MsgShield).
+//
+// A denom the bank has send-disabled does not enter the pool (audit 5 L-SH2):
+// inside it, the note would move privately, and a module release (a dex note
+// swap) would carry it out again, both around the switch.
 func (k Keeper) Shield(ctx context.Context, sender sdk.AccAddress, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error) {
+	if err := k.bankKeeper.IsSendEnabledCoins(ctx, coin); err != nil {
+		return 0, nil, err
+	}
 	cm, err := k.noteFor(ctx, coin, pc, ciphertext)
 	if err != nil {
 		return 0, nil, err

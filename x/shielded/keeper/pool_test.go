@@ -486,6 +486,14 @@ func TestSendRestriction(t *testing.T) {
 		Ciphertext: shieldedtest.BlindCT("anml")})
 	require.NoError(t, err)
 
+	// A send-disabled denom does not enter the pool (audit 5 L-SH2).
+	f.bank.mint(user, sdk.NewInt64Coin("uoff", 10))
+	f.bank.disabled = map[string]bool{"uoff": true}
+	_, err = f.msgs.Shield(f.ctx, &types.MsgShield{Sender: f.bech(user), Amount: sdk.NewInt64Coin("uoff", 10), Pc: pc,
+		Ciphertext: shieldedtest.BlindCT("off")})
+	require.ErrorIs(t, err, types.ErrSendRestricted)
+	f.bank.disabled = nil
+
 	// MintNote from a module holding the coins.
 	f.bank.mint(mod(personhood), sdk.NewInt64Coin(types.AnmlDenom, 1_000_000))
 	pos, cm, err := f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 1_000_000), pc, shieldedtest.BlindCT("mint"))

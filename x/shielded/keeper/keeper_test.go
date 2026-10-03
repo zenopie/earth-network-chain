@@ -28,6 +28,7 @@ import (
 type fakeBank struct {
 	balances    map[string]sdk.Coins
 	blocked     map[string]bool
+	disabled    map[string]bool // send-disabled denoms
 	restriction func(ctx context.Context, from, to sdk.AccAddress, amt sdk.Coins) (sdk.AccAddress, error)
 }
 
@@ -77,8 +78,15 @@ func (b *fakeBank) SendCoinsFromModuleToAccount(ctx context.Context, m string, t
 func (b *fakeBank) SendCoinsFromModuleToModule(ctx context.Context, from, to string, amt sdk.Coins) error {
 	return b.send(ctx, mod(from), mod(to), amt)
 }
-func (b *fakeBank) BlockedAddr(addr sdk.AccAddress) bool                  { return b.blocked[string(addr)] }
-func (b *fakeBank) IsSendEnabledCoins(context.Context, ...sdk.Coin) error { return nil }
+func (b *fakeBank) BlockedAddr(addr sdk.AccAddress) bool { return b.blocked[string(addr)] }
+func (b *fakeBank) IsSendEnabledCoins(_ context.Context, coins ...sdk.Coin) error {
+	for _, c := range coins {
+		if b.disabled[c.Denom] {
+			return types.ErrSendRestricted.Wrapf("fake bank: %s transfers are disabled", c.Denom)
+		}
+	}
+	return nil
+}
 
 type fakeAuth struct{ ac address.Codec }
 
