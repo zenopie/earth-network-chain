@@ -16,7 +16,11 @@ import (
 // msg that asks for it, and every stake note x/shieldedstaking mints carries
 // a blind stake ciphertext (zk/privacy.EncryptBlindStakeNote). The wallet
 // finds every note it owns by trial-decrypting ciphertexts and checking the
-// cm against the published amount; it keeps no self-mint counter.
+// cm against the published amount; it keeps no self-mint counter. One
+// exception, an open note (Keeper.MintOpenNote: the referral note the chain
+// mints to a referrer handle's address): no ciphertext; its shielded_mint
+// event carries owner_pk, rho and rcm, and the wallet takes the notes whose
+// owner_pk is its own (pc and cm recomputed and checked as usual).
 const BlindCiphertextBytes = privacy.BlindNoteCiphertextBytes
 
 // NoteCiphertextBytes is every bundle action's output ciphertext length: a

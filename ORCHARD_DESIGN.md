@@ -729,3 +729,79 @@ vote_nf(0x5eed, 0xa1, 1, 7) = 0x1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f
 with their leaf index (it already streams the nullifier events; add `index`,
 keep failed txs' events, and page by index), or proxy Query/
 StakeNullifierTree.
+
+## 16. Audit round 5: wallet-facing rules (2026-10-03)
+
+Design principle throughout: people are private; power and public money
+are public. Each item changes consensus.
+
+**Referral note: the chain makes it (P1).** Before, the registrant's wallet
+made the referral note (`affiliate_pc`, `affiliate_ciphertext`) and the chain
+never related its pc to the handle, so every registrant could name any live
+handle and send the referral half to itself. Now:
+
+- `MsgRegister` carries `affiliate_handle` (15) only; fields 11 and 12 are
+  reserved.
+- Binding affiliate field: `0` for no referrer, else
+  `H(TAG_AFFILIATE, Bytes(affiliate_handle))` (TAG_AFFILIATE = "earth.affiliate").
+  The handle stays in the binding, so a relayer cannot swap the referrer.
+- At execution the chain resolves the handle (live) and mints the referrer's
+  half to `pc = PC(handle.owner_pk, rho, rcm)` with
+  `rho = H(TAG_REFERRAL, nullifier, leaf_index, 0)`,
+  `rcm = H(TAG_REFERRAL, nullifier, leaf_index, 1)`
+  (`zk/privacy.ReferralOpening`; TAG_REFERRAL = "earth.referral"; nullifier =
+  the passport nullifier, leaf_index = the new identity leaf). Unique per
+  registration (the leaf index never repeats).
+- The note has no ciphertext. Its `shielded_mint` event carries `owner_pk`,
+  `rho`, `rcm` (hex) beside `amount` and `position`; `ciphertext` is empty.
+  The handle owner's wallet takes every mint whose owner_pk is its own,
+  recomputes pc and cm and checks cm at that position (`shielded_note`).
+  The `register` event adds `handle`, `referral` (amount) and
+  `referral_position`.
+- Why publishing the opening is safe: the recipient (the handle's address)
+  and the amount are public already; spending needs nk, and the nullifier
+  `H(TAG_NF, nk, rho, position)` cannot be linked without it.
+- Alternatives considered: checking a wallet-supplied pc against an opening
+  in the msg (more fields, same disclosure) and drawing the same total with
+  or without a referrer (kills the referral incentive). The chain-derived
+  opening has the fewest fields and no way to get it wrong.
+- A handle that stops resolving between the ante and execution (released by
+  an earlier tx in the block) lands the registration unreferred, drawing the
+  unreferred rate, rather than failing after its fee.
+
+**LP payouts above u64 (D1).** A note value is a u64. A chain-priced payout
+(a matured LP withdrawal's legs) is minted as `ceil(v / (2^64-1))` notes to
+the same pc and ciphertext (`MintNoteSplit`, at most 64), each with its own
+`shielded_mint` event and position: the wallet decrypts the one ciphertext
+and checks each position's cm with that position's amount. A payout that
+still fails is never dropped: the entry keeps its escrowed shares, its
+`payout_attempts` (LpUnbonding field 10) goes up and its completion_time
+moves to now + 1h << min(attempts-1, 8) (`lp_unbond_payout_failed` carries
+`attempts` and `retry_at`). A withdrawal whose note leg is already above 16
+notes' worth is refused when it starts. Every other private mint is either
+atomic with its msg (swaps, deposits, refunds, unbond claims, the user's own
+shield: an oversized value fails the tx and nothing is lost) or bounded far
+below 2^64 (registration rewards are 1e-4 of an option; ANML claims are one
+ANML).
+
+**One live handle per passport (P2).** MsgBindHandle needs the claim bound
+(`max_predecessor < now - handle lease - 86400`) unless the prover holds a
+**live** handle: a renewal or change during the renewal period is bounded
+like a claim. MsgMoveHandle refuses a handle that is not live. A caretaker
+split past its expiry that the sweep has not reached is not held either
+(a refresh of it is a new split, bounded).
+
+**Lease bounds (P3).** `Query/LeaseBounds` (`/earth/personhood/v1/lease_bounds`):
+`block_time`, `activation_margin_seconds`, `handle_lease_seconds` (the
+longest ever in force), `handle_claim_bound`, `caretaker_lease_seconds`
+(including a held longer lease after a cut), `caretaker_cast_bound`,
+`caretaker_lease_hold_until`. Wallets compute max_predecessor from these
+lease lengths, never from Params.
+
+**Smaller rules.** CheckTx refuses an anchor that lapses within 120 s of the
+last block (pick a newer one). MsgShield refuses a send-disabled denom. The
+dex swap fee rounds up. An expedited proposal the chamber ratifies and x/gov
+demotes votes again in round 1 (a new nullifier scope; `Query/BallotInputs`
+reports it). Chamber votes pass the circuit breaker; the private gas prices
+are capped (proof 10M, note 1M, bundle 1M). Handle binds cost nine note
+writes of gas.

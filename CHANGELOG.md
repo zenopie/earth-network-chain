@@ -15,6 +15,42 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Audit round 5 (see FIX_ROUND5_PROGRESS.md, ORCHARD_DESIGN.md section 16):
+  - x/personhood: **the chain mints the referral note** to the referrer
+    handle's registered address, with an opening derived from the passport
+    nullifier and leaf index (`H("earth.referral", nullifier, leaf_index,
+    0|1)`) and published on its `shielded_mint` event (`owner_pk`, `rho`,
+    `rcm`; no ciphertext). MsgRegister drops `affiliate_pc` (11) and
+    `affiliate_ciphertext` (12); the binding's affiliate field is
+    `H("earth.affiliate", Bytes(handle))`. The `register` event adds
+    `handle`, `referral`, `referral_position`. Before this a registrant
+    could pay the referral half to itself.
+  - x/personhood: a handle renewal or change by a holder whose handle is not
+    live is bounded like a claim; MsgMoveHandle refuses a handle that is not
+    live; a lapsed, unswept caretaker split no longer counts as held. Closes
+    two live handles per passport via switch-and-switch-back.
+  - x/personhood: new `Query/LeaseBounds` (effective handle and caretaker
+    lease lengths, and the predecessor bounds at this block). Handle binds
+    now cost nine note writes of gas.
+  - x/dex: a private LP payout leg above 2^64-1 is minted as up to 64 notes;
+    a failed payout is kept and retried with backoff (LpUnbonding
+    `payout_attempts` = 10), never dropped; withdrawals whose note leg is
+    above 16 notes' worth are refused at start. Swap fee rounds up. TWAP
+    accumulators are exported (genesis `price_accumulators` = 11).
+  - x/allocation: a struck INTEGRATED option stays out of the handler set
+    across export/import, prune clears it, and a dangling entry no longer
+    halts BeginBlock.
+  - x/shielded: CheckTx/ReCheckTx refuse an anchor lapsing within 120 s;
+    PrepareProposal leaves out txs whose anchor lapsed by the block's time;
+    MsgShield refuses a send-disabled denom; gas prices capped (proof 10M,
+    note 1M, bundle 1M); `MintNoteSplit`, `MintOpenNote`.
+  - x/assembly: a chamber-ratified expedited proposal demoted by x/gov
+    votes in a new round (new nullifier scope); ProposalTally uses the
+    expedited bar; stale ballots are swept (with a cursor) and not imported.
+  - app: the chamber's vote msgs pass the circuit breaker (ante and msg
+    router).
+  - x/shieldedstaking: checkpointSupply's walk is bounded; InitGenesis
+    validates first; a position's derth must fit a u64.
 - Audit round 4 (see FIX_ROUND4_PROGRESS.md):
   - x/dex: **pool cap 2^120** on reserves, LP share supply, a swap input and
     the auction raise (ErrPoolCap, code 1120); payout / POL / deposit maths
