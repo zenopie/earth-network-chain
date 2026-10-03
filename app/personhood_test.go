@@ -307,7 +307,8 @@ func stubFeeBundle(fee uint64) shieldedtypes.Bundle {
 		BindingSig: make([]byte, orchard.BindingSigSize)}
 	for i := range uint64(2) {
 		b.Actions = append(b.Actions, shieldedtypes.Action{Anchor: make([]byte, 32),
-			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: make([]byte, shieldedtypes.ProofBytes)})
+			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: make([]byte, shieldedtypes.ProofBytes),
+			Ciphertext: shieldedtest.NoteCT(fmt.Sprintf("unverified/%d", i))})
 	}
 	return b
 }

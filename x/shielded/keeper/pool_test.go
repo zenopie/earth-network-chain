@@ -257,9 +257,9 @@ func TestNegatedBaseInflationNeedsAnImpossibleProof(t *testing.T) {
 	rho2, rcm2 := dummy(1)
 	b := types.Bundle{Actions: []types.Action{
 		{Anchor: privacy.FieldBytes(root), Nullifier: privacy.FieldBytes(privacy.NF(shieldedtest.Alice.NK, rho1, 0)),
-			Commitment: privacy.FieldBytes(out1.CM()), Cv: orchard.PointBytes(cv1)},
+			Commitment: privacy.FieldBytes(out1.CM()), Cv: orchard.PointBytes(cv1), Ciphertext: shieldedtest.NoteCT("forge/1")},
 		{Anchor: privacy.FieldBytes(root), Nullifier: privacy.FieldBytes(privacy.NF(shieldedtest.Alice.NK, rho2, 0)),
-			Commitment: privacy.FieldBytes(out2.CM()), Cv: orchard.PointBytes(cv2)},
+			Commitment: privacy.FieldBytes(out2.CM()), Cv: orchard.PointBytes(cv2), Ciphertext: shieldedtest.NoteCT("forge/2")},
 	}}
 	// A MsgSend must pay a fee, and nothing is spent: the forger mints the
 	// fee the same way, a third action committing +1*G_uerth (a -G_uerth
@@ -273,7 +273,8 @@ func TestNegatedBaseInflationNeedsAnImpossibleProof(t *testing.T) {
 	out3 := out1
 	out3.Rho, out3.Denom, out3.Value = shieldedtest.Det("forge/rho", 2), types.FeeDenom, 1
 	m.Bundle.Actions = append(m.Bundle.Actions, types.Action{Anchor: privacy.FieldBytes(root),
-		Nullifier: privacy.FieldBytes(privacy.NF(shieldedtest.Alice.NK, rho3, 0)), Commitment: privacy.FieldBytes(out3.CM()), Cv: orchard.PointBytes(cv3)})
+		Nullifier: privacy.FieldBytes(privacy.NF(shieldedtest.Alice.NK, rho3, 0)), Commitment: privacy.FieldBytes(out3.CM()), Cv: orchard.PointBytes(cv3),
+		Ciphertext: shieldedtest.NoteCT("forge/3")})
 	sighash, err := types.Sighash(m, shieldedtest.ChainID, testTx, f.ac)
 	require.NoError(t, err)
 	m.Bundle.BindingSig, err = orchard.SignBinding(orchard.BindingSigningKey([]fr.Element{r1, r2, r3}), sighash, bytes.NewReader(make([]byte, 32)))

@@ -40,7 +40,7 @@ func forgedSend(t *testing.T, f *fixture, n int, anchor, proof []byte) *types.Ms
 		_, _ = nf.SetRandom()
 		_, _ = cm.SetRandom()
 		b.Actions = append(b.Actions, types.Action{Anchor: anchor, Nullifier: privacy.FieldBytes(nf),
-			Commitment: privacy.FieldBytes(cm), Cv: orchard.PointBytes(cv), Proof: proof})
+			Commitment: privacy.FieldBytes(cm), Cv: orchard.PointBytes(cv), Proof: proof, Ciphertext: shieldedtest.NoteCT("junk")})
 	}
 	b.BindingSig = make([]byte, orchard.BindingSigSize)
 	m := &types.MsgSend{Bundle: b, Fee: fee}
