@@ -73,6 +73,21 @@ func RegisterPrivateActions(register func(string, shieldedtypes.PrivateActionHan
 	register(types.TypeMsgRemoveLiquidityShielded, h)
 }
 
+// ReleasedDenoms is what each note path takes into the module: a swap its
+// asset in, a deposit both legs, a withdrawal its pool's LP shares.
+func (h ActionHandler) ReleasedDenoms(msg shieldedtypes.PrivateMsg) []string {
+	switch m := msg.(type) {
+	case *types.MsgNoteSwap:
+		return []string{m.In().Denom}
+	case *types.MsgAddLiquidityShielded:
+		erth, token := m.Legs()
+		return []string{erth.Denom, token.Denom}
+	case *types.MsgRemoveLiquidityShielded:
+		return []string{types.LPShareDenom(m.PoolId)}
+	}
+	return nil
+}
+
 func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.PrivateMsg) (uint64, error) {
 	if h.k.shielded == nil {
 		return 0, types.ErrInvalidPrivateMsg.Wrap("no shielded pool")

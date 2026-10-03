@@ -30,6 +30,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
+	earthtypes "github.com/earth-network/earth/x/earth/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
@@ -41,11 +42,11 @@ import (
 func (e *stakeEnv) auditFundPool(amt int64) {
 	ctx := e.ctx()
 	coins := sdk.NewCoins(sdk.NewInt64Coin("uerth", amt))
-	require.NoError(e.t, e.app.BankKeeper.MintCoins(ctx, shieldedtypes.ModuleName, coins))
-	t, err := e.app.ShieldedKeeper.Turnstile(ctx, "uerth")
+	// The pool's account cannot mint (and refuses plain sends): shield.
+	require.NoError(e.t, e.app.BankKeeper.MintCoins(ctx, earthtypes.ModuleName, coins))
+	require.NoError(e.t, e.app.BankKeeper.SendCoinsFromModuleToAccount(ctx, earthtypes.ModuleName, e.userAddr(), coins))
+	_, _, err := e.app.ShieldedKeeper.Shield(ctx, e.userAddr(), coins[0], privacy.FieldBytes(ssDet("audit-fund", uint64(amt))), nil)
 	require.NoError(e.t, err)
-	t.In = t.In.Add(math.NewInt(amt))
-	require.NoError(e.t, e.app.ShieldedKeeper.Turnstiles.Set(ctx, "uerth", t))
 }
 
 func auditDelegateMsg(valoper string, amt uint64, label string) *sstypes.MsgDelegate {

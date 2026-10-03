@@ -81,6 +81,9 @@ func (k Keeper) CheckMint(ctx context.Context, pc, ciphertext []byte) error {
 // ciphertext is optional. A recipient who chose pc and knows the value it is
 // owed can find its note by recomputing cm from the events.
 func (k Keeper) MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error) {
+	if err := notThePool(fromModule); err != nil {
+		return 0, nil, err
+	}
 	cm, err := k.noteFor(ctx, coin, pc, ciphertext)
 	if err != nil {
 		return 0, nil, err
@@ -222,6 +225,9 @@ func (k Keeper) unshield(ctx context.Context, msg types.PrivateMsg, receiver sdk
 // the payment depends on, and should not fail after this returns: the ante
 // has already spent the inputs.
 func (k Keeper) ReleaseToModule(ctx context.Context, msg types.PrivateMsg, denom, targetModule string) (sdk.Coin, error) {
+	if err := notThePool(targetModule); err != nil {
+		return sdk.Coin{}, err
+	}
 	coin, err := release(ctx, msg, denom)
 	if err != nil {
 		return sdk.Coin{}, err
@@ -237,4 +243,15 @@ func (k Keeper) ReleaseToModule(ctx context.Context, msg types.PrivateMsg, denom
 		sdk.NewAttribute(types.AttributeKeyAmount, coin.String()),
 	))
 	return coin, nil
+}
+
+// notThePool refuses the pool's own module account as the other side of a
+// module mint, release or fee payment: coins the pool already holds (backing
+// existing notes) would back a second note, or pay a fee no note paid, while
+// the bank sees nothing move.
+func notThePool(module string) error {
+	if module == types.ModuleName {
+		return types.ErrUnauthorized.Wrap("the shielded pool cannot mint to, release to or pay fees for itself")
+	}
+	return nil
 }

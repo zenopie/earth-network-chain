@@ -104,7 +104,9 @@ var (
 		// restriction (x/shielded/keeper/send_restriction.go) refuses every
 		// deposit that does not go through the keeper, which is what keeps its
 		// balance exactly the turnstiles' In - Out.
-		{Account: shieldedmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		// No Minter or Burner: the pool never creates or destroys coins (its
+		// coins only enter by a shield or module mint and leave by a spend).
+		{Account: shieldedmoduletypes.ModuleName},
 		// Private staking: the only delegator besides validators' self-bonds.
 		// Mints and burns derth/<valoper> and unbond/<valoper>/<epoch>. No
 		// Staking permission (the SDK checks it only on the bonded pools) and,

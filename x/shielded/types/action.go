@@ -45,6 +45,12 @@ type PrivateActionHandler interface {
 	// VerifyPrivateAction verifies the action's own proofs against what
 	// CheckPrivateAction prepared. It must not write.
 	VerifyPrivateAction(ctx context.Context, msg PrivateMsg, prepared any) error
+	// ReleasedDenoms is every denom the action takes out of the pool with
+	// keeper.ReleaseToModule (nil for an action that releases nothing). The
+	// pool refuses the msg unless its remainders (Remainders) are exactly
+	// these denoms, before anything is spent: a remainder no handler takes
+	// would leave value in the pool with no note for it.
+	ReleasedDenoms(msg PrivateMsg) []string
 }
 
 // PrivateActionExecutor is implemented by an action handler whose action, for
@@ -72,8 +78,11 @@ type PrivateActionHandler interface {
 // The price of atomicity: a tx whose action fails in DeliverTx (after
 // passing CheckTx, because the state moved in between) fails in the ante and
 // pays no fee, as any SDK tx failing its ante in DeliverTx does. It spends
-// nothing either. max_private_actions_per_block bounds how much of a block such
-// txs can take.
+// nothing either. What bounds how much of a block such txs can take is block
+// gas: the private gas charge (every proof included) is consumed before
+// anything is verified and counts toward the block's max_gas whether or not
+// the ante then fails. max_private_actions_per_block does not: the ante
+// counts a tx's actions in its own writes, which a failing ante discards.
 type PrivateActionExecutor interface {
 	// ExecutesInAnte reports whether the ante runs msg's action.
 	ExecutesInAnte(msg PrivateMsg) bool

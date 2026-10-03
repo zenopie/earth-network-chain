@@ -79,6 +79,15 @@ func RegisterPrivateActions(register func(string, shieldedtypes.PrivateActionHan
 	}
 }
 
+// ReleasedDenoms: a delegation takes its uerth into the module; every other
+// staking msg only pays a fee (its value moves in the stake tree).
+func (h ActionHandler) ReleasedDenoms(msg shieldedtypes.PrivateMsg) []string {
+	if _, ok := msg.(*types.MsgDelegate); ok {
+		return []string{types.BondDenom}
+	}
+	return nil
+}
+
 func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.PrivateMsg) (uint64, error) {
 	proof, note, err := h.k.shielded.PrivateGasPrices(ctx)
 	if err != nil {

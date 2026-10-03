@@ -157,3 +157,9 @@ func (a caretakerAction) CheckPrivateAction(ctx context.Context, msg shieldedtyp
 func (a caretakerAction) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, prepared any) error {
 	return a.k.VerifyMembership(ctx, msg.(*types.MsgSetCaretaker).Membership, prepared.(MembershipStatement))
 }
+
+// ReleasedDenoms: personhood's private msgs only pay a fee; they take no
+// value from the pool.
+func (registerAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string  { return nil }
+func (claimAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string     { return nil }
+func (caretakerAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string { return nil }

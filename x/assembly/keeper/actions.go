@@ -247,3 +247,9 @@ func (a voteRemovalAction) CheckPrivateAction(ctx context.Context, msg shieldedt
 func (a voteRemovalAction) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, prepared any) error {
 	return verify(a.k, ctx, msg.(*types.MsgVoteRemoval).Membership, prepared)
 }
+
+// ReleasedDenoms: assembly's private msgs only pay a fee; they take no value
+// from the pool.
+func (voteProposalAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string   { return nil }
+func (proposeRemovalAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string { return nil }
+func (voteRemovalAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string    { return nil }

@@ -241,3 +241,6 @@ func (a referrerAction) CheckPrivateAction(ctx context.Context, msg shieldedtype
 func (a referrerAction) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, prepared any) error {
 	return a.k.VerifyMembership(ctx, msg.(*types.MsgBindReferrer).Membership, prepared.(MembershipStatement))
 }
+
+// ReleasedDenoms: a referrer binding only pays a fee.
+func (referrerAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string { return nil }

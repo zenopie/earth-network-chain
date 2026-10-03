@@ -211,6 +211,9 @@ func CarryAuthorization(to, from sdk.Context) sdk.Context {
 // it, once, for exactly the msg's fee_from_output; the ante refuses the tx
 // unless the whole fee was paid this way.
 func (k Keeper) PayFeeFromModule(ctx context.Context, fromModule string, fee math.Int) error {
+	if err := notThePool(fromModule); err != nil {
+		return err
+	}
 	a, ok := authorizationOf(ctx)
 	if !ok {
 		return types.ErrUnauthorized

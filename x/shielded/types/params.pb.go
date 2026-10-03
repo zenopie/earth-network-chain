@@ -51,8 +51,12 @@ type Params struct {
 	// after the block that produced it. The latest root is always valid.
 	RootWindowSeconds uint64 `protobuf:"varint,5,opt,name=root_window_seconds,json=rootWindowSeconds,proto3" json:"root_window_seconds,omitempty"`
 	// max_private_actions_per_block caps how many actions (proofs) the private
-	// txs of one block carry in total. Proof verification is the dominant
-	// block cost.
+	// txs that pass their ante in one block carry in total. A tx whose ante
+	// fails (a bad proof, a spent nullifier) is not counted: its count is
+	// written with the ante's other writes and discarded with them. Block gas
+	// bounds the verification work of failed txs too: each proof's
+	// proof_verification_gas is charged before any proof is verified, and that
+	// gas counts toward the block's max_gas whether or not the ante fails.
 	MaxPrivateActionsPerBlock uint32 `protobuf:"varint,6,opt,name=max_private_actions_per_block,json=maxPrivateActionsPerBlock,proto3" json:"max_private_actions_per_block,omitempty"`
 	// max_actions_per_bundle caps one bundle: 2 (the padding minimum) to 32
 	// (zk/orchard.MaxActions, part of the balance's soundness bound).

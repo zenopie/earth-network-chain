@@ -10,12 +10,22 @@
 // unsigned tx, so the private chain replaces them:
 //
 //	SetUpContext, LimitSimulationGas, CircuitBreaker  (as the normal chain)
-//	ValidateTx        tx shape; bundle shapes; fee == the msg's fee, in uerth
+//	ValidateTx        tx shape (no timeout_timestamp); bundle shapes; fee ==
+//	                  the msg's fee, in uerth
 //	TxTimeoutHeight, ValidateMemo, ConsumeGasForTxSize  (as the normal chain)
-//	PrivateMsg        fixed gas; block cap; state checks; binding signatures
-//	                  and proofs; spend + append; fee floor; fee to
-//	                  fee_collector; unshield; an action that must be atomic
-//	                  with the spend, and a fee paid from that action's output
+//	PrivateMsg        record the bound tx fields; fixed gas; block cap; state
+//	                  checks; binding signatures and proofs; spend + append;
+//	                  fee floor; fee to fee_collector; unshield; an action
+//	                  that must be atomic with the spend, and a fee paid from
+//	                  that action's output
+//
+// The tx is unsigned, so whoever relays it could rewrite anything outside the
+// msg. Every sighash therefore binds the tx body's memo and timeout_height and
+// the auth info's gas_limit (types.TxFields, recorded in the context by
+// PrivateMsgDecorator and read back by types.SighashOf); the declared fee
+// must equal the msg's, and timeout_timestamp, unordered, extension options,
+// a payer and a granter are refused. Nothing left in the tx bytes can change
+// without changing the sighash, so one msg has one tx encoding.
 //
 // A msg may spend more than one bundle (a stake vote and the bundle paying
 // its fee); each is checked, proven and executed as a single one is, under
@@ -32,7 +42,25 @@
 // after every check has passed. The ante's writes persist even if the msg
 // then fails, so a handler failure can never leave inputs spent without their
 // outputs, or a fee paid without its note spent (which would let the same
-// notes pay fees forever).
+// notes pay fees forever). So do the ante's events: a tx whose msg fails
+// still reports, in its (failed) result, the nullifiers it spent, the notes
+// it appended and the fee it paid, because they happened. An indexer must
+// read note, nullifier and fee events from failed private txs too (the
+// Earth indexer does); only the msg's own events are dropped with it.
+//
+// Cost of junk. A tx failing CheckTx pays nothing, and a binding signature
+// is no filter (anyone can sign a forged balance over unproven value
+// commitments), so CheckTx orders the work cheapest first (shape, anchors,
+// nullifiers, assets, the release map, the action's state checks, binding
+// signatures) and verifies proofs one at a time, stopping at the first
+// failure: a junk tx costs a node at most one proof verification. Public
+// nodes should still rate-limit CheckTx per peer (sentry nodes in front of
+// validators, as for any free mempool spam). In a block, every proof is paid
+// for before any is verified: the fixed private gas charge is consumed first
+// and counts toward the block's max_gas even when the ante then fails, so
+// block gas, not max_private_actions_per_block (counted in the ante's own
+// writes, which a failing ante discards), bounds the verification a block
+// can demand.
 //
 // Gas is fixed per bundle and per action (types.Params.PrivateMsgGas) and
 // charged before any work; the pool's writes then run on an infinite gas
@@ -154,12 +182,15 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 //     params.PrivateMsgGas (bundle_gas per bundle, proof and two notes per
 //     action) plus the action's fixed gas (before anything, whatever follows);
 //  2. in FinalizeBlock, admit the tx's actions under
-//     max_private_actions_per_block;
+//     max_private_actions_per_block (a count of the actions of txs that
+//     pass their ante: a failing ante's count is discarded with its other
+//     writes; block gas bounds the rest);
 //  3. the fee floor: fee >= params.min_fee always, and >= the node's
 //     min-gas-price x gas in CheckTx;
 //  4. the stateful checks (anchors, nullifiers, assets, room, the release
 //     map), then the action's;
-//  5. verify every binding signature, then every action proof (in parallel),
+//  5. verify every binding signature, then every action proof (in parallel
+//     in a block; one at a time, stopping at the first failure, in CheckTx),
 //     then the action's proofs (skipped on recheck, where neither the proofs
 //     nor their public inputs can have changed; charged but not required in
 //     simulate, so a wallet can estimate a tx before proving over its final

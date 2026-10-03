@@ -106,9 +106,10 @@ func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (Prep
 
 // checkReleaseMap refuses a msg whose released value (types.Remainders) has
 // no destination the chain can pay before anything is spent: an unshield's
-// receiver must be able to take every coin, and a msg with neither a
-// receiver nor an action handler (which releases to its module) must release
-// nothing beyond its fee.
+// receiver must be able to take every coin; a msg with an action handler
+// must release exactly the denoms the handler takes to its module
+// (ReleasedDenoms); and a msg with neither must release nothing beyond its
+// fee.
 func (k Keeper) checkReleaseMap(ctx context.Context, msg types.PrivateMsg) error {
 	rem, err := types.Remainders(msg)
 	if err != nil {
@@ -129,8 +130,24 @@ func (k Keeper) checkReleaseMap(ctx context.Context, msg types.PrivateMsg) error
 		}
 		return nil
 	}
-	if _, ok := k.PrivateAction(msg); !ok && len(rem) > 0 {
-		return types.ErrReleaseMap.Wrap("the msg releases value it has nowhere to send")
+	h, ok := k.PrivateAction(msg)
+	if !ok {
+		if len(rem) > 0 {
+			return types.ErrReleaseMap.Wrap("the msg releases value it has nowhere to send")
+		}
+		return nil
+	}
+	declared := map[string]bool{}
+	for _, d := range h.ReleasedDenoms(msg) {
+		declared[d] = true
+	}
+	if len(declared) != len(rem) {
+		return types.ErrReleaseMap.Wrapf("the msg releases %d denoms, its action takes %d", len(rem), len(declared))
+	}
+	for _, r := range rem {
+		if !declared[r.Denom] {
+			return types.ErrReleaseMap.Wrapf("the msg releases %s, which its action does not take", r.Denom)
+		}
 	}
 	return nil
 }
