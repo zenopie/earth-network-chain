@@ -17,7 +17,9 @@ ported as a regression test asserting the safe outcome.
   app/audit3_mempool_test.go TestAudit3AppMempoolForcedNoOp (SenderNonce
   option given -> still no-op, same tx result).
 - [ ] 7 unbond record growth
-- [ ] 8 vote weight canonical strings
+- [x] 8 vote weight canonical strings: ValidateOptions requires
+  weight == LegacyDec.String() (18 decimals). Test:
+  x/shieldedstaking/types/audit3_weights_test.go
 - [ ] 9 genesis root records
 - [ ] 10 personhood L1/L2/L4/L5/L6/I1
 - [ ] 11 dex L3 rounding / L7 buyback cap

@@ -582,7 +582,7 @@ func TestTransparentStakingBlocked(t *testing.T) {
 		return b
 	}
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
-	opts := []*v1.WeightedVoteOption{{Option: v1.OptionYes, Weight: "1"}}
+	opts := v1.NewNonSplitVoteOption(v1.OptionYes)
 	z := make([]byte, 32)
 	st := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{privacy.FieldBytes(ssDet("bypass-snf", 0)), z},
 		Commitments: [][]byte{z, z}, Ciphertexts: [][]byte{nil, nil}, SpcMint: pc, OwnerTag: pc}

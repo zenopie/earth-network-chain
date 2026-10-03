@@ -91,6 +91,13 @@ func ValidateOptions(opts []*v1.WeightedVoteOption) error {
 		if err != nil || !w.IsPositive() || w.GT(math.LegacyOneDec()) {
 			return errorsmod.Wrapf(ErrInvalidMsg, "invalid vote weight %q", o.Weight)
 		}
+		// Only the canonical spelling (LegacyDec.String(): 18 decimals) is
+		// accepted. OptionsBytes binds the canonical form, so any other
+		// spelling would let a relayer re-encode a vote under a new tx hash
+		// without touching its proofs.
+		if w.String() != o.Weight {
+			return errorsmod.Wrapf(ErrInvalidMsg, "vote weight %q is not canonical (want %q)", o.Weight, w.String())
+		}
 		sum = sum.Add(w)
 	}
 	if !sum.Equal(math.LegacyOneDec()) {
