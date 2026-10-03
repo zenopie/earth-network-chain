@@ -11,39 +11,41 @@ import (
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
-// A validator operator's self-bond always compounds (epoch.go), so its
-// rewards must land in the operator account: an operator has no withdraw
-// address of its own choosing. Four places hold that line:
+// A validator's income — its operator's self-bond rewards and its
+// commission — compounds into the self-bond at every epoch end (epoch.go)
+// and is never liquid. x/distribution pays both to the operator's withdraw
+// address, from the explicit withdrawals and also as a side effect of every
+// self-bond change (its BeforeDelegationSharesModified hook pays the
+// rewards accrued since the last withdrawal). So the chain points every
+// operator's withdraw address at the validator's REWARD ESCROW
+// (types.RewardEscrowAddress, escrow.go), an account of this module's that
+// nobody holds a key for: whatever distribution pays, by any path, waits
+// there until the epoch end moves it into the self-bond. An operator moving
+// its own self-bond (even 1uerth daily) only moves rewards into its escrow.
+//
+// The escrow is set when the validator is created (AfterValidatorCreated)
+// and at InitGenesis, through x/distribution's store setter (bypassing
+// withdraw_addr_enabled). The refusals stay, as defense in depth:
 //
 //   - genesis: networks/genesis sets x/distribution's withdraw_addr_enabled
 //     to false, so MsgSetWithdrawAddress fails for every account by every
 //     route (tx, authz, group, gov, ICA, contract). Only operators and this
 //     module hold delegations, so nobody else loses anything by it.
-//   - the ante filter (x/shieldedstaking/ante) refuses an operator's
-//     MsgSetWithdrawAddress, top level or inside authz MsgExec, with this
-//     module's error — the line that still holds if governance re-enables
-//     withdraw addresses.
+//   - the ante filter (x/shieldedstaking/ante) and app's message router
+//     refuse an operator's MsgSetWithdrawAddress to anything but its escrow,
+//     and anyone's to another validator's escrow — the line that still
+//     holds if governance re-enables withdraw addresses.
 //   - AfterValidatorCreated refuses a new validator whose operator already
-//     set a withdraw address elsewhere; InitGenesis refuses a genesis that
-//     has one.
-//   - compoundSelfBond resets a foreign withdraw address it finds rather
-//     than skipping the operator, so no route the refusals miss can opt a
-//     self-bond out of compounding.
+//     set a withdraw address elsewhere; InitGenesis and `genesis validate`
+//     refuse a genesis that has one.
+//   - compoundSelfBond resets a withdraw address it finds pointing anywhere
+//     but the escrow rather than skipping the operator.
 //
 // The same holds for claiming: an operator's MsgWithdrawDelegatorReward and
 // every MsgWithdrawValidatorCommission are refused, by the ante (top level,
 // authz MsgExec) and by app's message router (app/operator_router.go), which
 // authz dispatch, gov and group proposal execution, the ICA host and
-// contracts all go through. Only a self-bond change reaches the rewards
-// another way: x/distribution's delegation hook pays the self-bond's accrued
-// rewards to the operator when its shares change (MsgDelegate/
-// MsgUndelegate by the operator). They cannot be re-delegated in the same
-// tx: x/staking writes the validator it read before the hooks after they
-// return (Unbond -> RemoveValidatorTokensAndShares; Delegate ->
-// AddValidatorTokensAndShares), so a nested Delegate from a hook would be
-// clobbered. That leak is minor: it needs the operator to move its own
-// self-bond, is at most the rewards accrued since the last epoch end, and
-// commission is not paid by it.
+// contracts all go through. They would only pay the escrow anyway.
 
 // IsOperator reports whether acc is a validator's operator account.
 func (k Keeper) IsOperator(ctx context.Context, acc sdk.AccAddress) (bool, error) {
@@ -56,9 +58,11 @@ func (k Keeper) IsOperator(ctx context.Context, acc sdk.AccAddress) (bool, error
 
 // CheckWithdrawAddr refuses del setting its withdraw address to withdraw:
 // for every account while x/distribution's withdraw_addr_enabled is false
-// (genesis; x/distribution would refuse it too, with a less helpful error),
-// and otherwise when del is a validator operator and withdraw is another
-// account.
+// (genesis; x/distribution would refuse it too, with a less helpful error);
+// otherwise when del is a validator operator and withdraw is not its reward
+// escrow (the operator itself included), and when withdraw is another
+// validator's reward escrow (only distribution may pay one, and only for
+// its own operator).
 func (k Keeper) CheckWithdrawAddr(ctx context.Context, del, withdraw sdk.AccAddress) error {
 	enabled, err := k.distr.GetWithdrawAddrEnabled(ctx)
 	if err != nil {
@@ -67,36 +71,60 @@ func (k Keeper) CheckWithdrawAddr(ctx context.Context, del, withdraw sdk.AccAddr
 	if !enabled {
 		return types.ErrOperatorWithdraw
 	}
-	if del.Equals(withdraw) {
+	own := types.RewardEscrowAddress(sdk.ValAddress(del))
+	if withdraw.Equals(own) {
 		return nil
+	}
+	if _, escrow, err := k.escrowOwner(ctx, withdraw); err != nil {
+		return err
+	} else if escrow {
+		return errorsmod.Wrapf(types.ErrOperatorWithdraw, "%s is a validator's reward escrow", withdraw)
 	}
 	op, err := k.IsOperator(ctx, del)
 	if err != nil {
 		return err
 	}
 	if op {
-		return errorsmod.Wrapf(types.ErrOperatorWithdraw, "operator %s cannot pay its rewards to %s", del, withdraw)
+		return errorsmod.Wrapf(types.ErrOperatorWithdraw, "operator %s cannot pay its rewards to %s (only to its reward escrow %s)", del, withdraw, own)
 	}
 	return nil
 }
 
-// checkOperatorWithdrawAddr refuses an operator whose stored withdraw
-// address is another account.
-func (k Keeper) checkOperatorWithdrawAddr(ctx context.Context, op sdk.AccAddress) error {
+// setOperatorEscrow records val's reward escrow and points its operator's
+// withdraw address at it. A withdraw address elsewhere (neither the
+// operator, the default, nor the escrow) is refused when refuse is set
+// (validator creation, genesis), and otherwise reset to the escrow, with an
+// event (the epoch end: an address set by a route the refusals missed).
+func (k Keeper) setOperatorEscrow(ctx context.Context, val sdk.ValAddress, refuse bool) error {
+	op, escrow := sdk.AccAddress(val), types.RewardEscrowAddress(val)
+	if err := k.RewardEscrows.Set(ctx, escrow, val); err != nil {
+		return err
+	}
 	wa, err := k.distr.GetDelegatorWithdrawAddr(ctx, op)
 	if err != nil {
 		return err
 	}
-	if !wa.Equals(op) {
-		return errorsmod.Wrapf(types.ErrOperatorWithdraw, "operator %s has withdraw address %s", op, wa)
+	if wa.Equals(escrow) {
+		return nil
 	}
-	return nil
+	if !wa.Equals(op) {
+		if refuse {
+			return errorsmod.Wrapf(types.ErrOperatorWithdraw, "operator %s has withdraw address %s", op, wa)
+		}
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeWithdrawAddrReset,
+			sdk.NewAttribute(types.AttributeKeyValidator, val.String()),
+			sdk.NewAttribute(types.AttributeKeyWithdrawAddr, wa.String()),
+		))
+	}
+	return k.distr.SetDelegatorWithdrawAddr(ctx, op, escrow)
 }
 
-// checkGenesisWithdrawAddrs refuses a genesis in which any validator's
-// operator has a withdraw address elsewhere (x/distribution's
-// delegator_withdraw_infos). Runs after staking, distribution and genutil.
-func (k Keeper) checkGenesisWithdrawAddrs(ctx context.Context) error {
+// initGenesisEscrows points every validator's operator at its reward
+// escrow, refusing a genesis in which one has a withdraw address elsewhere
+// (x/distribution's delegator_withdraw_infos). Runs after staking,
+// distribution and genutil; an exported genesis already carries the
+// escrows (x/distribution exports them).
+func (k Keeper) initGenesisEscrows(ctx context.Context) error {
 	vals, err := k.staking.GetAllValidators(ctx)
 	if err != nil {
 		return err
@@ -106,30 +134,10 @@ func (k Keeper) checkGenesisWithdrawAddrs(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := k.checkOperatorWithdrawAddr(ctx, sdk.AccAddress(bz)); err != nil {
+		if err := k.setOperatorEscrow(ctx, bz, true); err != nil {
 			return errorsmod.Wrap(err, "genesis")
 		}
 	}
-	return nil
-}
-
-// resetOperatorWithdrawAddr points op's withdraw address back at op if it
-// points elsewhere, and says so.
-func (k Keeper) resetOperatorWithdrawAddr(ctx context.Context, op sdk.AccAddress) error {
-	wa, err := k.distr.GetDelegatorWithdrawAddr(ctx, op)
-	if err != nil {
-		return err
-	}
-	if wa.Equals(op) {
-		return nil
-	}
-	if err := k.distr.DeleteDelegatorWithdrawAddr(ctx, op, wa); err != nil {
-		return err
-	}
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeWithdrawAddrReset,
-		sdk.NewAttribute(types.AttributeKeyValidator, sdk.ValAddress(op).String()),
-		sdk.NewAttribute(types.AttributeKeyWithdrawAddr, wa.String()),
-	))
 	return nil
 }
 

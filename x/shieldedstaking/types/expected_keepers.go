@@ -23,6 +23,8 @@ type BankKeeper interface {
 	GetAllBalances(ctx context.Context, addr sdk.AccAddress) sdk.Coins
 	GetSupply(ctx context.Context, denom string) sdk.Coin
 	SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins) error
+	// SendCoins moves a reward escrow's balance to its operator.
+	SendCoins(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) error
 }
 
 // StakingKeeper is x/staking, driven by this module as a delegator.
@@ -51,7 +53,8 @@ type StakingKeeper interface {
 type DistrKeeper interface {
 	WithdrawDelegationRewards(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) (sdk.Coins, error)
 	// WithdrawValidatorCommission pays a validator's commission to its
-	// operator: the epoch end compounds it into the self-bond.
+	// operator's withdraw address (its reward escrow): the epoch end
+	// compounds it into the self-bond.
 	WithdrawValidatorCommission(ctx context.Context, valAddr sdk.ValAddress) (sdk.Coins, error)
 	IncrementValidatorPeriod(ctx context.Context, val stakingtypes.ValidatorI) (uint64, error)
 	CalculateDelegationRewards(ctx context.Context, val stakingtypes.ValidatorI, del stakingtypes.DelegationI, endingPeriod uint64) (sdk.DecCoins, error)
@@ -62,6 +65,9 @@ type DistrKeeper interface {
 	// DeleteDelegatorWithdrawAddr resets delAddr's withdraw address to
 	// itself (the default when none is stored).
 	DeleteDelegatorWithdrawAddr(ctx context.Context, delAddr, withdrawAddr sdk.AccAddress) error
+	// SetDelegatorWithdrawAddr is the store setter: it bypasses
+	// withdraw_addr_enabled, for pointing an operator at its reward escrow.
+	SetDelegatorWithdrawAddr(ctx context.Context, delAddr, withdrawAddr sdk.AccAddress) error
 }
 
 // SlashingKeeper reports tombstoning.

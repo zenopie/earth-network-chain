@@ -84,6 +84,10 @@ type Keeper struct {
 	StakeRoots       collections.Map[[]byte, types.StakeRoot]
 	StakeRootsByTime collections.KeySet[collections.Pair[int64, []byte]]
 	StakeLatestRoot  collections.Item[[]byte]
+
+	// RewardEscrows maps each validator's reward escrow account to the
+	// validator's address (escrow.go). Rebuilt from x/staking at genesis.
+	RewardEscrows collections.Map[[]byte, []byte]
 }
 
 type govRef struct{ k *govkeeper.Keeper }
@@ -156,6 +160,7 @@ func NewKeeper(
 		StakeRootsByTime: collections.NewKeySet(sb, types.StakeRootsByTimeKey, "stake_roots_by_time",
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
 		StakeLatestRoot: collections.NewItem(sb, types.StakeLatestRootKey, "stake_latest_root", collections.BytesValue),
+		RewardEscrows:   collections.NewMap(sb, types.RewardEscrowsKey, "reward_escrows", collections.BytesKey, collections.BytesValue),
 	}
 	schema, err := sb.Build()
 	if err != nil {

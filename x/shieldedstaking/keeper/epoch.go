@@ -121,16 +121,20 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 
 // compoundSelfBonds re-delegates, for every active (bonded, unjailed)
 // validator, its operator's self-bond rewards and its commission to the same
-// validator from the operator account: a validator's self-bond
-// auto-compounds as the module's delegations do. Only uerth is re-delegated
-// (another denom has no use as stake and stays in the operator account).
-// Neither can be withdrawn by a msg (the ante and app's message router
-// refuse MsgWithdrawDelegatorReward and MsgWithdrawValidatorCommission on
-// every route), so the operator's only exit for them is unbonding the
-// self-bond. A jailed validator's commission accrues until it is active
-// again. Every operator compounds: one whose
-// withdraw address points elsewhere has it reset first (withdraw_addr.go);
-// only a jailed validator is skipped. Each
+// validator: a validator's self-bond auto-compounds as the module's
+// delegations do. Both are paid to the validator's reward escrow (the
+// operator's withdraw address, escrow.go) — the explicit withdrawals here
+// and whatever a self-bond change paid since the last epoch — and the
+// escrow's uerth moves to the operator account and is self-delegated in the
+// same cache context, so none of it is ever liquid. Only uerth is
+// re-delegated (another denom stays in the escrow). Neither can be
+// withdrawn by a msg (the ante and app's message router refuse
+// MsgWithdrawDelegatorReward and MsgWithdrawValidatorCommission on every
+// route), so the operator's only exit for them is unbonding the self-bond.
+// A jailed validator is skipped: its commission accrues in x/distribution
+// and its escrow keeps what it is paid, until it is active again (or
+// removed: AfterValidatorRemoved releases the escrow). An operator whose
+// withdraw address points anywhere but its escrow has it reset first. Each
 // validator runs in its own cache context; a failure is logged, emitted and
 // skipped, never returned. The re-delegation moves the operator's bond, so
 // x/allocation's staking hook resyncs its Groundworks weight.
@@ -155,19 +159,18 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 	if err != nil {
 		return err
 	}
-	op := sdk.AccAddress(valAddr)
+	op, escrow := sdk.AccAddress(valAddr), types.RewardEscrowAddress(valAddr)
 	if _, err := k.staking.GetDelegation(ctx, op, valAddr); err != nil {
 		if errors.Is(err, stakingtypes.ErrNoDelegation) {
 			return nil // no self-bond left (it was undelegated whole)
 		}
 		return err
 	}
-	// The rewards must land in the operator account: never skip an operator
-	// for a withdraw address elsewhere, reset it (see withdraw_addr.go).
-	if err := k.resetOperatorWithdrawAddr(ctx, op); err != nil {
+	// The rewards must land in the escrow: never skip an operator for a
+	// withdraw address elsewhere, reset it (withdraw_addr.go).
+	if err := k.setOperatorEscrow(ctx, valAddr, false); err != nil {
 		return err
 	}
-	before := k.bank.GetBalance(ctx, op, types.BondDenom).Amount
 	if _, err := k.distr.WithdrawDelegationRewards(ctx, op, valAddr); err != nil {
 		return err
 	}
@@ -175,11 +178,14 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 		!errors.Is(err, distrtypes.ErrNoValidatorCommission) {
 		return err
 	}
-	// What the withdrawals paid the operator in uerth: its self-bond's
-	// rewards and its commission, and nothing it held before.
-	amt := k.bank.GetBalance(ctx, op, types.BondDenom).Amount.Sub(before)
+	// Everything the escrow holds in uerth: this epoch's self-bond rewards
+	// and commission, and what self-bond changes paid it since the last.
+	amt := k.bank.GetBalance(ctx, escrow, types.BondDenom).Amount
 	if !amt.IsPositive() {
 		return nil
+	}
+	if err := k.bank.SendCoins(ctx, escrow, op, sdk.NewCoins(sdk.NewCoin(types.BondDenom, amt))); err != nil {
+		return err
 	}
 	// Re-read: the withdrawal touched the validator's distribution period,
 	// not its tokens, but Delegate takes the validator by value.

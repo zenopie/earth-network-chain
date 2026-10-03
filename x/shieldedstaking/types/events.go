@@ -15,8 +15,11 @@ const (
 	EventTypePosition       = "shieldedstaking_position"
 	EventTypeInvariant      = "shieldedstaking_invariant_broken"
 	EventTypeSelfBond       = "shieldedstaking_self_bond_compounded"
-	// An operator's withdraw address pointed elsewhere at epoch end (set by
-	// a route the refusals do not reach) and was reset to the operator.
+	// A removed validator's reward escrow was released to its operator.
+	EventTypeEscrowReleased = "shieldedstaking_reward_escrow_released"
+	// An operator's withdraw address pointed elsewhere than its reward escrow
+	// at epoch end (set by a route the refusals do not reach) and was reset
+	// to the escrow.
 	EventTypeWithdrawAddrReset = "shieldedstaking_withdraw_addr_reset"
 	// The stake note tree's stream, for wallets and indexers: every append
 	// (position, commitment; a minted note's denom, amount and stake pc, a

@@ -15,7 +15,8 @@ import (
 // WithdrawChecker is x/shieldedstaking's keeper: it refuses what would take a
 // validator operator's self-bond rewards out of the epoch's compounding.
 type WithdrawChecker interface {
-	// CheckWithdrawAddr refuses an operator's withdraw address elsewhere.
+	// CheckWithdrawAddr refuses an operator's withdraw address anywhere but
+	// its reward escrow, and anyone's to another validator's escrow.
 	CheckWithdrawAddr(ctx context.Context, del, withdraw sdk.AccAddress) error
 	// CheckRewardWithdraw refuses an operator's mid-epoch reward claim.
 	CheckRewardWithdraw(ctx context.Context, del sdk.AccAddress) error
@@ -23,11 +24,13 @@ type WithdrawChecker interface {
 
 // CheckOperatorRewardsMsg refuses MsgSetWithdrawAddress from anyone while
 // x/distribution's withdraw addresses are disabled (genesis) and, for a
-// validator operator, to another account always; an operator's
+// validator operator, to anything but its reward escrow always (to a
+// validator's escrow, for anyone else); an operator's
 // MsgWithdrawDelegatorReward; and every MsgWithdrawValidatorCommission: a
-// validator's self-bond
-// rewards and commission compound into its self-bond at the epoch end, so
-// they stay with distribution until then and land in the operator account.
+// validator's self-bond rewards and commission compound into its self-bond
+// at the epoch end, from its reward escrow (the operator's withdraw
+// address, set by the chain). Defense in depth: a claim would only pay the
+// escrow.
 // An operator's only exit for either is unbonding its self-bond. Other msgs
 // pass. It does not look inside authz MsgExec: the ante decorator recurses,
 // and the app's message router (app/operator_router.go) sees each inner msg
@@ -59,12 +62,14 @@ func CheckOperatorRewardsMsg(ctx context.Context, ac address.Codec, k WithdrawCh
 
 // WithdrawAddrFilterDecorator refuses, top level or inside an authz MsgExec,
 // what CheckOperatorRewardsMsg refuses: a validator operator's
-// MsgSetWithdrawAddress to another account, its MsgWithdrawDelegatorReward,
+// MsgSetWithdrawAddress to anything but its reward escrow, its
+// MsgWithdrawDelegatorReward,
 // and MsgWithdrawValidatorCommission. Every other route to the msg router (authz
 // dispatch, gov, group, ICA host, contracts) goes through app's filtering
 // router, which applies the same check; this refuses a plain tx before it
 // pays a fee. Genesis also disables withdraw addresses in x/distribution's
-// params, and the compounding resets a foreign withdraw address it finds
+// params, and the compounding resets an operator's withdraw address it
+// finds pointing anywhere but the escrow
 // (x/shieldedstaking/keeper/withdraw_addr.go).
 type WithdrawAddrFilterDecorator struct {
 	AddressCodec address.Codec

@@ -21,11 +21,12 @@ import (
 // each msg before its handler runs: a validator's self-bond rewards and
 // commission compound into its self-bond at the epoch end, so the operator
 // cannot claim them (MsgWithdrawDelegatorReward,
-// MsgWithdrawValidatorCommission) or pay them elsewhere
-// (MsgSetWithdrawAddress) by any route. Since every route that executes a
-// msg without the ante goes through here, nothing slips through to recover
-// from; what accrues stays with x/distribution until the epoch compounds it. A plain tx reaches baseapp's own router, which is not this
-// one: the ante's WithdrawAddrFilterDecorator applies the same check there.
+// MsgWithdrawValidatorCommission) or point its withdraw address away from
+// its reward escrow (MsgSetWithdrawAddress) by any route. Defense in depth:
+// x/distribution pays an operator only to its escrow (set by the chain), so
+// a claim would only move rewards into the escrow early. A plain tx reaches
+// baseapp's own router, which is not this one: the ante's
+// WithdrawAddrFilterDecorator applies the same check there.
 //
 // The keeper is set after depinject builds it (SetChecker); until then the
 // two msgs are refused (fail closed) and every other msg passes.

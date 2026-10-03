@@ -79,6 +79,10 @@ var (
 	StakeRootsKey       = collections.NewPrefix(17)
 	StakeRootsByTimeKey = collections.NewPrefix(18)
 	StakeLatestRootKey  = collections.NewPrefix(19)
+
+	// RewardEscrowsKey maps each validator's reward escrow account to the
+	// validator (escrow.go).
+	RewardEscrowsKey = collections.NewPrefix(20)
 )
 
 // DerthDenom is validator's delegation token.

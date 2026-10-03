@@ -75,7 +75,7 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.initStakeTree(ctx, gs); err != nil {
 		return err
 	}
-	if err := k.checkGenesisWithdrawAddrs(ctx); err != nil {
+	if err := k.initGenesisEscrows(ctx); err != nil {
 		return err
 	}
 	return k.AssertInvariants(ctx)

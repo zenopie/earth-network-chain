@@ -33,6 +33,9 @@ import (
 //     18-decimal LegacyDec, so the product may fall short of the backing by
 //     at most ceil(supply x 1e-18) + 1 uerth; it never exceeds it.
 //     Conversions themselves are exact integer floors that favour the pool.
+//  5. Reward escrows: every validator has its escrow recorded and its
+//     operator's withdraw address is that escrow; no other escrow is
+//     recorded (a removed validator's was released).
 func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertERTH(ctx); err != nil {
 		return err
@@ -43,7 +46,49 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertUnbonding(ctx); err != nil {
 		return err
 	}
-	return k.assertRates(ctx)
+	if err := k.assertRates(ctx); err != nil {
+		return err
+	}
+	return k.assertEscrows(ctx)
+}
+
+func (k Keeper) assertEscrows(ctx context.Context) error {
+	vals, err := k.staking.GetAllValidators(ctx)
+	if err != nil {
+		return err
+	}
+	for _, v := range vals {
+		val, err := k.staking.ValidatorAddressCodec().StringToBytes(v.GetOperator())
+		if err != nil {
+			return err
+		}
+		escrow := types.RewardEscrowAddress(val)
+		owner, ok, err := k.escrowOwner(ctx, escrow)
+		if err != nil {
+			return err
+		}
+		if !ok || !sdk.ValAddress(owner).Equals(sdk.ValAddress(val)) {
+			return types.ErrInvariant.Wrapf("validator %s: reward escrow %s not recorded", v.GetOperator(), escrow)
+		}
+		wa, err := k.distr.GetDelegatorWithdrawAddr(ctx, sdk.AccAddress(val))
+		if err != nil {
+			return err
+		}
+		if !wa.Equals(escrow) {
+			return types.ErrInvariant.Wrapf("validator %s: operator withdraw address %s is not its reward escrow %s", v.GetOperator(), wa, escrow)
+		}
+	}
+	n := 0
+	if err := k.RewardEscrows.Walk(ctx, nil, func(_, _ []byte) (bool, error) {
+		n++
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	if n != len(vals) {
+		return types.ErrInvariant.Wrapf("%d reward escrows recorded for %d validators", n, len(vals))
+	}
+	return nil
 }
 
 func (k Keeper) assertERTH(ctx context.Context) error {

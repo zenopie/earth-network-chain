@@ -9,12 +9,16 @@ import (
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+
+	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
 // ValidateOperatorWithdrawAddrs refuses a genesis in which a validator's
 // operator — a staking genesis validator or a gentx's MsgCreateValidator —
 // has a withdraw address (x/distribution delegator_withdraw_infos) pointing
-// at another account: its self-bond could not compound. The cross-module
+// anywhere but itself (the default, which InitGenesis turns into the
+// escrow) or its reward escrow (sstypes.RewardEscrowAddress; an exported
+// genesis carries it): its rewards would be liquid. The cross-module
 // half of `earthd genesis validate`, which otherwise checks each module
 // alone; x/shieldedstaking's InitGenesis refuses the same state on chain.
 func ValidateOperatorWithdrawAddrs(cdc codec.JSONCodec, txDecoder sdk.TxDecoder, appState map[string]json.RawMessage) error {
@@ -39,8 +43,8 @@ func ValidateOperatorWithdrawAddrs(cdc codec.JSONCodec, txDecoder sdk.TxDecoder,
 			return fmt.Errorf("validator %s: %w", valoper, err)
 		}
 		op := sdk.AccAddress(bz).String()
-		if wa, ok := foreign[op]; ok {
-			return fmt.Errorf("validator operator %s has withdraw address %s: an operator's rewards are paid to the operator (its self-bond compounds)", op, wa)
+		if wa, ok := foreign[op]; ok && wa != sstypes.RewardEscrowAddress(bz).String() {
+			return fmt.Errorf("validator operator %s has withdraw address %s: an operator's rewards are paid to its reward escrow (its self-bond compounds)", op, wa)
 		}
 		return nil
 	}

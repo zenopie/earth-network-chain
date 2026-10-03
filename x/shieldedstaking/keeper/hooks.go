@@ -107,13 +107,21 @@ func (h StakingHooks) BeforeValidatorSlashed(ctx context.Context, val sdk.ValAdd
 	return nil
 }
 
-// AfterValidatorCreated refuses a validator whose operator already pays its
-// rewards to another account: its self-bond could not compound.
+// AfterValidatorCreated points the new validator's operator at its reward
+// escrow (escrow.go), before MsgCreateValidator's self-delegation, and
+// refuses an operator that already pays its rewards to another account.
 func (h StakingHooks) AfterValidatorCreated(ctx context.Context, val sdk.ValAddress) error {
-	return h.k.checkOperatorWithdrawAddr(ctx, sdk.AccAddress(val))
+	return h.k.setOperatorEscrow(ctx, val, true)
 }
 func (StakingHooks) BeforeValidatorModified(context.Context, sdk.ValAddress) error { return nil }
-func (StakingHooks) AfterValidatorRemoved(context.Context, sdk.ConsAddress, sdk.ValAddress) error {
+
+// AfterValidatorRemoved releases the removed validator's reward escrow to its
+// operator (escrow.go). x/staking calls it from its EndBlocker, so it never
+// fails: a failure is logged and the escrow keeps its balance.
+func (h StakingHooks) AfterValidatorRemoved(ctx context.Context, _ sdk.ConsAddress, val sdk.ValAddress) error {
+	if err := h.k.guarded(ctx, func(cc context.Context) error { return h.k.releaseEscrow(cc, val) }); err != nil {
+		h.k.failure(ctx, "escrow_release", val.String(), err)
+	}
 	return nil
 }
 func (StakingHooks) AfterValidatorBonded(context.Context, sdk.ConsAddress, sdk.ValAddress) error {
