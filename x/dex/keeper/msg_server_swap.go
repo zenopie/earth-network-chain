@@ -134,6 +134,12 @@ func (k Keeper) swapExactInFees(ctx context.Context, from, to swapParty, tokenIn
 	if !tokenIn.Amount.IsPositive() {
 		return sdk.Coin{}, swapFees{}, errorsmod.Wrap(types.ErrInvalidAmount, "token_in must be positive")
 	}
+	// The pool cap, before any arithmetic: reserve*input stays under 2^240
+	// (see types.MaxPoolAmount), and an input past the cap would take the
+	// reserve past it anyway. SetPool refuses the resulting reserves.
+	if !types.WithinPoolCap(tokenIn.Amount) {
+		return sdk.Coin{}, swapFees{}, errorsmod.Wrapf(types.ErrPoolCap, "token_in must be at most %s", types.MaxPoolAmount)
+	}
 	if denomOut == tokenIn.Denom {
 		return sdk.Coin{}, swapFees{}, errorsmod.Wrap(types.ErrInvalidDenom, "token_in and denom_out must differ")
 	}
@@ -240,6 +246,9 @@ func (k Keeper) swapExactInFees(ctx context.Context, from, to swapParty, tokenIn
 // persists the updated reserves. It returns the net ERTH out, the ERTH burned
 // and the whole ERTH fee.
 func (k Keeper) hopTokenToHub(ctx context.Context, tokenDenom string, amountIn math.Int, swapFee math.LegacyDec) (out, burn, fee math.Int, err error) {
+	if !types.WithinPoolCap(amountIn) {
+		return math.Int{}, math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolCap, "swap input %s", amountIn)
+	}
 	pool, err := k.PoolForToken(ctx, tokenDenom)
 	if err != nil {
 		return math.Int{}, math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolNotFound, "no pool for %s", tokenDenom)
@@ -270,6 +279,9 @@ func (k Keeper) hopTokenToHub(ctx context.Context, tokenDenom string, amountIn m
 // persists the updated reserves. It returns the net token out, the ERTH burned
 // and the whole ERTH fee.
 func (k Keeper) hopHubToToken(ctx context.Context, tokenDenom string, amountErthIn math.Int, swapFee math.LegacyDec) (out, burn, fee math.Int, err error) {
+	if !types.WithinPoolCap(amountErthIn) {
+		return math.Int{}, math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolCap, "swap input %s", amountErthIn)
+	}
 	pool, err := k.PoolForToken(ctx, tokenDenom)
 	if err != nil {
 		return math.Int{}, math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrPoolNotFound, "no pool for %s", tokenDenom)

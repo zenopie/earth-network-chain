@@ -124,6 +124,13 @@ func (k msgServer) BidLiquidityAuction(ctx context.Context, msg *types.MsgBidLiq
 		return nil, errorsmod.Wrapf(types.ErrInvalidDenom, "auction takes %s, got %s", a.BidDenom, msg.Amount.Denom)
 	}
 
+	// The raise becomes the auction pool's reserve: it is held to the pool
+	// cap (types.MaxPoolAmount) as it accrues, or settlement could not create
+	// the pool.
+	if !types.WithinPoolCap(msg.Amount.Amount) || !types.WithinPoolCap(a.TotalRaised.Add(msg.Amount.Amount)) {
+		return nil, errorsmod.Wrapf(types.ErrPoolCap, "the raise would pass %s", types.MaxPoolAmount)
+	}
+
 	if err := k.bankKeeper.SendCoinsFromAccountToModule(ctx, bidder, types.ModuleName, sdk.NewCoins(msg.Amount)); err != nil {
 		return nil, err
 	}

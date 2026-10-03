@@ -37,11 +37,31 @@ func TestGenesisState_Validate(t *testing.T) {
 			}},
 			valid: false,
 		}, {
-			desc: "pool with a zero reserve",
+			desc: "pool with a zero reserve (drained: audit 4 C4)",
 			genState: &types.GenesisState{Params: types.DefaultParams(), PoolMap: []types.Pool{
 				func() types.Pool {
 					p := validPool(1)
 					p.ReserveToken.Amount = math.ZeroInt()
+					return p
+				}(),
+			}},
+			valid: true,
+		}, {
+			desc: "pool with a negative reserve",
+			genState: &types.GenesisState{Params: types.DefaultParams(), PoolMap: []types.Pool{
+				func() types.Pool {
+					p := validPool(1)
+					p.ReserveToken.Amount = math.NewInt(-1)
+					return p
+				}(),
+			}},
+			valid: false,
+		}, {
+			desc: "pool reserve above the pool cap",
+			genState: &types.GenesisState{Params: types.DefaultParams(), PoolMap: []types.Pool{
+				func() types.Pool {
+					p := validPool(1)
+					p.ReserveToken.Amount = types.MaxPoolAmount.AddRaw(1)
 					return p
 				}(),
 			}},

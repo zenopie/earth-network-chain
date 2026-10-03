@@ -2,11 +2,13 @@ package keeper
 
 import (
 	"context"
+	"math/big"
 	"strconv"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	"github.com/earth-network/earth/internal/safeexec"
 	"github.com/earth-network/earth/x/dex/types"
 	earthtypes "github.com/earth-network/earth/x/earth/types"
 )
@@ -50,9 +52,21 @@ func (k Keeper) BurnDuePol(ctx context.Context) error {
 		return err
 	}
 
+	// Each schedule on its own branch, recovering panics. A failure skips the
+	// schedule for this block and is retried on the next: the target is
+	// recomputed from the clock (retirableAt), so a skipped block loses
+	// nothing, and a halt from the EndBlocker would be strictly worse.
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	for _, b := range due {
-		if err := k.advancePolBurn(ctx, b, now); err != nil {
-			return err
+		if err := safeexec.Cached(sdkCtx, func(cache sdk.Context) error {
+			return k.advancePolBurn(cache, b, now)
+		}); err != nil {
+			sdkCtx.Logger().Error("pol retirement failed; retrying next block", "pool_id", b.PoolId, "err", err)
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"burn_pol_failed",
+				sdk.NewAttribute("pool_id", strconv.FormatUint(b.PoolId, 10)),
+				sdk.NewAttribute("error", err.Error()),
+			))
 		}
 	}
 	return nil
@@ -81,7 +95,10 @@ func retirableAt(b types.PolBurn, now int64) math.Int {
 	if elapsed >= b.DurationSeconds {
 		return b.TotalShares
 	}
-	return b.TotalShares.MulRaw(elapsed).QuoRaw(b.DurationSeconds)
+	// big.Int: TotalShares*elapsed can pass 256 bits for a schedule over a
+	// share supply near the type's range, and MulRaw panics there.
+	q := new(big.Int).Mul(b.TotalShares.BigInt(), big.NewInt(elapsed))
+	return math.NewIntFromBigInt(q.Quo(q, big.NewInt(b.DurationSeconds)))
 }
 
 // advancePolBurn retires whatever the clock says is owed on one schedule.
@@ -156,10 +173,17 @@ func (k Keeper) retirePolShares(ctx context.Context, b types.PolBurn, slice math
 			b.PoolId, total, slice)
 	}
 
-	outErth := sdk.NewCoin(pool.ReserveErth.Denom, slice.Mul(pool.ReserveErth.Amount).Quo(total))
+	// big.Int, as in payoutUnbonding: math.Int's Mul panics past 256 bits.
+	erthAmt, err := mulDiv(slice, pool.ReserveErth.Amount, total)
+	if err != nil {
+		return sdk.Coin{}, sdk.Coin{}, types.ErrInsufficientPool.Wrapf("pool %d: %s", b.PoolId, err)
+	}
+	outErth := sdk.NewCoin(pool.ReserveErth.Denom, erthAmt)
 	outToken := sdk.NewCoin(pool.ReserveToken.Denom, math.ZeroInt())
 	if b.BurnToken {
-		outToken.Amount = slice.Mul(pool.ReserveToken.Amount).Quo(total)
+		if outToken.Amount, err = mulDiv(slice, pool.ReserveToken.Amount, total); err != nil {
+			return sdk.Coin{}, sdk.Coin{}, types.ErrInsufficientPool.Wrapf("pool %d: %s", b.PoolId, err)
+		}
 	}
 
 	burn := sdk.NewCoins(sdk.NewCoin(types.LPShareDenom(b.PoolId), slice), outErth, outToken)

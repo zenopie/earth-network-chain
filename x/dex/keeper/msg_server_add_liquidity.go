@@ -78,7 +78,16 @@ func (k Keeper) deposit(ctx context.Context, poolID uint64, erthIn, tokenIn sdk.
 		return none, none, none, errorsmod.Wrap(types.ErrInvalidAmount, "both amounts must be positive")
 	}
 
+	// The pool cap, before any arithmetic: each input, and below the
+	// resulting reserves and share supply (see types.MaxPoolAmount).
+	if !types.WithinPoolCap(erthIn.Amount) || !types.WithinPoolCap(tokenIn.Amount) {
+		return none, none, none, errorsmod.Wrapf(types.ErrPoolCap, "each amount must be at most %s", types.MaxPoolAmount)
+	}
+
 	total := k.totalShares(ctx, poolID).Amount
+	if !types.WithinPoolCap(total) {
+		return none, none, none, errorsmod.Wrapf(types.ErrPoolCap, "pool %d share supply %s", poolID, total)
+	}
 
 	var (
 		shareAmt   math.Int
@@ -99,22 +108,51 @@ func (k Keeper) deposit(ctx context.Context, poolID uint64, erthIn, tokenIn sdk.
 		}
 		shareAmt = initialShares(erthIn.Amount, tokenIn.Amount)
 	} else {
-		sharesFromErth := erthIn.Amount.Mul(total).Quo(pool.ReserveErth.Amount)
-		sharesFromToken := tokenIn.Amount.Mul(total).Quo(pool.ReserveToken.Amount)
+		// A pool with shares outstanding but a zero reserve (drained by
+		// rounding, or 0/0 after the last withdrawal) cannot price a deposit.
+		if !pool.ReserveErth.Amount.IsPositive() || !pool.ReserveToken.Amount.IsPositive() {
+			return none, none, none, errorsmod.Wrapf(types.ErrInsufficientPool,
+				"pool %d holds %s / %s against %s shares", poolID, pool.ReserveErth, pool.ReserveToken, total)
+		}
+		sharesFromErth, err := mulDiv(erthIn.Amount, total, pool.ReserveErth.Amount)
+		if err != nil {
+			return none, none, none, err
+		}
+		sharesFromToken, err := mulDiv(tokenIn.Amount, total, pool.ReserveToken.Amount)
+		if err != nil {
+			return none, none, none, err
+		}
 		shareAmt = math.MinInt(sharesFromErth, sharesFromToken)
 		if !shareAmt.IsPositive() {
 			return none, none, none, types.ErrZeroShares
 		}
-		// Pull assets in the exact pool ratio for the shares granted.
-		depositErt.Amount = shareAmt.Mul(pool.ReserveErth.Amount).Quo(total)
-		depositTok.Amount = shareAmt.Mul(pool.ReserveToken.Amount).Quo(total)
-		// Each pulled leg is floored. A share worth less than one unit of a
-		// leg would be minted against nothing of it, diluting the existing
-		// providers; refuse instead of minting shares against a zero leg.
-		if !depositErt.Amount.IsPositive() || !depositTok.Amount.IsPositive() {
-			return none, none, none, errorsmod.Wrapf(types.ErrZeroShares,
-				"deposit would pull %s and %s: both legs must be positive", depositErt, depositTok)
+		// Pull assets in the exact pool ratio for the shares granted, each
+		// leg rounded UP, in the existing providers' favour. Flooring them
+		// minted a depositor shares worth up to one unit more of each leg
+		// than they paid; when a share is worth less than one unit of a leg
+		// that is nearly twice the leg (audit 4, C2). The ceiling never
+		// exceeds what was offered: shareAmt <= in*total/reserve, so
+		// shareAmt*reserve/total <= in, and in is an integer.
+		if depositErt.Amount, err = mulDivUp(shareAmt, pool.ReserveErth.Amount, total); err != nil {
+			return none, none, none, err
 		}
+		if depositTok.Amount, err = mulDivUp(shareAmt, pool.ReserveToken.Amount, total); err != nil {
+			return none, none, none, err
+		}
+		if !depositErt.Amount.IsPositive() || !depositTok.Amount.IsPositive() ||
+			depositErt.Amount.GT(erthIn.Amount) || depositTok.Amount.GT(tokenIn.Amount) {
+			return none, none, none, errorsmod.Wrapf(types.ErrZeroShares,
+				"deposit would pull %s and %s of %s and %s offered", depositErt, depositTok, erthIn, tokenIn)
+		}
+	}
+	if !types.WithinPoolCap(total.Add(shareAmt)) {
+		return none, none, none, errorsmod.Wrapf(types.ErrPoolCap,
+			"pool %d share supply would pass %s", poolID, types.MaxPoolAmount)
+	}
+	if !types.WithinPoolCap(pool.ReserveErth.Amount.Add(depositErt.Amount)) ||
+		!types.WithinPoolCap(pool.ReserveToken.Amount.Add(depositTok.Amount)) {
+		return none, none, none, errorsmod.Wrapf(types.ErrPoolCap,
+			"pool %d reserves would pass %s", poolID, types.MaxPoolAmount)
 	}
 
 	if !shareAmt.IsPositive() {

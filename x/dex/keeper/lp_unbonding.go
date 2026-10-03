@@ -7,6 +7,7 @@ import (
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	"github.com/earth-network/earth/internal/safeexec"
 	"github.com/earth-network/earth/x/dex/types"
 )
 
@@ -85,8 +86,14 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 		// the pool, burns shares and writes reserves before it can fail, so
 		// letting a half-finished payout persist would be its own corruption. On
 		// failure the branch is discarded and only the removal below survives.
-		cacheCtx, write := sdkCtx.CacheContext()
-		if err := k.payoutUnbonding(cacheCtx, m.entry); err != nil {
+		//
+		// A panic is dropped the same way (safeexec.Cached recovers it): a
+		// cache branch does not unwind one, and a panic out of the EndBlocker
+		// is the same permanent halt as the error was (audit 4: a math.Int
+		// overflow in the payout).
+		if err := safeexec.Cached(sdkCtx, func(cacheCtx sdk.Context) error {
+			return k.payoutUnbonding(cacheCtx, m.entry)
+		}); err != nil {
 			sdkCtx.Logger().Error("lp unbonding payout failed — dropping the entry",
 				"pool_id", m.entry.PoolId,
 				"provider", m.entry.Address, // empty for a private withdrawal
@@ -100,8 +107,6 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 				sdk.NewAttribute("shares", m.entry.Shares.String()),
 				sdk.NewAttribute("error", err.Error()),
 			))
-		} else {
-			write()
 		}
 		if err := k.removeLpUnbonding(ctx, m.key); err != nil {
 			return err
@@ -183,8 +188,18 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) er
 			entry.PoolId, total, entry.Shares.Amount)
 	}
 
-	outErth := sdk.NewCoin(pool.ReserveErth.Denom, entry.Shares.Amount.Mul(pool.ReserveErth.Amount).Quo(total))
-	outToken := sdk.NewCoin(pool.ReserveToken.Denom, entry.Shares.Amount.Mul(pool.ReserveToken.Amount).Quo(total))
+	// big.Int: shares*reserve can pass math.Int's 256 bits on state that
+	// predates the pool cap (types.MaxPoolAmount), and Mul panics there.
+	erthAmt, err := mulDiv(entry.Shares.Amount, pool.ReserveErth.Amount, total)
+	if err != nil {
+		return types.ErrInvalidUnbonding.Wrapf("pool %d: %s", entry.PoolId, err)
+	}
+	tokenAmt, err := mulDiv(entry.Shares.Amount, pool.ReserveToken.Amount, total)
+	if err != nil {
+		return types.ErrInvalidUnbonding.Wrapf("pool %d: %s", entry.PoolId, err)
+	}
+	outErth := sdk.NewCoin(pool.ReserveErth.Denom, erthAmt)
+	outToken := sdk.NewCoin(pool.ReserveToken.Denom, tokenAmt)
 
 	if err := k.burnEscrowedShares(ctx, entry.Shares); err != nil {
 		return err

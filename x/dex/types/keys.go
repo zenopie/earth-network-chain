@@ -2,9 +2,11 @@ package types
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/math"
 )
 
 const (
@@ -240,4 +242,22 @@ const LPShareDenomPrefix = "dexlp/"
 // are claims on reserves already counted, not assets owed to anyone.
 func IsLPShareDenom(denom string) bool {
 	return strings.HasPrefix(denom, LPShareDenomPrefix)
+}
+
+// MaxPoolAmount (2^120) caps every pool reserve, every pool's LP share
+// supply, a single swap input and the liquidity auction's raise.
+//
+// math.Int is 256 bits and its Mul panics (not errors) past that. The dex
+// multiplies a share count by a reserve (deposit, withdrawal payout, POL
+// retirement) and a reserve by an input (swap), so two factors of 2^120 keep
+// every product under 2^240. An IBC voucher is minted at whatever amount the
+// counterparty chain says (ICS20 amounts go to 2^256), so without the cap a
+// pool seeded with a huge voucher made the EndBlocker's withdrawal payout
+// panic: a permanent halt from two ordinary messages. 2^120 is about 1.3e36
+// base units: no real asset is near it.
+var MaxPoolAmount = math.NewIntFromBigInt(new(big.Int).Lsh(big.NewInt(1), 120))
+
+// WithinPoolCap reports whether a is no more than MaxPoolAmount.
+func WithinPoolCap(a math.Int) bool {
+	return !a.IsNil() && !a.GT(MaxPoolAmount)
 }

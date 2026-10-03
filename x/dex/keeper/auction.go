@@ -9,6 +9,7 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	"github.com/earth-network/earth/internal/safeexec"
 	"github.com/earth-network/earth/x/dex/types"
 )
 
@@ -86,7 +87,20 @@ func (k Keeper) SettleDueAuction(ctx context.Context) error {
 	if sdk.UnwrapSDKContext(ctx).BlockTime().Unix() < a.EndTime {
 		return nil
 	}
-	return k.settleAuction(ctx, a)
+	// On its own branch, recovering panics: a settlement that cannot complete
+	// is retried next block (bidding is already closed: BlockTime >= EndTime)
+	// rather than halting the chain from the EndBlocker.
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	if err := safeexec.Cached(sdkCtx, func(cache sdk.Context) error {
+		return k.settleAuction(cache, a)
+	}); err != nil {
+		sdkCtx.Logger().Error("liquidity auction settlement failed; retrying next block", "err", err)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"liquidity_auction_settle_failed",
+			sdk.NewAttribute("error", err.Error()),
+		))
+	}
+	return nil
 }
 
 // settleAuction closes the bidding window.
@@ -202,7 +216,10 @@ func (k Keeper) claimableFor(a types.LiquidityAuction, bid types.AuctionBid) mat
 	if !a.TotalRaised.IsPositive() {
 		return math.ZeroInt()
 	}
-	share := a.ErthForBidders.Amount.Mul(bid.Amount).Quo(a.TotalRaised)
+	share, err := mulDiv(a.ErthForBidders.Amount, bid.Amount, a.TotalRaised)
+	if err != nil {
+		return math.ZeroInt()
+	}
 	if remaining := a.ErthForBidders.Amount.Sub(a.Claimed); share.GT(remaining) {
 		share = remaining
 	}

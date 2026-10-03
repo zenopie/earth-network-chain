@@ -56,15 +56,23 @@ func (gs GenesisState) Validate() error {
 		// VolumeWeight.IsNil() for exactly this reason; the reserves had no
 		// equivalent.
 		//
-		// Non-positive is refused too, not merely nil: a zero reserve makes the
-		// constant-product maths degenerate and every share price undefined.
-		if elem.ReserveErth.Amount.IsNil() || !elem.ReserveErth.Amount.IsPositive() {
-			return fmt.Errorf("pool %d: reserve_erth must be positive, got %s",
-				elem.PoolId, elem.ReserveErth.Amount)
+		// Zero is allowed, negative is not. Any pool can be drained to 0/0 by
+		// withdrawing every share (and a POL schedule that keeps its token
+		// side retires the hub side to zero), and a chain's own export must
+		// pass its own validation or one permissionless pool blocks every
+		// export -> relaunch (audit 4, C4). A drained pool has no shares, so
+		// nothing prices against it: the next deposit re-seeds it (deposit,
+		// total == 0) and a swap against it rounds to zero and is refused.
+		//
+		// Above the pool cap is refused: past it the share and swap maths can
+		// overflow math.Int (types.MaxPoolAmount).
+		if elem.ReserveErth.Amount.IsNil() || elem.ReserveErth.Amount.IsNegative() || !WithinPoolCap(elem.ReserveErth.Amount) {
+			return fmt.Errorf("pool %d: reserve_erth must be in [0, %s], got %s",
+				elem.PoolId, MaxPoolAmount, elem.ReserveErth.Amount)
 		}
-		if elem.ReserveToken.Amount.IsNil() || !elem.ReserveToken.Amount.IsPositive() {
-			return fmt.Errorf("pool %d: reserve_token must be positive, got %s",
-				elem.PoolId, elem.ReserveToken.Amount)
+		if elem.ReserveToken.Amount.IsNil() || elem.ReserveToken.Amount.IsNegative() || !WithinPoolCap(elem.ReserveToken.Amount) {
+			return fmt.Errorf("pool %d: reserve_token must be in [0, %s], got %s",
+				elem.PoolId, MaxPoolAmount, elem.ReserveToken.Amount)
 		}
 		if prev, dup := tokenPool[elem.ReserveToken.Denom]; dup {
 			return fmt.Errorf("pools %d and %d both trade %s", prev, elem.PoolId, elem.ReserveToken.Denom)

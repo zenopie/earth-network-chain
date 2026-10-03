@@ -10,6 +10,7 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	"github.com/earth-network/earth/internal/safeexec"
 	"github.com/earth-network/earth/x/dex/types"
 )
 
@@ -179,8 +180,11 @@ func (k Keeper) RebaseVolumeIndex(ctx context.Context) error {
 // the branch, emits an event, and the next block tries again from scratch.
 func (k Keeper) MaybeRebaseVolumeIndex(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	cacheCtx, write := sdkCtx.CacheContext()
-	if err := k.RebaseVolumeIndex(cacheCtx); err != nil {
+	// safeexec.Cached also recovers a panic, which a bare cache branch does
+	// not: it would otherwise leave the EndBlocker as a halt.
+	if err := safeexec.Cached(sdkCtx, func(cacheCtx sdk.Context) error {
+		return k.RebaseVolumeIndex(cacheCtx)
+	}); err != nil {
 		sdkCtx.Logger().Error("volume index rebase failed; retrying next block", "err", err)
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 			"volume_index_rebase_failed",
@@ -188,7 +192,6 @@ func (k Keeper) MaybeRebaseVolumeIndex(ctx context.Context) error {
 		))
 		return nil
 	}
-	write()
 	return nil
 }
 
@@ -500,33 +503,51 @@ func (k Keeper) SweepStalePools(ctx context.Context) error {
 			return err
 		}
 
-		pool, err := k.Pool.Get(ctx, poolID)
-		if errors.Is(err, collections.ErrNotFound) {
-			continue
-		} else if err != nil {
-			return err
+		// Per pool on its own branch, recovering panics: a pool that cannot
+		// be retired is dropped from the queue (it re-enters on its next
+		// trade) rather than halting the chain from the EndBlocker.
+		if err := safeexec.Cached(sdkCtx, func(ctx sdk.Context) error {
+			return k.expirePoolVolume(ctx, poolID)
+		}); err != nil {
+			sdkCtx.Logger().Error("stale pool sweep failed; dropping the entry", "pool_id", poolID, "err", err)
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"pool_volume_expire_failed",
+				sdk.NewAttribute("pool_id", strconv.FormatUint(poolID, 10)),
+				sdk.NewAttribute("error", err.Error()),
+			))
 		}
-		if pool.VolumeWeight.IsNil() || !pool.VolumeWeight.IsPositive() {
-			continue
-		}
-		// Settle first. The pool held this weight right up to now, and the
-		// rewards it earned doing so are owed to its LPs — dropping the weight
-		// without crediting them would strand exactly what this whole scheme
-		// exists to stop stranding.
-		if err := k.settlePoolRewards(ctx, poolID, &pool); err != nil {
-			return err
-		}
-		if err := k.setPoolVolume(ctx, &pool, math.ZeroInt(), dayOf(sdkCtx.BlockTime())); err != nil {
-			return err
-		}
-		if err := k.SetPool(ctx, poolID, pool); err != nil {
-			return err
-		}
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"pool_volume_expired",
-			sdk.NewAttribute("pool_id", strconv.FormatUint(poolID, 10)),
-		))
 	}
+	return nil
+}
+
+// expirePoolVolume settles a stale pool and zeroes its volume weight.
+func (k Keeper) expirePoolVolume(ctx sdk.Context, poolID uint64) error {
+	pool, err := k.Pool.Get(ctx, poolID)
+	if errors.Is(err, collections.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if pool.VolumeWeight.IsNil() || !pool.VolumeWeight.IsPositive() {
+		return nil
+	}
+	// Settle first. The pool held this weight right up to now, and the
+	// rewards it earned doing so are owed to its LPs — dropping the weight
+	// without crediting them would strand exactly what this whole scheme
+	// exists to stop stranding.
+	if err := k.settlePoolRewards(ctx, poolID, &pool); err != nil {
+		return err
+	}
+	if err := k.setPoolVolume(ctx, &pool, math.ZeroInt(), dayOf(ctx.BlockTime())); err != nil {
+		return err
+	}
+	if err := k.SetPool(ctx, poolID, pool); err != nil {
+		return err
+	}
+	ctx.EventManager().EmitEvent(sdk.NewEvent(
+		"pool_volume_expired",
+		sdk.NewAttribute("pool_id", strconv.FormatUint(poolID, 10)),
+	))
 	return nil
 }
 

@@ -61,4 +61,10 @@ var (
 	// ErrInvalidPrivateMsg is a malformed private dex msg.
 	ErrInvalidPrivateMsg = errors.Register(ModuleName, 1119,
 		"invalid private dex msg")
+
+	// ErrPoolCap means an operation would take a pool reserve, an LP share
+	// supply or an auction's raise past MaxPoolAmount (2^120), past which
+	// the share and swap arithmetic could overflow math.Int's 256 bits.
+	ErrPoolCap = errors.Register(ModuleName, 1120,
+		"amount exceeds the pool cap")
 )

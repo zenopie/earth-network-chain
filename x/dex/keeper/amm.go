@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"fmt"
 	"math/big"
 
 	"cosmossdk.io/math"
@@ -22,8 +23,40 @@ func intSqrt(i math.Int) math.Int {
 
 // initialShares returns the LP shares minted when a pool is first created.
 // It follows the Uniswap-v2 convention of sqrt(erth * token).
+//
+// The product is taken in big.Int: math.Int's Mul panics past 256 bits, and
+// the callers check the result against types.MaxPoolAmount rather than
+// trusting the inputs to be in range.
 func initialShares(reserveErth, reserveToken math.Int) math.Int {
-	return intSqrt(reserveErth.Mul(reserveToken))
+	p := new(big.Int).Mul(reserveErth.BigInt(), reserveToken.BigInt())
+	return math.NewIntFromBigInt(p.Sqrt(p))
+}
+
+// mulDiv returns floor(a*b/c), computed in big.Int so that the product never
+// panics. It errors (never panics) on a non-positive c or a result past
+// math.Int's range. a*b/c with b <= c is at most a, which is how every caller
+// uses it, so the range error only fires on corrupt state.
+func mulDiv(a, b, c math.Int) (math.Int, error) {
+	return mulDivRound(a, b, c, false)
+}
+
+// mulDivUp is mulDiv rounded up: ceil(a*b/c).
+func mulDivUp(a, b, c math.Int) (math.Int, error) {
+	return mulDivRound(a, b, c, true)
+}
+
+func mulDivRound(a, b, c math.Int, up bool) (math.Int, error) {
+	if a.IsNil() || b.IsNil() || c.IsNil() || !c.IsPositive() || a.IsNegative() || b.IsNegative() {
+		return math.Int{}, fmt.Errorf("mulDiv(%s, %s, %s): invalid operands", a, b, c)
+	}
+	q, r := new(big.Int).QuoRem(new(big.Int).Mul(a.BigInt(), b.BigInt()), c.BigInt(), new(big.Int))
+	if up && r.Sign() != 0 {
+		q.Add(q, big.NewInt(1))
+	}
+	if q.BitLen() > math.MaxBitLen {
+		return math.Int{}, fmt.Errorf("mulDiv(%s, %s, %s): result out of range", a, b, c)
+	}
+	return math.NewIntFromBigInt(q), nil
 }
 
 // hopResult is the outcome of a single ERTH<->token swap along the wheel.

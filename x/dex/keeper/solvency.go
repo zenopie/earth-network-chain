@@ -56,6 +56,14 @@ import (
 // check is repeated here because this is the one function every pool write goes
 // through, so a path added later cannot reintroduce it silently.
 func (k Keeper) SetPool(ctx context.Context, poolID uint64, pool types.Pool) error {
+	// The pool cap is enforced at the one place every reserve change goes
+	// through. The message paths check it before any arithmetic too; this is
+	// what makes it true of every pool in state (see types.MaxPoolAmount).
+	// (A nil reserve is left to the checks that already handle it.)
+	if overCap(pool.ReserveErth.Amount) || overCap(pool.ReserveToken.Amount) {
+		return types.ErrPoolCap.Wrapf("pool %d: reserves %s / %s, cap %s",
+			poolID, pool.ReserveErth, pool.ReserveToken, types.MaxPoolAmount)
+	}
 	if types.IsLPShareDenom(pool.ReserveToken.Denom) || types.IsLPShareDenom(pool.ReserveErth.Denom) {
 		return types.ErrLpShareDenom.Wrapf("pool %d: reserves are %s and %s",
 			poolID, pool.ReserveErth.Denom, pool.ReserveToken.Denom)
@@ -328,3 +336,6 @@ func (k Keeper) rotateSolvencyCheck(ctx context.Context) error {
 // SolvencyProbe exposes the bounded check for tests, which use it alongside the
 // exhaustive AssertInvariants to confirm the two agree.
 func (k Keeper) SolvencyProbe(ctx context.Context) error { return k.AssertBoundedSolvency(ctx) }
+
+// overCap reports whether a non-nil a exceeds types.MaxPoolAmount.
+func overCap(a math.Int) bool { return !a.IsNil() && a.GT(types.MaxPoolAmount) }

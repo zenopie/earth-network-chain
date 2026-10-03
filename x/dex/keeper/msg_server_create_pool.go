@@ -46,6 +46,13 @@ func (k msgServer) CreatePool(ctx context.Context, msg *types.MsgCreatePool) (*t
 		return nil, errorsmod.Wrap(types.ErrInvalidAmount, "both amounts must be positive")
 	}
 
+	// The pool cap (types.MaxPoolAmount): past it the share and swap
+	// arithmetic could overflow math.Int, and an IBC voucher can arrive in
+	// any amount the counterparty mints.
+	if !types.WithinPoolCap(msg.AmountA.Amount) || !types.WithinPoolCap(msg.AmountB.Amount) {
+		return nil, errorsmod.Wrapf(types.ErrPoolCap, "each amount must be at most %s", types.MaxPoolAmount)
+	}
+
 	hub, err := k.HubDenom(ctx)
 	if err != nil {
 		return nil, err
