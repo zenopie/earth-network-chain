@@ -15,6 +15,35 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- x/shielded (audit M1): **wallet format change.** Every private msg's
+  sighash binds the tx's memo, timeout_height and gas_limit:
+  `H(TAG_SIGNAL, Bytes(type_url), Bytes(chain_id), K, digests…,
+  Bytes(memo), timeout_height, gas_limit, msg fields…)`. A relayer can no
+  longer rewrite them. Private txs may not set timeout_timestamp.
+- x/shielded, x/personhood, x/shieldedstaking, zk/ultrahonk (audit M1): every
+  proof must be exactly 14,656 bytes (bb ignored trailing bytes).
+- x/shielded (audit M2, L1-L5): CheckTx verifies proofs one at a time and
+  stops at the first failure; the pool cannot mint to, release to or pay
+  fees for itself; its module account has no Minter/Burner; action handlers
+  declare the denoms they release and the pool refuses any other remainder;
+  private tx priority is capped. bb no longer logs failed verifications
+  (BB_VERBOSE=1 restores it).
+- **Wallet format change: one note-discovery rule.** Every note the chain
+  mints carries a required 177-byte amount-blind ciphertext (v2 for pool
+  notes; new blind stake ciphertext, salt "earth.stake.v1", version 0x03,
+  for stake notes: `StakeProof.spc_ciphertext`, bound last in the stake
+  fields). MsgShield's ciphertext is required (gas grant included).
+- **Wallet format change: one fee rule.** Private msgs pay their fee from
+  their bundles' uerth balance less what they move; staking and dex `fee`
+  fields removed; new MsgDelegate.amount, MsgNoteSwap.denom_in/amount_in,
+  MsgAddLiquidityShielded.erth_amount; MsgNoteSwap.fee_from_output removed
+  (only MsgClaimUnbonding pays from its output; MsgSend keeps its explicit
+  fee).
+
+**Operators.** Rate-limit CheckTx per peer on public nodes (sentries,
+connection and RPC broadcast limits): a junk private tx now costs one proof
+verification, but CheckTx is still free.
+
 - x/shieldedstaking + x/allocation: Groundworks positions are weighed per
   validator. Each validator with live positions is one weighted Groundworks
   voter (`gwpos/` + validator bytes; new `Voter.option_weights`) carrying

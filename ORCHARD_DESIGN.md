@@ -66,8 +66,9 @@ Public, in order: **`anchor, nf, cm_out, cv_x, cv_y, sighash`**.
     bind(sighash)
 
 Note, nullifier and commitment formulas are today's, so `MintNote`, note
-ciphertexts (v1/v2), self-mint pcs, sync and the indexer's note stream are
-unchanged. `rcv` is a Field (< r < n), lifted with `EmbeddedCurveScalar::
+ciphertexts (v1/v2), sync and the indexer's note stream are unchanged.
+(Self-mint pcs are retired 2026-10-02: every minted note now carries a
+blind ciphertext, §14.) `rcv` is a Field (< r < n), lifted with `EmbeddedCurveScalar::
 from_field`; the bias against uniform mod n is ~2^-127.
 
 **Dummy rules.**
@@ -99,7 +100,11 @@ feeds the Poseidon2 that defines x, y the curve equation and the sign check.
 
     bundle_digest = H(TAG_BUNDLE, anchor, N, nf_0, cm_0, cvx_0, cvy_0, Bytes(ct_0), …,
                       M, asset_0, value_0, …)                 TAG_BUNDLE = "earth.bundle"
-    sighash       = Signal(msg_type, chain_id, digest(bundle_0), [digest(bundle_1)], msg fields…)
+    sighash       = Signal(msg_type, chain_id, K, digest(bundle_0), …, digest(bundle_K-1),
+                           Bytes(memo), timeout_height, gas_limit, msg fields…)
+
+(Superseded 2026-10-02, see §14: the tx body's memo and timeout_height and
+the auth info's gas_limit are bound after the digests.)
 
 `Signal` is today's `zk/privacy.Signal`, so the msg-type, chain-id and
 per-msg field binding carries over. It replaces `SpendSignal`,
@@ -342,12 +347,13 @@ so the ante refuses their private msgs until they are ported
 
 ## 13. Phase 2 (2026-10-02): modules on bundles, private LP, stake notes
 
-**Fees.** Personhood and assembly msgs carry `Bundle fee = 1`; its only
-balance is the uerth fee. Staking and dex msgs carry an explicit `fee`
-field (bound by the sighash) and release their value as the release-map
-remainder of their denom. Membership proofs bind the msg's sighash as their
-signal (`SignalOf = Sighash`). A msg paying its whole fee from its output
-(an unbonding claim) may carry no bundle at all.
+**Fees.** (Superseded 2026-10-02 by the one fee rule, §14: no staking or
+dex msg has a `fee` field any more.) Personhood and assembly msgs carry
+`Bundle fee = 1`; its only balance is the uerth fee. Staking and dex msgs
+release their value as the release-map remainder of their denom. Membership
+proofs bind the msg's sighash as their signal (`SignalOf = Sighash`). A msg
+paying its whole fee from its output (an unbonding claim) may carry no
+bundle at all.
 
 **Dex, private LP shares (user decision).** `dexlp/<pool>` is a pool asset
 (admitted on first use); MsgAddLiquidityShielded mints the shares as a note
@@ -464,3 +470,117 @@ self-bond. See x/shieldedstaking/keeper/escrow.go, withdraw_addr.go.
 (mnemonics) appears, stake notes can additionally be bound to a personhood
 identity: the stake circuit would also prove an identity leaf (or bind
 owner_pk to an idc), so stake could not outlive a transfer of the account.
+
+## 14. Audit fixes and wallet-facing rules (2026-10-02)
+
+From the x/shielded audit (M1, M2, L1 to L5, info), plus two rules decided
+with the user. Everything here changes consensus and wallet formats; every
+proof fixture was re-recorded.
+
+**Sighash binds the tx fields (M1).** A private tx is unsigned, so its
+relayer could rewrite whatever lies outside the msg: the memo (an
+exchange's deposit tag), timeout_height (strip the wallet's expiry) and
+gas_limit (lower it so the handler runs out of gas after the ante spent
+the notes). Every private msg's sighash is now
+
+    sighash = H(TAG_SIGNAL, Bytes(msg_type_url), Bytes(chain_id),
+                K, digest(bundle_0), …, digest(bundle_K-1),
+                Bytes(memo), timeout_height, gas_limit,
+                msg fields…)
+
+`Bytes(memo)` over the memo's UTF-8 bytes (Bytes("") for none),
+timeout_height and gas_limit as u64 field elements, both 0 when unset.
+`zk/orchard.Sighash(msgType, chainID, TxFields{Memo, TimeoutHeight,
+GasLimit}, bundles, fields…)`; the private ante records the fields
+(`types.WithTxFields`) and everything computes the sighash with
+`types.SighashOf(ctx, msg, ac)`. A wallet picks the gas limit (simulate:
+proofs are not verified there) and memo before proving. `timeout_timestamp`
+is refused for private txs (unordered already was). Nothing left in the tx
+bytes can change without changing the sighash.
+
+**Exact proof length (M1).** bb v5.0.0 UltraHonk ZK proofs are 458 field
+elements (14,656 bytes) for every circuit; bb ignored trailing bytes, so a
+proof with 1..31 bytes appended verified (one tx, many hashes).
+`zk/ultrahonk.Verify` and every stateless check (`types.ProofBytes`,
+`CheckProofLength`: action, stake, membership, passport) require exactly
+14,656.
+
+**Canonical bech32.** MsgSend's receiver, personhood's affiliate and
+referrer and every staking valoper must be the lowercase canonical encoding
+(fix/staking F0 and this branch); no private msg carries any other address.
+
+**Cost of junk (M2, L1).** A tx failing CheckTx pays nothing, and the
+binding signature is no filter (anyone can sign a forged balance over
+unproven value commitments). CheckTx orders the work cheapest first (shape,
+anchors, nullifiers, assets, release map, the action's state checks,
+binding signatures) and then verifies proofs one at a time, stopping at the
+first failure (`orchard.VerifyProofsSequential`): a junk tx costs a node one
+proof verification. FinalizeBlock keeps the parallel, deterministic path.
+In a block every proof is paid for first: the fixed private gas charge
+(`proof_verification_gas` per action) is consumed before any proof is
+verified and counts toward max_gas even when the ante fails, so block gas
+bounds a block's verification work (6 forged 16-action txs: 2 reach the
+proofs, 4 are refused for block gas). `max_private_actions_per_block` counts
+only txs that pass their ante (its count is written with the ante's other
+writes). Operators: rate-limit CheckTx per peer on public nodes (sentries in
+front of validators, `p2p` connection limits, RPC broadcast limits), as for
+any free mempool traffic. bb's per-proof "verification failed" stderr line is
+silenced (bb_log_level 3 at start-up; BB_VERBOSE keeps it).
+
+**Pool self-dealing (L2, L3).** MintNote, PayFeeFromModule and
+ReleaseToModule refuse the pool's own module as the other side. The pool's
+module account has no Minter or Burner permission (it never needed one).
+
+**Ante events (L4).** A private tx's ante writes (nullifiers spent, notes
+appended, fee paid, unshield) persist when its msg fails, and so do their
+events: a failed tx's result still carries them. Indexers must read note,
+nullifier and fee events from failed private txs (the Earth indexer does).
+
+**Release map completeness (L5).** Every PrivateActionHandler declares the
+denoms it takes out of the pool (`ReleasedDenoms`); the pool refuses, before
+spending anything, a msg whose remainders are not exactly that set. A
+delegation takes uerth; a swap its denom_in; an LP deposit both legs; an LP
+withdrawal its pool's shares; everything else nothing.
+
+**Priority.** A private tx's priority is fee/gas capped at MaxInt64.
+
+**One note-discovery rule (user decision).** Every note the chain mints to a
+hidden owner carries an amount-blind ciphertext supplied by the msg that
+asks for it, required, exactly 177 bytes, bound by the msg's sighash (or
+signature, for a signed msg) and emitted with the note (note event, and the
+mint/shield event): MsgShield (incl. the gas grant), MsgRegister
+(ciphertext_anml/erth), MsgClaimAnml, MsgBuyAnml, MsgNoteSwap,
+MsgAddLiquidityShielded (share, refund: one ciphertext for both refund
+notes), MsgRemoveLiquidityShielded (erth and token legs), MsgRemoveLiquidity
+(ANML leg), MsgClaimUnbonding. Pool notes use v2
+(`EncryptBlindNote`: salt "earth.note.v2", pt 0x02||rho||rcm||memo64);
+stake notes the chain mints (Delegate's derth, Undelegate's claim,
+StakeVote's re-mint, UnlockPosition's derth) use the new blind stake
+ciphertext `StakeProof.spc_ciphertext`:
+
+    ct  = epk || ChaCha20-Poly1305(HKDF-SHA256(X25519(esk, ek_pub),
+                 salt "earth.stake.v1", info epk), nonce 0, pt)
+    pt  = 0x03 || rho || rcm || memo64                     (177 bytes)
+
+The owner opens it, recomputes spc = H(TAG_SPC, owner_pk, rho, rcm) and
+cm = H(TAG_STAKE, AssetID(denom), amount, spc) from the published denom and
+amount, and accepts only a matching cm (golden vector
+`goldenBlindStakeCT`, Python-cross-checked). `spc_ciphertext` is bound last
+in StakeFields: anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0), Bytes(ct_1),
+spc_mint, owner_tag, Bytes(spc_ciphertext); it is required exactly when the
+msg mints and must be empty otherwise. Wallets drop self-mint counters:
+every owned note is found by trial decryption and the cm check.
+
+**One fee rule (user decision).** Every private msg pays its fee out of its
+bundles' uerth balance: fee = the uerth balance less the uerth the msg itself
+moves (`types.FeeAfter`). The `fee` fields of every staking and dex msg are
+gone (reserved). What a msg moves is explicit where it is uerth:
+MsgDelegate.amount (new, field 5), MsgNoteSwap.denom_in/amount_in (new,
+8/9; the fee is the whole uerth balance unless denom_in is uerth),
+MsgAddLiquidityShielded.erth_amount (new, 11). Every other staking and dex
+msg (and every personhood and assembly msg) pays its whole uerth balance.
+Exceptions, exactly two: MsgSend names its fee (its uerth beyond the fee is
+unshielded to its receiver), and MsgClaimUnbonding may instead pay
+`fee_from_output` out of the ERTH it claims, with no bundle. MsgNoteSwap's
+`fee_from_output` is gone (a holder of only ANML needs an ERTH note to pay a
+swap's fee).
