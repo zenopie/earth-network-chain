@@ -4,8 +4,10 @@ import (
 	"context"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	vestingexported "github.com/cosmos/cosmos-sdk/x/auth/vesting/exported"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
@@ -110,8 +112,32 @@ func (h StakingHooks) BeforeValidatorSlashed(ctx context.Context, val sdk.ValAdd
 // AfterValidatorCreated points the new validator's operator at its reward
 // escrow (escrow.go), before MsgCreateValidator's self-delegation, and
 // refuses an operator that already pays its rewards to another account.
+//
+// It also refuses a vesting account as the operator (refuseVestingOperator).
 func (h StakingHooks) AfterValidatorCreated(ctx context.Context, val sdk.ValAddress) error {
+	if err := h.k.refuseVestingOperator(ctx, val); err != nil {
+		return err
+	}
 	return h.k.setOperatorEscrow(ctx, val, true)
+}
+
+// refuseVestingOperator refuses a validator whose operator is a vesting
+// account. The epoch end compounds the operator's rewards by delegating coins
+// it has just been paid, and x/bank tracks any delegation from a vesting
+// account against its vesting coins first (TrackDelegation): every compounded
+// reward would free as much of the vesting balance, until none is left
+// locked. Refused at creation (the hook) and in genesis (initGenesisEscrows).
+// x/auth/vesting creates vesting accounts only at new addresses, so an
+// operator cannot become one later.
+func (k Keeper) refuseVestingOperator(ctx context.Context, val sdk.ValAddress) error {
+	acc := k.auth.GetAccount(ctx, sdk.AccAddress(val))
+	if acc == nil {
+		return nil
+	}
+	if _, vesting := acc.(vestingexported.VestingAccount); vesting {
+		return errorsmod.Wrapf(types.ErrVestingOperator, "operator %s", sdk.AccAddress(val))
+	}
+	return nil
 }
 func (StakingHooks) BeforeValidatorModified(context.Context, sdk.ValAddress) error { return nil }
 

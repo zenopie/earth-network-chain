@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
@@ -285,6 +286,12 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 	if !amt.IsPositive() {
 		return nil
 	}
+	// Paid in and delegated straight back: the operator's spendable balance
+	// must come out where it went in. It would not for a vesting operator
+	// (refused at creation; see refuseVestingOperator), whose delegation x/bank
+	// counts against vesting coins first. Checked, so nothing slips through
+	// another way: compounding is undone (guarded) rather than unlock coins.
+	spendable := k.bank.SpendableCoin(ctx, op, types.BondDenom).Amount
 	if err := k.bank.SendCoins(ctx, escrow, op, sdk.NewCoins(sdk.NewCoin(types.BondDenom, amt))); err != nil {
 		return err
 	}
@@ -296,6 +303,10 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 	}
 	if _, err := k.staking.Delegate(ctx, op, amt, stakingtypes.Unbonded, v, true); err != nil {
 		return err
+	}
+	if after := k.bank.SpendableCoin(ctx, op, types.BondDenom).Amount; !after.Equal(spendable) {
+		return errorsmod.Wrapf(types.ErrVestingOperator, "compounding moved operator %s's spendable %s from %s to %s",
+			op, types.BondDenom, spendable, after)
 	}
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeSelfBond,
 		sdk.NewAttribute(types.AttributeKeyValidator, val.GetOperator()),

@@ -11,7 +11,7 @@ as a regression test asserting the safe outcome.
   Also: registration_sweep_limit validated (0 = default, else 5..10000),
   current_date_max_skew_seconds <= 1 year.
 - [~] R2 CheckTx bypass: action proofs verified before bundle proofs; CheckTx-only ultrahonk.VerifiedCache (shielded keeper: bundle + VerifyCircuit; personhood: passport proof). Test: app/reaudit_round2_test.go TestCheckTxValidBundleJunkActionProofCostsOne (NOT YET RUN: disk full)
-- [ ] R3 vesting validators
+- [~] R3 vesting validators: AfterValidatorCreated + initGenesisEscrows refuse a vesting operator (ErrVestingOperator); compoundSelfBond refuses (guarded, reverted) if the operator spendable moves. Tests: app/vesting_operator_test.go (NOT YET RUN)
 - [ ] R4 tally attribution
 - [ ] R5 GwEpoch leak
 - [x] R6 proof chunk canonical: ultrahonk.Verify refuses any 32-byte proof element >= r (bb reduced them). Test: zk/ultrahonk/proof_canonical_test.go

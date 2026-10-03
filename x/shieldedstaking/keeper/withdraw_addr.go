@@ -134,6 +134,9 @@ func (k Keeper) initGenesisEscrows(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if err := k.refuseVestingOperator(ctx, bz); err != nil {
+			return errorsmod.Wrap(err, "genesis")
+		}
 		if err := k.setOperatorEscrow(ctx, bz, true); err != nil {
 			return errorsmod.Wrap(err, "genesis")
 		}

@@ -15,12 +15,17 @@ type AuthKeeper interface {
 	AddressCodec() address.Codec
 	GetModuleAddress(moduleName string) sdk.AccAddress
 	GetModuleAccount(ctx context.Context, moduleName string) sdk.ModuleAccountI
+	// GetAccount is for refusing a vesting account as a validator operator.
+	GetAccount(ctx context.Context, addr sdk.AccAddress) sdk.AccountI
 }
 
 // BankKeeper defines the expected interface for the Bank module.
 type BankKeeper interface {
 	GetBalance(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
 	GetAllBalances(ctx context.Context, addr sdk.AccAddress) sdk.Coins
+	// SpendableCoin guards the epoch's compounding: it must not change an
+	// operator's spendable balance.
+	SpendableCoin(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
 	GetSupply(ctx context.Context, denom string) sdk.Coin
 	SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins) error
 	// SendCoins moves a reward escrow's balance to its operator.
