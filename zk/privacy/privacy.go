@@ -200,29 +200,6 @@ func CaretakerScope() fr.Element { return Scope("caretaker") }
 // always filed under the same nullifier, so a rebind moves it.
 func ReferrerScope() fr.Element { return Scope("referrer") }
 
-// GasScope is the scope of the transparent-ERTH gas grant for calendar month
-// month, written YYYYMM as a number (October 2026 = 202610, UTC). The gas
-// backend pays one grant per nullifier per month; nothing on chain records
-// it. A month number, not a day, so a person's grants in one month share a
-// nullifier and are refused after the first.
-func GasScope(month uint64) fr.Element { return Scope("gas", U64(month)) }
-
-// GasTransparentSignalType is the msg_type a transparent gas grant's
-// membership proof binds in place of a type URL: the grant is not a chain
-// msg, so it gets a name no type URL can take (they start with "/").
-const GasTransparentSignalType = "earth.gas.transparent"
-
-// GasTransparentSignal is the membership signal of a transparent gas grant
-// to the account with raw address bytes addr:
-//
-//	signal = H(TAG_SIGNAL, Bytes("earth.gas.transparent"), Bytes(chain_id), Bytes(addr))
-//
-// Binding the address means whoever relays the proof cannot redirect the
-// grant to themselves.
-func GasTransparentSignal(chainID string, addr []byte) fr.Element {
-	return Signal(GasTransparentSignalType, chainID, Bytes(addr))
-}
-
 // ProposalScope is the assembly ballot on x/gov proposal id in voting round
 // round (0, or 1 after the chamber demoted an expedited proposal).
 func ProposalScope(proposalID, round uint64) fr.Element {

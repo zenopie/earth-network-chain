@@ -2,7 +2,7 @@
 #
 # Real proofs for x/personhood's and x/assembly's app tests.
 #
-#   ./scripts/personhood-fixtures.sh [path-to-earth-network-mobile circuits dir] [passports|app|gas|all]
+#   ./scripts/personhood-fixtures.sh [path-to-earth-network-mobile circuits dir] [passports|app|all]
 #
 # passports: one lean_poa passport proof per x/personhood/testutil
 #   Registration, bound (address input) to its RegistrationBinding, for its
@@ -14,9 +14,6 @@
 #   witness against its real trees as they go.
 #   -> x/personhood/testdata/app/ (membership, by name),
 #      x/personhood/testdata/app/actions/ (actions, by public inputs)
-# gas: the transparent gas grant's membership proof (GasScope, bound to an
-#   address), for x/personhood/keeper's CheckGasMembership test.
-#   -> x/personhood/testdata/gas/
 #
 # Passport proofs carry random DSC keys, which the identity leaves commit to,
 # so regenerating passports means regenerating app too (all, the default).
@@ -71,11 +68,5 @@ if [ "$WHAT" = all ] || [ "$WHAT" = app ]; then
   rm -rf "$CHAIN_DIR"/x/personhood/testdata/app/actions
   ( cd "$CHAIN_DIR" && EARTH_PROVE_CIRCUITS="$CIRCUITS_SRC" EARTH_CIRCUITS="$CIRCUITS_SRC" \
       go test ./app -run 'TestPrivatePersonhood' -count=1 -timeout 60m )
-fi
-if [ "$WHAT" = all ] || [ "$WHAT" = gas ]; then
-  echo "==> gas membership, proving"
-  rm -f "$CHAIN_DIR"/x/personhood/testdata/gas/*.proof
-  ( cd "$CHAIN_DIR" && EARTH_PROVE_CIRCUITS="$CIRCUITS_SRC" \
-      go test ./x/personhood/keeper -run 'TestCheckGasMembership' -count=1 )
 fi
 echo done
