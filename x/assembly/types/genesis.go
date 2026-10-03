@@ -69,6 +69,32 @@ func (gs GenesisState) Validate() error {
 			seenVote[hex.EncodeToString(v.Nullifier)] = true
 		}
 	}
+	seenSubjects := map[uint64]bool{}
+	for _, e := range gs.ProposalSubjects {
+		if seenSubjects[e.ProposalId] {
+			return fmt.Errorf("proposal %d: subjects listed twice", e.ProposalId)
+		}
+		seenSubjects[e.ProposalId] = true
+		set := 0
+		if len(e.Subjects.ExcludedDsc) > 0 {
+			set++
+			if len(e.Subjects.ExcludedDsc) != 32 {
+				return fmt.Errorf("proposal %d: excluded_dsc is %d bytes, want 32", e.ProposalId, len(e.Subjects.ExcludedDsc))
+			}
+		}
+		if e.Subjects.ExcludedCountry != "" {
+			set++
+			if c := e.Subjects.ExcludedCountry; len(c) != 2 || c[0] < 'A' || c[0] > 'Z' || c[1] < 'A' || c[1] > 'Z' {
+				return fmt.Errorf("proposal %d: excluded_country %q is not an alpha-2 code", e.ProposalId, c)
+			}
+		}
+		if e.Subjects.Refusal != "" {
+			set++
+		}
+		if set > 1 {
+			return fmt.Errorf("proposal %d: subjects set more than one of excluded_dsc, excluded_country, refusal", e.ProposalId)
+		}
+	}
 	seenCooldown := map[uint64]bool{}
 	for _, c := range gs.RemovalCooldowns {
 		if seenCooldown[c.OptionId] {

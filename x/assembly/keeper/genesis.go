@@ -76,8 +76,16 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		}
 	}
 
-	// Subjects are not carried: they are recomputed for every proposal in
-	// voting from x/gov's and x/pki's state, both imported before this module.
+	// Subjects are carried (audit 4, C6): they were fixed as each proposal
+	// entered voting, and recomputing them against the relaunch's trust store
+	// could change who may vote mid-vote. Only a proposal in voting without
+	// an entry is classified here, from x/gov's and x/pki's state, both
+	// imported before this module (classifyProposal keeps a stored entry).
+	for _, e := range gs.ProposalSubjects {
+		if err := k.Subjects.Set(ctx, e.ProposalId, e.Subjects); err != nil {
+			return err
+		}
+	}
 	return k.gov.VotingPeriodProposals.Walk(ctx, nil, func(id uint64, _ []byte) (bool, error) {
 		p, err := k.gov.Proposals.Get(ctx, id)
 		if err != nil {
@@ -113,6 +121,13 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 			})
 			return false, nil
 		})
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := k.Subjects.Walk(ctx, nil, func(id uint64, subj types.ProposalSubjects) (bool, error) {
+		gs.ProposalSubjects = append(gs.ProposalSubjects, types.ProposalSubjectsEntry{ProposalId: id, Subjects: subj})
+		return false, nil
 	}); err != nil {
 		return nil, err
 	}
