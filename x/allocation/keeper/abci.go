@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"cosmossdk.io/collections"
@@ -52,7 +53,14 @@ func (k Keeper) resolveIntegrated(ctx context.Context, stream types.StreamId) er
 
 	for _, id := range ids {
 		opt, err := k.Options.Get(ctx, optionKey(stream, id))
-		if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			// A handler-set entry with no option (state from before pruneOption
+			// cleared both): drop the entry rather than halt BeginBlock.
+			if err := k.IntegratedOptions.Remove(ctx, optionKey(stream, id)); err != nil {
+				return err
+			}
+			continue
+		} else if err != nil {
 			return err
 		}
 		settleOption(&opt, rewardIndex)

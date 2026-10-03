@@ -219,7 +219,10 @@ func (k Keeper) restoreStream(ctx context.Context, st types.StreamState) error {
 		if err := k.Options.Set(ctx, optionKey(st.Stream, opt.Id), opt); err != nil {
 			return err
 		}
-		if opt.Kind == types.ALLOCATION_KIND_INTEGRATED {
+		// A struck INTEGRATED option left the handler set when it was struck
+		// (removal.go); it stays out across an export, or its prune would leave
+		// resolveIntegrated an id with no option (audit 5 A1).
+		if opt.Kind == types.ALLOCATION_KIND_INTEGRATED && !opt.Removed {
 			if err := k.IntegratedOptions.Set(ctx, optionKey(st.Stream, opt.Id)); err != nil {
 				return err
 			}

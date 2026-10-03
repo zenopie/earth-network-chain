@@ -195,6 +195,11 @@ func (k Keeper) pruneOption(ctx sdk.Context, stream types.StreamId, id uint64, k
 	if err := k.Options.Remove(ctx, kk); err != nil {
 		return err
 	}
+	// And out of the handler set, which removal already did for a struck
+	// option; kept here so no path leaves an id resolveIntegrated cannot read.
+	if err := k.IntegratedOptions.Remove(ctx, kk); err != nil {
+		return err
+	}
 
 	// forfeited is ERTH the option had earned and nobody claimed. The coins
 	// exist — AdvanceIndex minted them as they accrued — so they are burned
