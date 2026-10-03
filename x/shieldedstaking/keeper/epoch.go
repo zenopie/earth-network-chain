@@ -93,9 +93,8 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 	if !sweep.Active {
 		sweep = types.EpochSweep{Active: true}
 	}
-	k.sweepBooks(ctx, sweep, epoch.Number)
+	k.resyncBooks(ctx, k.sweepBooks(ctx, sweep, epoch.Number))
 	k.compoundSelfBonds(ctx)
-	k.ReweighGroundworks(ctx)
 	if err := k.guarded(ctx, k.sweepForeignRewards); err != nil {
 		k.failure(ctx, "sweep", "", err)
 	}
@@ -127,14 +126,22 @@ func (k Keeper) sweepState(ctx context.Context) types.EpochSweep {
 }
 
 // continueSweep goes on with an epoch-end sweep in a block after the epoch
-// end; the books it processes re-weigh their positions voter at once (the
-// epoch end re-weighed every validator's voter at the rates it had then).
+// end.
 func (k Keeper) continueSweep(ctx context.Context, maxEpoch uint64) {
 	sweep := k.sweepState(ctx)
 	if !sweep.Active {
 		return
 	}
-	for _, v := range k.sweepBooks(ctx, sweep, maxEpoch) {
+	k.resyncBooks(ctx, k.sweepBooks(ctx, sweep, maxEpoch))
+}
+
+// resyncBooks re-files the Groundworks voter of each book the sweep just
+// processed (at the epoch rate processValidator set), for those with
+// positions. The voters re-weigh with the bounded sweep, EpochValidatorLimit
+// a block, never in one walk over every validator at the epoch end: until
+// its book's turn, a validator's voter keeps the previous epoch's rate.
+func (k Keeper) resyncBooks(ctx context.Context, vals []string) {
+	for _, v := range vals {
 		if _, err := k.GwEpoch.Get(ctx, v); err == nil {
 			k.resyncValidatorVoter(ctx, v)
 		}

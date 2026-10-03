@@ -1,7 +1,13 @@
 package app
 
 import (
+	"fmt"
 	"testing"
+	"time"
+
+	"cosmossdk.io/collections"
+	storetypes "cosmossdk.io/store/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
@@ -105,4 +111,32 @@ func TestCheckTxValidBundleJunkActionProofCostsOne(t *testing.T) {
 	// The honest tx still passes, and lands.
 	res := e.checkTx(e.privateTx(dm))
 	require.Zero(t, res.Code, res.Log)
+}
+
+// Re-audit R5 (GwEpoch leak): a validator's Groundworks entry goes with its
+// last position, and the epoch end never walks the Groundworks index: its
+// voters re-weigh with the bounded book sweep. Stale entries (here forced in
+// state) cost an epoch end nothing.
+func TestGroundworksIndexNoLeakAndEpochCostBounded(t *testing.T) {
+	g := initGwEnv(t)
+	a := g.lockPos(g.v, 2*gwE, 1, g.split(100))
+	g.unlockPos(a, 1)
+	_, err := g.app.ShieldedStakingKeeper.GwEpoch.Get(g.ctx(), g.valoper(g.v))
+	require.ErrorIs(t, err, collections.ErrNotFound, "GwEpoch removed with the last position")
+
+	epochEndGas := func(n int) uint64 {
+		cc, _ := g.ctx().CacheContext()
+		for i := 0; i < n; i++ {
+			va := sdk.ValAddress([]byte(fmt.Sprintf("pocvalidator%08d", i)))
+			require.NoError(t, g.app.ShieldedStakingKeeper.GwEpoch.Set(cc, g.valoper(va), 0))
+		}
+		ep, err := g.app.ShieldedStakingKeeper.Epoch.Get(cc)
+		require.NoError(t, err)
+		ctx := cc.WithBlockTime(time.Unix(ep.EndTime, 0)).WithGasMeter(storetypes.NewGasMeter(1 << 60))
+		require.NoError(t, g.app.ShieldedStakingKeeper.EndBlocker(ctx))
+		return ctx.GasMeter().GasConsumed()
+	}
+	base, many := epochEndGas(0), epochEndGas(10_000)
+	t.Logf("epoch end gas: no stale entries %d, 10000 stale entries %d", base, many)
+	require.InDelta(t, float64(base), float64(many), 5_000)
 }

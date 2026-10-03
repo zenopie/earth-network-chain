@@ -148,6 +148,19 @@ func (k Keeper) syncValidatorVoter(ctx context.Context, v string) error {
 			return err
 		}
 	}
+	// No live totals left (the last position unlocked or cleared its
+	// split): the validator leaves the Groundworks index, so nothing walks
+	// or re-files it until a position votes again.
+	empty := true
+	if err := k.GwTotals.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](v),
+		func(collections.Pair[string, uint64], math.Int) (bool, error) { empty = false; return true, nil }); err != nil {
+		return err
+	}
+	if empty {
+		if err := k.GwEpoch.Remove(ctx, v); err != nil {
+			return err
+		}
+	}
 	ws, err := k.validatorOptionWeights(ctx, v, epoch)
 	if err != nil {
 		return err
@@ -163,9 +176,11 @@ func (k Keeper) resyncValidatorVoter(ctx context.Context, v string) {
 	}
 }
 
-// ReweighGroundworks re-files every validator's Groundworks voter at its new
-// epoch rate: one voter per validator that has (or had) live positions,
-// whatever the number of positions. The epoch end runs it; never fails.
+// ReweighGroundworks re-files every validator's Groundworks voter at its
+// epoch rate: one voter per validator with live positions, whatever the
+// number of positions. Unbounded in validators, so the epoch end does not
+// run it (the bounded book sweep re-files each voter, resyncBooks); for
+// tests and tools. Never fails.
 func (k Keeper) ReweighGroundworks(ctx context.Context) {
 	var vals []string
 	_ = k.GwEpoch.Walk(ctx, nil, func(v string, _ uint64) (bool, error) {
