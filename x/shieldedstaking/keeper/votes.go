@@ -508,6 +508,22 @@ func (k Keeper) privateTally(ctx context.Context, proposalID uint64, validators 
 			if ded.GT(del.Shares) {
 				ded = del.Shares
 			}
+			// And at what the voted derth is worth now: voted x rate_now
+			// tokens, in v's shares. Stake delegated to v after the snapshot
+			// (by holders who did not vote) raises the module's shares; without
+			// this cap the snapshot voters' fraction of those shares would take
+			// it, when it should follow v's own (inherited) vote.
+			b, sNow, err := k.Backing(ctx, valoper)
+			if err != nil {
+				return true, err
+			}
+			if sNow.IsPositive() && val.BondedTokens.IsPositive() {
+				worth := voted.MulInt(b).QuoInt(sNow).
+					Mul(val.DelegatorShares).QuoInt(val.BondedTokens)
+				if ded.GT(worth) {
+					ded = worth
+				}
+			}
 			if room := val.DelegatorShares.Sub(val.DelegatorDeductions); ded.GT(room) {
 				ded = room
 			}

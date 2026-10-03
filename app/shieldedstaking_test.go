@@ -913,9 +913,23 @@ func TestStakeVoteTally(t *testing.T) {
 	frac := func(m math.LegacyDec, d uint64, s math.Int) math.LegacyDec {
 		return m.MulInt(math.NewIntFromUint64(d)).QuoInt(s)
 	}
-	dedA := frac(mA, n3.amount, supply[e.valoper(vA)])
-	dedB1 := frac(mB, n1.amount, supply[e.valoper(vB)])
-	dedBP := frac(mB, n4.amount, supply[e.valoper(vB)])
+	// Each validator's deduction is capped at what its voted derth is worth
+	// now (voted x rate_now, in its shares); the cap scales every option alike.
+	capScale := func(v sdk.ValAddress, m math.LegacyDec, voted uint64) math.LegacyDec {
+		ded := frac(m, voted, supply[e.valoper(v)])
+		b, sNow, err := e.app.ShieldedStakingKeeper.Backing(cc, e.valoper(v))
+		require.NoError(t, err)
+		bonded, shares, _ := info(v)
+		worth := math.LegacyNewDecFromInt(math.NewIntFromUint64(voted)).MulInt(b).QuoInt(sNow).Mul(shares).QuoInt(bonded)
+		if ded.GT(worth) {
+			return worth.Quo(ded)
+		}
+		return math.LegacyOneDec()
+	}
+	scaleA, scaleB := capScale(vA, mA, n3.amount), capScale(vB, mB, n1.amount+n4.amount)
+	dedA := frac(mA, n3.amount, supply[e.valoper(vA)]).Mul(scaleA)
+	dedB1 := frac(mB, n1.amount, supply[e.valoper(vB)]).Mul(scaleB)
+	dedBP := frac(mB, n4.amount, supply[e.valoper(vB)]).Mul(scaleB)
 	want := tallyNums{
 		yes:     power(shB.Sub(dedB1).Sub(dedBP), bB, shB).Add(power(dedA, bA, shA)).Add(power(dedBP, bB, shB)),
 		abstain: power(thirdDel.Shares, bA, shA).Add(power(dedB1, bB, shB)),
@@ -945,6 +959,46 @@ func TestStakeVoteTally(t *testing.T) {
 	// No side effects on the private votes (x/gov's TallyResult query runs
 	// the same function).
 	require.Equal(t, votesBefore, countVotes(t, e, prop))
+
+	{ // Re-audit R4 (POC-B1): stake delegated to vB after the snapshot by
+		// holders who did not vote (here 100k ERTH: module shares and derth
+		// supply both grow, as an epoch end's delegation of new derth does)
+		// follows vB's inherited vote, not the snapshot voters' fraction.
+		cc2, _ := e.ctx().CacheContext()
+		v, err := sk.GetValidator(cc2, vB)
+		require.NoError(t, err)
+		extra := math.NewInt(100_000 * ssErth)
+		vs, err := e.app.ShieldedStakingKeeper.ValidatorState(cc2, e.valoper(vB))
+		require.NoError(t, err)
+		b0, s0, err := e.app.ShieldedStakingKeeper.Backing(cc2, e.valoper(vB))
+		require.NoError(t, err)
+		newDerth := extra.Mul(s0).Quo(b0) // minted at the current rate
+		_, sh, err := sk.AddValidatorTokensAndShares(cc2, v, extra)
+		require.NoError(t, err)
+		d, err := sk.GetDelegation(cc2, mod, vB)
+		require.NoError(t, err)
+		d.Shares = d.Shares.Add(sh)
+		require.NoError(t, sk.SetDelegation(cc2, d))
+		coins := sdk.NewCoins(sdk.NewCoin("uerth", extra))
+		require.NoError(t, e.app.BankKeeper.MintCoins(cc2, earthtypes.ModuleName, coins))
+		require.NoError(t, e.app.BankKeeper.SendCoinsFromModuleToModule(cc2, earthtypes.ModuleName, stakingtypes.BondedPoolName, coins))
+		vs.DerthSupply = vs.DerthSupply.Add(newDerth)
+		require.NoError(t, e.app.ShieldedStakingKeeper.Validators.Set(cc2, e.valoper(vB), vs))
+		p2, err := e.app.GovKeeper.Proposals.Get(cc2, prop)
+		require.NoError(t, err)
+		_, _, got2, err := e.app.GovKeeper.Tally(cc2, p2)
+		require.NoError(t, err)
+		abstain0, _ := math.NewIntFromString(got.AbstainCount)
+		abstain1, _ := math.NewIntFromString(got2.AbstainCount)
+		yes0, _ := math.NewIntFromString(got.YesCount)
+		yes1, _ := math.NewIntFromString(got2.YesCount)
+		t.Logf("POC-B1 abstain %s -> %s, yes %s -> %s", abstain0, abstain1, yes0, yes1)
+		// n1's abstain is what n1's derth is worth: it barely moves (the new
+		// stake was minted at the same rate). The new stake goes to vB's
+		// own vote (Yes).
+		require.True(t, abstain1.Sub(abstain0).Abs().LTE(abstain0.QuoRaw(1000).AddRaw(4)), "abstain %s -> %s", abstain0, abstain1)
+		require.True(t, yes1.Sub(yes0).Sub(extra).Abs().LTE(extra.QuoRaw(1000)), "yes %s -> %s", yes0, yes1)
+	}
 
 	// --- genesis round trip mid-vote: snapshot, votes, positions, books.
 	exported, err := e.app.ExportAppStateAndValidators(false, nil, nil)
