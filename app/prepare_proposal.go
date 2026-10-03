@@ -37,7 +37,19 @@ func privateCapPrepareProposal(sk shieldedkeeper.Keeper, dec sdk.TxDecoder) func
 			limit, used := uint64(params.MaxPrivateActionsPerBlock), uint64(0)
 			out := make([][]byte, 0, len(resp.Txs))
 			for _, bz := range resp.Txs {
-				if n, ok := privateActions(dec, bz); ok {
+				tx, err := dec(bz)
+				// A tx past its timeout_height fails in this block whatever
+				// it is (TxTimeoutHeightDecorator: height > timeout_height),
+				// so it is left out before it can count toward the private
+				// cap and crowd out a tx that would land (audit 4, L1).
+				if err == nil {
+					if t, ok := tx.(sdk.TxWithTimeoutHeight); ok {
+						if th := t.GetTimeoutHeight(); th != 0 && req.Height > 0 && th < uint64(req.Height) {
+							continue
+						}
+					}
+				}
+				if n, ok := privateActions(tx, err); ok {
 					if used+n > limit {
 						continue
 					}
@@ -53,8 +65,7 @@ func privateCapPrepareProposal(sk shieldedkeeper.Keeper, dec sdk.TxDecoder) func
 
 // privateActions is the action count of a well-formed private tx (exactly
 // one msg, a PrivateMsg), as the ante counts it.
-func privateActions(dec sdk.TxDecoder, bz []byte) (uint64, bool) {
-	tx, err := dec(bz)
+func privateActions(tx sdk.Tx, err error) (uint64, bool) {
 	if err != nil {
 		return 0, false
 	}

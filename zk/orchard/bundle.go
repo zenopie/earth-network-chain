@@ -250,7 +250,7 @@ func VerifyProofs(bundles []*Bundle, sighash fr.Element, verify ProofVerifier) e
 			for k := range next {
 				jb := jobs[k]
 				b := bundles[jb.b]
-				ok, err := verify(b.Actions[jb.a].Proof, b.PublicInputs(jb.a, sighash))
+				ok, err := verifyRecovered(verify, b.Actions[jb.a].Proof, b.PublicInputs(jb.a, sighash))
 				if err != nil || !ok {
 					errs[k] = &ActionError{Bundle: jb.b, Action: jb.a, Err: err}
 				}
@@ -270,6 +270,22 @@ func VerifyProofs(bundles []*Bundle, sighash fr.Element, verify ProofVerifier) e
 	return nil
 }
 
+// verifyRecovered runs verify, turning a panic into an error. In a worker
+// goroutine a panic is not caught by baseapp's recovery (that only covers the
+// goroutine running the tx): it would take the node down, on every node that
+// verified the same proof, so a malformed proof that panicked the verifier
+// would halt the chain. Recovered, it is that action's ActionError (audit 4,
+// I3). A deterministic verifier panics deterministically, so the outcome is
+// the same on every node.
+func verifyRecovered(verify ProofVerifier, proof []byte, inputs [][]byte) (ok bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			ok, err = false, fmt.Errorf("proof verifier panicked: %v", r)
+		}
+	}()
+	return verify(proof, inputs)
+}
+
 // VerifyProofsSequential verifies the same proofs as VerifyProofs, one at a
 // time in bundle and action order, and stops at the first that fails. For a
 // mempool (CheckTx), where a tx whose first proof is junk must cost one
@@ -279,7 +295,7 @@ func VerifyProofs(bundles []*Bundle, sighash fr.Element, verify ProofVerifier) e
 func VerifyProofsSequential(bundles []*Bundle, sighash fr.Element, verify ProofVerifier) error {
 	for i, b := range bundles {
 		for j := range b.Actions {
-			ok, err := verify(b.Actions[j].Proof, b.PublicInputs(j, sighash))
+			ok, err := verifyRecovered(verify, b.Actions[j].Proof, b.PublicInputs(j, sighash))
 			if err != nil || !ok {
 				return &ActionError{Bundle: i, Action: j, Err: err}
 			}

@@ -154,10 +154,14 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	// signer and sequence and reject a tx with no signers outright.
 	private := sdk.ChainAnteDecorators(
 		ante.NewSetUpContextDecorator(),
+		// Right after SetUpContext: a panic below is an error carrying the
+		// gas already charged (audit 4, I3).
+		shieldedante.RecoverDecorator{},
 		wasmkeeper.NewLimitSimulationGasDecorator(options.WasmNodeConfig.SimulationGasLimit),
 		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
 		shieldedante.ValidateTxDecorator{},
 		ante.NewTxTimeoutHeightDecorator(),
+		shieldedante.ExpiredTimeoutDecorator{},
 		ante.NewValidateMemoDecorator(options.AccountKeeper),
 		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
 		shieldedante.PrivateMsgDecorator{K: sk},

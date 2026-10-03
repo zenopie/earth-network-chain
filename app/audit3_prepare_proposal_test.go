@@ -18,7 +18,7 @@ func TestAudit3PrepareProposalRespectsPrivateActionCap(t *testing.T) {
 	s := shieldedtest.Default()
 	requireOK(t, e.shieldAll(s).TxResults[0])
 	tx := e.sendTx(s, shieldedtest.Send2)
-	n, ok := privateActions(e.app.TxConfig().TxDecoder(), tx)
+	n, ok := privateActions(e.app.TxConfig().TxDecoder()(tx))
 	require.True(t, ok)
 	params, err := e.app.ShieldedKeeper.Params.Get(e.ctx())
 	require.NoError(t, err)
