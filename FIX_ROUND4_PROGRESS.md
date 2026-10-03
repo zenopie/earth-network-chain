@@ -109,4 +109,8 @@ Each PoC is ported as a regression test asserting the safe outcome.
     paid; relayer cannot swap affiliate_code / address; the code follows a
     rebind; genesis round trip). New passport fixture D1; passports and
     app fixtures re-recorded.
-- [ ] 8 fixtures, genesis, build/vet/test, genesis-check, privacy-vks-check
+- [x] 8 fixtures (dex note paths; personhood passports + app), make
+  genesis, go build/vet/test ./... pass, make genesis-check passes (sha256
+  24f883576256fd96dc4fdf3b49297fa0ac2f4f3bdac7fd19057720c1253bba99), make
+  privacy-vks-check CIRCUITS=../mobile-orch/circuits passes (vks
+  unchanged). Genesis changed only by the new empty genesis fields.

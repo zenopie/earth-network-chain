@@ -15,6 +15,7 @@
     "assembly": {
       "ballot_seq": "0",
       "proposal_rounds": [],
+      "proposal_subjects": [],
       "proposal_votes": [],
       "removal_ballots": [],
       "removal_cooldowns": []
@@ -564,6 +565,7 @@
         }
       },
       "pending_dsc_purges": [],
+      "referral_codes": [],
       "referrer_bindings": [],
       "registrations": [],
       "used_bindings": []
