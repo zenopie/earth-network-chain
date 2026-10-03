@@ -5,8 +5,11 @@ package app
 // asserts the fail-safe outcome.
 
 import (
+	"cosmossdk.io/collections"
+	storetypes "cosmossdk.io/store/types"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -119,4 +122,102 @@ func TestAuditGenesisRefusesNonCanonicalValoper(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "not canonical")
 	panic(err)
+}
+
+// F1: with more books than one block processes, the books past the cap
+// starved for ever (the epoch end walked from the first key each time). The
+// sweep now goes on from a cursor in the following blocks: every book is
+// processed within ceil(books / EpochValidatorLimit) blocks of the epoch end.
+func TestAuditEpochValidatorStarvation(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(10_000 * ssErth)
+
+	var vals []sdk.ValAddress
+	for i := 0; i < sstypes.EpochValidatorLimit+5; i++ {
+		v, _ := e.createValidator(1) // 1uerth self-bond: unbonded, not jailed
+		vals = append(vals, v)
+	}
+	e.next(5 * time.Second)
+	for i, v := range vals {
+		e.auditDelegate(v, uint64(ssErth), fmt.Sprintf("book-%d", i)) // the minimum: 1 ERTH
+	}
+	sort.Slice(vals, func(i, j int) bool { return e.valoper(vals[i]) < e.valoper(vals[j]) })
+	victim := vals[len(vals)-1] // sorts last
+	e.auditDelegate(victim, uint64(1_000*ssErth), "victim")
+
+	e.next(25 * time.Hour) // epoch end: the first EpochValidatorLimit books
+	sweep, err := e.app.ShieldedStakingKeeper.EpochSweep.Get(e.ctx())
+	require.NoError(t, err)
+	require.True(t, sweep.Active, "the sweep goes on next block")
+	require.True(t, e.modDelegation(vals[0]).IsPositive())
+	require.True(t, e.modDelegation(victim).IsZero(), "not yet: past the cap")
+
+	e.next(5 * time.Second) // the rest
+	sweep, err = e.app.ShieldedStakingKeeper.EpochSweep.Get(e.ctx())
+	require.NoError(t, err)
+	require.False(t, sweep.Active, "the sweep reached the last book")
+	for _, v := range vals {
+		require.True(t, e.modDelegation(v).IsPositive(), e.valoper(v))
+	}
+	require.True(t, e.modDelegation(victim).GTE(math.NewInt(1_000*ssErth)))
+	require.True(t, e.state(victim).PendingDelegation.LT(math.NewInt(ssErth)), "only rewards stay queued")
+	require.NoError(t, e.app.ShieldedStakingKeeper.AssertInvariants(e.ctx()))
+}
+
+// F1: books can no longer be created for dust: a delegation below
+// min_delegation (1 ERTH), or one that would mint less than min_delegation
+// derth, is refused.
+func TestAuditMinDelegation(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(10_000 * ssErth)
+	v, _ := e.createValidator(1)
+	e.next(5 * time.Second)
+	m := auditDelegateMsg(e.valoper(v), uint64(ssErth)-1, "dust")
+	_, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Delegate(e.fakeAuthorized(m), m)
+	require.ErrorContains(t, err, "at least")
+	_, err = sskeeper.NewActionHandler(e.app.ShieldedStakingKeeper).CheckPrivateAction(e.ctx(), m)
+	require.ErrorContains(t, err, "at least")
+	has, err := e.app.ShieldedStakingKeeper.Validators.Has(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	require.False(t, has)
+}
+
+// F2: the snapshot a deposit takes when it activates voting walked every
+// book (a reward computation each) inside the deposit tx: enough books made
+// every such deposit run out of gas. It is O(1) now: the same gas with 1
+// book or 60.
+func TestAuditSnapshotGasIndependentOfBooks(t *testing.T) {
+	gasWith := func(books int) uint64 {
+		e := initStakeEnv(t)
+		e.auditFundPool(10_000 * ssErth)
+		for i := 0; i < books; i++ {
+			v, _ := e.createValidator(1)
+			e.next(5 * time.Second)
+			e.auditDelegate(v, uint64(ssErth), fmt.Sprintf("g-%d", i))
+		}
+		e.next(25 * time.Hour)
+		e.next(5 * time.Second)
+		prop := e.submitProposal()
+		k := e.app.ShieldedStakingKeeper
+		ctx := e.ctx()
+		snap, err := k.Snapshots.Get(ctx, prop)
+		require.NoError(t, err)
+		require.NoError(t, k.Snapshots.Remove(ctx, prop))
+		require.NoError(t, k.SnapshotsBySeq.Remove(ctx, collections.Join(snap.Seq, prop)))
+		gctx := ctx.WithGasMeter(storetypes.NewGasMeter(1 << 40))
+		require.NoError(t, k.GovHooks().AfterProposalDeposit(gctx, prop, nil))
+		require.True(t, must(k.Snapshots.Has(gctx, prop)))
+		return gctx.GasMeter().GasConsumed()
+	}
+	one, sixty := gasWith(1), gasWith(60)
+	t.Logf("snapshot gas: 1 book %d, 60 books %d", one, sixty)
+	require.Equal(t, one, sixty)
+	require.Less(t, sixty, uint64(100_000))
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }

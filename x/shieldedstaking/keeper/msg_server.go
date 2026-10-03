@@ -36,6 +36,9 @@ func (k msgServer) UpdateParams(ctx context.Context, req *types.MsgUpdateParams)
 	if err := req.Params.Validate(); err != nil {
 		return nil, err
 	}
+	if err := k.checkUnbondingEntries(ctx, req.Params); err != nil {
+		return nil, err
+	}
 	return &types.MsgUpdateParamsResponse{}, k.Params.Set(ctx, req.Params)
 }
 
@@ -56,6 +59,9 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	}
 	vs, err := k.ValidatorState(ctx, m.Validator)
 	if err != nil {
+		return nil, err
+	}
+	if err := k.checkpointSupply(ctx, &vs); err != nil {
 		return nil, err
 	}
 	vs.PendingDelegation = vs.PendingDelegation.Add(paid.Amount)
@@ -131,6 +137,9 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	}
 	vs, err := k.ValidatorState(ctx, m.Validator)
 	if err != nil {
+		return nil, err
+	}
+	if err := k.checkpointSupply(ctx, &vs); err != nil {
 		return nil, err
 	}
 	vs.PendingUndelegation = vs.PendingUndelegation.Add(u)
@@ -277,6 +286,9 @@ func (k msgServer) LockPosition(goCtx context.Context, m *types.MsgLockPosition)
 	if err := k.PositionsByVal.Set(ctx, collections.Join(p.Validator, id)); err != nil {
 		return nil, err
 	}
+	if err := k.addPositionCount(ctx, 1); err != nil {
+		return nil, err
+	}
 	if len(m.Splits) > 0 {
 		w, err := k.allocation.ApplySplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.PositionVoterKey(id), m.Splits)
 		if err != nil {
@@ -297,7 +309,7 @@ func (k msgServer) UpdatePosition(goCtx context.Context, m *types.MsgUpdatePosit
 	if err != nil {
 		return nil, err
 	}
-	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
+	p, err := k.checkUpdate(ctx, m)
 	if err != nil {
 		return nil, err
 	}
@@ -338,6 +350,9 @@ func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosit
 		return nil, err
 	}
 	if err := k.PositionsByVal.Remove(ctx, collections.Join(p.Validator, p.Id)); err != nil {
+		return nil, err
+	}
+	if err := k.addPositionCount(ctx, -1); err != nil {
 		return nil, err
 	}
 	k.positionEvent(ctx, "unlock", p)

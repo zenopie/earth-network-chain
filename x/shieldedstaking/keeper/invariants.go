@@ -78,9 +78,17 @@ func (k Keeper) assertEscrows(ctx context.Context) error {
 			return types.ErrInvariant.Wrapf("validator %s: operator withdraw address %s is not its reward escrow %s", v.GetOperator(), wa, escrow)
 		}
 	}
+	// A removed validator's escrow whose release failed stays recorded
+	// until the retry succeeds (PendingReleases).
 	n := 0
-	if err := k.RewardEscrows.Walk(ctx, nil, func(_, _ []byte) (bool, error) {
-		n++
+	if err := k.RewardEscrows.Walk(ctx, nil, func(_, owner []byte) (bool, error) {
+		pending, err := k.PendingReleases.Has(ctx, owner)
+		if err != nil {
+			return true, err
+		}
+		if !pending {
+			n++
+		}
 		return false, nil
 	}); err != nil {
 		return err

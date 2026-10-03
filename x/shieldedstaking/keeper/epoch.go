@@ -48,8 +48,11 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		k.failure(ctx, "epoch", "", err)
 	} else if sdk.UnwrapSDKContext(ctx).BlockTime().Unix() >= epoch.EndTime {
 		k.endEpoch(ctx, epoch)
+	} else if epoch.Number > 0 {
+		k.continueSweep(ctx, epoch.Number-1)
 	}
 	k.sweepSnapshots(ctx)
+	k.releaseRetiredEscrows(ctx)
 	return nil
 }
 
@@ -79,29 +82,24 @@ func (k Keeper) failure(ctx context.Context, stage, validator string, err error)
 	))
 }
 
-// endEpoch executes the queues and starts the next epoch. The epoch advances
-// whatever happened to individual validators: what failed stays queued.
+// endEpoch starts (or, if the last one has not finished, goes on with) the
+// sweep over the validator books, and starts the next epoch. The epoch
+// advances whatever happened to individual validators: what failed stays
+// queued.
 func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	var vals []string
-	_ = k.Validators.Walk(ctx, nil, func(v string, _ types.ValidatorState) (bool, error) {
-		vals = append(vals, v)
-		return len(vals) >= types.EpochValidatorLimit, nil
-	})
-	for _, v := range vals {
-		if err := k.guarded(ctx, func(cc context.Context) error { return k.processValidator(cc, v) }); err != nil {
-			k.failure(ctx, "validator", v, err)
-		}
+	sweep := k.sweepState(ctx)
+	if !sweep.Active {
+		sweep = types.EpochSweep{Active: true}
 	}
+	k.sweepBooks(ctx, sweep, epoch.Number)
 	k.compoundSelfBonds(ctx)
 	k.reweighPositions(ctx)
 	if err := k.guarded(ctx, k.sweepForeignRewards); err != nil {
 		k.failure(ctx, "sweep", "", err)
 	}
-	if err := k.AssertInvariants(ctx); err != nil {
-		k.logger(ctx).Error("private staking invariant broken", "err", err)
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeInvariant, sdk.NewAttribute(types.AttributeKeyError, err.Error())))
-	}
+	k.retryEscrowReleases(ctx)
+	k.reportInvariants(ctx)
 
 	params, err := k.Params.Get(ctx)
 	if err != nil {
@@ -117,6 +115,107 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeEpoch,
 		sdk.NewAttribute(types.AttributeKeyEpoch, strconv.FormatUint(epoch.Number, 10)),
 	))
+}
+
+func (k Keeper) sweepState(ctx context.Context) types.EpochSweep {
+	sweep, err := k.EpochSweep.Get(ctx)
+	if err != nil {
+		return types.EpochSweep{}
+	}
+	return sweep
+}
+
+// continueSweep goes on with an epoch-end sweep in a block after the epoch
+// end; the books it processes re-weigh their positions at once (the epoch
+// end re-weighed every position at the rates it had then).
+func (k Keeper) continueSweep(ctx context.Context, maxEpoch uint64) {
+	sweep := k.sweepState(ctx)
+	if !sweep.Active {
+		return
+	}
+	for _, v := range k.sweepBooks(ctx, sweep, maxEpoch) {
+		var ids []uint64
+		_ = k.PositionsByVal.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](v),
+			func(key collections.Pair[string, uint64]) (bool, error) {
+				ids = append(ids, key.K2())
+				return false, nil
+			})
+		for _, id := range ids {
+			k.reweighPosition(ctx, id)
+		}
+	}
+}
+
+// sweepBooks processes up to EpochValidatorLimit books after sweep's cursor,
+// in key order, settling their unbond records of epochs up to maxEpoch, and
+// records how far it got: the sweep ends when it reaches the last book.
+// Books the cap leaves out are processed in the next blocks, so none waits
+// on how its key sorts (audit F1). Returns the books processed.
+func (k Keeper) sweepBooks(ctx context.Context, sweep types.EpochSweep, maxEpoch uint64) []string {
+	var rng collections.Ranger[string]
+	if sweep.Cursor != "" {
+		rng = new(collections.Range[string]).StartExclusive(sweep.Cursor)
+	}
+	var vals []string
+	if err := k.guarded(ctx, func(cc context.Context) error {
+		return k.Validators.Walk(cc, rng, func(v string, _ types.ValidatorState) (bool, error) {
+			vals = append(vals, v)
+			return len(vals) >= types.EpochValidatorLimit, nil
+		})
+	}); err != nil {
+		k.failure(ctx, "sweep_walk", sweep.Cursor, err)
+		return nil
+	}
+	for _, v := range vals {
+		if err := k.guarded(ctx, func(cc context.Context) error { return k.processValidator(cc, v, maxEpoch) }); err != nil {
+			k.failure(ctx, "validator", v, err)
+		}
+	}
+	if len(vals) < types.EpochValidatorLimit {
+		sweep = types.EpochSweep{}
+	} else {
+		sweep.Cursor = vals[len(vals)-1]
+	}
+	if err := k.EpochSweep.Set(ctx, sweep); err != nil {
+		k.failure(ctx, "sweep_cursor", "", err)
+	}
+	return vals
+}
+
+// reportInvariants runs AssertInvariants at the epoch end, bounded (skipped,
+// with an event, past InvariantBookLimit books or unbond records) and
+// guarded: it reports a broken invariant or a panic, it never halts EndBlock.
+func (k Keeper) reportInvariants(ctx context.Context) {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	n := 0
+	_ = k.Validators.Walk(ctx, nil, func(string, types.ValidatorState) (bool, error) {
+		n++
+		return n > types.InvariantBookLimit, nil
+	})
+	if n <= types.InvariantBookLimit {
+		_ = k.UnbondRecords.Walk(ctx, nil, func(collections.Pair[string, uint64], types.UnbondRecord) (bool, error) {
+			n++
+			return n > types.InvariantBookLimit, nil
+		})
+	}
+	if n > types.InvariantBookLimit {
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeInvariant,
+			sdk.NewAttribute(types.AttributeKeyError, "skipped: too many books and unbond records for one block")))
+		return
+	}
+	err := func() (err error) {
+		cc, _ := sdkCtx.CacheContext() // read only: never written
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic: %v", r)
+			}
+		}()
+		return k.AssertInvariants(cc)
+	}()
+	if err != nil {
+		k.logger(ctx).Error("private staking invariant broken", "err", err)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeInvariant, sdk.NewAttribute(types.AttributeKeyError, err.Error())))
+	}
 }
 
 // compoundSelfBonds re-delegates, for every active (bonded, unjailed)
@@ -205,9 +304,17 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 
 // pendingRecords is v's PENDING records, in epoch order.
 func (k Keeper) pendingRecords(ctx context.Context, valoper string) ([]types.UnbondRecord, error) {
+	return k.pendingRecordsUpTo(ctx, valoper, ^uint64(0))
+}
+
+// pendingRecordsUpTo is v's PENDING records of epochs up to maxEpoch.
+func (k Keeper) pendingRecordsUpTo(ctx context.Context, valoper string, maxEpoch uint64) ([]types.UnbondRecord, error) {
 	var out []types.UnbondRecord
 	err := k.PendingRecords.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](valoper),
 		func(key collections.Pair[string, uint64]) (bool, error) {
+			if key.K2() > maxEpoch {
+				return true, nil
+			}
 			r, err := k.UnbondRecords.Get(ctx, key)
 			if err != nil {
 				return true, err
@@ -218,14 +325,24 @@ func (k Keeper) pendingRecords(ctx context.Context, valoper string) ([]types.Unb
 	return out, err
 }
 
-// processValidator is one validator's epoch end.
+// processValidator is one validator's epoch end: its unbond records of
+// epochs up to maxEpoch (the epoch that ended; a record of the epoch under
+// way stays PENDING, Undelegate is still adding to it).
 //
 // Accounting is by balance deltas: x/distribution pays the module's rewards
 // as a side effect of every delegation change (its
 // BeforeDelegationSharesModified hook), not only on the explicit withdraw.
 // Whatever arrives beyond the withdraw is v's reward too and joins v's queue
 // for the next epoch.
-func (k Keeper) processValidator(ctx context.Context, valoper string) error {
+//
+// A book left with no derth (S_v == 0) and no later records owns nothing it
+// backs: the module's whole delegation goes out with its last records (the
+// rewards accrued since their notes were minted are theirs: their stake
+// earned them), or, with no records at all, into an orphan record whose
+// payout goes to the community pool; and what is queued is sent to the
+// community pool. So the next delegator to v never buys backing nobody owns
+// (audit F5), and the book empties and is removed.
+func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch uint64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	vs, err := k.ValidatorState(ctx, valoper)
 	if err != nil {
@@ -235,10 +352,13 @@ func (k Keeper) processValidator(ctx context.Context, valoper string) error {
 	if err != nil {
 		return err
 	}
+	if err := k.sweepOrphanRecords(ctx, valoper); err != nil {
+		return err
+	}
 	balance := func() math.Int { return k.bank.GetBalance(ctx, k.modAddr, types.BondDenom).Amount }
 
 	bal0 := balance()
-	_, del, v, found, err := k.delegation(ctx, val)
+	_, del, _, found, err := k.delegation(ctx, val)
 	if err != nil {
 		return err
 	}
@@ -265,28 +385,46 @@ func (k Keeper) processValidator(ctx context.Context, valoper string) error {
 	} else if err != nil && !errors.Is(err, stakingtypes.ErrNoValidatorFound) {
 		return err
 	}
-	_ = v
 
-	// Undelegate this epoch's unbond notes (and any a failed epoch left).
-	records, err := k.pendingRecords(ctx, valoper)
+	// Undelegate the ended epochs' unbond notes (and any a failed epoch left).
+	records, err := k.pendingRecordsUpTo(ctx, valoper, maxEpoch)
 	if err != nil {
 		return err
 	}
+	all, err := k.pendingRecords(ctx, valoper)
+	if err != nil {
+		return err
+	}
+	// settling: nobody holds derth/v and every pending record is in this
+	// batch, so nothing left at v is owed to anyone but these records.
+	settling := !vs.DerthSupply.IsPositive() && len(all) == len(records)
 	target := math.ZeroInt()
 	for _, r := range records {
 		target = target.Add(r.Target)
 	}
 	fromQueue := math.ZeroInt()
-	if target.IsPositive() {
+	if len(records) > 0 || settling {
 		tokens, _, _, found, err := k.delegation(ctx, val)
 		if err != nil {
 			return err
 		}
-		if found && tokens.IsPositive() {
-			amt := math.MinInt(target, tokens)
-			shares, err := k.staking.ValidateUnbondAmount(ctx, k.modAddr, val, amt)
-			if err != nil {
+		switch {
+		case found && tokens.IsPositive() && (settling || target.IsPositive()):
+			var shares math.LegacyDec
+			if settling {
+				d, err := k.staking.GetDelegation(ctx, k.modAddr, val)
+				if err != nil {
+					return err
+				}
+				shares = d.Shares
+			} else if shares, err = k.staking.ValidateUnbondAmount(ctx, k.modAddr, val, math.MinInt(target, tokens)); err != nil {
 				return err
+			}
+			if len(records) == 0 {
+				if err := k.orphanUnbonding(ctx, valoper, maxEpoch, val, shares); err != nil {
+					return err
+				}
+				break
 			}
 			completion, returned, err := k.staking.Undelegate(ctx, k.modAddr, val, shares)
 			if err != nil {
@@ -295,9 +433,10 @@ func (k Keeper) processValidator(ctx context.Context, valoper string) error {
 			if err := k.startUnbonding(ctx, records, target, returned, sdkCtx.BlockHeight(), completion); err != nil {
 				return err
 			}
-		} else {
+		case len(records) > 0:
 			// Nothing bonded to undelegate from (the validator is gone or
-			// slashed to nothing): pay what the queue holds, now.
+			// slashed to nothing), or nothing to undelegate (a slash took
+			// the records' whole target): pay what the queue holds, now.
 			fromQueue = math.MinInt(target, queue.Sub(delegated))
 			if err := k.matureFromQueue(ctx, records, target, fromQueue); err != nil {
 				return err
@@ -308,7 +447,21 @@ func (k Keeper) processValidator(ctx context.Context, valoper string) error {
 	bal2 := balance()
 	late := bal2.Sub(bal1.Sub(delegated)) // rewards paid by the delegation changes
 	vs.PendingDelegation = queue.Sub(delegated).Add(late).Sub(fromQueue)
-	vs.PendingUndelegation = math.ZeroInt()
+	vs.PendingUndelegation = vs.PendingUndelegation.Sub(target)
+	if vs.PendingUndelegation.IsNegative() {
+		vs.PendingUndelegation = math.ZeroInt()
+	}
+	if settling && vs.PendingDelegation.IsPositive() {
+		// Owned by nobody: no derth, no record left to pay.
+		if err := k.distr.FundCommunityPool(ctx, sdk.NewCoins(sdk.NewCoin(types.BondDenom, vs.PendingDelegation)), k.modAddr); err != nil {
+			return err
+		}
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeOrphan,
+			sdk.NewAttribute(types.AttributeKeyValidator, valoper),
+			sdk.NewAttribute(types.AttributeKeyAmount, vs.PendingDelegation.String()),
+		))
+		vs.PendingDelegation = math.ZeroInt()
+	}
 	b, s, err := k.Backing(ctx, valoper)
 	if err != nil {
 		return err
@@ -317,7 +470,7 @@ func (k Keeper) processValidator(ctx context.Context, valoper string) error {
 	if err := k.Validators.Set(ctx, valoper, vs); err != nil {
 		return err
 	}
-	if !s.IsPositive() && vs.PendingDelegation.IsZero() && !b.IsPositive() {
+	if !s.IsPositive() && vs.PendingDelegation.IsZero() && vs.PendingUndelegation.IsZero() && !b.IsPositive() && len(all) == len(records) {
 		// Nothing left to account for at v.
 		if err := k.Validators.Remove(ctx, valoper); err != nil {
 			return err
@@ -331,6 +484,63 @@ func (k Keeper) processValidator(ctx context.Context, valoper string) error {
 		sdk.NewAttribute(types.AttributeKeyRate, vs.EpochRate.String()),
 		sdk.NewAttribute(types.AttributeKeySupply, s.String()),
 	))
+	return nil
+}
+
+// orphanUnbonding undelegates shares that back no derth and no record (a
+// book left with a delegation and no derth, as books could be before audit
+// F5's fix) into an orphan record: requested and outstanding zero, so no
+// note can claim it; sweepOrphanRecords sends its payout to the community
+// pool once it matures. Skipped (left for a later epoch) if v already has a
+// record for maxEpoch.
+func (k Keeper) orphanUnbonding(ctx context.Context, valoper string, maxEpoch uint64, val sdk.ValAddress, shares math.LegacyDec) error {
+	key := collections.Join(valoper, maxEpoch)
+	if ok, err := k.UnbondRecords.Has(ctx, key); err != nil || ok {
+		return err
+	}
+	completion, returned, err := k.staking.Undelegate(ctx, k.modAddr, val, shares)
+	if err != nil {
+		return err
+	}
+	r := types.UnbondRecord{
+		Validator: valoper, Epoch: maxEpoch, Status: types.UNBOND_STATUS_UNBONDING,
+		Requested: math.ZeroInt(), Target: math.ZeroInt(), Undelegated: returned,
+		Payout: math.ZeroInt(), Outstanding: math.ZeroInt(), Paid: math.ZeroInt(),
+		CreationHeight: sdk.UnwrapSDKContext(ctx).BlockHeight(), CompletionTime: completion.UnixNano(),
+	}
+	if err := k.UnbondRecords.Set(ctx, key, r); err != nil {
+		return err
+	}
+	return k.MaturityQueue.Set(ctx, collections.Join3(r.CompletionTime, valoper, maxEpoch))
+}
+
+// sweepOrphanRecords sends the payout of v's matured orphan records (no note
+// was ever minted against them) to the community pool, and forgets them.
+func (k Keeper) sweepOrphanRecords(ctx context.Context, valoper string) error {
+	var done []types.UnbondRecord
+	if err := k.UnbondRecords.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](valoper),
+		func(_ collections.Pair[string, uint64], r types.UnbondRecord) (bool, error) {
+			if r.Status == types.UNBOND_STATUS_MATURED && r.Requested.IsZero() {
+				done = append(done, r)
+			}
+			return false, nil
+		}); err != nil {
+		return err
+	}
+	for _, r := range done {
+		if amt := r.Payout.Sub(r.Paid); amt.IsPositive() {
+			if err := k.distr.FundCommunityPool(ctx, sdk.NewCoins(sdk.NewCoin(types.BondDenom, amt)), k.modAddr); err != nil {
+				return err
+			}
+			sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeOrphan,
+				sdk.NewAttribute(types.AttributeKeyValidator, valoper),
+				sdk.NewAttribute(types.AttributeKeyAmount, amt.String()),
+			))
+		}
+		if err := k.UnbondRecords.Remove(ctx, collections.Join(r.Validator, r.Epoch)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

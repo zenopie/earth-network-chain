@@ -138,10 +138,7 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	case *types.MsgLockPosition:
 		err = k.checkLock(ctx, m)
 	case *types.MsgUpdatePosition:
-		_, err = k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
-		if err == nil {
-			err = k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits)
-		}
+		_, err = k.checkUpdate(ctx, m)
 	case *types.MsgUnlockPosition:
 		_, err = k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
 	case *types.MsgPositionVote:
@@ -224,13 +221,34 @@ func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) (math.I
 	if err := k.checkDelegatable(ctx, m.Validator); err != nil {
 		return math.Int{}, err
 	}
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return math.Int{}, err
+	}
+	amount := math.NewIntFromUint64(m.Delegated())
+	if amount.LT(params.MinDelegation) {
+		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "a delegation is at least %s%s", params.MinDelegation, types.BondDenom)
+	}
 	b, s, err := k.Backing(ctx, m.Validator)
 	if err != nil {
 		return math.Int{}, err
 	}
-	d, err := derthFor(math.NewIntFromUint64(m.Delegated()), b, s)
+	if !s.IsPositive() && b.IsPositive() {
+		// Backing nobody owns (rewards accrued after the last holder's
+		// notes were minted): the epoch end settles it (processValidator).
+		// A delegation now would buy it at rate 1 (audit F5).
+		return math.Int{}, types.ErrValidator.Wrapf("%s's book is settling (no derth, %s%s backing); delegate after the epoch end", m.Validator, b, types.BondDenom)
+	}
+	d, err := derthFor(amount, b, s)
 	if err != nil {
 		return math.Int{}, err
+	}
+	// At least min_delegation derth: a delegation's rounding loss (under one
+	// derth's value) is then at most 1/min_delegation of it, however far a
+	// donation to the validator's rewards pool has pushed the rate (audit
+	// F4); a delegation too small for that is refused, not rounded away.
+	if d.LT(params.MinDelegation) {
+		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "the delegation mints %s derth, less than the minimum %s (rate %s)", d, params.MinDelegation, rateOf(b, s))
 	}
 	if err := fitsNote(d); err != nil {
 		return math.Int{}, err
@@ -294,7 +312,7 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (math
 	if _, err := k.valAddr(m.Validator); err != nil {
 		return math.Int{}, err
 	}
-	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
+	snap, supply, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
 		return math.Int{}, err
 	}
@@ -302,7 +320,7 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (math
 		return math.Int{}, types.ErrNoVoting.Wrapf("a stake vote on proposal %d spends against its snapshot root", m.ProposalId)
 	}
 	d := math.NewIntFromUint64(m.Weight)
-	if d.GT(vs.Supply) {
+	if d.GT(supply) {
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
 	}
 	return d, nil
@@ -335,6 +353,22 @@ func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
 	return nil
 }
 
+// checkUpdate: the owner's proof, a valid split, and (as LockPosition
+// requires) a split only on a position that has weight (audit F9).
+func (k Keeper) checkUpdate(ctx context.Context, m *types.MsgUpdatePosition) (types.Position, error) {
+	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
+	if err != nil {
+		return p, err
+	}
+	if err := k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits); err != nil {
+		return p, err
+	}
+	if len(m.Splits) > 0 && !k.positionWeight(ctx, p.Validator, p.Derth).IsPositive() {
+		return p, allocationtypes.ErrNoWeight
+	}
+	return p, nil
+}
+
 // checkPositionOwner returns the position if the stake proof's owner tag is
 // the one it stores: the proof (verified by the ante) shows its prover owns
 // that tag.
@@ -351,10 +385,10 @@ func (k Keeper) checkPositionOwner(ctx context.Context, id uint64, sp *types.Sta
 	return p, nil
 }
 
-func (k Keeper) checkPositionVote(ctx context.Context, m *types.MsgPositionVote) (types.Position, types.ValidatorSnapshot, error) {
+func (k Keeper) checkPositionVote(ctx context.Context, m *types.MsgPositionVote) (types.Position, math.Int, error) {
 	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
 	if err != nil {
-		return p, types.ValidatorSnapshot{}, err
+		return p, math.Int{}, err
 	}
 	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, p.Validator)
 	if err != nil {

@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
@@ -17,6 +19,9 @@ import (
 // checks the books against them.
 func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.checkGenesisValidators(ctx, gs); err != nil {
+		return err
+	}
+	if err := k.checkUnbondingEntries(ctx, gs.Params); err != nil {
 		return err
 	}
 	if err := k.Params.Set(ctx, gs.Params); err != nil {
@@ -62,12 +67,36 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.PositionSeq.Set(ctx, gs.NextPositionId); err != nil {
 		return err
 	}
+	if err := k.PositionCount.Set(ctx, uint64(len(gs.Positions))); err != nil {
+		return err
+	}
+	if err := k.SnapshotSeq.Set(ctx, gs.SnapshotSeq); err != nil {
+		return err
+	}
+	for _, c := range gs.SupplyCheckpoints {
+		if err := k.SupplyCheckpoints.Set(ctx, collections.Join(c.Validator, c.Seq), c.Supply); err != nil {
+			return err
+		}
+		if err := k.CheckpointsBySeq.Set(ctx, collections.Join(c.Seq, c.Validator)); err != nil {
+			return err
+		}
+	}
+	if gs.EpochSweep != nil {
+		if err := k.EpochSweep.Set(ctx, *gs.EpochSweep); err != nil {
+			return err
+		}
+	}
 	for _, s := range gs.Snapshots {
 		if err := k.Snapshots.Set(ctx, s.ProposalId, s); err != nil {
 			return err
 		}
 		if err := k.SnapshotExpiry.Set(ctx, collections.Join(s.VotingEnd, s.ProposalId)); err != nil {
 			return err
+		}
+		if s.Seq > 0 {
+			if err := k.SnapshotsBySeq.Set(ctx, collections.Join(s.Seq, s.ProposalId)); err != nil {
+				return err
+			}
 		}
 	}
 	for _, v := range gs.Votes {
@@ -82,6 +111,26 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	return k.AssertInvariants(ctx)
+}
+
+// checkUnbondingEntries refuses params under which an epoch's undelegation
+// could hit x/staking's max_entries for the module's delegation to one
+// validator (audit F8): one entry per epoch over the unbonding time, plus
+// one for a sweep under way.
+func (k Keeper) checkUnbondingEntries(ctx context.Context, p types.Params) error {
+	ut, err := k.staking.UnbondingTime(ctx)
+	if err != nil {
+		return err
+	}
+	maxEntries, err := k.staking.MaxEntries(ctx)
+	if err != nil {
+		return err
+	}
+	if need := p.MaxEpochUnbondings(uint64(ut / time.Second)); need > uint64(maxEntries) {
+		return types.ErrInvalidMsg.Wrapf("epoch_seconds %d with x/staking's unbonding_time %s needs max_entries >= %d, have %d",
+			p.EpochSeconds, ut, need, maxEntries)
+	}
+	return nil
 }
 
 // checkGenesisValidators refuses a genesis whose books, records, positions,
@@ -118,6 +167,16 @@ func (k Keeper) checkGenesisValidators(_ context.Context, gs types.GenesisState)
 	}
 	for _, v := range gs.Votes {
 		if err := check("vote", v.Validator); err != nil {
+			return err
+		}
+	}
+	for _, c := range gs.SupplyCheckpoints {
+		if err := check("supply checkpoint", c.Validator); err != nil {
+			return err
+		}
+	}
+	if gs.EpochSweep != nil && gs.EpochSweep.Cursor != "" {
+		if err := check("epoch sweep cursor", gs.EpochSweep.Cursor); err != nil {
 			return err
 		}
 	}
@@ -202,6 +261,22 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return nil, err
 	}
 	if gs.NextPositionId, err = k.PositionSeq.Peek(ctx); err != nil {
+		return nil, err
+	}
+	if gs.SnapshotSeq, err = k.SnapshotSeq.Peek(ctx); err != nil {
+		return nil, err
+	}
+	if err := k.SupplyCheckpoints.Walk(ctx, nil, func(key collections.Pair[string, uint64], supply math.Int) (bool, error) {
+		gs.SupplyCheckpoints = append(gs.SupplyCheckpoints, types.SupplyCheckpoint{Validator: key.K1(), Seq: key.K2(), Supply: supply})
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if sweep, err := k.EpochSweep.Get(ctx); err == nil {
+		if sweep.Active {
+			gs.EpochSweep = &sweep
+		}
+	} else if !errors.Is(err, collections.ErrNotFound) {
 		return nil, err
 	}
 	if err := k.Snapshots.Walk(ctx, nil, func(_ uint64, s types.ProposalSnapshot) (bool, error) {
