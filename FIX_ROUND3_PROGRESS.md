@@ -3,7 +3,16 @@
 PoCs: /private/tmp/claude-501/audit3/{core/chain,staking/repo,pdx/*}. Each is
 ported as a regression test asserting the safe outcome.
 
-- [ ] 1 escrow poisoning (HIGH)
+- [x] 1 escrow poisoning (HIGH): compounding and every release move only
+  the escrow's spendable coins (locked coins at the address stay, never
+  fail anything); a pre-existing account at the escrow is not refused at
+  creation (that would be a creation DoS). A failed retirement release
+  moves EscrowRetryDelay (24h) back in its queue; pending-release retries
+  rotate through the set from a cursor (PendingReleaseCursor, prefix 31).
+  Tests: app/audit3_escrow_test.go TestAudit3EscrowPoisonedByLockedAccount
+  (compounds, retirement released, 1 locked uerth left),
+  TestAudit3FailingEscrowReleasesDoNotStarveQueues (60 always-failing
+  entries in each queue; the good one behind them is released).
 - [ ] 2 unshield into module accounts
 - [-] 3 stake votes on concurrent proposals: DROPPED by decision. A no-spend
   vote reveals the same nullifier on every vote and again at the later spend

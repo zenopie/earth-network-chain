@@ -37,6 +37,13 @@ import (
 //
 // Non-uerth rewards (fee denoms) cannot be staked: they stay in the escrow
 // until the validator is removed.
+//
+// Only the escrow's spendable coins ever move (audit 3): the address is
+// derivable, so anyone can make it an account before the validator exists --
+// a permanently locked vesting account holding 1 uerth, say. Locked coins are
+// not the operator's and stay where they are; they never fail a compounding
+// or a release. Such an account is not refused at MsgCreateValidator either:
+// anyone could then block any future validator by poisoning its escrow.
 
 // escrowOwner reports whether addr is a validator's reward escrow, and
 // whose.
@@ -102,14 +109,25 @@ func (k Keeper) releaseRetiredEscrows(ctx context.Context) {
 		})
 		if err != nil {
 			k.failure(ctx, "escrow_retire", val.String(), err)
+			// Behind everything due now: an entry that keeps failing must
+			// not hold the head of the queue (and the per-block budget).
+			retry := sdk.UnwrapSDKContext(ctx).BlockTime().Add(types.EscrowRetryDelay).UnixNano()
+			_ = k.guarded(ctx, func(cc context.Context) error {
+				if err := k.RetiringEscrows.Remove(cc, key); err != nil {
+					return err
+				}
+				return k.RetiringEscrows.Set(cc, collections.Join(retry, key.K2()))
+			})
 		}
 	}
 }
 
-// payEscrow pays everything in val's reward escrow to its operator.
+// payEscrow pays everything spendable in val's reward escrow to its
+// operator. Coins locked at the escrow address (an account someone made
+// there) stay.
 func (k Keeper) payEscrow(ctx context.Context, val sdk.ValAddress) error {
 	op, escrow := sdk.AccAddress(val), types.RewardEscrowAddress(val)
-	if bal := k.bank.GetAllBalances(ctx, escrow); !bal.IsZero() {
+	if bal := k.bank.SpendableCoins(ctx, escrow); !bal.IsZero() {
 		if err := k.bank.SendCoins(ctx, escrow, op, bal); err != nil {
 			return err
 		}
@@ -122,13 +140,40 @@ func (k Keeper) payEscrow(ctx context.Context, val sdk.ValAddress) error {
 }
 
 // retryEscrowReleases retries, at each epoch end, the releases of removed
-// validators' escrows that failed when they were removed.
+// validators' escrows that failed when they were removed. Each round starts
+// after the last entry the previous one tried (wrapping around), so entries
+// that keep failing cannot take the whole budget for ever.
 func (k Keeper) retryEscrowReleases(ctx context.Context) {
+	cursor, err := k.PendingReleaseCursor.Get(ctx)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		k.failure(ctx, "escrow_release", "", err)
+		return
+	}
 	var vals [][]byte
-	_ = k.PendingReleases.Walk(ctx, nil, func(v []byte) (bool, error) {
-		vals = append(vals, v)
-		return len(vals) >= types.EscrowRetireLimit, nil
-	})
+	seen := map[string]bool{}
+	collect := func(rng collections.Ranger[[]byte]) {
+		_ = k.PendingReleases.Walk(ctx, rng, func(v []byte) (bool, error) {
+			if seen[string(v)] {
+				return true, nil
+			}
+			seen[string(v)] = true
+			vals = append(vals, v)
+			return len(vals) >= types.EscrowRetireLimit, nil
+		})
+	}
+	if len(cursor) > 0 {
+		collect(new(collections.Range[[]byte]).StartExclusive(cursor))
+	}
+	if len(vals) < types.EscrowRetireLimit {
+		collect(nil) // wrap around
+	}
+	if len(vals) == 0 {
+		return
+	}
+	if err := k.PendingReleaseCursor.Set(ctx, vals[len(vals)-1]); err != nil {
+		k.failure(ctx, "escrow_release", "", err)
+		return
+	}
 	for _, v := range vals {
 		err := k.guarded(ctx, func(cc context.Context) error {
 			if err := k.releaseEscrow(cc, v); err != nil {

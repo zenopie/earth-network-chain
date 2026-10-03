@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"cosmossdk.io/collections"
 )
@@ -54,6 +55,11 @@ const (
 	// EscrowRetireLimit caps how many retired operators' escrows one block
 	// releases.
 	EscrowRetireLimit = 50
+
+	// EscrowRetryDelay is how far a failed retirement release moves back in
+	// the queue, behind the entries due now, so one that keeps failing
+	// cannot hold the head of the queue.
+	EscrowRetryDelay = 24 * time.Hour
 
 	// SnapshotSweepLimit caps how many finished proposals one block forgets.
 	SnapshotSweepLimit = 20
@@ -115,6 +121,10 @@ var (
 	// the Groundworks allocation epoch those totals belong to.
 	GwTotalsKey = collections.NewPrefix(29)
 	GwEpochKey  = collections.NewPrefix(30)
+	// PendingReleaseCursorKey is the last PendingReleases entry the epoch
+	// end retried: retries rotate through the set, so entries that keep
+	// failing cannot starve the rest of the per-epoch budget.
+	PendingReleaseCursorKey = collections.NewPrefix(31)
 )
 
 // DerthDenom is validator's delegation token.

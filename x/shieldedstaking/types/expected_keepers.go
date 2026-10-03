@@ -23,6 +23,7 @@ type AuthKeeper interface {
 type BankKeeper interface {
 	GetBalance(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
 	GetAllBalances(ctx context.Context, addr sdk.AccAddress) sdk.Coins
+	SpendableCoins(ctx context.Context, addr sdk.AccAddress) sdk.Coins
 	// SpendableCoin guards the epoch's compounding: it must not change an
 	// operator's spendable balance.
 	SpendableCoin(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin

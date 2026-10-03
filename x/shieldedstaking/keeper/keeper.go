@@ -108,6 +108,9 @@ type Keeper struct {
 	// whose escrow release failed and is retried (escrow.go).
 	RetiringEscrows collections.KeySet[collections.Pair[int64, []byte]]
 	PendingReleases collections.KeySet[[]byte]
+	// PendingReleaseCursor is where the next retry round of PendingReleases
+	// starts (after this entry; escrow.go).
+	PendingReleaseCursor collections.Item[[]byte]
 }
 
 type govRef struct{ k *govkeeper.Keeper }
@@ -195,6 +198,8 @@ func NewKeeper(
 		RetiringEscrows: collections.NewKeySet(sb, types.RetiringEscrowsKey, "retiring_escrows",
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
 		PendingReleases: collections.NewKeySet(sb, types.PendingReleasesKey, "pending_releases", collections.BytesKey),
+		PendingReleaseCursor: collections.NewItem(sb, types.PendingReleaseCursorKey, "pending_release_cursor",
+			collections.BytesValue),
 	}
 	schema, err := sb.Build()
 	if err != nil {

@@ -313,9 +313,11 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 		!errors.Is(err, distrtypes.ErrNoValidatorCommission) {
 		return err
 	}
-	// Everything the escrow holds in uerth: this epoch's self-bond rewards
-	// and commission, and what self-bond changes paid it since the last.
-	amt := k.bank.GetBalance(ctx, escrow, types.BondDenom).Amount
+	// Everything spendable the escrow holds in uerth: this epoch's self-bond
+	// rewards and commission, and what self-bond changes paid it since the
+	// last. Coins locked there (an account someone made at the escrow
+	// address before the validator existed) are not the operator's and stay.
+	amt := k.bank.SpendableCoin(ctx, escrow, types.BondDenom).Amount
 	if !amt.IsPositive() {
 		return nil
 	}
