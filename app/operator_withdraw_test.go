@@ -8,12 +8,16 @@ import (
 
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
+	abci "github.com/cometbft/cometbft/abci/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
+	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/authz"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -23,19 +27,24 @@ import (
 )
 
 // A validator operator's self-bond always compounds, so its rewards always
-// land in the operator account. Genesis disables withdraw addresses for
+// land in its reward escrow. Genesis disables withdraw addresses for
 // everyone (every route); with them re-enabled (a governance flip), an
-// operator is still refused — in the ante, top level and inside authz
-// MsgExec — while other accounts are not; an account with a foreign
+// operator is still refused anything but its escrow (itself included) —
+// in the ante, top level and inside authz MsgExec — while other accounts
+// are not, except to a validator's escrow; an account with a foreign
 // withdraw address cannot become an operator; and a foreign address that
-// arrived by a route nothing refuses is reset at epoch end, and the
-// self-bond compounds rather than being skipped.
+// arrived by a route nothing refuses is reset to the escrow at epoch end,
+// and the self-bond compounds rather than being skipped.
 func TestOperatorWithdrawAddrRefused(t *testing.T) {
 	e := initStakeEnv(t)
 	vB, vBKey := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	opB := sdk.AccAddress(vB)
+	escB := sstypes.RewardEscrowAddress(vB)
 	user := e.userAddr()
+	wa, err := e.app.DistrKeeper.GetDelegatorWithdrawAddr(e.ctx(), opB)
+	require.NoError(t, err)
+	require.Equal(t, escB, wa, "set by the chain at creation")
 	setWA := func(del, wa sdk.AccAddress) *distrtypes.MsgSetWithdrawAddress {
 		return distrtypes.NewMsgSetWithdrawAddress(del, wa)
 	}
@@ -70,14 +79,22 @@ func TestOperatorWithdrawAddrRefused(t *testing.T) {
 	exec := authz.NewMsgExec(user, []sdk.Msg{setWA(opB, user)})
 	res = e.checkTx(e.signedTx(e.user, 300_000, 5_000, &exec))
 	require.Equal(t, sstypes.ErrOperatorWithdraw.ABCICode(), res.Code, res.Log)
-	// To itself is no change, and passes.
-	fb = e.run(e.signedTx(vBKey, 300_000, 5_000, setWA(opB, opB)))
+	// To itself is refused too: its rewards would be liquid.
+	res = e.checkTx(e.signedTx(vBKey, 300_000, 5_000, setWA(opB, opB)))
+	require.Equal(t, sstypes.ErrOperatorWithdraw.ABCICode(), res.Code, res.Log)
+	// To its escrow is no change, and passes.
+	fb = e.run(e.signedTx(vBKey, 300_000, 5_000, setWA(opB, escB)))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
 
-	// Any other account may.
+	// Nobody may point at a validator's escrow.
+	res = e.checkTx(e.signedTx(e.user, 300_000, 5_000, setWA(user, escB)))
+	require.Equal(t, sstypes.ErrOperatorWithdraw.ABCICode(), res.Code, res.Log)
+	require.Contains(t, res.Log, "reward escrow")
+
+	// Any other account may set another.
 	fb = e.run(e.signedTx(e.user, 300_000, 5_000, setWA(user, opB)))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
-	wa, err := e.app.DistrKeeper.GetDelegatorWithdrawAddr(e.ctx(), user)
+	wa, err = e.app.DistrKeeper.GetDelegatorWithdrawAddr(e.ctx(), user)
 	require.NoError(t, err)
 	require.Equal(t, opB, wa)
 
@@ -118,7 +135,7 @@ func TestOperatorWithdrawAddrRefused(t *testing.T) {
 	require.True(t, end.compounded, "operator compounded, not skipped")
 	wa, err = e.app.DistrKeeper.GetDelegatorWithdrawAddr(e.ctx(), opB)
 	require.NoError(t, err)
-	require.Equal(t, opB, wa)
+	require.Equal(t, escB, wa)
 	e.invariants()
 }
 
@@ -170,16 +187,19 @@ func TestGenesisOperatorWithdrawAddr(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorContains(t, ValidateOperatorWithdrawAddrs(a.AppCodec(), dec, noGentx), "validator operator")
 
-	// To itself, or for a non-operator: fine.
+	// To itself (InitGenesis sets the escrow), to its escrow (an exported
+	// genesis), or for a non-operator: fine.
 	var d distrtypes.GenesisState
 	require.NoError(t, a.AppCodec().UnmarshalJSON(state["distribution"], &d))
-	d.DelegatorWithdrawInfos = []distrtypes.DelegatorWithdrawInfo{
-		{DelegatorAddress: valOp.String(), WithdrawAddress: valOp.String()},
-		{DelegatorAddress: other.String(), WithdrawAddress: valOp.String()},
+	for _, wa := range []sdk.AccAddress{valOp, sstypes.RewardEscrowAddress(sdk.ValAddress(valOp))} {
+		d.DelegatorWithdrawInfos = []distrtypes.DelegatorWithdrawInfo{
+			{DelegatorAddress: valOp.String(), WithdrawAddress: wa.String()},
+			{DelegatorAddress: other.String(), WithdrawAddress: valOp.String()},
+		}
+		state["distribution"], err = a.AppCodec().MarshalJSON(&d)
+		require.NoError(t, err)
+		require.NoError(t, ValidateOperatorWithdrawAddrs(a.AppCodec(), dec, state))
 	}
-	state["distribution"], err = a.AppCodec().MarshalJSON(&d)
-	require.NoError(t, err)
-	require.NoError(t, ValidateOperatorWithdrawAddrs(a.AppCodec(), dec, state))
 }
 
 // A validator's self-bond rewards and commission compound at the epoch end
@@ -294,4 +314,145 @@ func TestBlockedMsgErrors(t *testing.T) {
 	// The operator's exit: undelegating its own self-bond still works.
 	fb := e.run(e.signedTx(vBKey, 400_000, 5_000, stakingtypes.NewMsgUndelegate(e.bech(opB), valoper, amt)))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
+}
+
+// Every validator's income goes to its reward escrow, never to the operator:
+// a tiny self-delegation (or undelegation) — which makes x/distribution pay
+// the self-bond's accrued rewards — pays them to the escrow; the epoch end
+// moves the escrow's uerth and the commission into the self-bond; no
+// account can send to or take from an escrow; genesis round-trips the
+// escrows; and the validator's removal (its operator unbonded the whole
+// self-bond and the unbonding period passed) releases the escrow to the
+// operator.
+func TestRewardEscrow(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, vBKey := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	opB, escB, valoper := sdk.AccAddress(vB), sstypes.RewardEscrowAddress(vB), e.valoper(vB)
+	bal := func(a sdk.AccAddress) math.Int { return e.app.BankKeeper.GetBalance(e.ctx(), a, "uerth").Amount }
+	selfBond := func() math.Int {
+		d, err := e.app.StakingKeeper.GetDelegation(e.ctx(), opB, vB)
+		require.NoError(t, err)
+		val, err := e.app.StakingKeeper.GetValidator(e.ctx(), vB)
+		require.NoError(t, err)
+		return val.TokensFromShares(d.Shares).TruncateInt()
+	}
+	const fee = 5_000
+
+	// --- the harvest attempt: 1uerth self-delegated, then undelegated. Each
+	// pays the accrued self-bond rewards, to the escrow; the operator's
+	// liquid balance only pays the stake and the fees.
+	e.next(time.Hour)
+	op0, esc0 := bal(opB), bal(escB)
+	fb := e.run(e.signedTx(vBKey, 400_000, fee, stakingtypes.NewMsgDelegate(e.bech(opB), valoper, sdk.NewInt64Coin("uerth", 1))))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
+	require.Equal(t, op0.SubRaw(1+fee), bal(opB), "no rewards reached the operator")
+	esc1 := bal(escB)
+	require.True(t, esc1.GT(esc0), "the rewards went to the escrow: %s -> %s", esc0, esc1)
+	e.next(time.Hour)
+	op1 := bal(opB)
+	fb = e.run(e.signedTx(vBKey, 400_000, fee, stakingtypes.NewMsgUndelegate(e.bech(opB), valoper, sdk.NewInt64Coin("uerth", 1))))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
+	require.Equal(t, op1.SubRaw(fee), bal(opB), "no rewards reached the operator")
+	require.True(t, bal(escB).GT(esc1), "the rewards went to the escrow")
+
+	// --- sealed: nobody sends to an escrow, and an escrow pays only its
+	// operator (only this module moves it: nobody has its key).
+	user := e.userAddr()
+	fb = e.run(e.signedTx(e.user, 300_000, fee, banktypes.NewMsgSend(user, escB, sdk.NewCoins(sdk.NewInt64Coin("uerth", 1)))))
+	require.Equal(t, sstypes.ErrSendRestricted.ABCICode(), fb.Code, fb.Log)
+	cc, _ := e.ctx().CacheContext()
+	one := sdk.NewCoins(sdk.NewInt64Coin("uerth", 1))
+	require.ErrorIs(t, e.app.BankKeeper.SendCoins(cc, escB, user, one), sstypes.ErrSendRestricted)
+	require.ErrorIs(t, e.app.BankKeeper.SendCoins(cc, opB, escB, one), sstypes.ErrSendRestricted)
+	require.NoError(t, e.app.BankKeeper.SendCoins(cc, escB, opB, one))
+	e.invariants()
+
+	// --- epoch end: the escrow's uerth and the commission join the self-bond;
+	// the operator's liquid balance does not move.
+	opBal, sb0, inEscrow := bal(opB), selfBond(), bal(escB)
+	var res *abci.ResponseFinalizeBlock
+	for i := 0; i < 2 && res == nil; i++ {
+		if r := e.next(24 * time.Hour); len(eventsOf(r.Events, sstypes.EventTypeEpoch)) > 0 {
+			res = r
+		}
+	}
+	require.NotNil(t, res, "no epoch end")
+	var compounded math.Int
+	for _, ev := range eventsOf(res.Events, sstypes.EventTypeSelfBond) {
+		if ev["validator"] == valoper {
+			compounded, _ = math.NewIntFromString(ev["amount"])
+		}
+	}
+	require.True(t, compounded.GT(inEscrow), "escrowed %s + this epoch's rewards and commission: %s", inEscrow, compounded)
+	require.True(t, bal(escB).IsZero(), "escrow emptied into the self-bond")
+	require.Equal(t, opBal, bal(opB), "nothing liquid")
+	require.True(t, selfBond().Sub(sb0).Sub(compounded).Abs().LTE(math.OneInt()))
+	c, err := e.app.DistrKeeper.GetValidatorAccumulatedCommission(e.ctx(), vB)
+	require.NoError(t, err)
+	require.True(t, c.Commission.AmountOf("uerth").LT(math.LegacyOneDec()), "commission compounded")
+	e.invariants()
+
+	// --- genesis round trip: the escrows are rebuilt (deterministic from the
+	// validators) and the withdraw addresses come across.
+	e.next(time.Hour)
+	exported, err := e.app.ExportAppStateAndValidators(false, nil, nil)
+	require.NoError(t, err)
+	var appState map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(exported.AppState, &appState))
+	fresh := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
+		baseapp.SetChainID(ssChainID))
+	fctx := fresh.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: e.height, Time: e.now})
+	_, err = fresh.ModuleManager.InitGenesis(fctx, fresh.AppCodec(), appState)
+	require.NoError(t, err)
+	for _, v := range []sdk.ValAddress{e.genesisValidator(), vB} {
+		esc := sstypes.RewardEscrowAddress(v)
+		owner, err := fresh.ShieldedStakingKeeper.RewardEscrows.Get(fctx, esc)
+		require.NoError(t, err)
+		require.Equal(t, []byte(v), owner)
+		wa, err := fresh.DistrKeeper.GetDelegatorWithdrawAddr(fctx, sdk.AccAddress(v))
+		require.NoError(t, err)
+		require.Equal(t, esc, wa)
+		require.Equal(t, e.app.BankKeeper.GetAllBalances(e.ctx(), esc), fresh.BankKeeper.GetAllBalances(fctx, esc))
+	}
+	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
+
+	// --- the exit: the operator unbonds its whole self-bond (rewards to the
+	// escrow; the validator is jailed and kept out of compounding). Once the
+	// unbonding period has passed x/staking removes the validator, and the
+	// escrow is released to the operator.
+	e.next(time.Hour)
+	fb = e.run(e.signedTx(vBKey, 400_000, fee, stakingtypes.NewMsgUndelegate(e.bech(opB), valoper, sdk.NewCoin("uerth", selfBond()))))
+	require.Equal(t, uint32(0), fb.Code, fb.Log)
+	held := bal(escB)
+	require.True(t, held.IsPositive(), "the undelegation paid the escrow")
+	var released sdk.Coins
+	for i := 0; i < 25 && released == nil; i++ {
+		r := e.next(24 * time.Hour)
+		require.Empty(t, eventsOf(r.Events, sstypes.EventTypeEpochFailure))
+		for _, ev := range eventsOf(r.Events, sstypes.EventTypeSelfBond) {
+			require.NotEqual(t, valoper, ev["validator"], "an unbonding validator does not compound")
+		}
+		for _, ev := range eventsOf(r.Events, sstypes.EventTypeEscrowReleased) {
+			if ev["validator"] == valoper {
+				released, err = sdk.ParseCoinsNormalized(ev["amount"])
+				require.NoError(t, err)
+			}
+		}
+		if released == nil {
+			require.Equal(t, held, bal(escB), "kept while unbonding")
+		}
+	}
+	require.NotNil(t, released, "validator removed and escrow released")
+	require.True(t, released.AmountOf("uerth").GTE(held), "released %s, held %s", released, held)
+	_, err = e.app.StakingKeeper.GetValidator(e.ctx(), vB)
+	require.ErrorIs(t, err, stakingtypes.ErrNoValidatorFound)
+	require.True(t, e.app.BankKeeper.GetAllBalances(e.ctx(), escB).IsZero())
+	has, err := e.app.ShieldedStakingKeeper.RewardEscrows.Has(e.ctx(), escB)
+	require.NoError(t, err)
+	require.False(t, has)
+	wa, err := e.app.DistrKeeper.GetDelegatorWithdrawAddr(e.ctx(), opB)
+	require.NoError(t, err)
+	require.Equal(t, opB, wa)
+	e.invariants()
 }
