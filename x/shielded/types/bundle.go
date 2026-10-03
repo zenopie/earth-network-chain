@@ -52,8 +52,9 @@ func (b *Bundle) ValidateBasic() error {
 		if _, err := orchard.PointFromBytes(a.Cv); err != nil {
 			return errorsmod.Wrapf(ErrInvalidBundle, "action %d cv: %v", i, err)
 		}
-		if len(a.Ciphertext) > MaxCiphertextBytes {
-			return errorsmod.Wrapf(ErrInvalidBundle, "action %d: ciphertext exceeds %d bytes", i, MaxCiphertextBytes)
+		if len(a.Ciphertext) != NoteCiphertextBytes {
+			return errorsmod.Wrapf(ErrInvalidBundle, "action %d: ciphertext must be exactly %d bytes (v1 note), got %d",
+				i, NoteCiphertextBytes, len(a.Ciphertext))
 		}
 		if seen[string(a.Nullifier)] {
 			return errorsmod.Wrap(ErrInvalidBundle, "duplicate nullifier")

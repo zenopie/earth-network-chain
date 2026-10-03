@@ -193,7 +193,7 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 		}
 		if i < len(sp.outs) && sp.outs[i].amount > 0 {
 			cm = e.scm(sp.outs[i])
-			ct = []byte(fmt.Sprintf("stake-ct:%d", e.w.seq))
+			ct = shieldedtest.StakeCT(fmt.Sprintf("%d", e.w.seq))
 		}
 		p.Nullifiers = append(p.Nullifiers, privacy.FieldBytes(nf))
 		p.Commitments = append(p.Commitments, privacy.FieldBytes(cm))

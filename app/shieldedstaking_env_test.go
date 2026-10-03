@@ -538,7 +538,7 @@ func (e *stakeEnv) build(s spend) *pendingBundle {
 	output := func(n *wnote) shieldedtest.PlanOutput {
 		p.out = append(p.out, n)
 		return shieldedtest.PlanOutput{Denom: n.denom, Value: n.value, PC: w.pc(n),
-			Ciphertext: []byte(fmt.Sprintf("ct:%s:%d", p.plan.Seed, len(p.out)))}
+			Ciphertext: shieldedtest.NoteCT(fmt.Sprintf("ct:%s:%d", p.plan.Seed, len(p.out)))}
 	}
 	var inA uint64
 	for _, n := range s.inputs {
@@ -600,7 +600,7 @@ func (e *stakeEnv) buildLegs(fee uint64, legs ...leg) *pendingBundle {
 		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{
 			Spend: &shieldedtest.PlanSpend{NK: w.nk, Denom: l.n.denom, Value: l.n.value, Rho: l.n.rho, Rcm: l.n.rcm, Position: l.n.pos},
 			Out: shieldedtest.PlanOutput{Denom: out.denom, Value: out.value, PC: w.pc(out),
-				Ciphertext: []byte(fmt.Sprintf("ct:%s:%d", p.plan.Seed, len(p.out)))},
+				Ciphertext: shieldedtest.NoteCT(fmt.Sprintf("ct:%s:%d", p.plan.Seed, len(p.out)))},
 		})
 	}
 	if !paid {

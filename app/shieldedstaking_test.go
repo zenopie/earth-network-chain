@@ -590,7 +590,7 @@ func TestTransparentStakingBlocked(t *testing.T) {
 	none := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{z, z}, Commitments: [][]byte{z, z}, Ciphertexts: [][]byte{nil, nil}, SpcMint: pc, OwnerTag: pc}
 	restake := st
 	restake.Commitments = [][]byte{pc, z}
-	restake.Ciphertexts = [][]byte{[]byte("restake-ct"), nil}
+	restake.Ciphertexts = [][]byte{shieldedtest.StakeCT("restake"), nil}
 	// The msgs that mint a stake note carry its blind ciphertext.
 	stMint, noneMint := st, none
 	stMint.SpcCiphertext, noneMint.SpcCiphertext = shieldedtest.BlindCT("m"), shieldedtest.BlindCT("m")
@@ -872,7 +872,7 @@ func TestStakeVoteTally(t *testing.T) {
 	// A vote re-creates nothing itself: the chain re-mints its weight.
 	making := *sa
 	making.Stake.Commitments = [][]byte{privacy.FieldBytes(ssDet("made", 0)), sa.Stake.Commitments[1]}
-	making.Stake.Ciphertexts = [][]byte{[]byte("made-ct"), sa.Stake.Ciphertexts[1]}
+	making.Stake.Ciphertexts = [][]byte{shieldedtest.StakeCT("made"), sa.Stake.Ciphertexts[1]}
 	res = e.checkTx(e.privateTx(&making))
 	require.NotEqual(t, uint32(0), res.Code)
 	require.Contains(t, res.Log, "creates no note")

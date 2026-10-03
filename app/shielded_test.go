@@ -617,7 +617,7 @@ func TestShieldedPrivateTxShape(t *testing.T) {
 	// A relay swapping a ciphertext: the binding signature fails in CheckTx
 	// and in a block.
 	bad := e.sendMsg(s, shieldedtest.Send2)
-	bad.Bundle.Actions[0].Ciphertext = []byte("swapped by a relay")
+	bad.Bundle.Actions[0].Ciphertext = shieldedtest.NoteCT("swapped by a relay")
 	res = e.checkTx(e.privateTx(gas, nil, bad))
 	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), res.Code, res.Log)
 	fb = e.finalize(e.privateTx(gas, nil, bad))

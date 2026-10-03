@@ -113,7 +113,7 @@ func (p *Plan) Unproven() (types.Bundle, error) {
 		cv := orchard.ValueCommit(privacy.AssetID(s.Denom), s.Value, privacy.AssetID(out.Denom), out.Value, p.Rcv(j))
 		ct := out.Ciphertext
 		if ct == nil {
-			ct = []byte(fmt.Sprintf("plan-ct:%s:%d", p.Seed, j))
+			ct = NoteCT(fmt.Sprintf("plan-ct:%s:%d", p.Seed, j))
 		}
 		b.Actions = append(b.Actions, types.Action{
 			Anchor:     privacy.FieldBytes(root),

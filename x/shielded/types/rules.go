@@ -17,6 +17,13 @@ import (
 // cm against the published amount; it keeps no self-mint counter.
 const BlindCiphertextBytes = privacy.BlindNoteCiphertextBytes
 
+// NoteCiphertextBytes is every bundle action's output ciphertext length: a
+// v1 note ciphertext (zk/privacy.EncryptNote), dummy outputs included (a
+// dummy is encrypted to a throwaway key). One length, so an output's
+// ciphertext says nothing about what kind of output it is, and a relayer or
+// wallet bug cannot pad or shorten it.
+const NoteCiphertextBytes = privacy.NoteCiphertextBytes
+
 // CheckBlindCiphertext refuses a minted note's ciphertext that is not
 // exactly BlindCiphertextBytes long. Callers wrap the error in their own.
 func CheckBlindCiphertext(what string, ct []byte) error {

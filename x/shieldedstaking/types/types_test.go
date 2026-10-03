@@ -7,6 +7,8 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
+
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 func TestTypeURLs(t *testing.T) {
@@ -50,4 +52,33 @@ func TestCanonicalValoper(t *testing.T) {
 	short, _ := bech32.ConvertAndEncode(hrp, make([]byte, 5))
 	require.Error(t, CanonicalValoper(short))
 	require.Error(t, (&MsgDelegate{Validator: strings.ToUpper(canon)}).ValidateBasic())
+}
+
+// A stake proof carries exactly two ciphertext slots: empty for a zero
+// commitment, exactly a wallet stake ciphertext (153 bytes) for a created
+// note.
+func TestStakeProofCiphertextShape(t *testing.T) {
+	z := make([]byte, 32)
+	cm := make([]byte, 32)
+	cm[31] = 7
+	ct := make([]byte, privacy.WalletStakeCiphertextBytes)
+	base := func() StakeProof {
+		return StakeProof{Proof: make([]byte, 14_656), Anchor: z, SpcMint: z, OwnerTag: z,
+			Nullifiers: [][]byte{z, z}, Commitments: [][]byte{cm, z}, Ciphertexts: [][]byte{ct, nil}}
+	}
+	ok := base()
+	require.NoError(t, ok.ValidateBasic())
+	for name, mutate := range map[string]func(p *StakeProof){
+		"one slot":           func(p *StakeProof) { p.Ciphertexts = p.Ciphertexts[:1] },
+		"three slots":        func(p *StakeProof) { p.Ciphertexts = append(p.Ciphertexts, nil) },
+		"missing ct":         func(p *StakeProof) { p.Ciphertexts[0] = nil },
+		"ct for zero cm":     func(p *StakeProof) { p.Ciphertexts[1] = ct },
+		"ct a byte short":    func(p *StakeProof) { p.Ciphertexts[0] = ct[:len(ct)-1] },
+		"ct a byte long":     func(p *StakeProof) { p.Ciphertexts[0] = append(append([]byte(nil), ct...), 0) },
+		"blind (177) length": func(p *StakeProof) { p.Ciphertexts[0] = make([]byte, privacy.BlindStakeCiphertextBytes) },
+	} {
+		p := base()
+		mutate(&p)
+		require.Error(t, p.ValidateBasic(), name)
+	}
 }

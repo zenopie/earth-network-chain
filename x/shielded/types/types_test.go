@@ -64,6 +64,13 @@ func TestMsgSendValidateBasic(t *testing.T) {
 			m.Bundle.Actions[0].Cv = append(nonCanonical, m.Bundle.Actions[0].Cv[32:]...)
 		},
 		"huge ciphertext":   func(m *types.MsgSend) { m.Bundle.Actions[0].Ciphertext = make([]byte, types.MaxCiphertextBytes+1) },
+		"ciphertext a byte short": func(m *types.MsgSend) {
+			m.Bundle.Actions[0].Ciphertext = m.Bundle.Actions[0].Ciphertext[:types.NoteCiphertextBytes-1]
+		},
+		"ciphertext a byte long": func(m *types.MsgSend) {
+			m.Bundle.Actions[1].Ciphertext = append(append([]byte(nil), m.Bundle.Actions[1].Ciphertext...), 0)
+		},
+		"empty (dummy) ciphertext": func(m *types.MsgSend) { m.Bundle.Actions[1].Ciphertext = nil },
 		"zero balance":      func(m *types.MsgSend) { m.Bundle.Balances[0].Amount = 0 },
 		"duplicate balance": func(m *types.MsgSend) { m.Bundle.Balances = append(m.Bundle.Balances, m.Bundle.Balances[0]) },
 		"bad denom":         func(m *types.MsgSend) { m.Bundle.Balances[0].Denom = "!" },

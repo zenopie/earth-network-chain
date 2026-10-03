@@ -141,7 +141,7 @@ func TestSighashBindsEverything(t *testing.T) {
 
 	mutations := map[string]func(m *types.MsgSend){
 		"receiver":   func(m *types.MsgSend) { m.Receiver = f.bech(f.addr("thief")) },
-		"ciphertext": func(m *types.MsgSend) { m.Bundle.Actions[1].Ciphertext = []byte("garbage") },
+		"ciphertext": func(m *types.MsgSend) { m.Bundle.Actions[1].Ciphertext = shieldedtest.NoteCT("garbage") },
 		"commitment": func(m *types.MsgSend) {
 			m.Bundle.Actions[0].Commitment = privacy.FieldBytes(shieldedtest.Det("x", 1))
 		},

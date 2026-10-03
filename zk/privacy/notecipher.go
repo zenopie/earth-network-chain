@@ -301,6 +301,10 @@ const (
 	BlindStakeVersion byte = 0x03
 	// BlindStakeCiphertextBytes is the stake ciphertext's length (as v2's).
 	BlindStakeCiphertextBytes = BlindNoteCiphertextBytes
+	// WalletStakeCiphertextBytes is the length of the ciphertext a stake
+	// proof's own output carries (the wallet's "earth stake note v1": epk ||
+	// AEAD of 0x03 || asset_id || amount u64 || rho || rcm): 32 + 105 + 16.
+	WalletStakeCiphertextBytes = 32 + 1 + 32 + 8 + 32 + 32 + 16
 )
 
 var blindStakeSalt = []byte("earth.stake.v1")

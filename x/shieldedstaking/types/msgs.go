@@ -192,7 +192,8 @@ func StakeAsset(denom string) fr.Element {
 
 // ValidateBasic checks a stake proof's shape: a proof, canonical 32-byte
 // fields, exactly two nullifiers and two commitments (zero for none), the
-// spent ones distinct, at most a ciphertext per commitment.
+// spent ones distinct, exactly two ciphertext slots (a 153-byte wallet stake
+// ciphertext for a non-zero commitment, empty for a zero one).
 func (p *StakeProof) ValidateBasic() error {
 	if err := shieldedtypes.CheckProofLength(p.Proof); err != nil {
 		return errorsmod.Wrapf(ErrInvalidMsg, "stake proof: %v", err)
@@ -227,11 +228,12 @@ func (p *StakeProof) ValidateBasic() error {
 		return errorsmod.Wrap(ErrInvalidMsg, "a stake proof carries exactly two ciphertexts (empty for a zero commitment)")
 	}
 	for i, ct := range p.Ciphertexts {
-		if len(ct) > shieldedtypes.MaxCiphertextBytes {
-			return errorsmod.Wrapf(ErrInvalidMsg, "ciphertext exceeds %d bytes", shieldedtypes.MaxCiphertextBytes)
-		}
 		if isZero(p.Commitments[i]) != (len(ct) == 0) {
 			return errorsmod.Wrapf(ErrInvalidMsg, "ciphertext %d must be present iff commitment %d is non-zero", i, i)
+		}
+		if len(ct) != 0 && len(ct) != privacy.WalletStakeCiphertextBytes {
+			return errorsmod.Wrapf(ErrInvalidMsg, "ciphertext %d must be exactly %d bytes (wallet stake note), got %d",
+				i, privacy.WalletStakeCiphertextBytes, len(ct))
 		}
 	}
 	return nil
