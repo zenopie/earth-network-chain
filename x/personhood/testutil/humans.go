@@ -79,7 +79,12 @@ func (r Registration) ReferrerField() fr.Element {
 	return privacy.Bytes(ReferralAddress(r.Referrer))
 }
 
+// CiphertextAnml and CiphertextErth are the registration's note ciphertexts:
+// fixed stand-ins (nothing decrypts them in the tests), bound by Binding.
+func (r Registration) CiphertextAnml() []byte { return []byte("personhood-ct:" + r.Name + ":10") }
+func (r Registration) CiphertextErth() []byte { return []byte("personhood-ct:" + r.Name + ":11") }
+
 // Binding is the passport proof's address input.
 func (r Registration) Binding() fr.Element {
-	return privacy.RegistrationBinding(r.IDC(), r.AnmlNote().PC(), r.ErthPC(), r.ReferrerField())
+	return privacy.RegistrationBinding(r.IDC(), r.AnmlNote().PC(), r.CiphertextAnml(), r.ErthPC(), r.CiphertextErth(), r.ReferrerField())
 }

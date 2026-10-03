@@ -129,7 +129,8 @@ func AffiliateField(ac address.Codec, affiliate string) (fr.Element, error) {
 }
 
 // Binding is the value the passport proof's address input must carry:
-// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, AffiliateField).
+// zk/privacy.RegistrationBinding(idc, pc_anml, ciphertext_anml, pc_erth,
+// ciphertext_erth, AffiliateField).
 func (m *MsgRegister) Binding(ac address.Codec) (fr.Element, error) {
 	idc, err := Field("idc", m.Idc)
 	if err != nil {
@@ -147,7 +148,7 @@ func (m *MsgRegister) Binding(ac address.Codec) (fr.Element, error) {
 	if err != nil {
 		return fr.Element{}, err
 	}
-	return privacy.RegistrationBinding(idc, pcAnml, pcErth, aff), nil
+	return privacy.RegistrationBinding(idc, pcAnml, m.CiphertextAnml, pcErth, m.CiphertextErth, aff), nil
 }
 
 // SighashFields implements PrivateMsg: idc, pc_anml, Bytes(ciphertext_anml),

@@ -330,8 +330,8 @@ func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {
 	f := e.feeFor("register/" + name)
 	msg := &personhoodtypes.MsgRegister{
 		Fee: e.bundle(f), Proof: p.proof, PublicSignals: p.signals, SignatureAlgorithm: "lean_poa", DscDer: p.dscDER,
-		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), CiphertextAnml: ct(name, 10),
-		PcErth: privacy.FieldBytes(r.ErthPC()), CiphertextErth: ct(name, 11),
+		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), CiphertextAnml: r.CiphertextAnml(),
+		PcErth: privacy.FieldBytes(r.ErthPC()), CiphertextErth: r.CiphertextErth(),
 	}
 	if r.Referrer != "" {
 		msg.Affiliate = e.bech(personhoodtest.ReferralAddress(r.Referrer))

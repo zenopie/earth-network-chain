@@ -123,6 +123,7 @@ func passportMsg(t *testing.T, name string) *types.MsgRegister {
 		Proof: readFileAt(t, filepath.Join(passportDir, name, "proof")), PublicSignals: signals,
 		SignatureAlgorithm: "lean_poa", DscDer: readFileAt(t, filepath.Join(passportDir, name, "dsc.der")),
 		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), PcErth: privacy.FieldBytes(r.ErthPC()),
+		CiphertextAnml: r.CiphertextAnml(), CiphertextErth: r.CiphertextErth(),
 	}
 	if r.Referrer != "" {
 		m.Affiliate = sdk.AccAddress(personhoodtest.ReferralAddress(r.Referrer)).String()
@@ -168,8 +169,9 @@ func dscKeyOf(t *testing.T, name string) *certs.PublicKey {
 	return c.PublicKey
 }
 
-// A passport proof is bound to the identity commitment and notes the msg
-// names: change any of them and the chain refuses it before verifying.
+// A passport proof is bound to the identity commitment, notes and note
+// ciphertexts the msg names: change any of them and the chain refuses it
+// before verifying.
 func TestRegistrationBinding(t *testing.T) {
 	k, ctx := regKeeper(t, stubPki{pubkey: dscKeyOf(t, "A1")})
 	m := passportMsg(t, "A1")
@@ -185,6 +187,11 @@ func TestRegistrationBinding(t *testing.T) {
 		"pc_anml":   func(m *types.MsgRegister) { m.PcAnml = other },
 		"pc_erth":   func(m *types.MsgRegister) { m.PcErth = other },
 		"affiliate": func(m *types.MsgRegister) { m.Affiliate = sdk.AccAddress(make([]byte, 20)).String() },
+		// A relayer front-running the registration with garbage ciphertexts
+		// (the notes would land, but the wallet could not find them on chain).
+		"ciphertext_anml": func(m *types.MsgRegister) { m.CiphertextAnml = []byte("garbage") },
+		"ciphertext_erth": func(m *types.MsgRegister) { m.CiphertextErth = []byte("garbage") },
+		"no ciphertexts":  func(m *types.MsgRegister) { m.CiphertextAnml, m.CiphertextErth = nil, nil },
 	} {
 		m := passportMsg(t, "A1")
 		mutate(m)

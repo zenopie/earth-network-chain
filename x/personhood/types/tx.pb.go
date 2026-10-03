@@ -134,21 +134,26 @@ var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 // verifies dsc_der against the CSCA trust store and binds it to the proof's
 // dsc_key, pins current_date to block time, dedups on the passport nullifier,
 // and requires the proof's `address` input to equal
-// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate) with
-// affiliate = Bytes(the affiliate's address bytes), 0 when none.
+// zk/privacy.RegistrationBinding =
+//
+//	H(TAG_REG, idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
+//	  Bytes(ciphertext_erth), affiliate)
+//
+// with affiliate = Bytes(the affiliate's address bytes), 0 when none.
 //
 // A new registration (or one re-entering after its last lapsed) appends the
 // leaf, mints 1 ANML to pc_anml and the registrant's half of the reward to
 // pc_erth, and pays the referrer's half in transparent ERTH to affiliate,
 // which must hold a live referrer binding (MsgBindReferrer). A live
 // registration is a switch: the old leaf is zeroed and the new one appended,
-// and nothing is paid (affiliate is then not checked).
+// and nothing is paid (affiliate is then not checked). A switch to the idc
+// the live registration already holds is refused (a replay).
 //
 // sighash fields: idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
 // Bytes(ciphertext_erth), affiliate (as in the binding),
 // Bytes(signature_algorithm), then every public signal in order. The passport
-// proof binds the identity and pcs through its address input; the sighash
-// binds the rest to the fee bundle.
+// proof binds the identity, pcs and ciphertexts through its address input;
+// the sighash binds the rest to the fee bundle.
 type MsgRegister struct {
 	Fee types.Bundle `protobuf:"bytes,1,opt,name=fee,proto3" json:"fee"`
 	// proof is the Barretenberg UltraHonk proof bytes (bb v5.0.0).

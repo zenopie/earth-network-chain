@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -121,3 +122,22 @@ func TestCountryField(t *testing.T) {
 		t.Fatal("the leaf does not commit to the country")
 	}
 }
+
+// Pinned for the wallet: RegistrationBinding (the passport proof's `address`
+// input) over these exact inputs. idc = 1, pc_anml = 2, ciphertext_anml =
+// "anml", pc_erth = 3, ciphertext_erth = "erth", affiliate = 0.
+func TestRegistrationBindingPinned(t *testing.T) {
+	got := RegistrationBinding(U64(1), U64(2), []byte("anml"), U64(3), []byte("erth"), fr.Element{})
+	t.Logf("RegistrationBinding = 0x%x", FieldBytes(got))
+	if want := registrationBindingVector; fmt.Sprintf("%x", FieldBytes(got)) != want {
+		t.Fatalf("RegistrationBinding = %x, want %s", FieldBytes(got), want)
+	}
+	if other := RegistrationBinding(U64(1), U64(2), []byte("anmL"), U64(3), []byte("erth"), fr.Element{}); other == got {
+		t.Fatal("binding does not cover ciphertext_anml")
+	}
+	if other := RegistrationBinding(U64(1), U64(2), []byte("anml"), U64(3), []byte("ertH"), fr.Element{}); other == got {
+		t.Fatal("binding does not cover ciphertext_erth")
+	}
+}
+
+const registrationBindingVector = "20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c"
