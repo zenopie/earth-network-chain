@@ -59,7 +59,7 @@ Phase 2 complete (incl. the user's three additions). Plan file updated.
   unshielded (x/shielded RegisterPoolLockedPrefix) but may be shielded in.
 - Self-bond always compounds (SUPERSEDES "skip operators with a withdraw
   address elsewhere"): an operator's rewards always land in the operator
-  account. Genesis sets distribution withdraw_addr_enabled=false (refuses
+  account (now: in its reward escrow, see below). Genesis sets distribution withdraw_addr_enabled=false (refuses
   every route: tx, authz, group, gov, ICA, wasm; only operators and the
   module hold delegations). Operator-scoped layers that survive a gov flip:
   ante WithdrawAddrFilterDecorator (top level + authz MsgExec);
@@ -80,12 +80,34 @@ Phase 2 complete (incl. the user's three additions). Plan file updated.
   by depinject as baseapp.MessageRouter for authz/gov/group and passed by
   hand to the ICA host and wasm; so no route executes a claim and nothing
   needs epoch recovery. Operators' only exit: unbond the self-bond (21
-  days). Minor, documented: a self-bond change auto-withdraws the self-bond
-  rewards accrued since the last epoch (distribution hook); same-tx
-  re-delegation from a hook is unsafe (x/staking writes a stale validator
-  after hooks), so left liquid. Non-uerth rewards/commission stay liquid in
-  the operator account. Tests: TestOperatorRewardClaimRefused,
-  TestSelfBondCompounds (commission compounded).
+  days). Tests: TestOperatorRewardClaimRefused, TestSelfBondCompounds
+  (commission compounded). The self-bond-change leak this item left
+  (distribution's hook paying liquid rewards on operator MsgDelegate/
+  MsgUndelegate) is closed by the reward escrow, next.
+- Per-validator reward escrow (user decision, option A; SUPERSEDES "rewards
+  land in the operator account" and the documented self-bond-change leak):
+  every operator's distribution withdraw address is its validator's escrow,
+  types.RewardEscrowAddress(val) = address.Module(shieldedstaking,
+  "reward_escrow", val), set by the chain (AfterValidatorCreated, InitGenesis;
+  distribution's store setter). Sealed by the send restriction (in only from
+  distribution, out only to its operator; RewardEscrows escrow -> val).
+  Epoch end, active validators: withdraw rewards + commission (both pay the
+  withdraw address: verified in SDK v0.53.6 WithdrawValidatorCommission and
+  AfterValidatorRemoved), move the escrow's uerth to the operator and
+  self-delegate it in the same guarded cache ctx. Jailed/unbonded: escrow
+  accrues. Validator removal (whole self-bond unbonded, period passed):
+  AfterValidatorRemoved (guarded, never fails) releases every denom to the
+  operator, forgets the escrow, resets the withdraw address. Non-uerth stays
+  in the escrow until removal. MsgSetWithdrawAddress (gov re-enabled): an
+  operator only to its escrow (itself refused), nobody to a validator's
+  escrow. Escrows not exported (deterministic); InitGenesis + genesis
+  validate refuse an operator withdraw address that is neither itself nor
+  its escrow; invariant 5 (escrow recorded + withdraw address, no orphans).
+  Test: TestRewardEscrow (1uerth delegate/undelegate pays the escrow, not the
+  operator; sealed; compounding; genesis round trip; removal releases);
+  TestOperatorWithdrawAddrRefused, TestGenesisOperatorWithdrawAddr updated.
+  Rates unchanged: staking fixtures did not need regenerating; network
+  genesis unchanged (make genesis-check up to date).
 - Dead-code cleanup (fresh genesis): unused registered errors removed —
   allocation ErrUnknownKind; assembly ErrNotRegistered, ErrVoterIsSubject;
   personhood ErrRegExpired, ErrInvalidAffiliate; pki ErrDuplicateDsc,

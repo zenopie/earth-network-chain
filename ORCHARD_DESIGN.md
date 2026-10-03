@@ -397,21 +397,44 @@ the fee bundle, so a proof is never reusable). Rates, epochs, slashing,
 MaxEntries, gov tally, Groundworks weight and self-bond compounding are
 unchanged.
 
-**Validator income compounds; the only exit is unbonding.** At each epoch
-end every active (unjailed) validator's self-bond rewards and its
-commission (uerth) are withdrawn to the operator account and self-delegated
-to the same validator. Neither can be withdrawn by a msg:
-MsgWithdrawDelegatorReward (from an operator), MsgWithdrawValidatorCommission
-and MsgSetWithdrawAddress (to another account) are refused by the ante (top
+**Validator income compounds; the only exit is unbonding.** Each
+validator has a REWARD ESCROW, `types.RewardEscrowAddress(val) =
+address.Module("shieldedstaking", "reward_escrow", val)` (32 bytes, no key,
+not on the blocked list), and the chain sets the operator's x/distribution
+withdraw address to it (AfterValidatorCreated, before MsgCreateValidator's
+self-delegation; InitGenesis for every validator; distribution's store
+setter, bypassing `withdraw_addr_enabled=false`). So everything
+distribution pays the operator — explicit withdrawals, and the self-bond
+rewards its delegation hook pays on every self-bond change (operator
+MsgDelegate/MsgUndelegate: a daily 1uerth self-delegation harvests nothing)
+and the commission (WithdrawValidatorCommission and the force-withdraw at
+validator removal both pay the withdraw address) — lands in the escrow.
+The bank send restriction seals it: coins in only from x/distribution, out
+only to its own operator (moved by the module; `RewardEscrows` maps escrow ->
+validator). At each epoch end every active (bonded, unjailed) validator's
+self-bond rewards and commission are withdrawn to the escrow, and the
+escrow's whole uerth balance moves to the operator account and is
+self-delegated in the same guarded cache context: never liquid. Jailed (or
+unbonded) validators skip; their escrow keeps accruing until active again.
+When x/staking removes a validator (operator unbonded the whole self-bond,
+the 21-day unbonding passed, no delegations left), AfterValidatorRemoved
+releases the escrow — every denom — to the operator, forgets it and resets
+the withdraw address. Non-uerth rewards stay in the escrow until then.
+Escrows are deterministic from the validators: not exported, rebuilt at
+InitGenesis (which refuses an operator whose withdraw address is neither
+itself nor its escrow; `genesis validate` likewise); invariant 5 checks
+every validator has its escrow recorded and as withdraw address, and no
+other escrow is recorded. Defense in depth, unchanged routes: operator
+MsgWithdrawDelegatorReward, every MsgWithdrawValidatorCommission, and
+MsgSetWithdrawAddress (anyone while disabled; with withdraw addresses
+re-enabled by gov, an operator to anything but its escrow — itself
+included — and anyone to a validator's escrow) are refused by the ante (top
 level, authz MsgExec) and by app/operator_router.go, the message router
-authz dispatch, gov and group execution, the ICA host and contracts use.
+authz dispatch, gov and group execution, the ICA host and contracts use;
+compounding resets an operator's withdraw address found pointing elsewhere.
 Liquid validator income would back a staking-derivative scheme, so an
 operator's only way to take rewards or commission out is to unbond its
-self-bond (21-day unbonding). Minor, documented leak: a self-bond change
-(operator MsgDelegate/MsgUndelegate) pays the self-bond's rewards accrued
-since the last epoch end to the operator (x/distribution's hook); they
-cannot be re-delegated in the same tx (x/staking writes a stale validator
-after its hooks), see x/shieldedstaking/keeper/withdraw_addr.go.
+self-bond. See x/shieldedstaking/keeper/escrow.go, withdraw_addr.go.
 
 **Future option (noted for the user).** If selling of whole accounts
 (mnemonics) appears, stake notes can additionally be bound to a personhood
