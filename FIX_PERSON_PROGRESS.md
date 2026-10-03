@@ -7,4 +7,4 @@ Audit fixes for personhood/assembly + removal of the transparent gas grant.
 - [ ] 3. Remove transparent gas grant (gas-check membership, CheckGasMembership, GasScope/GasTransparentSignal, fixtures)
 - [ ] 4. Sweep starvation: guaranteed share for expiry/caretaker/referrer sweeps
 - [ ] 5. Removal-ballot cooldown param per groundworks option (default 30d)
-- [ ] 6. Remove dead PrivateAnchorAcceptor hook
+- [x] 6. Remove dead PrivateAnchorAcceptor hook

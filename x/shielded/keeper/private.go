@@ -51,29 +51,19 @@ func (k Keeper) CheckPrivateMsg(ctx context.Context, msg types.PrivateMsg) (Prep
 				"bundle %d: %d actions, max_actions_per_bundle is %d", i, len(b.Actions), params.MaxActionsPerBundle)
 		}
 	}
-	// Anchors: the first bundle's actions may be vouched for by the msg's
-	// action handler (a stake vote's snapshot root); every other bundle
-	// spends against the window. Dummy spends need a valid anchor too.
+	// Anchors: every action, dummies included, spends against an anchor in
+	// the pool's window.
 	valid := map[string]bool{}
 	for i, b := range bs {
 		for j := range b.Actions {
 			root := b.Actions[j].Anchor
-			key := string(root)
-			if i == 0 {
-				key = "0:" + key
-			}
-			if valid[key] {
+			if valid[string(root)] {
 				continue
 			}
-			if i == 0 {
-				err = k.checkPrivateAnchor(ctx, msg, root)
-			} else {
-				err = k.checkAnchor(ctx, root)
-			}
-			if err != nil {
+			if err = k.checkAnchor(ctx, root); err != nil {
 				return PreparedPrivateMsg{}, errorsmod.Wrapf(err, "bundle %d action %d", i, j)
 			}
-			valid[key] = true
+			valid[string(root)] = true
 		}
 	}
 	for _, b := range bs {
@@ -142,32 +132,6 @@ func (k Keeper) checkReleaseMap(ctx context.Context, msg types.PrivateMsg) error
 	}
 	if _, ok := k.PrivateAction(msg); !ok && len(rem) > 0 {
 		return types.ErrReleaseMap.Wrap("the msg releases value it has nowhere to send")
-	}
-	return nil
-}
-
-// checkPrivateAnchor is checkAnchor, except that a msg whose action handler
-// implements types.PrivateAnchorAcceptor may vouch for a root outside the
-// window (a stake vote's proposal snapshot root).
-func (k Keeper) checkPrivateAnchor(ctx context.Context, msg types.PrivateMsg, root []byte) error {
-	err := k.checkAnchor(ctx, root)
-	if err == nil || !errors.Is(err, types.ErrUnknownRoot) {
-		return err
-	}
-	h, ok := k.PrivateAction(msg)
-	if !ok {
-		return err
-	}
-	acc, ok := h.(types.PrivateAnchorAcceptor)
-	if !ok {
-		return err
-	}
-	accepted, aerr := acc.AcceptsPrivateAnchor(ctx, msg, root)
-	if aerr != nil {
-		return aerr
-	}
-	if !accepted {
-		return err
 	}
 	return nil
 }
