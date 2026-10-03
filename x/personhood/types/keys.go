@@ -243,6 +243,15 @@ const (
 	// drains over following blocks.
 	ClaimNullifierPruneLimit = 1000
 
+	// CaretakerSweepLimit is the lapsed caretaker leases one block retires on
+	// a budget of their own (BeginBlocker), before x/allocation settles the
+	// stream. A lease is filed by a private action (one membership proof) and
+	// lapses a fixed lease length later; a block holds a few dozen private
+	// actions (x/shielded max_private_actions_per_block, default 32), so no
+	// block can see this many lapse unless a lowered lease length bunches two
+	// cohorts together, and even then the remainder drains next block.
+	CaretakerSweepLimit = 1000
+
 	// MaxIdentityLeavesQuery caps one IdentityLeaves page.
 	MaxIdentityLeavesQuery = 1000
 )

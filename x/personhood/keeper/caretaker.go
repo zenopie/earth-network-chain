@@ -122,9 +122,6 @@ func (k Keeper) sweepCaretakerVotes(ctx context.Context, budget int) (int, error
 	if len(lapsed) == 0 {
 		return 0, nil
 	}
-	if err := k.allocationKeeper.AdvanceIndex(ctx, types.AllocationStream); err != nil {
-		return 0, err
-	}
 	count, err := k.getCaretakerCount(ctx)
 	if err != nil {
 		return 0, err
@@ -132,6 +129,13 @@ func (k Keeper) sweepCaretakerVotes(ctx context.Context, budget int) (int, error
 	for _, key := range lapsed {
 		// Per entry, recovering panics (ClearVoter settles allocation maths).
 		if !safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, "expire_caretaker", func(c sdk.Context) error {
+			// Settle the stream up to the lease's own expiry, not to now:
+			// the lapsed weight earns nothing after it, however late the
+			// sweep (audit 4, C8). Lapsed keys are in expiry order, so the
+			// index only moves forward.
+			if err := k.allocationKeeper.AdvanceIndexTo(c, types.AllocationStream, key.K1()); err != nil {
+				return err
+			}
 			if err := k.allocationKeeper.ClearVoter(c, types.AllocationStream, key.K2()); err != nil {
 				return err
 			}

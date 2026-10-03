@@ -129,9 +129,12 @@ func (k Keeper) caretakerStatement(ctx context.Context, m *types.MsgSetCaretaker
 	if err != nil {
 		return MembershipStatement{}, err
 	}
-	if bound < 0 || m.MaxActivation > uint64(bound) {
+	// Strictly before the bound (audit 4, C7): at max_activation == bound a
+	// successor activated at the bound could file a lease in the very block
+	// its predecessor's last lease lapses, both counted until the sweep.
+	if bound <= 0 || m.MaxActivation >= uint64(bound) {
 		return MembershipStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg,
-			"max_activation %d is after %d (now - lease length - activation margin)", m.MaxActivation, bound)
+			"max_activation %d is not before %d (now - lease length - activation margin)", m.MaxActivation, bound)
 	}
 	return MembershipStatement{
 		Scope:         privacy.CaretakerScope(),

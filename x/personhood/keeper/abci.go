@@ -31,6 +31,13 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Lapsed caretaker leases first, on a budget of their own: their weight
+	// must be gone before x/allocation (next in BeginBlock) settles the
+	// stream, and a backlog in the shared budget (a revoked signer's purge)
+	// must not keep paying lapsed splits. Leases are cast at most one per
+	// private action, so CaretakerSweepLimit per block outpaces any rate at
+	// which they can lapse.
+	k.runSweep(ctx, k.sweepCaretakerVotes, types.CaretakerSweepLimit)
 	if err := k.runSweeps(ctx, params.RegistrationSweepLimitOrDefault()); err != nil {
 		return err
 	}

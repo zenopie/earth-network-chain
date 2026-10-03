@@ -217,7 +217,33 @@ func (k Keeper) getEpoch(ctx context.Context, stream types.StreamId) (uint64, er
 // a lapsed registration: the vote weight being unwound has to be credited
 // against a current index or the option loses the emission it earned this block.
 func (k Keeper) AdvanceIndex(ctx context.Context, stream types.StreamId) error {
+	return k.advanceIndexTo(ctx, stream, sdk.UnwrapSDKContext(ctx).BlockTime().UnixNano())
+}
+
+// AdvanceIndexTo settles a stream up to unix time t (seconds), no later than
+// the block time. A t at or before the stream's last settlement is a no-op.
+//
+// For x/personhood's lapsed caretaker leases: settling up to a lease's own
+// expiry before clearing it means the emission after the expiry is never
+// shared with the lapsed weight, however late the sweep reaches it (audit
+// 4, C8).
+func (k Keeper) AdvanceIndexTo(ctx context.Context, stream types.StreamId, t int64) error {
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixNano()
+	at := t * int64(time.Second)
+	if t > now/int64(time.Second) {
+		at = now
+	}
+	last, err := k.getLastUpkeep(ctx, stream)
+	if err != nil {
+		return err
+	}
+	if last == 0 || at <= last {
+		return nil
+	}
+	return k.advanceIndexTo(ctx, stream, at)
+}
+
+func (k Keeper) advanceIndexTo(ctx context.Context, stream types.StreamId, now int64) error {
 	last, err := k.getLastUpkeep(ctx, stream)
 	if err != nil {
 		return err

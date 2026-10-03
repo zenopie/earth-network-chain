@@ -20,6 +20,9 @@ type AllocationKeeper interface {
 	// clearing a voter, so the weight being removed is credited against a current
 	// index rather than silently forfeiting this block's emission.
 	AdvanceIndex(ctx context.Context, stream allocationtypes.StreamId) error
+	// AdvanceIndexTo settles a stream up to unix time t (no later than the
+	// block time; a no-op at or before its last settlement).
+	AdvanceIndexTo(ctx context.Context, stream allocationtypes.StreamId, t int64) error
 	// ValidateSplit checks a split against the stream's options as they stand
 	// (sum 100, no duplicates, live options, at most MaxVoterOptions).
 	ValidateSplit(ctx context.Context, stream allocationtypes.StreamId, percentages []allocationtypes.AllocationWeight) error

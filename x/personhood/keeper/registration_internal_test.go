@@ -33,6 +33,9 @@ import (
 type stubAllocation struct{}
 
 func (stubAllocation) AdvanceIndex(context.Context, allocationtypes.StreamId) error { return nil }
+func (stubAllocation) AdvanceIndexTo(context.Context, allocationtypes.StreamId, int64) error {
+	return nil
+}
 func (stubAllocation) ClearVoter(context.Context, allocationtypes.StreamId, []byte) error {
 	return nil
 }

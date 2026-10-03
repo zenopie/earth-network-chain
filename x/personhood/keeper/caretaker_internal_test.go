@@ -130,18 +130,22 @@ func TestCaretakerLeaseAndSweep(t *testing.T) {
 	require.Zero(t, used)
 }
 
-// The caretaker statement refuses a max_activation later than now - R -
+// The caretaker statement refuses a max_activation at or after now - R -
 // activation margin: a switched-to identity cannot vote beside a
 // predecessor's live split.
 func TestCaretakerActivationBound(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
 	now := ctx.BlockTime().Unix()
 	bound := now - 1000 - types.ActivationMarginSeconds
-	m := &types.MsgSetCaretaker{Fee: feeStub(), MaxActivation: uint64(bound)}
+	m := &types.MsgSetCaretaker{Fee: feeStub(), MaxActivation: uint64(bound - 1)}
 	st, err := k.caretakerStatement(ctx, m)
 	require.NoError(t, err)
-	require.Equal(t, bound, st.MaxActivation)
+	require.Equal(t, bound-1, st.MaxActivation)
 	require.Equal(t, privacy.CaretakerScope(), st.Scope)
+	// The bound itself is refused (audit 4, C7), and anything later.
+	m.MaxActivation++
+	_, err = k.caretakerStatement(ctx, m)
+	require.ErrorIs(t, err, types.ErrInvalidMsg)
 	m.MaxActivation++
 	_, err = k.caretakerStatement(ctx, m)
 	require.ErrorIs(t, err, types.ErrInvalidMsg)
