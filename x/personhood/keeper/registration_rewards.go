@@ -32,15 +32,15 @@ type referralNote struct {
 	rho, rcm fr.Element
 }
 
-// referralNoteFor resolves handle (it must be live) and derives the opening
-// of the referral note registration (nullifier, leafIndex) mints to it.
+// referralNoteFor resolves handle and derives the opening of the referral
+// note registration (nullifier, leafIndex) mints to it. nil when the handle
+// stopped resolving after the ante checked it (released or changed by an
+// earlier tx in the block): the registration then lands unreferred, drawing
+// the unreferred rate, rather than failing after its fee was paid.
 func (k Keeper) referralNoteFor(ctx context.Context, handle string, nullifier []byte, leafIndex uint64) (*referralNote, error) {
 	rec, live, err := k.liveHandle(ctx, handle)
-	if err != nil {
+	if err != nil || !live {
 		return nil, err
-	}
-	if !live {
-		return nil, errorsmod.Wrapf(types.ErrNoReferrer, "affiliate_handle %q", handle)
 	}
 	ownerPK, err := privacy.FieldFromBytes(rec.OwnerPk)
 	if err != nil {

@@ -108,6 +108,7 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 	}
 
 	paid := registrationPayout{registrant: math.ZeroInt(), referral: math.ZeroInt()}
+	referred := false
 	if !switched {
 		if err := k.recordRegistrationRate(ctx, p.dsc.key, p.dsc.country); err != nil {
 			return nil, err
@@ -120,6 +121,7 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 			if referrer, err = k.referralNoteFor(ctx, msg.AffiliateHandle, p.nullifier, index); err != nil {
 				return nil, err
 			}
+			referred = referrer != nil
 		}
 		paid, err = k.payRegistrationReward(ctx, rewardNote{pc: msg.PcErth, ciphertext: msg.CiphertextErth}, referrer)
 		if err != nil {
@@ -133,7 +135,7 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		sdk.NewAttribute("reward", paid.registrant.String()),
 		sdk.NewAttribute("switched", strconv.FormatBool(switched)),
 	}
-	if p.referred {
+	if referred {
 		// The referral: the handle, what it was paid and where the note is
 		// (its opening is on that position's shielded_mint event). Public: the
 		// handle and the amount are what MsgRegister and the draw already show.
