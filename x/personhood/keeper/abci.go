@@ -29,23 +29,7 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	budget := params.RegistrationSweepLimitOrDefault()
-
-	// Revoked signers first: see purgeRevokedDscs for why it outranks expiry.
-	used, err := k.purgeRevokedDscs(ctx, budget)
-	if err != nil {
-		return err
-	}
-	budget -= used
-	if used, err = k.sweepExpiredRegistrations(ctx, budget); err != nil {
-		return err
-	}
-	budget -= used
-	if used, err = k.sweepCaretakerVotes(ctx, budget); err != nil {
-		return err
-	}
-	budget -= used
-	if _, err := k.sweepReferrerBindings(ctx, budget); err != nil {
+	if err := k.runSweeps(ctx, params.RegistrationSweepLimitOrDefault()); err != nil {
 		return err
 	}
 	if err := k.pruneClaimNullifiers(ctx, types.ClaimNullifierPruneLimit); err != nil {
@@ -53,6 +37,73 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	}
 
 	return k.buybackAndBurn(ctx)
+}
+
+// sweepReserveDivisor sets each later sweep's guaranteed share of the block's
+// retirement budget: budget/sweepReserveDivisor (at least 1) apiece for the
+// expiry, caretaker and referrer sweeps.
+const sweepReserveDivisor = 8
+
+// runSweeps shares one block's retirement budget among the four sweeps.
+//
+// The revoked-signer purge comes first and gets the largest share (see
+// purgeRevokedDscs for why it outranks expiry), but not all of it: the expiry,
+// caretaker and referrer sweeps each have a reserved share, so a revoked
+// signer with many registrations (a purge lasting many blocks) cannot starve
+// them. A lapsed registration that keeps its leaf, a lapsed caretaker split
+// that keeps its weight, or a lapsed referrer binding that keeps being paid is
+// each a wrong of its own, and none of them should wait on another's backlog.
+//
+// Round one runs each sweep in priority order with its share plus whatever the
+// sweeps before it left unused. Round two hands what is still left, in the
+// same order, to the sweeps that used their whole allowance (they may have
+// more). The total never exceeds budget.
+func (k Keeper) runSweeps(ctx context.Context, budget int) error {
+	if budget <= 0 {
+		return nil
+	}
+	sweeps := []func(context.Context, int) (int, error){
+		k.purgeRevokedDscs,
+		k.sweepExpiredRegistrations,
+		k.sweepCaretakerVotes,
+		k.sweepReferrerBindings,
+	}
+	reserve := budget / sweepReserveDivisor
+	if reserve == 0 && budget >= len(sweeps) {
+		reserve = 1
+	}
+	shares := []int{budget - reserve*(len(sweeps)-1), reserve, reserve, reserve}
+
+	remaining := budget
+	carry := 0
+	saturated := make([]bool, len(sweeps))
+	for i, sweep := range sweeps {
+		allowance := shares[i] + carry
+		if allowance > remaining {
+			allowance = remaining
+		}
+		used, err := sweep(ctx, allowance)
+		if err != nil {
+			return err
+		}
+		remaining -= used
+		carry = allowance - used
+		saturated[i] = allowance > 0 && used >= allowance
+	}
+	for i, sweep := range sweeps {
+		if remaining <= 0 {
+			break
+		}
+		if !saturated[i] {
+			continue
+		}
+		used, err := sweep(ctx, remaining)
+		if err != nil {
+			return err
+		}
+		remaining -= used
+	}
+	return nil
 }
 
 // EndBlocker records the block's identity root as an anchor, if the tree

@@ -47,8 +47,9 @@ func (k Keeper) StartDscPurge(ctx context.Context, dscKey []byte) error {
 // purgeRevokedDscs retires up to `budget` registrations belonging to revoked
 // signers, returning how many it used.
 //
-// Runs before the expiry sweep and takes what it needs from the shared budget
-// first. Both are self-healing and both drain over following blocks, but a
+// Runs before the expiry sweep and has the largest share of the block's
+// budget, though not all of it (runSweeps reserves a share for each other
+// sweep). Both are self-healing and both drain over following blocks, but a
 // lapsed voter lingering an extra block costs a rounding error of emission,
 // while a revoked signer's voter lingering costs governance weight to somebody
 // who should not have it.
