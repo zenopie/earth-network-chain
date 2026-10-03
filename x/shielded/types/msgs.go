@@ -258,8 +258,8 @@ func (m *MsgShield) ValidateBasic() error {
 	if _, err := privacy.FieldFromBytes(m.Pc); err != nil {
 		return errorsmod.Wrapf(ErrInvalidNote, "pc: %v", err)
 	}
-	if len(m.Ciphertext) > MaxCiphertextBytes {
-		return errorsmod.Wrapf(ErrInvalidNote, "ciphertext exceeds %d bytes", MaxCiphertextBytes)
+	if err := CheckBlindCiphertext("ciphertext", m.Ciphertext); err != nil {
+		return errorsmod.Wrap(ErrInvalidNote, err.Error())
 	}
 	return nil
 }

@@ -153,7 +153,8 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 				Rho: personhoodtest.Det("feenote/rho", j), Rcm: personhoodtest.Det("feenote/rcm", j)}
 			notes = append(notes, n)
 			msgs = append(msgs, &shieldedtypes.MsgShield{Sender: e.bech(e.userAddr()),
-				Amount: sdk.NewInt64Coin("uerth", phFeeNote), Pc: privacy.FieldBytes(n.PC())})
+				Amount: sdk.NewInt64Coin("uerth", phFeeNote), Pc: privacy.FieldBytes(n.PC()),
+				Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("fee-note/%d", j))})
 		}
 		fb := e.finalize(e.signedTx(4_000_000, e.fee(20_000), msgs...))
 		requireOK(t, fb.TxResults[0])
@@ -208,7 +209,7 @@ func (e *phEnv) identityTree() *merkle.Tree {
 	return t
 }
 
-func ct(name string, i int) []byte { return []byte(fmt.Sprintf("personhood-ct:%s:%d", name, i)) }
+func ct(name string, i int) []byte { return shieldedtest.BlindCT(fmt.Sprintf("personhood-ct:%s:%d", name, i)) }
 
 // feeFor plans the msg's fee bundle: the next fee note pays phFee, its
 // change back to the payer, padded with a dummy action.

@@ -5,6 +5,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
@@ -80,9 +81,10 @@ func (r Registration) ReferrerField() fr.Element {
 }
 
 // CiphertextAnml and CiphertextErth are the registration's note ciphertexts:
-// fixed stand-ins (nothing decrypts them in the tests), bound by Binding.
-func (r Registration) CiphertextAnml() []byte { return []byte("personhood-ct:" + r.Name + ":10") }
-func (r Registration) CiphertextErth() []byte { return []byte("personhood-ct:" + r.Name + ":11") }
+// fixed stand-ins of an amount-blind ciphertext's length (nothing decrypts
+// them in the tests), bound by Binding.
+func (r Registration) CiphertextAnml() []byte { return shieldedtest.BlindCT("personhood-ct:" + r.Name + ":10") }
+func (r Registration) CiphertextErth() []byte { return shieldedtest.BlindCT("personhood-ct:" + r.Name + ":11") }
 
 // Binding is the passport proof's address input.
 func (r Registration) Binding() fr.Element {

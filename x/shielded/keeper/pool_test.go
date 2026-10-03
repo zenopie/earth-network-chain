@@ -481,12 +481,13 @@ func TestSendRestriction(t *testing.T) {
 
 	// MsgShield of ANML is a counted deposit.
 	pc := privacy.FieldBytes(shieldedtest.Det("pc", 1))
-	_, err = f.msgs.Shield(f.ctx, &types.MsgShield{Sender: f.bech(user), Amount: sdk.NewInt64Coin(types.AnmlDenom, 10), Pc: pc})
+	_, err = f.msgs.Shield(f.ctx, &types.MsgShield{Sender: f.bech(user), Amount: sdk.NewInt64Coin(types.AnmlDenom, 10), Pc: pc,
+		Ciphertext: shieldedtest.BlindCT("anml")})
 	require.NoError(t, err)
 
 	// MintNote from a module holding the coins.
 	f.bank.mint(mod(personhood), sdk.NewInt64Coin(types.AnmlDenom, 1_000_000))
-	pos, cm, err := f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 1_000_000), pc, nil)
+	pos, cm, err := f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 1_000_000), pc, shieldedtest.BlindCT("mint"))
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), pos)
 	pcEl, _ := privacy.FieldFromBytes(pc)
@@ -498,14 +499,14 @@ func TestSendRestriction(t *testing.T) {
 
 	// MintNote refuses an unregistered denom, a non-canonical pc, a value
 	// beyond u64, and coins the module does not hold.
-	_, _, err = f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin("unope", 1), pc, nil)
+	_, _, err = f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin("unope", 1), pc, shieldedtest.BlindCT("mint"))
 	require.ErrorIs(t, err, types.ErrAssetNotRegistered)
-	_, _, err = f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 1), bytes.Repeat([]byte{0xff}, 32), nil)
+	_, _, err = f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 1), bytes.Repeat([]byte{0xff}, 32), shieldedtest.BlindCT("mint"))
 	require.ErrorIs(t, err, types.ErrInvalidNote)
 	huge := sdk.NewCoin(types.AnmlDenom, math.NewIntFromUint64(^uint64(0)).AddRaw(1))
-	_, _, err = f.k.MintNote(f.ctx, personhood, huge, pc, nil)
+	_, _, err = f.k.MintNote(f.ctx, personhood, huge, pc, shieldedtest.BlindCT("mint"))
 	require.ErrorIs(t, err, types.ErrInvalidNote)
-	_, _, err = f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 5), pc, nil)
+	_, _, err = f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 5), pc, shieldedtest.BlindCT("mint"))
 	require.Error(t, err)
 }
 
@@ -643,7 +644,7 @@ func TestShieldedOnlyPrefix(t *testing.T) {
 	// Into the pool (through the keeper) and back to the registering module.
 	_, err := f.k.RegisterAsset(f.ctx, d.Denom)
 	require.NoError(t, err)
-	_, _, err = f.k.MintNote(f.ctx, staking, d, privacy.FieldBytes(shieldedtest.Det("pc", 9)), nil)
+	_, _, err = f.k.MintNote(f.ctx, staking, d, privacy.FieldBytes(shieldedtest.Det("pc", 9)), shieldedtest.BlindCT("mint"))
 	require.NoError(t, err)
 	require.NoError(t, f.k.AssertInvariants(f.ctx))
 }

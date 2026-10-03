@@ -13,13 +13,13 @@ import "gogoproto/gogo.proto";
 option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
 
 // Msg is private staking. Every msg but UpdateParams is a private msg: no
-// signer, an ordinary shielded bundle paying its fee (out of its uerth
-// balance; a delegation's bundle also releases the ERTH it stakes), a stake
-// proof (circuits/stake) over the module's own owner-locked stake note tree,
-// and a sighash, zk/orchard.Sighash(type URL, chain id, K, bundle digests,
-// fields), binding every other field: the stake proof's public values
-// (StakeProof fields, see StakeFields), then the msg's own fields, ending with
-// its fee. See x/shielded/ante and ORCHARD_DESIGN.md section 13.
+// signer, an ordinary shielded bundle paying its fee (its uerth balance; a
+// delegation's bundle also releases the amount it stakes), a stake proof
+// (circuits/stake) over the module's own owner-locked stake note tree, and a
+// sighash, zk/orchard.Sighash(type URL, chain id, tx fields, K, bundle
+// digests, fields), binding every other field: the stake proof's public
+// values (StakeProof fields, see StakeFields), then the msg's own fields.
+// See x/shielded/ante and ORCHARD_DESIGN.md section 13.
 //
 // Delegated stake (derth/<valoper>) and unbonding claims
 // (unbond/<valoper>/<epoch>) exist only as stake notes, never in the shielded
@@ -93,20 +93,31 @@ message StakeProof {
   // owner_tag is H(TAG_OTAG, owner_pk, salt) (32 bytes): stored by
   // LockPosition, compared by a position's later msgs.
   bytes owner_tag = 7;
+  // spc_ciphertext is the amount-blind stake ciphertext (zk/privacy
+  // EncryptBlindStakeNote: rho, rcm, memo of spc_mint's note), exactly 177
+  // bytes, for the note the chain mints to spc_mint: required by the msgs
+  // that mint one (Delegate, Undelegate, StakeVote, UnlockPosition), empty
+  // otherwise. The owner recomputes spc and cm from the denom and amount the
+  // chain publishes with the note.
+  bytes spc_ciphertext = 8;
 }
 
-// MsgDelegate: bundle releases its uerth balance less fee into the module for
-// validator; the chain mints derth/<validator> at the live rate as a stake
-// note to stake.spc_mint, whose owner the stake proof knows nk for (one
-// delegates only to oneself). The proof spends and creates nothing. The ERTH
-// is delegated at the epoch's end.
+// MsgDelegate: bundle releases amount uerth into the module for validator
+// (the rest of its uerth balance is the fee); the chain mints
+// derth/<validator> at the live rate as a stake note to stake.spc_mint, whose
+// owner the stake proof knows nk for (one delegates only to oneself). The
+// proof spends and creates nothing. The ERTH is delegated at the epoch's end.
 //
-// sighash fields: StakeFields(stake), Bytes(validator), fee.
+// sighash fields: StakeFields(stake), Bytes(validator), amount.
 message MsgDelegate {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
-  uint64 fee = 3;
+  // fee (3): the fee is the bundle's uerth balance less amount.
+  reserved 3;
+  reserved "fee";
   StakeProof stake = 4 [(gogoproto.nullable) = false];
+  // amount is the uerth delegated.
+  uint64 amount = 5;
 }
 
 // MsgDelegateResponse returns the derth minted and the stake note's position.
@@ -119,11 +130,13 @@ message MsgDelegateResponse {
 // the owner's derth/<validator> notes and creates one or two of the same
 // owner, the amounts balancing (hidden). bundle pays the fee only.
 //
-// sighash fields: StakeFields(stake), Bytes(validator), fee.
+// sighash fields: StakeFields(stake), Bytes(validator).
 message MsgRestake {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
-  uint64 fee = 3;
+  // fee (3): the fee is the bundle's uerth balance.
+  reserved 3;
+  reserved "fee";
   StakeProof stake = 4 [(gogoproto.nullable) = false];
 }
 
@@ -137,12 +150,14 @@ message MsgRestakeResponse {
 // owner-locked unbond/<validator>/<epoch> claim of the derth's live ERTH value
 // to stake.spc_mint. bundle pays the fee only.
 //
-// sighash fields: StakeFields(stake), Bytes(validator), amount, fee.
+// sighash fields: StakeFields(stake), Bytes(validator), amount.
 message MsgUndelegate {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
   uint64 amount = 3;
-  uint64 fee = 4;
+  // fee (4): the fee is the bundle's uerth balance.
+  reserved 4;
+  reserved "fee";
   StakeProof stake = 5 [(gogoproto.nullable) = false];
 }
 
@@ -158,12 +173,14 @@ message MsgUndelegateResponse {
 // back; the chain mints ERTH = amount x payout / requested to pc in the
 // shielded pool (an ordinary, transferable note), less fee_from_output.
 //
-// With fee_from_output the msg carries no bundle (bundle empty, fee 0): the
-// fee comes out of the claimed ERTH and the claim runs in the private ante,
-// atomically with the spend. Otherwise bundle pays fee.
+// With fee_from_output the msg carries no bundle: the fee comes out of the
+// claimed ERTH and the claim runs in the private ante, atomically with the
+// spend. Otherwise the bundle's uerth balance is the fee. A claim is the only
+// private msg that may pay from its output. ciphertext is the payout note's
+// amount-blind v2 ciphertext (177 bytes).
 //
 // sighash fields: StakeFields(stake), Bytes(validator), epoch, amount, pc,
-// Bytes(ciphertext), fee_from_output, fee.
+// Bytes(ciphertext), fee_from_output.
 message MsgClaimUnbonding {
   // bundle is absent (no actions) when fee_from_output pays the fee.
   earth.shielded.v1.Bundle bundle = 1;
@@ -173,7 +190,9 @@ message MsgClaimUnbonding {
   bytes pc = 5;
   bytes ciphertext = 6;
   uint64 fee_from_output = 7;
-  uint64 fee = 8;
+  // fee (8): the fee is the bundle's uerth balance.
+  reserved 8;
+  reserved "fee";
   StakeProof stake = 9 [(gogoproto.nullable) = false];
 }
 
@@ -195,14 +214,16 @@ message MsgClaimUnbondingResponse {
 // bundle pays the fee against the shielded pool's current roots.
 //
 // sighash fields: StakeFields(stake), proposal_id, Bytes(validator),
-// Bytes(OptionsBytes(options)), weight, fee.
+// Bytes(OptionsBytes(options)), weight.
 message MsgStakeVote {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 proposal_id = 2;
   string validator = 3;
   repeated cosmos.gov.v1.WeightedVoteOption options = 4;
   uint64 weight = 5;
-  uint64 fee = 6;
+  // fee (6): the fee is the bundle's uerth balance.
+  reserved 6;
+  reserved "fee";
   StakeProof stake = 7 [(gogoproto.nullable) = false];
 }
 
@@ -218,13 +239,15 @@ message MsgStakeVoteResponse {
 // the fee only.
 //
 // sighash fields: StakeFields(stake), Bytes(validator), amount,
-// Bytes(SplitsBytes(splits)), fee.
+// Bytes(SplitsBytes(splits)).
 message MsgLockPosition {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
   uint64 amount = 3;
   repeated earth.allocation.v1.AllocationWeight splits = 4 [(gogoproto.nullable) = false];
-  uint64 fee = 5;
+  // fee (5): the fee is the bundle's uerth balance.
+  reserved 5;
+  reserved "fee";
   StakeProof stake = 6 [(gogoproto.nullable) = false];
 }
 
@@ -236,13 +259,14 @@ message MsgLockPositionResponse {
 // MsgUpdatePosition replaces a position's split. The proof spends and creates
 // nothing; its owner_tag must be the position's. bundle pays the fee only.
 //
-// sighash fields: StakeFields(stake), position_id, Bytes(SplitsBytes(splits)),
-// fee.
+// sighash fields: StakeFields(stake), position_id, Bytes(SplitsBytes(splits)).
 message MsgUpdatePosition {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 position_id = 2;
   repeated earth.allocation.v1.AllocationWeight splits = 3 [(gogoproto.nullable) = false];
-  uint64 fee = 4;
+  // fee (4): the fee is the bundle's uerth balance.
+  reserved 4;
+  reserved "fee";
   StakeProof stake = 5 [(gogoproto.nullable) = false];
 }
 
@@ -253,11 +277,13 @@ message MsgUpdatePositionResponse {}
 // its owner to stake.spc_mint. The proof spends and creates nothing; its
 // owner_tag must be the position's. bundle pays the fee only.
 //
-// sighash fields: StakeFields(stake), position_id, fee.
+// sighash fields: StakeFields(stake), position_id.
 message MsgUnlockPosition {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 position_id = 2;
-  uint64 fee = 3;
+  // fee (3): the fee is the bundle's uerth balance.
+  reserved 3;
+  reserved "fee";
   StakeProof stake = 4 [(gogoproto.nullable) = false];
 }
 
@@ -272,13 +298,15 @@ message MsgUnlockPositionResponse {
 // only.
 //
 // sighash fields: StakeFields(stake), position_id, proposal_id,
-// Bytes(OptionsBytes(options)), fee.
+// Bytes(OptionsBytes(options)).
 message MsgPositionVote {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 position_id = 2;
   uint64 proposal_id = 3;
   repeated cosmos.gov.v1.WeightedVoteOption options = 4;
-  uint64 fee = 5;
+  // fee (5): the fee is the bundle's uerth balance.
+  reserved 5;
+  reserved "fee";
   StakeProof stake = 6 [(gogoproto.nullable) = false];
 }
 

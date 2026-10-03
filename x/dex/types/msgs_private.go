@@ -19,10 +19,9 @@ const (
 )
 
 var (
-	_ shieldedtypes.PrivateMsg       = (*MsgNoteSwap)(nil)
-	_ shieldedtypes.FeeFromOutputMsg = (*MsgNoteSwap)(nil)
-	_ shieldedtypes.PrivateMsg       = (*MsgAddLiquidityShielded)(nil)
-	_ shieldedtypes.PrivateMsg       = (*MsgRemoveLiquidityShielded)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgNoteSwap)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgAddLiquidityShielded)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgRemoveLiquidityShielded)(nil)
 
 	_ sdk.HasValidateBasic = (*MsgNoteSwap)(nil)
 	_ sdk.HasValidateBasic = (*MsgAddLiquidityShielded)(nil)
@@ -38,12 +37,14 @@ func pcField(b []byte) (fr.Element, error) {
 	return e, nil
 }
 
+// checkNote checks a note the chain will mint: a pc and its amount-blind v2
+// ciphertext (shieldedtypes.CheckBlindCiphertext).
 func checkNote(pc, ct []byte) error {
 	if _, err := pcField(pc); err != nil {
 		return err
 	}
-	if len(ct) > shieldedtypes.MaxCiphertextBytes {
-		return errorsmod.Wrapf(ErrInvalidPrivateMsg, "ciphertext exceeds %d bytes", shieldedtypes.MaxCiphertextBytes)
+	if err := shieldedtypes.CheckBlindCiphertext("ciphertext", ct); err != nil {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, err.Error())
 	}
 	return nil
 }
@@ -69,61 +70,58 @@ func (m *MsgNoteSwap) PrivateBundles() []*shieldedtypes.Bundle {
 	return []*shieldedtypes.Bundle{&m.Bundle}
 }
 
-func (m *MsgNoteSwap) PrivateFee() uint64 { return m.Fee }
-
-// OutputFee implements x/shielded's FeeFromOutputMsg.
-func (m *MsgNoteSwap) OutputFee() uint64 { return m.FeeFromOutput }
-
-// In is the asset swapped in: the release map's one remainder (zero coin if
-// the msg is malformed; ValidateBasic refuses it).
-func (m *MsgNoteSwap) In() sdk.Coin {
-	rem, err := shieldedtypes.Remainders(m)
-	if err != nil || len(rem) != 1 {
-		return sdk.Coin{}
+// PrivateFee is the fee rule's: the bundle's uerth balance, less amount_in
+// for a swap of uerth.
+func (m *MsgNoteSwap) PrivateFee() uint64 {
+	if m.DenomIn == shieldedtypes.FeeDenom {
+		return shieldedtypes.FeeAfter(m, m.AmountIn)
 	}
-	return sdk.NewCoin(rem[0].Denom, math.NewIntFromUint64(rem[0].Amount))
+	return shieldedtypes.FeeAfter(m, 0)
 }
 
-// SighashFields binds the asset out, the slippage bound, where the output
-// goes and both fees. The asset in is the bundle's balance.
+// In is the asset swapped in, amount_in of denom_in.
+func (m *MsgNoteSwap) In() sdk.Coin {
+	return sdk.Coin{Denom: m.DenomIn, Amount: math.NewIntFromUint64(m.AmountIn)}
+}
+
+// SighashFields binds the asset in and out, the slippage bound and where the
+// output goes. The fee is the bundle's (its balances are in the digest).
 func (m *MsgNoteSwap) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := pcField(m.Pc)
 	if err != nil {
 		return nil, err
 	}
-	return []fr.Element{privacy.Bytes([]byte(m.DenomOut)), privacy.U64(m.MinAmountOut), pc,
-		privacy.Bytes(m.Ciphertext), privacy.U64(m.FeeFromOutput), privacy.U64(m.Fee)}, nil
+	return []fr.Element{privacy.Bytes([]byte(m.DenomIn)), privacy.U64(m.AmountIn), privacy.Bytes([]byte(m.DenomOut)),
+		privacy.U64(m.MinAmountOut), pc, privacy.Bytes(m.Ciphertext)}, nil
 }
 
 func (m *MsgNoteSwap) ValidateBasic() error {
+	if err := sdk.ValidateDenom(m.DenomIn); err != nil {
+		return errorsmod.Wrap(ErrInvalidDenom, err.Error())
+	}
+	if m.AmountIn == 0 {
+		return errorsmod.Wrap(ErrInvalidAmount, "amount_in must be positive")
+	}
 	rem, err := remainders(m)
 	if err != nil {
 		return err
 	}
-	if len(rem) != 1 {
-		return errorsmod.Wrap(ErrInvalidPrivateMsg, "a swap releases one asset beyond its fee")
+	if m.PrivateFee() == 0 {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the bundle pays a positive uerth fee")
 	}
-	if (m.Fee == 0) == (m.FeeFromOutput == 0) {
-		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the fee is paid by the bundle or from the output, exactly one")
+	if len(rem) != 1 || rem[0].Denom != m.DenomIn || rem[0].Amount != m.AmountIn {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, "a swap releases exactly amount_in of denom_in beyond its fee")
 	}
 	if err := sdk.ValidateDenom(m.DenomOut); err != nil {
 		return errorsmod.Wrap(ErrInvalidDenom, err.Error())
 	}
-	if m.DenomOut == rem[0].Denom {
+	if m.DenomOut == m.DenomIn {
 		return errorsmod.Wrap(ErrInvalidDenom, "denom in and denom out must differ")
 	}
 	if m.MinAmountOut == 0 {
 		// A note holds a positive value; a swap with no bound is a gift to
 		// whoever orders the block.
 		return errorsmod.Wrap(ErrInvalidPrivateMsg, "min_amount_out must be positive")
-	}
-	if m.FeeFromOutput > 0 {
-		if m.DenomOut != shieldedtypes.FeeDenom {
-			return errorsmod.Wrapf(ErrInvalidPrivateMsg, "fee_from_output needs a swap into %s", shieldedtypes.FeeDenom)
-		}
-		if m.MinAmountOut <= m.FeeFromOutput {
-			return errorsmod.Wrap(ErrInvalidPrivateMsg, "min_amount_out must exceed fee_from_output")
-		}
 	}
 	return checkNote(m.Pc, m.Ciphertext)
 }
@@ -134,10 +132,11 @@ func (m *MsgAddLiquidityShielded) PrivateBundles() []*shieldedtypes.Bundle {
 	return []*shieldedtypes.Bundle{&m.Bundle}
 }
 
-func (m *MsgAddLiquidityShielded) PrivateFee() uint64 { return m.Fee }
+// PrivateFee is the fee rule's: the bundle's uerth balance less the ERTH leg.
+func (m *MsgAddLiquidityShielded) PrivateFee() uint64 { return shieldedtypes.FeeAfter(m, m.ErthAmount) }
 
-// Legs is the deposit: the ERTH leg (the uerth balance less the fee) and the
-// token leg (the other balance). Zero coins if the msg is malformed.
+// Legs is the deposit: the ERTH leg (erth_amount) and the token leg (the
+// other balance). Zero coins if the msg is malformed.
 func (m *MsgAddLiquidityShielded) Legs() (erth, token sdk.Coin) {
 	rem, err := shieldedtypes.Remainders(m)
 	if err != nil || len(rem) != 2 {
@@ -155,7 +154,7 @@ func (m *MsgAddLiquidityShielded) Legs() (erth, token sdk.Coin) {
 }
 
 // SighashFields binds the pool, the slippage bound, where the shares and the
-// refunds go and the fee.
+// refunds go and the ERTH leg.
 func (m *MsgAddLiquidityShielded) SighashFields(address.Codec) ([]fr.Element, error) {
 	sharePc, err := pcField(m.SharePc)
 	if err != nil {
@@ -166,7 +165,7 @@ func (m *MsgAddLiquidityShielded) SighashFields(address.Codec) ([]fr.Element, er
 		return nil, err
 	}
 	return []fr.Element{privacy.U64(m.PoolId), privacy.Bytes([]byte(m.MinShares)), sharePc,
-		privacy.Bytes(m.ShareCiphertext), refundPc, privacy.Bytes(m.RefundCiphertext), privacy.U64(m.Fee)}, nil
+		privacy.Bytes(m.ShareCiphertext), refundPc, privacy.Bytes(m.RefundCiphertext), privacy.U64(m.ErthAmount)}, nil
 }
 
 func (m *MsgAddLiquidityShielded) ValidateBasic() error {
@@ -174,11 +173,12 @@ func (m *MsgAddLiquidityShielded) ValidateBasic() error {
 	if err != nil {
 		return err
 	}
-	if m.Fee == 0 {
-		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the bundle pays a positive fee")
+	if m.ErthAmount == 0 || m.PrivateFee() == 0 {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the bundle carries a positive ERTH leg and pays a positive fee")
 	}
-	if erth, token := m.Legs(); len(rem) != 2 || !erth.IsValid() || !token.IsValid() || erth.IsZero() || token.IsZero() {
-		return errorsmod.Wrapf(ErrInvalidDenom, "the bundle releases %s and the pool's token beyond its fee", shieldedtypes.FeeDenom)
+	erth, token := m.Legs()
+	if len(rem) != 2 || !erth.IsValid() || !token.IsValid() || erth.IsZero() || token.IsZero() || erth.Amount.Uint64() != m.ErthAmount {
+		return errorsmod.Wrapf(ErrInvalidDenom, "the bundle releases erth_amount %s and the pool's token beyond its fee", shieldedtypes.FeeDenom)
 	}
 	if m.MinShares != "" {
 		if v, ok := math.NewIntFromString(m.MinShares); !ok || v.IsNegative() || v.String() != m.MinShares {
@@ -197,7 +197,8 @@ func (m *MsgRemoveLiquidityShielded) PrivateBundles() []*shieldedtypes.Bundle {
 	return []*shieldedtypes.Bundle{&m.Bundle}
 }
 
-func (m *MsgRemoveLiquidityShielded) PrivateFee() uint64 { return m.Fee }
+// PrivateFee is the fee rule's: the bundle's whole uerth balance.
+func (m *MsgRemoveLiquidityShielded) PrivateFee() uint64 { return shieldedtypes.FeeAfter(m, 0) }
 
 // Shares is the LP shares withdrawn: the bundle's dexlp/<pool_id> balance.
 func (m *MsgRemoveLiquidityShielded) Shares() sdk.Coin {
@@ -214,7 +215,7 @@ func (m *MsgRemoveLiquidityShielded) WithdrawalID() []byte {
 	return append([]byte{0}, m.Bundle.Actions[0].Nullifier...)
 }
 
-// SighashFields binds the pool, where both legs go and the fee.
+// SighashFields binds the pool and where both legs go.
 func (m *MsgRemoveLiquidityShielded) SighashFields(address.Codec) ([]fr.Element, error) {
 	erthPc, err := pcField(m.ErthPc)
 	if err != nil {
@@ -225,7 +226,7 @@ func (m *MsgRemoveLiquidityShielded) SighashFields(address.Codec) ([]fr.Element,
 		return nil, err
 	}
 	return []fr.Element{privacy.U64(m.PoolId), erthPc, privacy.Bytes(m.ErthCiphertext), tokenPc,
-		privacy.Bytes(m.TokenCiphertext), privacy.U64(m.Fee)}, nil
+		privacy.Bytes(m.TokenCiphertext)}, nil
 }
 
 func (m *MsgRemoveLiquidityShielded) ValidateBasic() error {
@@ -233,8 +234,8 @@ func (m *MsgRemoveLiquidityShielded) ValidateBasic() error {
 	if err != nil {
 		return err
 	}
-	if m.Fee == 0 {
-		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the bundle pays a positive fee")
+	if m.PrivateFee() == 0 {
+		return errorsmod.Wrap(ErrInvalidPrivateMsg, "the bundle pays a positive uerth fee")
 	}
 	if len(rem) != 1 || rem[0].Denom != LPShareDenom(m.PoolId) {
 		return errorsmod.Wrapf(ErrInvalidDenom, "the bundle releases %s and nothing else beyond its fee", LPShareDenom(m.PoolId))

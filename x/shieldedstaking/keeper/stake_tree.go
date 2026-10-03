@@ -14,6 +14,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/privacy"
@@ -134,7 +135,7 @@ func (k Keeper) appendStake(ctx context.Context, cm []byte, attrs ...sdk.Attribu
 
 // mintStake appends a stake note of amount of denom to the stake pc spc: a
 // note the chain mints, its amount and denom public.
-func (k Keeper) mintStake(ctx context.Context, denom string, amount math.Int, spc []byte) (uint64, error) {
+func (k Keeper) mintStake(ctx context.Context, denom string, amount math.Int, spc, ciphertext []byte) (uint64, error) {
 	if !amount.IsPositive() || !amount.IsUint64() {
 		return 0, errorsmod.Wrapf(types.ErrAmount, "a stake note holds 1..2^64-1, not %s", amount)
 	}
@@ -142,11 +143,17 @@ func (k Keeper) mintStake(ctx context.Context, denom string, amount math.Int, sp
 	if err != nil {
 		return 0, types.ErrStakeTree.Wrapf("spc: %v", err)
 	}
+	// The note discovery rule: every minted stake note carries its blind
+	// stake ciphertext (zk/privacy.EncryptBlindStakeNote), emitted with it.
+	if err := shieldedtypes.CheckBlindCiphertext("spc_ciphertext", ciphertext); err != nil {
+		return 0, types.ErrStakeTree.Wrap(err.Error())
+	}
 	cm := privacy.FieldBytes(privacy.StakeCM(privacy.AssetID(denom), amount.Uint64(), pc))
 	return k.appendStake(ctx, cm,
 		sdk.NewAttribute(types.AttributeKeyDenom, denom),
 		sdk.NewAttribute(types.AttributeKeyAmount, amount.String()),
 		sdk.NewAttribute(types.AttributeKeySpc, hex.EncodeToString(spc)),
+		sdk.NewAttribute(types.AttributeKeyCiphertext, base64.StdEncoding.EncodeToString(ciphertext)),
 	)
 }
 

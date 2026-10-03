@@ -33,6 +33,7 @@ import (
 	earthtypes "github.com/earth-network/earth/x/earth/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
@@ -45,16 +46,16 @@ func (e *stakeEnv) auditFundPool(amt int64) {
 	// The pool's account cannot mint (and refuses plain sends): shield.
 	require.NoError(e.t, e.app.BankKeeper.MintCoins(ctx, earthtypes.ModuleName, coins))
 	require.NoError(e.t, e.app.BankKeeper.SendCoinsFromModuleToAccount(ctx, earthtypes.ModuleName, e.userAddr(), coins))
-	_, _, err := e.app.ShieldedKeeper.Shield(ctx, e.userAddr(), coins[0], privacy.FieldBytes(ssDet("audit-fund", uint64(amt))), nil)
+	_, _, err := e.app.ShieldedKeeper.Shield(ctx, e.userAddr(), coins[0], privacy.FieldBytes(ssDet("audit-fund", uint64(amt))), shieldedtest.BlindCT("audit-fund"))
 	require.NoError(e.t, err)
 }
 
 func auditDelegateMsg(valoper string, amt uint64, label string) *sstypes.MsgDelegate {
 	return &sstypes.MsgDelegate{
 		Bundle:    stubBundle(label, shieldedtypes.ValueBalance{Denom: "uerth", Amount: amt + 1}),
-		Fee:       1,
+		Amount:    amt,
 		Validator: valoper,
-		Stake:     sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/"+label, 0))},
+		Stake:     sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/"+label, 0)), SpcCiphertext: shieldedtest.BlindCT("spc")},
 	}
 }
 
@@ -90,7 +91,7 @@ func TestAuditValoperCaseAliasDrainsDelegation(t *testing.T) {
 		require.Error(t, err)
 
 		u := &sstypes.MsgUndelegate{Validator: alias, Amount: 1,
-			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("atk-pc", 1))}}
+			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("atk-pc", 1)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
 		require.Error(t, u.ValidateBasic())
 		_, err = srv.Undelegate(e.fakeAuthorized(u), u)
 		require.Error(t, err)
@@ -249,7 +250,7 @@ func TestAuditZeroHeightExportBreaksInvariants(t *testing.T) {
 	e.next(25 * time.Hour)
 	// an unbonding in flight across the export
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth / 4,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/z", 1))}}
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/z", 1)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
 	_, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)
 	e.next(25 * time.Hour)
@@ -307,7 +308,7 @@ func TestAuditOrphanBackingNotCaptured(t *testing.T) {
 	e.next(25 * time.Hour)
 	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/o", 1))}}
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/o", 1)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
 	ures, err := srv.Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
@@ -468,7 +469,7 @@ func TestAuditDonationInflationHarmless(t *testing.T) {
 	e.next(25 * time.Hour)
 	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth - 1,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/atk", 1))}}
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/atk", 1)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
 	_, err := srv.Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)
 	e.next(25 * time.Hour)

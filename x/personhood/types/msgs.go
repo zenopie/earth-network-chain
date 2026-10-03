@@ -53,9 +53,12 @@ func OptionalField(what string, b []byte) (fr.Element, error) {
 	return Field(what, b)
 }
 
+// checkCiphertext checks a minted note's ciphertext: the amount-blind v2
+// ciphertext every note the chain mints carries (registration rewards, ANML
+// claims), exactly shieldedtypes.BlindCiphertextBytes.
 func checkCiphertext(what string, b []byte) error {
-	if len(b) > MaxNoteCiphertextBytes {
-		return errorsmod.Wrapf(ErrInvalidMsg, "%s exceeds %d bytes", what, MaxNoteCiphertextBytes)
+	if err := shieldedtypes.CheckBlindCiphertext(what, b); err != nil {
+		return errorsmod.Wrap(ErrInvalidMsg, err.Error())
 	}
 	return nil
 }

@@ -235,8 +235,10 @@ type MsgShield struct {
 	Amount types.Coin `protobuf:"bytes,2,opt,name=amount,proto3" json:"amount"`
 	// pc = H(TAG_PC, owner_pk, rho, rcm), 32 bytes.
 	Pc []byte `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
-	// ciphertext is optional: the note encrypted to its owner, when the owner
-	// is not the sender (a gas grant, a payment). Emitted, never stored.
+	// ciphertext is the note's amount-blind v2 ciphertext (zk/privacy
+	// EncryptBlindNote: rho, rcm, memo to the owner's ek_pub), exactly 177
+	// bytes. Required: every note the chain mints to a hidden owner carries
+	// one, so a wallet finds every note by trial decryption alone.
 	Ciphertext []byte `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
 }
 

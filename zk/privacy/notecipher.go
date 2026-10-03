@@ -208,9 +208,11 @@ func (n BlindNote) bytes() []byte {
 	return append(b, n.Memo[:]...)
 }
 
-func blindNoteAEAD(shared, epk []byte) (cipher.AEAD, error) {
+func blindNoteAEAD(shared, epk []byte) (cipher.AEAD, error) { return blindAEAD(blindNoteSalt, shared, epk) }
+
+func blindAEAD(salt, shared, epk []byte) (cipher.AEAD, error) {
 	key := make([]byte, chacha20poly1305.KeySize)
-	if _, err := io.ReadFull(hkdf.New(sha256.New, shared, blindNoteSalt, epk), key); err != nil {
+	if _, err := io.ReadFull(hkdf.New(sha256.New, shared, salt, epk), key); err != nil {
 		return nil, err
 	}
 	return chacha20poly1305.New(key)
@@ -219,6 +221,10 @@ func blindNoteAEAD(shared, epk []byte) (cipher.AEAD, error) {
 // EncryptBlindNote encrypts n's secrets to ekPub with the ephemeral secret esk
 // (32 random bytes; deterministic only in fixtures).
 func EncryptBlindNote(n BlindNote, ekPub [32]byte, esk [32]byte) ([]byte, error) {
+	return encryptBlind(blindNoteSalt, n.bytes(), ekPub, esk)
+}
+
+func encryptBlind(salt, pt []byte, ekPub [32]byte, esk [32]byte) ([]byte, error) {
 	epk, err := curve25519.X25519(esk[:], curve25519.Basepoint)
 	if err != nil {
 		return nil, err
@@ -227,11 +233,11 @@ func EncryptBlindNote(n BlindNote, ekPub [32]byte, esk [32]byte) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("note: %w", err) // a low-order ek_pub
 	}
-	aead, err := blindNoteAEAD(shared, epk)
+	aead, err := blindAEAD(salt, shared, epk)
 	if err != nil {
 		return nil, err
 	}
-	return aead.Seal(epk, make([]byte, chacha20poly1305.NonceSize), n.bytes(), nil), nil
+	return aead.Seal(epk, make([]byte, chacha20poly1305.NonceSize), pt, nil), nil
 }
 
 // DecryptBlindNote opens a v2 ciphertext with the encryption secret ek. An
@@ -239,6 +245,10 @@ func EncryptBlindNote(n BlindNote, ekPub [32]byte, esk [32]byte) ([]byte, error)
 // check CM(asset, value, n.PC(owner_pk)) == cm with the asset and value the
 // chain published for the note before trusting the opening.
 func DecryptBlindNote(ct []byte, ek [32]byte) (BlindNote, error) {
+	return decryptBlind(blindNoteSalt, BlindNoteVersion, ct, ek)
+}
+
+func decryptBlind(salt []byte, version byte, ct []byte, ek [32]byte) (BlindNote, error) {
 	var n BlindNote
 	if len(ct) != BlindNoteCiphertextBytes {
 		return n, errors.New("note: wrong ciphertext length")
@@ -248,7 +258,7 @@ func DecryptBlindNote(ct []byte, ek [32]byte) (BlindNote, error) {
 	if err != nil {
 		return n, fmt.Errorf("note: %w", err)
 	}
-	aead, err := blindNoteAEAD(shared, epk)
+	aead, err := blindAEAD(salt, shared, epk)
 	if err != nil {
 		return n, err
 	}
@@ -256,7 +266,7 @@ func DecryptBlindNote(ct []byte, ek [32]byte) (BlindNote, error) {
 	if err != nil {
 		return n, errors.New("note: not ours")
 	}
-	if len(pt) != BlindNotePlaintextBytes || pt[0] != BlindNoteVersion {
+	if len(pt) != BlindNotePlaintextBytes || pt[0] != version {
 		return n, errors.New("note: unknown plaintext version or length")
 	}
 	if n.Rho, err = FieldFromBytes(pt[1:33]); err != nil {
@@ -267,4 +277,52 @@ func DecryptBlindNote(ct []byte, ek [32]byte) (BlindNote, error) {
 	}
 	copy(n.Memo[:], pt[65:])
 	return n, nil
+}
+
+// ---- blind stake ciphertext ("earth stake v1") ------------------------------
+//
+// Every stake note the chain mints (derth at the live rate, an unbond claim,
+// a stake vote's re-mint, an unlocked position) has a value the chain
+// decides, so its owner's wallet cannot know cm in advance. The msg carries
+// the note's secrets encrypted to the owner, exactly as a v2 note does, under
+// its own salt and version byte so the two can never be confused:
+//
+//	ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 12 zero bytes, aad = none, pt)
+//	key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.stake.v1", info = epk)
+//	pt    = 0x03 || rho (32) || rcm (32) || memo (64)
+//
+// 177 bytes. The owner opens it, recomputes spc = H(TAG_SPC, owner_pk, rho,
+// rcm) and cm = H(TAG_STAKE, AssetID(denom), amount, spc) with the denom and
+// amount the chain publishes for the stake note at that position, and accepts
+// it only if cm matches.
+
+const (
+	// BlindStakeVersion is the stake ciphertext plaintext's leading byte.
+	BlindStakeVersion byte = 0x03
+	// BlindStakeCiphertextBytes is the stake ciphertext's length (as v2's).
+	BlindStakeCiphertextBytes = BlindNoteCiphertextBytes
+)
+
+var blindStakeSalt = []byte("earth.stake.v1")
+
+// SPC is the stake note's owner commitment for ownerPK (StakePC).
+func (n BlindNote) SPC(ownerPK fr.Element) fr.Element { return StakePC(ownerPK, n.Rho, n.Rcm) }
+
+func (n BlindNote) stakeBytes() []byte {
+	b := n.bytes()
+	b[0] = BlindStakeVersion
+	return b
+}
+
+// EncryptBlindStakeNote encrypts a minted stake note's secrets to ekPub with
+// the ephemeral secret esk (32 random bytes; deterministic only in fixtures).
+func EncryptBlindStakeNote(n BlindNote, ekPub [32]byte, esk [32]byte) ([]byte, error) {
+	return encryptBlind(blindStakeSalt, n.stakeBytes(), ekPub, esk)
+}
+
+// DecryptBlindStakeNote opens a stake ciphertext with ek. The caller must
+// still check StakeCM(asset, amount, n.SPC(owner_pk)) == cm before trusting
+// it.
+func DecryptBlindStakeNote(ct []byte, ek [32]byte) (BlindNote, error) {
+	return decryptBlind(blindStakeSalt, BlindStakeVersion, ct, ek)
 }

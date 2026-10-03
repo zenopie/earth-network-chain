@@ -326,6 +326,7 @@ func (e *shieldedEnv) shieldAll(s shieldedtest.Scenario) *abci.ResponseFinalizeB
 	for _, n := range s.Shields {
 		shields = append(shields, &shieldedtypes.MsgShield{
 			Sender: e.bech(e.userAddr()), Amount: sdk.NewCoin(n.Denom, math.NewIntFromUint64(n.Value)), Pc: privacy.FieldBytes(n.PC()),
+			Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("shield/%d", len(shields))),
 		})
 	}
 	fb := e.finalize(e.signedTx(4_000_000, e.fee(20_000), shields...))
@@ -472,7 +473,7 @@ func TestShieldedPoolEndToEnd(t *testing.T) {
 	// anchors are no longer accepted (checked before its spent nullifiers).
 	pc := privacy.FieldBytes(shieldedtest.Det("late", 0))
 	fb = e.finalize(e.signedTx(600_000, e.fee(3_000), &shieldedtypes.MsgShield{
-		Sender: e.bech(e.userAddr()), Amount: sdk.NewInt64Coin("uerth", 7), Pc: pc}))
+		Sender: e.bech(e.userAddr()), Amount: sdk.NewInt64Coin("uerth", 7), Pc: pc, Ciphertext: shieldedtest.BlindCT("late")}))
 	requireOK(t, fb.TxResults[0])
 	fb = e.finalizeAfter(15*24*time.Hour, e.privateTx(shGas(2)+3, nil, e.sendMsg(s, shieldedtest.Send2)))
 	require.Equal(t, shieldedtypes.ErrUnknownRoot.ABCICode(), fb.TxResults[0].Code, fb.TxResults[0].Log)
@@ -689,7 +690,7 @@ func TestShieldedSendRestriction(t *testing.T) {
 	// ANML shields, and is counted.
 	pc := privacy.FieldBytes(shieldedtest.Det("anml", 0))
 	fb = e.finalize(e.signedTx(600_000, e.fee(3_000), &shieldedtypes.MsgShield{
-		Sender: e.bech(e.userAddr()), Amount: sdk.NewInt64Coin("uanml", 1_000_000), Pc: pc}))
+		Sender: e.bech(e.userAddr()), Amount: sdk.NewInt64Coin("uanml", 1_000_000), Pc: pc, Ciphertext: shieldedtest.BlindCT("anml")}))
 	requireOK(t, fb.TxResults[0])
 	ts, err := e.app.ShieldedKeeper.Turnstile(e.ctx(), "uanml")
 	require.NoError(t, err)

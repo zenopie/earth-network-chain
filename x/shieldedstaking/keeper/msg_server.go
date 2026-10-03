@@ -68,7 +68,7 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
-	pos, err := k.mintStake(ctx, types.DerthDenom(m.Validator), d, m.Stake.SpcMint)
+	pos, err := k.mintStake(ctx, types.DerthDenom(m.Validator), d, m.Stake.SpcMint, m.Stake.SpcCiphertext)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 		return nil, err
 	}
 	denom := types.UnbondDenom(m.Validator, epoch.Number)
-	pos, err := k.mintStake(ctx, denom, u, m.Stake.SpcMint)
+	pos, err := k.mintStake(ctx, denom, u, m.Stake.SpcMint, m.Stake.SpcCiphertext)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +251,7 @@ func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*typ
 	if err := k.putVote(ctx, v); err != nil {
 		return nil, err
 	}
-	pos, err := k.mintStake(ctx, types.DerthDenom(m.Validator), d, m.Stake.SpcMint)
+	pos, err := k.mintStake(ctx, types.DerthDenom(m.Validator), d, m.Stake.SpcMint, m.Stake.SpcCiphertext)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +326,7 @@ func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosit
 	if _, err := k.applyPositionSplit(ctx, p, nil, true); err != nil {
 		return nil, err
 	}
-	pos, err := k.mintStake(ctx, types.DerthDenom(p.Validator), p.Derth, m.Stake.SpcMint)
+	pos, err := k.mintStake(ctx, types.DerthDenom(p.Validator), p.Derth, m.Stake.SpcMint, m.Stake.SpcCiphertext)
 	if err != nil {
 		return nil, err
 	}

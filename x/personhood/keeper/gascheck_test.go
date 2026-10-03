@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/earth-network/earth/x/personhood/types"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	pkikeeper "github.com/earth-network/earth/x/pki/keeper"
 	pkitypes "github.com/earth-network/earth/x/pki/types"
 	"github.com/earth-network/earth/zk/privacy"
@@ -32,6 +33,7 @@ func TestCheckRegistrationAgreesWithTheChain(t *testing.T) {
 	ctx := testutil.DefaultContextWithKeys(map[string]*storetypes.KVStoreKey{
 		pkitypes.StoreKey: pkiStore, types.StoreKey: phStore,
 	}, nil, nil).WithBlockTime(passportTime)
+	ctx = shieldedtypes.WithTxFields(ctx, shieldedtypes.TxFields{}) // as the private ante records them
 
 	pki := pkikeeper.NewKeeper(runtime.NewKVStoreService(pkiStore), encCfg.Codec, ac, authtypes.NewModuleAddress(pkitypes.GovModuleName))
 	require.NoError(t, pki.InitGenesis(ctx, pkitypes.GenesisState{

@@ -33,6 +33,7 @@ import (
 
 	dexkeeper "github.com/earth-network/earth/x/dex/keeper"
 	dextypes "github.com/earth-network/earth/x/dex/types"
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
@@ -57,15 +58,15 @@ func (e *stakeEnv) pool(id uint64) dextypes.Pool {
 	return p
 }
 
-// noteSwapMsg spends amount of in (a fee note pays the fee, unless
-// feeFromOutput is set) and swaps it for denomOut, minted to a fresh note.
-func (e *stakeEnv) noteSwapMsg(in *wnote, amount uint64, denomOut string, minOut, feeFromOutput uint64, prove bool) (*dextypes.MsgNoteSwap, *pendingBundle, *wnote) {
+// noteSwapMsg spends amount of in (a fee note pays fee, ssFee when 0) and
+// swaps it for denomOut, minted to a fresh note.
+func (e *stakeEnv) noteSwapMsg(in *wnote, amount uint64, denomOut string, minOut, fee uint64, prove bool) (*dextypes.MsgNoteSwap, *pendingBundle, *wnote) {
 	e.t.Helper()
-	p := e.build(spend{denom: in.denom, inputs: []*wnote{in}, valueOut: amount, feeless: feeFromOutput > 0})
+	p := e.build(spend{denom: in.denom, inputs: []*wnote{in}, valueOut: amount, fee: fee})
 	out := e.w.fresh(denomOut, 0)
 	m := &dextypes.MsgNoteSwap{
-		Bundle: p.b, Fee: p.fee, DenomOut: denomOut, MinAmountOut: minOut,
-		Pc: privacy.FieldBytes(e.w.pc(out)), Ciphertext: []byte("swap out"), FeeFromOutput: feeFromOutput,
+		Bundle: p.b, DenomIn: in.denom, AmountIn: amount, DenomOut: denomOut, MinAmountOut: minOut,
+		Pc: privacy.FieldBytes(e.w.pc(out)), Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("swap/%d", e.w.seq)),
 	}
 	if !prove {
 		unproven(m)
@@ -76,9 +77,9 @@ func (e *stakeEnv) noteSwapMsg(in *wnote, amount uint64, denomOut string, minOut
 }
 
 // noteSwap runs a note swap and returns the output note.
-func (e *stakeEnv) noteSwap(in *wnote, amount uint64, denomOut string, minOut, feeFromOutput uint64) (*wnote, *abci.ExecTxResult) {
+func (e *stakeEnv) noteSwap(in *wnote, amount uint64, denomOut string, minOut, fee uint64) (*wnote, *abci.ExecTxResult) {
 	e.t.Helper()
-	m, p, out := e.noteSwapMsg(in, amount, denomOut, minOut, feeFromOutput, true)
+	m, p, out := e.noteSwapMsg(in, amount, denomOut, minOut, fee, true)
 	res := e.run(e.privateTx(m))
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.settle(p)
@@ -133,24 +134,22 @@ func TestDexNoteSwaps(t *testing.T) {
 	require.Equal(t, before-ssFee+wantErth, e.w.balance("uerth"))
 	e.dexInvariants()
 
-	// --- ANML note -> ERTH note paying its fee from the output: a holder of
-	// nothing but ANML can sell it. No ERTH note is spent; the note holds the
-	// output less the fee, and fee_collector got the fee from the dex.
+	// --- the fee rule: a swap pays its fee from its bundle's uerth (only a
+	// claim pays from its output). Below the floor it is refused; the rest
+	// of the ANML sells with an ERTH fee note paying.
 	rest := e.w.unspent("uanml", 1)
 	require.NotNil(t, rest)
 	wantErth = e.quote("uanml", rest.value, "uerth")
-	// The fee must clear the floor, and the bound must leave something.
 	tiny, _, _ := e.noteSwapMsg(rest, rest.value, "uerth", wantErth, 1, false)
 	ct := e.checkTx(e.privateTx(tiny))
 	require.Equal(t, sdkerrors.ErrInsufficientFee.ABCICode(), ct.Code, ct.Log)
 	before = e.w.balance("uerth")
-	sold, res := e.noteSwap(rest, rest.value, "uerth", wantErth, ssFee)
-	require.Equal(t, wantErth-ssFee, sold.value)
-	require.Equal(t, before+sold.value, e.w.balance("uerth"), "no fee note spent")
+	sold, res := e.noteSwap(rest, rest.value, "uerth", wantErth, 0)
+	require.Equal(t, wantErth, sold.value)
+	require.Equal(t, before-ssFee+sold.value, e.w.balance("uerth"))
 	fees := feeEvents(t, res)
 	require.Len(t, fees, 1)
 	require.Equal(t, fmt.Sprintf("%duerth", ssFee), fees[0]["amount"])
-	require.Equal(t, dextypes.ModuleName, fees[0]["module"])
 	require.Equal(t, uint64(0), e.w.balance("uanml"))
 	e.dexInvariants()
 
@@ -185,7 +184,7 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 	n := e.w.fresh("uanml", 0)
 	res := e.run(e.signedTx(e.user, 600_000, 5_000, &dextypes.MsgBuyAnml{
 		Creator: user, TokenIn: sdk.NewInt64Coin("uerth", 1_000*ssErth), MinAmountOut: fmt.Sprint(want),
-		Pc: privacy.FieldBytes(e.w.pc(n)), Ciphertext: []byte("bought"),
+		Pc: privacy.FieldBytes(e.w.pc(n)), Ciphertext: shieldedtest.BlindCT("bought"),
 	}))
 	require.Equal(t, uint32(0), res.Code, res.Log)
 	n = e.minted(res, n)
@@ -223,11 +222,12 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 	}
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
 	for _, m := range []sdk.Msg{
-		&dextypes.MsgNoteSwap{Bundle: stubBundle("a", bal("uanml", 1), bal("uerth", ssFee)), Fee: ssFee, DenomOut: "uerth", MinAmountOut: 1, Pc: pc},
-		&dextypes.MsgAddLiquidityShielded{Bundle: stubBundle("b", bal("uanml", 1), bal("uerth", ssFee+1)), Fee: ssFee,
+		&dextypes.MsgNoteSwap{Bundle: stubBundle("a", bal("uanml", 1), bal("uerth", ssFee)), DenomIn: "uanml", AmountIn: 1,
+			DenomOut: "uerth", MinAmountOut: 1, Pc: pc},
+		&dextypes.MsgAddLiquidityShielded{Bundle: stubBundle("b", bal("uanml", 1), bal("uerth", ssFee+1)), ErthAmount: 1,
 			PoolId: anmlPool, SharePc: pc, RefundPc: pc},
 		&dextypes.MsgRemoveLiquidityShielded{Bundle: stubBundle("r", bal(dextypes.LPShareDenom(anmlPool), 1), bal("uerth", ssFee)),
-			Fee: ssFee, PoolId: anmlPool, ErthPc: pc, TokenPc: pc},
+			PoolId: anmlPool, ErthPc: pc, TokenPc: pc},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
 		require.NotNil(t, h, "%T", m)
@@ -239,7 +239,8 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 	fb := e.run(e.signedTx(e.user, 400_000, 5_000, &exec))
 	require.NotEqual(t, uint32(0), fb.Code)
 	// A private msg in a signed tx goes nowhere either.
-	sw := &dextypes.MsgNoteSwap{Bundle: stubBundle("c", bal("uanml", 1), bal("uerth", ssFee)), Fee: ssFee, DenomOut: "uerth", MinAmountOut: 1, Pc: pc}
+	sw := &dextypes.MsgNoteSwap{Bundle: stubBundle("c", bal("uanml", 1), bal("uerth", ssFee)), DenomIn: "uanml", AmountIn: 1,
+		DenomOut: "uerth", MinAmountOut: 1, Pc: pc}
 	ct := e.checkTx(e.signedTx(e.user, 400_000, 5_000, sw))
 	require.NotEqual(t, uint32(0), ct.Code)
 }
@@ -296,9 +297,9 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	refT := &wnote{denom: "uanml", rho: refE.rho, rcm: refE.rcm} // the same pc
 	wantShares := math.NewIntFromUint64(anml.value).Mul(total).Quo(pool.ReserveToken.Amount)
 	m := &dextypes.MsgAddLiquidityShielded{
-		Bundle: pa.b, Fee: pa.fee, PoolId: anmlPool, MinShares: wantShares.String(),
-		SharePc: privacy.FieldBytes(e.w.pc(shareNote)), ShareCiphertext: []byte("lp shares"),
-		RefundPc: privacy.FieldBytes(e.w.pc(refE)), RefundCiphertext: []byte("refund"),
+		Bundle: pa.b, ErthAmount: erthIn, PoolId: anmlPool, MinShares: wantShares.String(),
+		SharePc: privacy.FieldBytes(e.w.pc(shareNote)), ShareCiphertext: shieldedtest.BlindCT("lp shares"),
+		RefundPc: privacy.FieldBytes(e.w.pc(refE)), RefundCiphertext: shieldedtest.BlindCT("refund"),
 	}
 	e.prove(m, pa)
 	// The sighash binds where the shares go: they cannot be redirected.
@@ -344,8 +345,9 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	ct = e.checkTx(e.privateTx(unshield))
 	require.Equal(t, shieldedtypes.ErrSendRestricted.ABCICode(), ct.Code, ct.Log)
 	ercPc, tokPc := e.w.fresh("uerth", 0), e.w.fresh("uanml", 0)
-	wrongPool := &dextypes.MsgRemoveLiquidityShielded{Bundle: ps.b, Fee: ps.fee, PoolId: anmlPool + 1,
-		ErthPc: privacy.FieldBytes(e.w.pc(ercPc)), TokenPc: privacy.FieldBytes(e.w.pc(tokPc))}
+	wrongPool := &dextypes.MsgRemoveLiquidityShielded{Bundle: ps.b, PoolId: anmlPool + 1,
+		ErthPc: privacy.FieldBytes(e.w.pc(ercPc)), ErthCiphertext: shieldedtest.BlindCT("wrong erth"),
+		TokenPc: privacy.FieldBytes(e.w.pc(tokPc)), TokenCiphertext: shieldedtest.BlindCT("wrong anml")}
 	unproven(wrongPool)
 	ct = e.checkTx(e.privateTx(wrongPool))
 	require.Equal(t, dextypes.ErrInvalidDenom.ABCICode(), ct.Code, ct.Log)
@@ -355,9 +357,9 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	half := shareNote.value / 2
 	pr := e.build(spend{denom: lp, inputs: []*wnote{shareNote}, valueOut: half})
 	backE, backT := e.w.fresh("uerth", 0), e.w.fresh("uanml", 0)
-	rm := &dextypes.MsgRemoveLiquidityShielded{Bundle: pr.b, Fee: pr.fee, PoolId: anmlPool,
-		ErthPc: privacy.FieldBytes(e.w.pc(backE)), ErthCiphertext: []byte("lp erth"),
-		TokenPc: privacy.FieldBytes(e.w.pc(backT)), TokenCiphertext: []byte("lp anml")}
+	rm := &dextypes.MsgRemoveLiquidityShielded{Bundle: pr.b, PoolId: anmlPool,
+		ErthPc: privacy.FieldBytes(e.w.pc(backE)), ErthCiphertext: shieldedtest.BlindCT("lp erth"),
+		TokenPc: privacy.FieldBytes(e.w.pc(backT)), TokenCiphertext: shieldedtest.BlindCT("lp anml")}
 	e.prove(rm, pr)
 	r := e.run(e.privateTx(rm))
 	require.Equal(t, uint32(0), r.Code, r.Log)

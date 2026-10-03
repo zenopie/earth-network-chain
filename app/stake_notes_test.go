@@ -170,6 +170,9 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 		size = sp.atSize
 	}
 	sp.atSize = size
+	// A msg that has the chain mint a stake note names it (mint) and carries
+	// its blind stake ciphertext.
+	mints := sp.mint != nil
 	if sp.mint == nil {
 		sp.mint = e.freshStake(sp.denom, 0)
 	}
@@ -195,6 +198,9 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 		p.Nullifiers = append(p.Nullifiers, privacy.FieldBytes(nf))
 		p.Commitments = append(p.Commitments, privacy.FieldBytes(cm))
 		p.Ciphertexts = append(p.Ciphertexts, ct)
+	}
+	if mints {
+		p.SpcCiphertext = shieldedtest.BlindCT(fmt.Sprintf("spc/%d/%d", e.w.seq, len(e.sw.leaves)))
 	}
 	sp.proof = p
 	return sp

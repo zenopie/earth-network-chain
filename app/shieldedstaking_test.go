@@ -49,7 +49,7 @@ func (e *stakeEnv) delegateMsg(val sdk.ValAddress, in *wnote, amount uint64) (*s
 	v := e.valoper(val)
 	dn := e.freshStake(sstypes.DerthDenom(v), 0)
 	sp := e.stake(&stakePlan{denom: sstypes.DerthDenom(v), mint: dn})
-	m := &sstypes.MsgDelegate{Bundle: p.b, Fee: p.fee, Validator: v, Stake: sp.proof}
+	m := &sstypes.MsgDelegate{Bundle: p.b, Amount: amount, Validator: v, Stake: sp.proof}
 	e.prove(m, p)
 	e.proveStake(m, sp)
 	return m, p, dn
@@ -77,7 +77,7 @@ func (e *stakeEnv) undelegateMsg(val sdk.ValAddress, in *snote, amount uint64) (
 	un := e.freshStake(sstypes.UnbondDenom(v, epoch.Number), 0)
 	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, outs: []*snote{e.freshStake(in.denom, in.amount-amount)},
 		vOut: amount, mint: un})
-	m := &sstypes.MsgUndelegate{Bundle: p.b, Fee: p.fee, Validator: v, Amount: amount, Stake: sp.proof}
+	m := &sstypes.MsgUndelegate{Bundle: p.b, Validator: v, Amount: amount, Stake: sp.proof}
 	e.prove(m, p)
 	e.proveStake(m, sp)
 	return m, p, sp, un
@@ -110,7 +110,7 @@ func (e *stakeEnv) claimMsgFee(in *snote, feeFromOutput uint64, prove bool) (*ss
 	var p *pendingBundle
 	if feeFromOutput == 0 {
 		p = e.feeOnly()
-		m.Bundle, m.Fee = &p.b, p.fee
+		m.Bundle = &p.b
 	}
 	if !prove {
 		unproven(m)
@@ -392,7 +392,7 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 	// Jailed and tombstoned: a delegation is refused before anything is spent.
 	in := e.w.unspent("uerth", uint64(100*ssErth))
 	p := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: uint64(100 * ssErth)})
-	m := &sstypes.MsgDelegate{Bundle: p.b, Fee: p.fee, Validator: e.valoper(vB),
+	m := &sstypes.MsgDelegate{Bundle: p.b, Validator: e.valoper(vB),
 		Stake: e.stake(&stakePlan{denom: sstypes.DerthDenom(e.valoper(vB))}).proof}
 	unproven(m) // refused before any proof is read
 	ct := e.checkTx(e.privateTx(m))
@@ -473,7 +473,7 @@ func TestPrivateStakingEpochBatchingAndHaltSafety(t *testing.T) {
 	for d := 0; d < 30; d++ {
 		m := &sstypes.MsgUndelegate{
 			Validator: e.valoper(vB), Amount: uint64(ssErth),
-			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("fakepc", uint64(d)))},
+			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("fakepc", uint64(d))), SpcCiphertext: shieldedtest.BlindCT("spc")},
 		}
 		_, err := srv.Undelegate(e.fakeAuthorized(m), m)
 		require.NoError(t, err, "day %d", d)
@@ -591,16 +591,16 @@ func TestTransparentStakingBlocked(t *testing.T) {
 	restake := st
 	restake.Commitments = [][]byte{pc, z}
 	for _, m := range []sdk.Msg{
-		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Fee: ssFee, Validator: valoper, Stake: none},
-		&sstypes.MsgRestake{Bundle: tr("r", "", 0, ssFee), Fee: ssFee, Validator: valoper, Stake: restake},
-		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Fee: ssFee, Validator: valoper, Amount: 1, Stake: st},
-		&sstypes.MsgClaimUnbonding{Bundle: &claimFee, Fee: ssFee, Validator: valoper, Epoch: 1, Amount: 1, Pc: pc, Stake: st},
-		&sstypes.MsgStakeVote{Bundle: tr("v", "", 0, ssFee), Fee: ssFee, ProposalId: 1, Validator: valoper, Options: opts,
+		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Amount: 1, Validator: valoper, Stake: none},
+		&sstypes.MsgRestake{Bundle: tr("r", "", 0, ssFee), Validator: valoper, Stake: restake},
+		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st},
+		&sstypes.MsgClaimUnbonding{Bundle: &claimFee, Validator: valoper, Epoch: 1, Amount: 1, Pc: pc, Stake: st},
+		&sstypes.MsgStakeVote{Bundle: tr("v", "", 0, ssFee), ProposalId: 1, Validator: valoper, Options: opts,
 			Weight: 1, Stake: st},
-		&sstypes.MsgLockPosition{Bundle: tr("l", "", 0, ssFee), Fee: ssFee, Validator: valoper, Amount: 1, Stake: st},
-		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Fee: ssFee, Stake: none},
-		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Fee: ssFee, Stake: none},
-		&sstypes.MsgPositionVote{Bundle: tr("pv", "", 0, ssFee), Fee: ssFee, Options: opts, Stake: none},
+		&sstypes.MsgLockPosition{Bundle: tr("l", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st},
+		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Stake: none},
+		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Stake: none},
+		&sstypes.MsgPositionVote{Bundle: tr("pv", "", 0, ssFee), Options: opts, Stake: none},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
 		require.NotNil(t, h, "%T", m)
@@ -634,7 +634,7 @@ func (e *stakeEnv) lock(in *snote, amount uint64, salt fr.Element, splits []allo
 	p := e.feeOnly()
 	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, outs: []*snote{e.freshStake(in.denom, in.amount-amount)},
 		vOut: amount, salt: salt})
-	m := &sstypes.MsgLockPosition{Bundle: p.b, Fee: p.fee, Validator: v, Amount: amount, Splits: splits, Stake: sp.proof}
+	m := &sstypes.MsgLockPosition{Bundle: p.b, Validator: v, Amount: amount, Splits: splits, Stake: sp.proof}
 	e.prove(m, p)
 	e.proveStake(m, sp)
 	res := e.run(e.privateTx(m))
@@ -689,7 +689,7 @@ func (e *stakeEnv) stakeVoteMsg(n *snote, proposalID uint64, opts []*v1.Weighted
 		require.Equal(e.t, snap.Root, sp.proof.Anchor)
 	}
 	fee := e.feeOnly()
-	m := &sstypes.MsgStakeVote{Bundle: fee.b, Fee: fee.fee, ProposalId: proposalID, Validator: v, Options: opts,
+	m := &sstypes.MsgStakeVote{Bundle: fee.b, ProposalId: proposalID, Validator: v, Options: opts,
 		Weight: n.amount, Stake: sp.proof}
 	if !prove {
 		unproven(m)
@@ -715,7 +715,7 @@ func (e *stakeEnv) stakeVote(n *snote, proposalID uint64, opt v1.VoteOption) *sn
 func (e *stakeEnv) positionVoteMsg(id uint64, salt fr.Element, proposalID uint64, opt v1.VoteOption) (*sstypes.MsgPositionVote, *pendingBundle, *stakePlan) {
 	p := e.feeOnly()
 	sp := e.ownerProof(salt, nil)
-	m := &sstypes.MsgPositionVote{Bundle: p.b, Fee: p.fee, PositionId: id, ProposalId: proposalID,
+	m := &sstypes.MsgPositionVote{Bundle: p.b, PositionId: id, ProposalId: proposalID,
 		Options: v1.NewNonSplitVoteOption(opt), Stake: sp.proof}
 	return m, p, sp
 }
@@ -850,7 +850,7 @@ func TestStakeVoteTally(t *testing.T) {
 	oldFee := e.feeOnly()
 	oldPlan := e.stake(&stakePlan{denom: n2.denom, ins: []*snote{n2}, outs: []*snote{e.freshStake(n2.denom, n2.amount-1)},
 		vOut: 1, atSize: snap.TreeSize})
-	old := &sstypes.MsgUndelegate{Bundle: oldFee.b, Fee: oldFee.fee, Validator: e.valoper(vB), Amount: 1, Stake: oldPlan.proof}
+	old := &sstypes.MsgUndelegate{Bundle: oldFee.b, Validator: e.valoper(vB), Amount: 1, Stake: oldPlan.proof}
 	unproven(old)
 	res = e.checkTx(e.privateTx(old))
 	require.Equal(t, sstypes.ErrStakeTree.ABCICode(), res.Code, res.Log)
@@ -860,7 +860,7 @@ func TestStakeVoteTally(t *testing.T) {
 	sa, pa, spa, ba := e.stakeVoteMsg(n3, prop, v1.NewNonSplitVoteOption(v1.OptionYes), true, false)
 	sb, _, _, _ := e.stakeVoteMsg(n2, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, false)
 	spliced := *sa
-	spliced.Bundle, spliced.Fee = sb.Bundle, sb.Fee
+	spliced.Bundle = sb.Bundle
 	res = e.checkTx(e.privateTx(&spliced))
 	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), res.Code, res.Log)
 	// A vote re-creates nothing itself: the chain re-mints its weight.
@@ -1057,7 +1057,7 @@ func TestGroundworksPositions(t *testing.T) {
 	up := func(splits []allocationtypes.AllocationWeight, salt fr.Element) (*sstypes.MsgUpdatePosition, *pendingBundle, *stakePlan) {
 		pt := e.feeOnly()
 		sp := e.ownerProof(salt, nil)
-		return &sstypes.MsgUpdatePosition{Bundle: pt.b, Fee: pt.fee, PositionId: id, Splits: splits, Stake: sp.proof}, pt, sp
+		return &sstypes.MsgUpdatePosition{Bundle: pt.b, PositionId: id, Splits: splits, Stake: sp.proof}, pt, sp
 	}
 	m, pt, sp := up(nil, key)
 	e.prove(m, pt)
@@ -1078,7 +1078,7 @@ func TestGroundworksPositions(t *testing.T) {
 	pt = e.feeOnly()
 	back := e.freshStake(dn.denom, 0)
 	usp := e.ownerProof(key, back)
-	um := &sstypes.MsgUnlockPosition{Bundle: pt.b, Fee: pt.fee, PositionId: id, Stake: usp.proof}
+	um := &sstypes.MsgUnlockPosition{Bundle: pt.b, PositionId: id, Stake: usp.proof}
 	e.prove(um, pt)
 	e.proveStake(um, usp)
 	fb = e.run(e.privateTx(um))
@@ -1395,7 +1395,7 @@ func TestStakeNotesOwnerLocked(t *testing.T) {
 	restake := func(outs ...*snote) (*sstypes.MsgRestake, *pendingBundle, *stakePlan) {
 		p := e.feeOnly()
 		sp := e.stake(&stakePlan{denom: dn.denom, ins: []*snote{dn}, outs: outs})
-		return &sstypes.MsgRestake{Bundle: p.b, Fee: p.fee, Validator: v, Stake: sp.proof}, p, sp
+		return &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: sp.proof}, p, sp
 	}
 
 	// The transfer attempt: an output note of another owner. No witness
@@ -1422,7 +1422,7 @@ func TestStakeNotesOwnerLocked(t *testing.T) {
 	forged.Stake.Commitments = [][]byte{privacy.FieldBytes(privacy.StakeCM(asset, a.amount, privacy.StakePC(other, a.rho, a.rcm))),
 		honest.Stake.Commitments[1]}
 	fb := e.feeOnly()
-	forged.Bundle, forged.Fee = fb.b, fb.fee
+	forged.Bundle = fb.b
 	e.prove(&forged, fb)
 	res := e.checkTx(e.privateTx(&forged))
 	require.Equal(t, sstypes.ErrInvalidStakeProof.ABCICode(), res.Code, res.Log)
@@ -1443,7 +1443,8 @@ func TestStakeNotesOwnerLocked(t *testing.T) {
 	in := e.w.unspent("uerth", uint64(ssErth))
 	sw := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: uint64(ssErth)})
 	out := e.w.fresh(dn.denom, 0)
-	swap := &dextypes.MsgNoteSwap{Bundle: sw.b, Fee: sw.fee, DenomOut: dn.denom, MinAmountOut: 1, Pc: privacy.FieldBytes(e.w.pc(out))}
+	swap := &dextypes.MsgNoteSwap{Bundle: sw.b, DenomIn: "uerth", AmountIn: uint64(ssErth), DenomOut: dn.denom, MinAmountOut: 1,
+		Pc: privacy.FieldBytes(e.w.pc(out)), Ciphertext: shieldedtest.BlindCT("derth-swap")}
 	unproven(swap)
 	res = e.checkTx(e.privateTx(swap))
 	require.Equal(t, dextypes.ErrPoolNotFound.ABCICode(), res.Code, res.Log)

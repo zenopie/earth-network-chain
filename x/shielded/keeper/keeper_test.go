@@ -156,7 +156,8 @@ func (f *fixture) shieldScenario(s shieldedtest.Scenario) {
 	for _, n := range s.Shields {
 		coin := sdk.NewCoin(n.Denom, math.NewIntFromUint64(n.Value))
 		f.bank.mint(funder, coin)
-		_, err := f.msgs.Shield(f.ctx, &types.MsgShield{Sender: f.bech(funder), Amount: coin, Pc: privacy.FieldBytes(n.PC())})
+		_, err := f.msgs.Shield(f.ctx, &types.MsgShield{Sender: f.bech(funder), Amount: coin, Pc: privacy.FieldBytes(n.PC()),
+			Ciphertext: shieldedtest.BlindCT(string(privacy.FieldBytes(n.PC())))})
 		require.NoError(f.t, err)
 	}
 }

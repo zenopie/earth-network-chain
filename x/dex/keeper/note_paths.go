@@ -194,8 +194,8 @@ func (k Keeper) checkNoteSwap(ctx context.Context, m *types.MsgNoteSwap) error {
 	return k.checkNoteOut(ctx, m.DenomOut, m.Pc, m.Ciphertext)
 }
 
-// executeNoteSwap: the note's value into this module, through the pools, the
-// fee from output (if any) to fee_collector, the rest minted to pc. Runs in
+// executeNoteSwap: the note's value into this module, through the pools, and
+// the output minted to pc (the fee was the bundle's). Runs in
 // the private ante after the bundle was spent; any error (min_amount_out
 // not met) fails the whole tx, spend included.
 func (k Keeper) executeNoteSwap(ctx sdk.Context, m *types.MsgNoteSwap) (*types.MsgNoteSwapResponse, error) {
@@ -207,15 +207,7 @@ func (k Keeper) executeNoteSwap(ctx sdk.Context, m *types.MsgNoteSwap) (*types.M
 	if err != nil {
 		return nil, err
 	}
-	note := out
-	if m.FeeFromOutput > 0 {
-		fee := math.NewIntFromUint64(m.FeeFromOutput)
-		if err := k.shielded.PayFeeFromModule(ctx, types.ModuleName, fee); err != nil {
-			return nil, err
-		}
-		note = out.SubAmount(fee) // out >= min_amount_out > fee
-	}
-	pos, _, err := k.shielded.MintNote(ctx, types.ModuleName, note, m.Pc, m.Ciphertext)
+	pos, _, err := k.shielded.MintNote(ctx, types.ModuleName, out, m.Pc, m.Ciphertext)
 	if err != nil {
 		return nil, err
 	}

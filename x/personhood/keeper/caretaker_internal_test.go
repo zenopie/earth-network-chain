@@ -70,6 +70,7 @@ func caretakerKeepers(t *testing.T) (Keeper, allocationkeeper.Keeper, sdk.Contex
 		types.StoreKey: phKey, allocationtypes.StoreKey: alKey,
 	}, map[string]*storetypes.TransientStoreKey{"t": storetypes.NewTransientStoreKey("t")}, nil).
 		WithBlockTime(time.Unix(1_800_000_000, 0).UTC())
+	ctx = shieldedtypes.WithTxFields(ctx, shieldedtypes.TxFields{}) // as the private ante records them
 	authority := authtypes.NewModuleAddress(types.GovModuleName)
 	ak := allocationkeeper.NewKeeper(runtime.NewKVStoreService(alKey), encCfg.Codec, ac, authority, alBank{}, stakingStub{}, &burnLog{})
 	require.NoError(t, ak.Options.Set(ctx, collections.Join(uint32(types.AllocationStream), uint64(1)), allocationtypes.AllocationOption{

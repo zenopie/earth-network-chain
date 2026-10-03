@@ -169,14 +169,20 @@ func TestPrivateMsgGas(t *testing.T) {
 
 func TestMsgShieldValidateBasic(t *testing.T) {
 	pc := privacy.FieldBytes(shieldedtest.Det("pc", 0))
-	ok := types.MsgShield{Amount: sdk.NewInt64Coin("uerth", 1), Pc: pc}
+	ct := shieldedtest.BlindCT("shield")
+	ok := types.MsgShield{Amount: sdk.NewInt64Coin("uerth", 1), Pc: pc, Ciphertext: ct}
 	require.NoError(t, ok.ValidateBasic())
 	for name, m := range map[string]types.MsgShield{
-		"zero":       {Amount: sdk.NewInt64Coin("uerth", 0), Pc: pc},
-		"over u64":   {Amount: sdk.NewCoin("uerth", math.NewIntFromUint64(^uint64(0)).AddRaw(1)), Pc: pc},
-		"bad pc":     {Amount: ok.Amount, Pc: bytes.Repeat([]byte{0xff}, 32)},
-		"short pc":   {Amount: ok.Amount, Pc: pc[:31]},
-		"ciphertext": {Amount: ok.Amount, Pc: pc, Ciphertext: make([]byte, types.MaxCiphertextBytes+1)},
+		"zero":     {Amount: sdk.NewInt64Coin("uerth", 0), Pc: pc, Ciphertext: ct},
+		"over u64": {Amount: sdk.NewCoin("uerth", math.NewIntFromUint64(^uint64(0)).AddRaw(1)), Pc: pc, Ciphertext: ct},
+		"bad pc":   {Amount: ok.Amount, Pc: bytes.Repeat([]byte{0xff}, 32), Ciphertext: ct},
+		"short pc": {Amount: ok.Amount, Pc: pc[:31], Ciphertext: ct},
+		// The note discovery rule: every minted note carries its blind
+		// ciphertext, exactly 177 bytes.
+		"no ciphertext":    {Amount: ok.Amount, Pc: pc},
+		"short ciphertext": {Amount: ok.Amount, Pc: pc, Ciphertext: ct[:176]},
+		"v1 ciphertext":    {Amount: ok.Amount, Pc: pc, Ciphertext: make([]byte, 217)},
+		"huge ciphertext":  {Amount: ok.Amount, Pc: pc, Ciphertext: make([]byte, types.MaxCiphertextBytes+1)},
 	} {
 		require.Error(t, m.ValidateBasic(), name)
 	}

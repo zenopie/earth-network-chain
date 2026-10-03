@@ -474,6 +474,7 @@ func (e *stakeEnv) shield(amount uint64) *wnote {
 	n := e.w.fresh("uerth", amount)
 	res := e.run(e.signedTx(e.user, 600_000, 5_000, &shieldedtypes.MsgShield{
 		Sender: e.bech(e.userAddr()), Amount: sdk.NewCoin("uerth", math.NewIntFromUint64(amount)), Pc: privacy.FieldBytes(e.w.pc(n)),
+		Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("shield/%d", len(e.w.leaves))),
 	}))
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.w.track(n)

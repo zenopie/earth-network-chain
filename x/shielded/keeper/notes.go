@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"strconv"
 
@@ -39,8 +40,8 @@ func (k Keeper) noteFor(ctx context.Context, coin sdk.Coin, pc, ciphertext []byt
 	if err != nil {
 		return nil, errorsmod.Wrapf(types.ErrInvalidNote, "pc: %v", err)
 	}
-	if len(ciphertext) > types.MaxCiphertextBytes {
-		return nil, errorsmod.Wrapf(types.ErrInvalidNote, "ciphertext exceeds %d bytes", types.MaxCiphertextBytes)
+	if err := types.CheckBlindCiphertext("ciphertext", ciphertext); err != nil {
+		return nil, errorsmod.Wrap(types.ErrInvalidNote, err.Error())
 	}
 	id, err := k.AssetID(ctx, coin.Denom)
 	if err != nil {
@@ -62,8 +63,8 @@ func (k Keeper) CheckMint(ctx context.Context, pc, ciphertext []byte) error {
 	if _, err := privacy.FieldFromBytes(pc); err != nil {
 		return errorsmod.Wrapf(types.ErrInvalidNote, "pc: %v", err)
 	}
-	if len(ciphertext) > types.MaxCiphertextBytes {
-		return errorsmod.Wrapf(types.ErrInvalidNote, "ciphertext exceeds %d bytes", types.MaxCiphertextBytes)
+	if err := types.CheckBlindCiphertext("ciphertext", ciphertext); err != nil {
+		return errorsmod.Wrap(types.ErrInvalidNote, err.Error())
 	}
 	return k.checkCapacity(ctx, types.MaxBundlesPerMsg*orchard.MaxActions+1)
 }
@@ -78,8 +79,11 @@ func (k Keeper) CheckMint(ctx context.Context, pc, ciphertext []byte) error {
 // never mints, so the turnstile counts exactly the coins that arrived and
 // the pool balance stays In - Out without exception.
 //
-// ciphertext is optional. A recipient who chose pc and knows the value it is
-// owed can find its note by recomputing cm from the events.
+// ciphertext is required: the note's amount-blind v2 ciphertext
+// (types.CheckBlindCiphertext), supplied by the msg that asked for the note.
+// It is emitted with the note (and on the mint event), and is how the owner
+// finds the note: trial decryption, then cm recomputed from the minted
+// amount.
 func (k Keeper) MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error) {
 	if err := notThePool(fromModule); err != nil {
 		return 0, nil, err
@@ -102,6 +106,7 @@ func (k Keeper) MintNote(ctx context.Context, fromModule string, coin sdk.Coin, 
 		sdk.NewAttribute(types.AttributeKeyModule, fromModule),
 		sdk.NewAttribute(types.AttributeKeyAmount, coin.String()),
 		sdk.NewAttribute(types.AttributeKeyPosition, strconv.FormatUint(pos, 10)),
+		sdk.NewAttribute(types.AttributeKeyCiphertext, base64.StdEncoding.EncodeToString(ciphertext)),
 	))
 	return pos, cm, nil
 }
@@ -127,6 +132,7 @@ func (k Keeper) Shield(ctx context.Context, sender sdk.AccAddress, coin sdk.Coin
 		sdk.NewAttribute(types.AttributeKeySender, senderStr),
 		sdk.NewAttribute(types.AttributeKeyAmount, coin.String()),
 		sdk.NewAttribute(types.AttributeKeyPosition, strconv.FormatUint(pos, 10)),
+		sdk.NewAttribute(types.AttributeKeyCiphertext, base64.StdEncoding.EncodeToString(ciphertext)),
 	))
 	return pos, cm, nil
 }
