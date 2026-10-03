@@ -91,6 +91,24 @@ func (k Keeper) ResetHeightsForZeroHeight(ctx context.Context, height int64) err
 			return err
 		}
 	}
+	// A book's supply_height is compared with snapshot heights
+	// (snapshotSupply): shifted alike.
+	var books []types.ValidatorState
+	if err := k.Validators.Walk(ctx, nil, func(_ string, vs types.ValidatorState) (bool, error) {
+		books = append(books, vs)
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	for _, vs := range books {
+		if vs.SupplyHeight == 0 {
+			continue
+		}
+		vs.SupplyHeight = shift(vs.SupplyHeight)
+		if err := k.Validators.Set(ctx, vs.Validator, vs); err != nil {
+			return err
+		}
+	}
 	var snaps []types.ProposalSnapshot
 	if err := k.Snapshots.Walk(ctx, nil, func(_ uint64, s types.ProposalSnapshot) (bool, error) {
 		snaps = append(snaps, s)

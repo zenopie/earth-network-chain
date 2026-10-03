@@ -60,6 +60,18 @@ message ValidatorState {
   // checkpoint_seq is the latest snapshot sequence for which this book's
   // derth_supply was checkpointed (SupplyCheckpoint) before it changed.
   uint64 checkpoint_seq = 6;
+  // supply_height is the height of the block in which derth_supply last
+  // changed, and supply_at_block_start its value before that block's first
+  // change. A snapshot taken in a block pairs the stake roots recorded at
+  // the end of the block before, so the supply it sees is the supply at the
+  // start of its block (audit 4, I1), not after changes earlier in the block.
+  int64 supply_height = 7;
+  string supply_at_block_start = 8 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
 }
 
 // SupplyCheckpoint is a book's derth supply just before its first change

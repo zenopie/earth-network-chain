@@ -29,6 +29,9 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.checkGenesisDelegations(ctx); err != nil {
 		return err
 	}
+	if err := k.checkModuleWithdrawAddr(ctx); err != nil {
+		return err
+	}
 	if err := k.Params.Set(ctx, gs.Params); err != nil {
 		return err
 	}
@@ -94,6 +97,25 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if gs.EpochSweep != nil {
 		if err := k.EpochSweep.Set(ctx, *gs.EpochSweep); err != nil {
 			return err
+		}
+	}
+	// An open snapshot's height is compared with the new chain's heights (a
+	// position created at or after it may not vote), so it must be below the
+	// chain's first height: a zero-height export shifts it below 1
+	// (ResetHeightsForZeroHeight), and an export relaunched at
+	// initial_height = export height + 1 has it below already. A snapshot at
+	// or above the initial height would let positions created on the new
+	// chain vote on it (audit 4, I2).
+	// (InitChain's context carries the initial height when it is above 1,
+	// and 0 for a chain starting at 1.)
+	initialHeight := sdk.UnwrapSDKContext(ctx).BlockHeight()
+	if initialHeight < 1 {
+		initialHeight = 1
+	}
+	for _, s := range gs.Snapshots {
+		if s.Height >= initialHeight {
+			return fmt.Errorf("snapshot %d: height %d is not below the initial height %d (export for zero height, or relaunch past it)",
+				s.ProposalId, s.Height, initialHeight)
 		}
 	}
 	for _, s := range gs.Snapshots {
@@ -212,11 +234,57 @@ func (k Keeper) checkGenesisValidators(_ context.Context, gs types.GenesisState)
 }
 
 // initStakeTree rebuilds the stake note tree from its leaves, its nullifier
-// set and its roots, the last of which is the latest and must be the
-// rebuilt tree's root.
+// set and its roots. Every root record, and every snapshot's note root, must
+// be the rebuilt tree's root at its tree_size, and no record may be dated
+// after genesis (audit 4, G1 / L-B: only the last was checked, so any other
+// record or a snapshot could carry a forged anchor). The last record is the
+// latest and must be the rebuilt tree's root.
 func (k Keeper) initStakeTree(ctx context.Context, gs types.GenesisState) error {
+	genesisTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	n := uint64(len(gs.StakeCommitments))
+	want := map[uint64][][]byte{} // tree_size -> roots claimed there
+	for i, r := range gs.StakeRoots {
+		if r.Time > genesisTime {
+			return fmt.Errorf("stake root %d: time %d is after genesis time %d", i, r.Time, genesisTime)
+		}
+		if r.TreeSize > n {
+			return fmt.Errorf("stake root %d: tree_size %d is past the tree's %d", i, r.TreeSize, n)
+		}
+		want[r.TreeSize] = append(want[r.TreeSize], r.Root)
+	}
+	for _, s := range gs.Snapshots {
+		if len(s.Root) == 0 {
+			continue
+		}
+		if s.TreeSize > n {
+			return fmt.Errorf("snapshot %d: tree_size %d is past the stake tree's %d", s.ProposalId, s.TreeSize, n)
+		}
+		want[s.TreeSize] = append(want[s.TreeSize], s.Root)
+	}
 	t, err := k.stakeTree(ctx)
 	if err != nil {
+		return err
+	}
+	if t.Size() != 0 {
+		return fmt.Errorf("stake tree is not empty at genesis")
+	}
+	check := func() error {
+		roots, ok := want[t.Size()]
+		if !ok {
+			return nil
+		}
+		root, err := t.Root()
+		if err != nil {
+			return err
+		}
+		for _, r := range roots {
+			if !bytes.Equal(r, privacy.FieldBytes(root)) {
+				return fmt.Errorf("stake root %X is not the root of the first %d stake commitments", r, t.Size())
+			}
+		}
+		return nil
+	}
+	if err := check(); err != nil {
 		return err
 	}
 	for i, cm := range gs.StakeCommitments {
@@ -225,6 +293,9 @@ func (k Keeper) initStakeTree(ctx context.Context, gs types.GenesisState) error 
 			return fmt.Errorf("stake commitment %d: %w", i, err)
 		}
 		if _, err := t.Append(leaf); err != nil {
+			return err
+		}
+		if err := check(); err != nil {
 			return err
 		}
 	}
@@ -495,4 +566,22 @@ func (k Keeper) delegationAddrs(del, val string) (sdk.AccAddress, sdk.ValAddress
 		return nil, nil, fmt.Errorf("genesis validator %q: %w", val, err)
 	}
 	return d, v, nil
+}
+
+// checkModuleWithdrawAddr refuses a genesis in which x/distribution pays
+// this module's delegation rewards anywhere but the module account (audit
+// 4, G2): the epoch end withdraws them by balance delta, so rewards paid
+// elsewhere would simply never be booked, every private staker's yield
+// going to whoever the withdraw address names, with no invariant noticing.
+// Nothing on chain can set it (the module has no key, and MsgSetWithdrawAddress
+// needs the delegator's signature), so genesis is the one way in.
+func (k Keeper) checkModuleWithdrawAddr(ctx context.Context) error {
+	wa, err := k.distr.GetDelegatorWithdrawAddr(ctx, k.modAddr)
+	if err != nil {
+		return err
+	}
+	if !wa.Equals(k.modAddr) {
+		return fmt.Errorf("genesis: the %s module account's withdraw address is %s, not itself", types.ModuleName, wa)
+	}
+	return nil
 }

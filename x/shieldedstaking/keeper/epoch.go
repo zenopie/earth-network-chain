@@ -42,11 +42,18 @@ import (
 // tree's, if the block moved them (a root is an anchor from the end of the
 // block that made it; a snapshot takes both from the end of the same block).
 func (k Keeper) EndBlocker(ctx context.Context) error {
-	if err := k.guarded(ctx, k.recordStakeRoot); err != nil {
-		k.failure(ctx, "stake_root", "", err)
-	}
-	if err := k.guarded(ctx, k.recordNfRoot); err != nil {
-		k.failure(ctx, "stake_nf_root", "", err)
+	// The note root and the nullifier root in ONE guarded call (audit 4,
+	// L-A): a snapshot pairs the latest of each as of the same block's end
+	// (a note in the root is unspent iff its nullifier is not under the nf
+	// root). Recorded separately, one could fail and the other not, and a
+	// snapshot would pair roots of different blocks.
+	if err := k.guarded(ctx, func(cc context.Context) error {
+		if err := k.recordStakeRoot(cc); err != nil {
+			return err
+		}
+		return k.recordNfRoot(cc)
+	}); err != nil {
+		k.failure(ctx, "stake_roots", "", err)
 	}
 	k.reweighSlashed(ctx)
 	k.matureRecords(ctx)

@@ -118,6 +118,12 @@ func (h StakingHooks) AfterValidatorCreated(ctx context.Context, val sdk.ValAddr
 	if err := h.k.refuseVestingOperator(ctx, val); err != nil {
 		return err
 	}
+	// A validator re-created at an operator whose previous validator's
+	// escrow release is still queued: the escrow is this validator's again,
+	// and the epoch end's retry must not release it out from under it.
+	if err := h.k.PendingReleases.Remove(ctx, val); err != nil {
+		return err
+	}
 	return h.k.setOperatorEscrow(ctx, val, true)
 }
 

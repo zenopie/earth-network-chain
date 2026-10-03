@@ -16,6 +16,8 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
+
+	storetypes "cosmossdk.io/store/types"
 )
 
 // Stake votes.
@@ -83,7 +85,30 @@ import (
 // checkpointSupply must run before vs's derth supply changes: it records
 // the supply open snapshots saw, if this is the book's first change since
 // the latest snapshot. vs is updated; the caller stores it.
+//
+// A snapshot taken in block H sees the supply at the START of H (audit 4,
+// I1): its stake roots are the ones recorded at the end of H-1, so a
+// change earlier in H must not count. The snapshots in (checkpoint_seq,
+// cur] were all taken after the book's last change, at height
+// supply_height or later: those taken in that same block saw
+// supply_at_block_start, later ones the current supply. Each group gets
+// its checkpoint, under the highest seq in it, so snapshotSupply's
+// "smallest q >= seq" finds the right one.
 func (k Keeper) checkpointSupply(ctx context.Context, vs *types.ValidatorState) error {
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
+	supply := vs.DerthSupply
+	if supply.IsNil() {
+		supply = math.ZeroInt()
+	}
+	blockStart := vs.SupplyAtBlockStart
+	if blockStart.IsNil() {
+		blockStart = math.ZeroInt()
+	}
+	defer func() {
+		if vs.SupplyHeight != height {
+			vs.SupplyHeight, vs.SupplyAtBlockStart = height, supply
+		}
+	}()
 	cur, err := k.SnapshotSeq.Peek(ctx)
 	if err != nil {
 		return err
@@ -96,26 +121,50 @@ func (k Keeper) checkpointSupply(ctx context.Context, vs *types.ValidatorState) 
 		return err
 	}
 	if open {
-		key := collections.Join(vs.Validator, cur)
-		has, err := k.SupplyCheckpoints.Has(ctx, key)
-		if err != nil {
+		// The highest seq in (checkpoint_seq, cur] taken in the block of the
+		// book's last change.
+		lastAt := uint64(0)
+		rng := new(collections.Range[collections.Pair[uint64, uint64]]).
+			StartExclusive(collections.Join(vs.CheckpointSeq, ^uint64(0))).
+			EndInclusive(collections.Join(cur, ^uint64(0)))
+		if err := k.SnapshotsBySeq.Walk(ctx, rng, func(key collections.Pair[uint64, uint64]) (bool, error) {
+			snap, err := k.Snapshots.Get(ctx, key.K2())
+			if err != nil {
+				return true, err
+			}
+			if snap.Height == vs.SupplyHeight && key.K1() > lastAt {
+				lastAt = key.K1()
+			}
+			return false, nil
+		}); err != nil {
 			return err
 		}
-		if !has {
-			supply := vs.DerthSupply
-			if supply.IsNil() {
-				supply = math.ZeroInt()
-			}
-			if err := k.SupplyCheckpoints.Set(ctx, key, supply); err != nil {
+		if lastAt > 0 {
+			if err := k.putCheckpoint(ctx, vs.Validator, lastAt, blockStart); err != nil {
 				return err
 			}
-			if err := k.CheckpointsBySeq.Set(ctx, collections.Join(cur, vs.Validator)); err != nil {
+		}
+		if lastAt < cur {
+			if err := k.putCheckpoint(ctx, vs.Validator, cur, supply); err != nil {
 				return err
 			}
 		}
 	}
 	vs.CheckpointSeq = cur
 	return nil
+}
+
+// putCheckpoint stores (valoper, seq) -> supply unless an entry is there.
+func (k Keeper) putCheckpoint(ctx context.Context, valoper string, seq uint64, supply math.Int) error {
+	key := collections.Join(valoper, seq)
+	has, err := k.SupplyCheckpoints.Has(ctx, key)
+	if err != nil || has {
+		return err
+	}
+	if err := k.SupplyCheckpoints.Set(ctx, key, supply); err != nil {
+		return err
+	}
+	return k.CheckpointsBySeq.Set(ctx, collections.Join(seq, valoper))
 }
 
 func (k Keeper) anyOpenSnapshot(ctx context.Context) (bool, error) {
@@ -145,6 +194,18 @@ func (k Keeper) snapshotSupply(ctx context.Context, snap types.ProposalSnapshot,
 	defer it.Close()
 	if it.Valid() {
 		return it.Value()
+	}
+	// No change since the snapshot, except possibly earlier in its own block
+	// (a change after it in that block would have checkpointed): then the
+	// snapshot saw the supply at the block's start.
+	vs, err := k.Validators.Get(ctx, valoper)
+	if errors.Is(err, collections.ErrNotFound) {
+		return math.ZeroInt(), nil
+	} else if err != nil {
+		return math.Int{}, err
+	}
+	if vs.SupplyHeight == snap.Height && !vs.SupplyAtBlockStart.IsNil() {
+		return vs.SupplyAtBlockStart, nil
 	}
 	return k.Supply(ctx, valoper), nil
 }
@@ -452,7 +513,38 @@ func (k Keeper) extendSnapshot(ctx context.Context, key collections.Pair[int64, 
 // it removes the proposal's transparent votes, which x/gov relies on.
 func (k Keeper) StakeTally() govkeeper.CalculateVoteResultsAndVotingPowerFn {
 	return func(ctx context.Context, gk govkeeper.Keeper, proposal v1.Proposal, validators map[string]v1.ValidatorGovInfo,
-	) (math.LegacyDec, map[v1.VoteOption]math.LegacyDec, error) {
+	) (total math.LegacyDec, results map[v1.VoteOption]math.LegacyDec, err error) {
+		// x/gov's EndBlocker returns this function's error, and a panic in
+		// it (Backing's or the supply maths on corrupt state) escapes the
+		// EndBlocker: either is a chain halt. Instead the tally fails safe
+		// (audit 4): an empty result, which no proposal passes (no voting
+		// power: below quorum, and all-abstain fails regardless).
+		defer func() {
+			if r := recover(); r != nil {
+				if _, oog := r.(storetypes.ErrorOutOfGas); oog {
+					panic(r)
+				}
+				err = fmt.Errorf("panic: %v", r)
+			}
+			if err != nil {
+				k.failure(ctx, "stake_tally", strconv.FormatUint(proposal.Id, 10), err)
+				total, results, err = math.LegacyZeroDec(), emptyResults(), nil
+			}
+		}()
+		return k.stakeTally(ctx, gk, proposal, validators)
+	}
+}
+
+func emptyResults() map[v1.VoteOption]math.LegacyDec {
+	return map[v1.VoteOption]math.LegacyDec{
+		v1.OptionYes: math.LegacyZeroDec(), v1.OptionAbstain: math.LegacyZeroDec(),
+		v1.OptionNo: math.LegacyZeroDec(), v1.OptionNoWithVeto: math.LegacyZeroDec(),
+	}
+}
+
+func (k Keeper) stakeTally(ctx context.Context, gk govkeeper.Keeper, proposal v1.Proposal, validators map[string]v1.ValidatorGovInfo,
+) (math.LegacyDec, map[v1.VoteOption]math.LegacyDec, error) {
+	{
 		total := math.LegacyZeroDec()
 		results := map[v1.VoteOption]math.LegacyDec{
 			v1.OptionYes: math.LegacyZeroDec(), v1.OptionAbstain: math.LegacyZeroDec(),

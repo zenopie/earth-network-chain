@@ -50,10 +50,14 @@ func (k Keeper) ValidatorState(ctx context.Context, valoper string) (types.Valid
 			PendingUndelegation: math.ZeroInt(),
 			EpochRate:           math.LegacyOneDec(),
 			DerthSupply:         math.ZeroInt(),
+			SupplyAtBlockStart:  math.ZeroInt(),
 		}, nil
 	}
 	if err == nil && vs.DerthSupply.IsNil() {
 		vs.DerthSupply = math.ZeroInt()
+	}
+	if err == nil && vs.SupplyAtBlockStart.IsNil() {
+		vs.SupplyAtBlockStart = math.ZeroInt()
 	}
 	return vs, err
 }

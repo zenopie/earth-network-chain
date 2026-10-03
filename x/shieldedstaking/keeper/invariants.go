@@ -35,7 +35,8 @@ import (
 //     Conversions themselves are exact integer floors that favour the pool.
 //  5. Reward escrows: every validator has its escrow recorded and its
 //     operator's withdraw address is that escrow; no other escrow is
-//     recorded (a removed validator's was released).
+//     recorded (a removed validator's was released). The module account's
+//     own withdraw address is itself (audit 4, G2).
 //  6. Groundworks: per (validator, option), the stored total (current epoch)
 //     == the sum of derth x percent over the validator's live positions.
 //  7. Stake nullifier tree (O(1)): its size is 0, or 1 + its last value's
@@ -95,6 +96,11 @@ func (k Keeper) assertNfTree(ctx context.Context) error {
 }
 
 func (k Keeper) assertEscrows(ctx context.Context) error {
+	if wa, err := k.distr.GetDelegatorWithdrawAddr(ctx, k.modAddr); err != nil {
+		return err
+	} else if !wa.Equals(k.modAddr) {
+		return types.ErrInvariant.Wrapf("module withdraw address %s is not the module account", wa)
+	}
 	vals, err := k.staking.GetAllValidators(ctx)
 	if err != nil {
 		return err

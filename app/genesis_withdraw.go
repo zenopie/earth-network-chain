@@ -6,6 +6,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -32,9 +33,18 @@ func ValidateOperatorWithdrawAddrs(cdc codec.JSONCodec, txDecoder sdk.TxDecoder,
 		return nil
 	}
 	foreign := map[string]string{}
+	modules := map[string]string{}
+	for name := range GetMaccPerms() {
+		modules[authtypes.NewModuleAddress(name).String()] = name
+	}
 	for _, wi := range distr.DelegatorWithdrawInfos {
 		if wi.DelegatorAddress != wi.WithdrawAddress {
 			foreign[wi.DelegatorAddress] = wi.WithdrawAddress
+			// A module account's rewards (x/shieldedstaking's are every
+			// private staker's) are paid to the module itself (audit 4, G2).
+			if name, ok := modules[wi.DelegatorAddress]; ok {
+				return fmt.Errorf("the %s module account has withdraw address %s: a module account's rewards stay with it", name, wi.WithdrawAddress)
+			}
 		}
 	}
 	check := func(valoper string) error {
