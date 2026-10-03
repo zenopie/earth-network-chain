@@ -16,6 +16,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
@@ -448,4 +450,48 @@ func TestAuditOrphanDelegationToCommunityPool(t *testing.T) {
 	pool1, err := e.app.DistrKeeper.FeePool.Get(e.ctx())
 	require.NoError(t, err)
 	require.True(t, pool1.CommunityPool.AmountOf("uerth").Sub(pool0.CommunityPool.AmountOf("uerth")).GTE(math.LegacyNewDecFromInt(orphan)))
+}
+
+// F4: a donation to a validator's rewards pool (MsgDepositValidatorRewardsPool)
+// raises the rate of its derth. Against a book reduced to 1 derth it made
+// the next delegation round to almost nothing, the loss going to the 1
+// derth's holder. A delegation must now mint at least min_delegation derth,
+// so its rounding loss is at most a millionth of it; one too small for that
+// is refused, not rounded away.
+func TestAuditDonationInflationHarmless(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(10_000 * ssErth)
+	v, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	res := e.auditDelegate(v, uint64(ssErth), "atk")
+	e.next(25 * time.Hour)
+	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
+	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth - 1,
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/atk", 1))}}
+	_, err := srv.Undelegate(e.fakeAuthorized(u), u)
+	require.NoError(t, err)
+	e.next(25 * time.Hour)
+	require.Equal(t, math.OneInt(), e.app.ShieldedStakingKeeper.Supply(e.ctx(), e.valoper(v)))
+	_, err = distrkeeper.NewMsgServerImpl(e.app.DistrKeeper).DepositValidatorRewardsPool(e.ctx(), &distrtypes.MsgDepositValidatorRewardsPool{
+		Depositor: e.bech(e.userAddr()), ValidatorAddress: e.valoper(v), Amount: sdk.NewCoins(sdk.NewInt64Coin("uerth", 1_000*ssErth)),
+	})
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	b, s, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	t.Logf("after the donation: backing %s for %s derth", b, s)
+	require.True(t, b.GT(math.NewInt(1000)))
+
+	m := auditDelegateMsg(e.valoper(v), uint64(100*ssErth), "victim")
+	_, err = srv.Delegate(e.fakeAuthorized(m), m)
+	require.ErrorContains(t, err, "less than the minimum")
+	// a delegation that mints enough loses under a millionth to rounding
+	big := b.MulRaw(ssErth).Add(b).Uint64()
+	e.auditFundPool(int64(big) + ssErth)
+	vr := e.auditDelegate(v, big, "big")
+	b2, s2, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	value := math.NewIntFromUint64(vr.Derth).Mul(b2).Quo(s2)
+	loss := math.NewIntFromUint64(big).Sub(value)
+	require.True(t, loss.MulRaw(ssErth).LTE(math.NewIntFromUint64(big)), "loss %s of %d", loss, big)
 }

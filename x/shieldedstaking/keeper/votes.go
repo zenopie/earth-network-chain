@@ -37,6 +37,18 @@ import (
 // exceeds bonded stake. Those shares are deducted from v, which (as in the
 // SDK's default tally) then votes whatever was not deducted: its self-bond,
 // the module's un-voted derth, and any delegator that did not vote.
+//
+// A vote outlives the stake that cast it (audit F6, by design): the notes a
+// stake vote spent are re-minted to their owner, who may then undelegate
+// them, and a position may unlock after voting; the vote still counts. The
+// chain cannot tell which derth left (the notes are private), so it counts
+// a vote as a fraction of the validator's snapshot supply applied to the
+// module's current shares: undelegations during the vote shrink every
+// private vote at v pro rata (voters' and non-voters' alike), never the
+// total past the module's bonded stake at v. A voter that exits therefore
+// keeps a diluted voice until the proposal ends, as in a snapshot-weighted
+// vote. Tracking each voted note to its exit would mean linking the vote to
+// later spends, which the privacy model forbids.
 
 // Snapshots are O(1) (audit F2: walking every book, with a reward
 // computation each, inside the deposit tx that activates voting let enough
