@@ -167,7 +167,9 @@ type MsgRegister struct {
 	// idc is the identity commitment H(TAG_ID, id_secret), 32 bytes.
 	Idc []byte `protobuf:"bytes,6,opt,name=idc,proto3" json:"idc,omitempty"`
 	// pc_anml receives the registration's ANML note.
-	PcAnml         []byte `protobuf:"bytes,7,opt,name=pc_anml,json=pcAnml,proto3" json:"pc_anml,omitempty"`
+	PcAnml []byte `protobuf:"bytes,7,opt,name=pc_anml,json=pcAnml,proto3" json:"pc_anml,omitempty"`
+	// ciphertext_anml / ciphertext_erth: each note's amount-blind v2
+	// ciphertext (zk/privacy.EncryptBlindNote), exactly 177 bytes, required.
 	CiphertextAnml []byte `protobuf:"bytes,8,opt,name=ciphertext_anml,json=ciphertextAnml,proto3" json:"ciphertext_anml,omitempty"`
 	// pc_erth receives the registrant's half of the registration reward.
 	PcErth         []byte `protobuf:"bytes,9,opt,name=pc_erth,json=pcErth,proto3" json:"pc_erth,omitempty"`
@@ -357,7 +359,8 @@ type MsgClaimAnml struct {
 	Membership Membership   `protobuf:"bytes,2,opt,name=membership,proto3" json:"membership"`
 	Day        uint64       `protobuf:"varint,3,opt,name=day,proto3" json:"day,omitempty"`
 	Pc         []byte       `protobuf:"bytes,4,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext []byte       `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	// ciphertext is the ANML note's amount-blind v2 ciphertext, 177 bytes.
+	Ciphertext []byte `protobuf:"bytes,5,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
 }
 
 func (m *MsgClaimAnml) Reset()         { *m = MsgClaimAnml{} }

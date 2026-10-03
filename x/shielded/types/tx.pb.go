@@ -367,8 +367,10 @@ func (m *MsgShieldResponse) GetCommitment() []byte {
 // With no receiver the balances must be exactly the fee.
 //
 // sighash = zk/orchard.Sighash("/earth.shielded.v1.MsgSend", chain_id,
-// [bundle], Bytes(receiver address bytes), fee), so neither the receiver,
-// the fee, a ciphertext nor any balance can be changed by whoever relays it.
+// tx fields (memo, timeout_height, gas_limit), [bundle], Bytes(receiver
+// address bytes), fee), so neither the receiver, the fee, a ciphertext, any
+// balance nor the tx's memo, timeout height or gas limit can be changed by
+// whoever relays it.
 type MsgSend struct {
 	Bundle Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	// receiver gets every balance less the fee. Required exactly when the
