@@ -20,6 +20,11 @@ import (
 // InitGenesis loads the books. It runs after bank, staking and shielded, and
 // checks the books against them.
 func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
+	// Validate first: what follows reads the amounts (a nil Requested would
+	// panic InitChain rather than refuse the file; audit 5 L-ST2).
+	if err := gs.Validate(); err != nil {
+		return err
+	}
 	if err := k.checkGenesisValidators(ctx, gs); err != nil {
 		return err
 	}

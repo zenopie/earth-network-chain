@@ -122,7 +122,11 @@ func (k Keeper) checkpointSupply(ctx context.Context, vs *types.ValidatorState) 
 	}
 	if open {
 		// The highest seq in (checkpoint_seq, cur] taken in the block of the
-		// book's last change.
+		// book's last change. Seqs are taken in height order and every one in
+		// the range at supply_height or later, so those of that block are the
+		// range's first run: the walk stops at the first later snapshot
+		// instead of reading every snapshot since the book last changed
+		// (audit 5 L-ST1: unbounded work under a fixed gas price).
 		lastAt := uint64(0)
 		rng := new(collections.Range[collections.Pair[uint64, uint64]]).
 			StartExclusive(collections.Join(vs.CheckpointSeq, ^uint64(0))).
@@ -132,7 +136,10 @@ func (k Keeper) checkpointSupply(ctx context.Context, vs *types.ValidatorState) 
 			if err != nil {
 				return true, err
 			}
-			if snap.Height == vs.SupplyHeight && key.K1() > lastAt {
+			if snap.Height != vs.SupplyHeight {
+				return true, nil
+			}
+			if key.K1() > lastAt {
 				lastAt = key.K1()
 			}
 			return false, nil
