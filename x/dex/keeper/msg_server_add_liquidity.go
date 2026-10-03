@@ -108,6 +108,13 @@ func (k Keeper) deposit(ctx context.Context, poolID uint64, erthIn, tokenIn sdk.
 		// Pull assets in the exact pool ratio for the shares granted.
 		depositErt.Amount = shareAmt.Mul(pool.ReserveErth.Amount).Quo(total)
 		depositTok.Amount = shareAmt.Mul(pool.ReserveToken.Amount).Quo(total)
+		// Each pulled leg is floored. A share worth less than one unit of a
+		// leg would be minted against nothing of it, diluting the existing
+		// providers; refuse instead of minting shares against a zero leg.
+		if !depositErt.Amount.IsPositive() || !depositTok.Amount.IsPositive() {
+			return none, none, none, errorsmod.Wrapf(types.ErrZeroShares,
+				"deposit would pull %s and %s: both legs must be positive", depositErt, depositTok)
+		}
 	}
 
 	if !shareAmt.IsPositive() {
