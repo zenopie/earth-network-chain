@@ -2,6 +2,7 @@ package app
 
 import (
 	"crypto/rand"
+	"strconv"
 	"testing"
 	"time"
 
@@ -139,7 +140,8 @@ func (e *shieldedEnv) forgedPrivateTx(n int, proof []byte) []byte {
 		_, _ = nf.SetRandom()
 		_, _ = cm.SetRandom()
 		b.Actions = append(b.Actions, shieldedtypes.Action{Anchor: anchor, Nullifier: privacy.FieldBytes(nf),
-			Commitment: privacy.FieldBytes(cm), Cv: orchard.PointBytes(cv), Proof: proof})
+			Commitment: privacy.FieldBytes(cm), Cv: orchard.PointBytes(cv), Proof: proof,
+			Ciphertext: shieldedtest.NoteCT("forged/" + strconv.Itoa(i))})
 	}
 	b.BindingSig = make([]byte, orchard.BindingSigSize)
 	m := &shieldedtypes.MsgSend{Bundle: b, Fee: fee}
