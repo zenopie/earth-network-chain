@@ -552,7 +552,8 @@
         }
       },
       "referrer_bindings": [],
-      "registrations": []
+      "registrations": [],
+      "used_bindings": []
     },
     "pki": {
       "cscas": [
@@ -2211,7 +2212,9 @@
         "min_position": "1000000",
         "stake_root_window_seconds": "1209600"
       },
+      "pending_releases": [],
       "positions": [],
+      "retiring_escrows": [],
       "snapshot_seq": "0",
       "snapshots": [],
       "stake_commitments": [],
