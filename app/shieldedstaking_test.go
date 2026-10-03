@@ -1003,14 +1003,40 @@ func TestStakeVoteTally(t *testing.T) {
 	}
 
 	// --- genesis round trip mid-vote: snapshot, votes, positions, books.
-	exported, err := e.app.ExportAppStateAndValidators(false, nil, nil)
-	require.NoError(t, err)
-	var appState map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(exported.AppState, &appState))
-	fresh := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
-		baseapp.SetChainID(ssChainID))
-	fctx := fresh.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: e.height, Time: e.now})
-	_, err = fresh.ModuleManager.InitGenesis(fctx, fresh.AppCodec(), appState)
+	importExport := func() (fresh *App, fctx sdk.Context, err error) {
+		exported, err := e.app.ExportAppStateAndValidators(false, nil, nil)
+		require.NoError(t, err)
+		var appState map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(exported.AppState, &appState))
+		fresh = New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
+			baseapp.SetChainID(ssChainID))
+		fctx = fresh.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: e.height, Time: e.now})
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("%v", r)
+			}
+		}()
+		_, err = fresh.ModuleManager.InitGenesis(fctx, fresh.AppCodec(), appState)
+		return fresh, fctx, err
+	}
+	// The residual third-party delegation cannot cross a genesis (audit 3:
+	// the delegation rule is checked at InitGenesis). Take it out, then the
+	// round trip goes through.
+	_, _, err = importExport()
+	require.ErrorContains(t, err, "genesis delegation")
+	{
+		ctx := e.ctx()
+		sk := e.app.StakingKeeper
+		d, err := sk.GetDelegation(ctx, third, vA)
+		require.NoError(t, err)
+		v, err := sk.GetValidator(ctx, vA)
+		require.NoError(t, err)
+		_, removed, err := sk.RemoveValidatorTokensAndShares(ctx, v, d.Shares)
+		require.NoError(t, err)
+		require.NoError(t, sk.RemoveDelegation(ctx, d))
+		require.NoError(t, e.app.BankKeeper.BurnCoins(ctx, stakingtypes.BondedPoolName, sdk.NewCoins(sdk.NewCoin("uerth", removed))))
+	}
+	fresh, fctx, err := importExport()
 	require.NoError(t, err)
 	gs1, err := e.app.ShieldedStakingKeeper.ExportGenesis(e.ctx())
 	require.NoError(t, err)
