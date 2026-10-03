@@ -24,8 +24,10 @@
 // the auth info's gas_limit (types.TxFields, recorded in the context by
 // PrivateMsgDecorator and read back by types.SighashOf); the declared fee
 // must equal the msg's, and timeout_timestamp, unordered, extension options,
-// a payer and a granter are refused. Nothing left in the tx bytes can change
-// without changing the sighash, so one msg has one tx encoding.
+// a tip, a payer and a granter are refused. Nothing left in the tx can change
+// without changing the sighash, and the tx bytes must be the canonical
+// encoding of what they decode to (requireCanonicalEncoding), so one msg has
+// one tx encoding and one hash.
 //
 // A msg may spend more than one bundle (a stake vote and the bundle paying
 // its fee); each is checked, proven and executed as a single one is, under
@@ -70,14 +72,17 @@
 package ante
 
 import (
+	"bytes"
 	stdmath "math"
 
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
+	"github.com/cosmos/gogoproto/proto"
 
 	"github.com/earth-network/earth/x/shielded/keeper"
 	"github.com/earth-network/earth/x/shielded/types"
@@ -154,6 +159,13 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 		// in SigVerificationDecorator, which private txs never reach.
 		return ctx, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "private txs cannot be unordered")
 	}
+	if p.AuthInfo.Tip != nil { //nolint:staticcheck // deprecated, still decoded
+		// Not bound by the sighash, and nothing pays it.
+		return ctx, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "private txs take no tip")
+	}
+	if err := requireCanonicalEncoding(ctx, p); err != nil {
+		return ctx, err
+	}
 	if p.Body.TimeoutTimestamp != nil {
 		// Not bound by the sighash (TxFields): a relayer could add, move or
 		// strip it. A private tx expires by timeout_height, which is bound.
@@ -174,6 +186,53 @@ func (ValidateTxDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 		return ctx, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "tx fee %s must equal the msg's fee %s", declared, want)
 	}
 	return next(ctx, tx, simulate)
+}
+
+// requireCanonicalEncoding refuses a private tx whose bytes are not the one
+// canonical encoding of what they decode to. The tx is unsigned, so its hash
+// is all that names it, and the decoder accepts many spellings of one tx: a
+// non-critical unknown field (>= 1024) in the body or in the msg, fields out
+// of order or repeated, over-long varints. Each would land under its own
+// hash, the same msg twice in a mempool, and a relayer could re-spell a tx it
+// saw so its sender's tracked hash never confirms. The canonical encoding is
+// TxRaw{body, auth_info} with each part, and each msg inside the body, as
+// gogoproto marshals the decoded value.
+func requireCanonicalEncoding(ctx sdk.Context, p *txtypes.Tx) error {
+	raw := ctx.TxBytes()
+	if len(raw) == 0 {
+		// Only a tx run outside baseapp (a unit test's ante call) lacks them.
+		return nil
+	}
+	body := *p.Body
+	body.Messages = make([]*codectypes.Any, len(p.Body.Messages))
+	for i, m := range p.Body.Messages {
+		cached := m.GetCachedValue()
+		pm, ok := cached.(proto.Message)
+		if !ok {
+			return errorsmod.Wrapf(sdkerrors.ErrTxDecode, "msg %d is not decoded", i)
+		}
+		v, err := proto.Marshal(pm)
+		if err != nil {
+			return errorsmod.Wrapf(sdkerrors.ErrTxDecode, "msg %d: %v", i, err)
+		}
+		body.Messages[i] = &codectypes.Any{TypeUrl: m.TypeUrl, Value: v}
+	}
+	bodyBz, err := proto.Marshal(&body)
+	if err != nil {
+		return errorsmod.Wrap(sdkerrors.ErrTxDecode, err.Error())
+	}
+	authBz, err := proto.Marshal(p.AuthInfo)
+	if err != nil {
+		return errorsmod.Wrap(sdkerrors.ErrTxDecode, err.Error())
+	}
+	canonical, err := proto.Marshal(&txtypes.TxRaw{BodyBytes: bodyBz, AuthInfoBytes: authBz})
+	if err != nil {
+		return errorsmod.Wrap(sdkerrors.ErrTxDecode, err.Error())
+	}
+	if !bytes.Equal(raw, canonical) {
+		return errorsmod.Wrap(sdkerrors.ErrTxDecode, "private tx is not canonically encoded (unknown fields, field order or varint padding)")
+	}
+	return nil
 }
 
 // PrivateMsgDecorator does the private msg's work, in order:

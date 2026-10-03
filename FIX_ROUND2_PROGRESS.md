@@ -15,6 +15,6 @@ as a regression test asserting the safe outcome.
 - [ ] R4 tally attribution
 - [ ] R5 GwEpoch leak
 - [x] R6 proof chunk canonical: ultrahonk.Verify refuses any 32-byte proof element >= r (bb reduced them). Test: zk/ultrahonk/proof_canonical_test.go
-- [ ] R7 tx malleability
+- [x] R7 tx malleability: private txs refuse AuthInfo.tip and must be byte-equal to TxRaw{marshal(body with each msg re-marshaled), marshal(auth_info)} (ctx.TxBytes). Test: app/reaudit_round2_test.go TestPrivateTxRespellingsRefused
 - [ ] R8 max_entries/unbonding floor at epoch end
 - [ ] smaller items
