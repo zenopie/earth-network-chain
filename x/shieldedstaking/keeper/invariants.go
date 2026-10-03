@@ -38,6 +38,8 @@ import (
 //     recorded (a removed validator's was released).
 //  6. Groundworks: per (validator, option), the stored total (current epoch)
 //     == the sum of derth x percent over the validator's live positions.
+//  7. Stake nullifier tree (O(1)): its size is 0, or 1 + its last value's
+//     leaf index; the recorded latest size is at most the size.
 func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertERTH(ctx); err != nil {
 		return err
@@ -54,7 +56,42 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertGwTotals(ctx); err != nil {
 		return err
 	}
+	if err := k.assertNfTree(ctx); err != nil {
+		return err
+	}
 	return k.assertEscrows(ctx)
+}
+
+func (k Keeper) assertNfTree(ctx context.Context) error {
+	t, err := k.nfTree(ctx)
+	if err != nil {
+		return err
+	}
+	want := uint64(0) // 0, or the last value's leaf index + 1
+	it, err := k.StakeNfValues.Iterate(ctx, new(collections.Range[uint64]).Descending())
+	if err != nil {
+		return err
+	}
+	if it.Valid() {
+		last, err := it.Key()
+		if err != nil {
+			it.Close()
+			return err
+		}
+		want = last + 1
+	}
+	it.Close()
+	if t.Size() != want {
+		return types.ErrInvariant.Wrapf("stake nullifier tree: size %d, want %d", t.Size(), want)
+	}
+	_, latest, err := k.latestNfRoot(ctx)
+	if err != nil {
+		return err
+	}
+	if latest > t.Size() {
+		return types.ErrInvariant.Wrapf("stake nullifier tree: recorded size %d above size %d", latest, t.Size())
+	}
+	return nil
 }
 
 func (k Keeper) assertEscrows(ctx context.Context) error {
