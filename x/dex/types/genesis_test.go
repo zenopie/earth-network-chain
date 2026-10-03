@@ -179,6 +179,7 @@ func TestGenesisRejectsMalformedLpUnbondings(t *testing.T) {
 		e.WithdrawalId[32] = 7
 		e.Pc, e.ErthPc = make([]byte, 32), make([]byte, 32)
 		e.Pc[31], e.ErthPc[31] = 1, 2
+		e.Ciphertext, e.ErthCiphertext = make([]byte, 177), make([]byte, 177)
 		return e
 	}
 	t.Run("a private withdrawal is accepted", func(t *testing.T) {
@@ -191,6 +192,8 @@ func TestGenesisRejectsMalformedLpUnbondings(t *testing.T) {
 		"private, id not 0x00||nf":  func(e *types.LpUnbonding) { e.WithdrawalId[0] = 1 },
 		"private, no erth pc":       func(e *types.LpUnbonding) { e.ErthPc = nil },
 		"private, no token pc":      func(e *types.LpUnbonding) { e.Pc = nil },
+		"private, no token ct":      func(e *types.LpUnbonding) { e.Ciphertext = nil },
+		"private, short erth ct":    func(e *types.LpUnbonding) { e.ErthCiphertext = e.ErthCiphertext[:176] },
 		"an account's, with an id":  func(e *types.LpUnbonding) { e.Address = provider },
 		"private, duplicate of key": nil,
 	} {

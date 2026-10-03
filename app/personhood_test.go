@@ -294,7 +294,7 @@ func (e *phEnv) unverified(f *shieldedtest.Plan) shieldedtypes.Bundle {
 	e.t.Helper()
 	b := e.bundle(f)
 	for i := range b.Actions {
-		b.Actions[i].Proof = []byte("never verified")
+		b.Actions[i].Proof = make([]byte, shieldedtypes.ProofBytes) // never verified
 	}
 	b.BindingSig = make([]byte, orchard.BindingSigSize)
 	return b
@@ -307,7 +307,7 @@ func stubFeeBundle(fee uint64) shieldedtypes.Bundle {
 		BindingSig: make([]byte, orchard.BindingSigSize)}
 	for i := range uint64(2) {
 		b.Actions = append(b.Actions, shieldedtypes.Action{Anchor: make([]byte, 32),
-			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: []byte{1}})
+			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: make([]byte, shieldedtypes.ProofBytes)})
 	}
 	return b
 }
@@ -801,13 +801,14 @@ func TestPrivatePersonhood(t *testing.T) {
 func TestPrivatePersonhoodBypassRefused(t *testing.T) {
 	e := initShieldedEnv(t)
 	tr := stubFeeBundle(1000)
-	mem := personhoodtypes.Membership{Proof: []byte{1}, Root: make([]byte, 32), Nullifier: make([]byte, 32)}
+	mem := personhoodtypes.Membership{Proof: make([]byte, shieldedtypes.ProofBytes), Root: make([]byte, 32), Nullifier: make([]byte, 32)}
 	for _, msg := range []sdk.Msg{
-		&personhoodtypes.MsgClaimAnml{Fee: tr, Membership: mem, Pc: make([]byte, 32)},
+		&personhoodtypes.MsgClaimAnml{Fee: tr, Membership: mem, Pc: make([]byte, 32), Ciphertext: shieldedtest.BlindCT("c")},
 		&personhoodtypes.MsgSetCaretaker{Fee: tr, Membership: mem},
 		&personhoodtypes.MsgBindReferrer{Fee: tr, Membership: mem},
-		&personhoodtypes.MsgRegister{Fee: tr, Proof: []byte{1}, PublicSignals: []string{"1"}, SignatureAlgorithm: "lean_poa",
-			Idc: make([]byte, 32), PcAnml: make([]byte, 32), PcErth: make([]byte, 32)},
+		&personhoodtypes.MsgRegister{Fee: tr, Proof: make([]byte, shieldedtypes.ProofBytes), PublicSignals: []string{"1"}, SignatureAlgorithm: "lean_poa",
+			Idc: make([]byte, 32), PcAnml: make([]byte, 32), PcErth: make([]byte, 32),
+			CiphertextAnml: shieldedtest.BlindCT("a"), CiphertextErth: shieldedtest.BlindCT("e")},
 		&assemblytypes.MsgVoteProposal{Fee: tr, Membership: mem, ProposalId: 1, Option: assemblytypes.VOTE_OPTION_YES},
 		&assemblytypes.MsgProposeRemoval{Fee: tr, Membership: mem, OptionId: 1},
 		&assemblytypes.MsgVoteRemoval{Fee: tr, Membership: mem, OptionId: 1, Option: assemblytypes.VOTE_OPTION_YES},

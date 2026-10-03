@@ -6,6 +6,7 @@ import (
 
 	"cosmossdk.io/math"
 
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
@@ -228,6 +229,11 @@ func (gs GenesisState) Validate() error {
 			if _, err := privacy.FieldFromBytes(u.Pc); err != nil {
 				return fmt.Errorf("lp unbonding for %s in pool %d: pc: %w", u.Address, u.PoolId, err)
 			}
+			// Every minted note carries its blind ciphertext (MintNote
+			// refuses one without at maturity).
+			if err := shieldedtypes.CheckBlindCiphertext("ciphertext", u.Ciphertext); err != nil {
+				return fmt.Errorf("lp unbonding for %s in pool %d: %w", u.Address, u.PoolId, err)
+			}
 		}
 		// A private withdrawal: no address, an id (0x00 || a nullifier) as
 		// its key, and both legs paid as notes.
@@ -237,6 +243,9 @@ func (gs GenesisState) Validate() error {
 			}
 			if _, err := privacy.FieldFromBytes(u.ErthPc); err != nil {
 				return fmt.Errorf("private lp unbonding in pool %d: erth_pc: %w", u.PoolId, err)
+			}
+			if err := shieldedtypes.CheckBlindCiphertext("erth_ciphertext", u.ErthCiphertext); err != nil {
+				return fmt.Errorf("private lp unbonding in pool %d: %w", u.PoolId, err)
 			}
 			if len(u.Pc) == 0 {
 				return fmt.Errorf("private lp unbonding in pool %d: no pc for the token leg", u.PoolId)

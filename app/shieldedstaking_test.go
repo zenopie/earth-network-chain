@@ -106,7 +106,7 @@ func (e *stakeEnv) claimMsgFee(in *snote, feeFromOutput uint64, prove bool) (*ss
 	out := e.w.fresh("uerth", 0)
 	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, vOut: in.amount})
 	m := &sstypes.MsgClaimUnbonding{Validator: v, Epoch: epoch, Amount: in.amount, Pc: privacy.FieldBytes(e.w.pc(out)),
-		FeeFromOutput: feeFromOutput, Stake: sp.proof}
+		Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("claim/%d", e.w.seq)), FeeFromOutput: feeFromOutput, Stake: sp.proof}
 	var p *pendingBundle
 	if feeFromOutput == 0 {
 		p = e.feeOnly()
@@ -392,8 +392,8 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 	// Jailed and tombstoned: a delegation is refused before anything is spent.
 	in := e.w.unspent("uerth", uint64(100*ssErth))
 	p := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: uint64(100 * ssErth)})
-	m := &sstypes.MsgDelegate{Bundle: p.b, Validator: e.valoper(vB),
-		Stake: e.stake(&stakePlan{denom: sstypes.DerthDenom(e.valoper(vB))}).proof}
+	m := &sstypes.MsgDelegate{Bundle: p.b, Validator: e.valoper(vB), Amount: uint64(100 * ssErth),
+		Stake: e.stake(&stakePlan{denom: sstypes.DerthDenom(e.valoper(vB)), mint: e.freshStake(sstypes.DerthDenom(e.valoper(vB)), 0)}).proof}
 	unproven(m) // refused before any proof is read
 	ct := e.checkTx(e.privateTx(m))
 	require.Equal(t, sstypes.ErrValidator.ABCICode(), ct.Code, ct.Log)
@@ -584,22 +584,26 @@ func TestTransparentStakingBlocked(t *testing.T) {
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
 	opts := []*v1.WeightedVoteOption{{Option: v1.OptionYes, Weight: "1"}}
 	z := make([]byte, 32)
-	st := sstypes.StakeProof{Proof: []byte{1}, Anchor: z, Nullifiers: [][]byte{privacy.FieldBytes(ssDet("bypass-snf", 0)), z},
+	st := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{privacy.FieldBytes(ssDet("bypass-snf", 0)), z},
 		Commitments: [][]byte{z, z}, SpcMint: pc, OwnerTag: pc}
 	claimFee := tr("c", "", 0, ssFee)
-	none := sstypes.StakeProof{Proof: []byte{1}, Anchor: z, Nullifiers: [][]byte{z, z}, Commitments: [][]byte{z, z}, SpcMint: pc, OwnerTag: pc}
+	none := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{z, z}, Commitments: [][]byte{z, z}, SpcMint: pc, OwnerTag: pc}
 	restake := st
 	restake.Commitments = [][]byte{pc, z}
+	// The msgs that mint a stake note carry its blind ciphertext.
+	stMint, noneMint := st, none
+	stMint.SpcCiphertext, noneMint.SpcCiphertext = shieldedtest.BlindCT("m"), shieldedtest.BlindCT("m")
 	for _, m := range []sdk.Msg{
-		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Amount: 1, Validator: valoper, Stake: none},
+		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Amount: 1, Validator: valoper, Stake: noneMint},
 		&sstypes.MsgRestake{Bundle: tr("r", "", 0, ssFee), Validator: valoper, Stake: restake},
-		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st},
-		&sstypes.MsgClaimUnbonding{Bundle: &claimFee, Validator: valoper, Epoch: 1, Amount: 1, Pc: pc, Stake: st},
+		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: stMint},
+		&sstypes.MsgClaimUnbonding{Bundle: &claimFee, Validator: valoper, Epoch: 1, Amount: 1, Pc: pc,
+			Ciphertext: shieldedtest.BlindCT("c"), Stake: st},
 		&sstypes.MsgStakeVote{Bundle: tr("v", "", 0, ssFee), ProposalId: 1, Validator: valoper, Options: opts,
-			Weight: 1, Stake: st},
+			Weight: 1, Stake: stMint},
 		&sstypes.MsgLockPosition{Bundle: tr("l", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st},
 		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Stake: none},
-		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Stake: none},
+		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Stake: noneMint},
 		&sstypes.MsgPositionVote{Bundle: tr("pv", "", 0, ssFee), Options: opts, Stake: none},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
@@ -850,6 +854,7 @@ func TestStakeVoteTally(t *testing.T) {
 	oldFee := e.feeOnly()
 	oldPlan := e.stake(&stakePlan{denom: n2.denom, ins: []*snote{n2}, outs: []*snote{e.freshStake(n2.denom, n2.amount-1)},
 		vOut: 1, atSize: snap.TreeSize})
+	oldPlan.proof.SpcCiphertext = shieldedtest.BlindCT("old")
 	old := &sstypes.MsgUndelegate{Bundle: oldFee.b, Validator: e.valoper(vB), Amount: 1, Stake: oldPlan.proof}
 	unproven(old)
 	res = e.checkTx(e.privateTx(old))

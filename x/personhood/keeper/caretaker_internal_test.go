@@ -156,7 +156,7 @@ func TestClaimChecksAndPrune(t *testing.T) {
 	root, err := k.CurrentIdentityRoot(ctx)
 	require.NoError(t, err)
 	m := &types.MsgClaimAnml{Fee: feeStub(), Day: today, Pc: privacy.FieldBytes(privacy.U64(9)),
-		Membership: types.Membership{Proof: []byte{1}, Root: root, Nullifier: privacy.FieldBytes(privacy.U64(3))}}
+		Membership: types.Membership{Proof: make([]byte, shieldedtypes.ProofBytes), Root: root, Nullifier: privacy.FieldBytes(privacy.U64(3))}}
 	st, err := k.checkClaim(ctx, m)
 	require.NoError(t, err)
 	require.Equal(t, int64(today-1)*types.SecondsPerDay, st.MaxActivation)
@@ -223,7 +223,7 @@ func feeStub() shieldedtypes.Bundle {
 	b := shieldedtypes.Bundle{Balances: []shieldedtypes.ValueBalance{{Denom: "uerth", Amount: 1000}}, BindingSig: make([]byte, 96)}
 	for i := range uint64(2) {
 		b.Actions = append(b.Actions, shieldedtypes.Action{Anchor: make([]byte, 32),
-			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: []byte{1}})
+			Nullifier: privacy.FieldBytes(privacy.U64(i + 1)), Commitment: make([]byte, 32), Cv: cv, Proof: make([]byte, shieldedtypes.ProofBytes)})
 	}
 	return b
 }

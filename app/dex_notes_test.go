@@ -221,13 +221,14 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 		return shieldedtypes.ValueBalance{Denom: denom, Amount: v}
 	}
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
+	bct := shieldedtest.BlindCT("bypass")
 	for _, m := range []sdk.Msg{
 		&dextypes.MsgNoteSwap{Bundle: stubBundle("a", bal("uanml", 1), bal("uerth", ssFee)), DenomIn: "uanml", AmountIn: 1,
-			DenomOut: "uerth", MinAmountOut: 1, Pc: pc},
+			DenomOut: "uerth", MinAmountOut: 1, Pc: pc, Ciphertext: bct},
 		&dextypes.MsgAddLiquidityShielded{Bundle: stubBundle("b", bal("uanml", 1), bal("uerth", ssFee+1)), ErthAmount: 1,
-			PoolId: anmlPool, SharePc: pc, RefundPc: pc},
+			PoolId: anmlPool, SharePc: pc, ShareCiphertext: bct, RefundPc: pc, RefundCiphertext: bct},
 		&dextypes.MsgRemoveLiquidityShielded{Bundle: stubBundle("r", bal(dextypes.LPShareDenom(anmlPool), 1), bal("uerth", ssFee)),
-			PoolId: anmlPool, ErthPc: pc, TokenPc: pc},
+			PoolId: anmlPool, ErthPc: pc, ErthCiphertext: bct, TokenPc: pc, TokenCiphertext: bct},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
 		require.NotNil(t, h, "%T", m)
@@ -240,7 +241,7 @@ func TestDexAnmlTransparentLegs(t *testing.T) {
 	require.NotEqual(t, uint32(0), fb.Code)
 	// A private msg in a signed tx goes nowhere either.
 	sw := &dextypes.MsgNoteSwap{Bundle: stubBundle("c", bal("uanml", 1), bal("uerth", ssFee)), DenomIn: "uanml", AmountIn: 1,
-		DenomOut: "uerth", MinAmountOut: 1, Pc: pc}
+		DenomOut: "uerth", MinAmountOut: 1, Pc: pc, Ciphertext: bct}
 	ct := e.checkTx(e.signedTx(e.user, 400_000, 5_000, sw))
 	require.NotEqual(t, uint32(0), ct.Code)
 }

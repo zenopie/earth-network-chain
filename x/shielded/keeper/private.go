@@ -141,12 +141,16 @@ func (k Keeper) checkReleaseMap(ctx context.Context, msg types.PrivateMsg) error
 	for _, d := range h.ReleasedDenoms(msg) {
 		declared[d] = true
 	}
-	if len(declared) != len(rem) {
-		return types.ErrReleaseMap.Wrapf("the msg releases %d denoms, its action takes %d", len(rem), len(declared))
-	}
+	released := map[string]bool{}
 	for _, r := range rem {
 		if !declared[r.Denom] {
 			return types.ErrReleaseMap.Wrapf("the msg releases %s, which its action does not take", r.Denom)
+		}
+		released[r.Denom] = true
+	}
+	for d := range declared {
+		if !released[d] {
+			return types.ErrReleaseMap.Wrapf("the msg's action takes %q, which the msg does not release", d)
 		}
 	}
 	return nil
