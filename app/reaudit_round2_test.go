@@ -140,3 +140,46 @@ func TestGroundworksIndexNoLeakAndEpochCostBounded(t *testing.T) {
 	t.Logf("epoch end gas: no stale entries %d, 10000 stale entries %d", base, many)
 	require.InDelta(t, float64(base), float64(many), 5_000)
 }
+
+// Re-audit R8: x/staking's governance lowers max_entries under the floor the
+// module checked at genesis. The epoch end reports it, defers the
+// undelegation that would not fit (its record stays PENDING) instead of
+// failing the validator's whole book, and settles it once there is room.
+func TestEpochEndDefersUndelegationPastMaxEntries(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(5_000 * ssErth))
+	e.shield(uint64(100 * ssErth))
+	dn := e.delegate(vB, uint64(2_000*ssErth))
+	e.days(1)
+	un1 := e.undelegate(vB, dn, uint64(500*ssErth))
+	dn = e.unspentStake(dn.denom)
+	e.days(1)
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, epochOf(t, un1.denom)).Status)
+
+	sp, err := e.app.StakingKeeper.GetParams(e.ctx())
+	require.NoError(t, err)
+	old := sp.MaxEntries
+	sp.MaxEntries = 1
+	require.NoError(t, e.app.StakingKeeper.SetParams(e.ctx(), sp))
+
+	un2 := e.undelegate(vB, dn, uint64(300*ssErth))
+	r := e.next(24 * time.Hour)
+	deferred := false
+	for _, ev := range eventsOf(r.Events, sstypes.EventTypeUnbondingDeferred) {
+		deferred = deferred || ev[sstypes.AttributeKeyValidator] == e.valoper(vB)
+	}
+	require.True(t, deferred, "undelegation deferred")
+	floor := false
+	for _, ev := range eventsOf(r.Events, sstypes.EventTypeEpochFailure) {
+		floor = floor || ev[sstypes.AttributeKeyStage] == "unbonding_floor"
+	}
+	require.True(t, floor, "floor violation reported")
+	require.Equal(t, sstypes.UNBOND_STATUS_PENDING, e.record(vB, epochOf(t, un2.denom)).Status)
+
+	sp.MaxEntries = old
+	require.NoError(t, e.app.StakingKeeper.SetParams(e.ctx(), sp))
+	e.days(1)
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, epochOf(t, un2.denom)).Status)
+}

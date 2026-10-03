@@ -93,6 +93,7 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 	if !sweep.Active {
 		sweep = types.EpochSweep{Active: true}
 	}
+	k.checkUnbondingFloor(ctx)
 	k.resyncBooks(ctx, k.sweepBooks(ctx, sweep, epoch.Number))
 	k.compoundSelfBonds(ctx)
 	if err := k.guarded(ctx, k.sweepForeignRewards); err != nil {
@@ -115,6 +116,20 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeEpoch,
 		sdk.NewAttribute(types.AttributeKeyEpoch, strconv.FormatUint(epoch.Number, 10)),
 	))
+}
+
+// checkUnbondingFloor re-checks, at each epoch end, the floor genesis and
+// MsgUpdateParams enforce (checkUnbondingEntries): x/staking's governance may
+// have changed unbonding_time or max_entries since. A violation is reported,
+// never fatal: processValidator defers an undelegation that would not fit.
+func (k Keeper) checkUnbondingFloor(ctx context.Context) {
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return
+	}
+	if err := k.checkUnbondingEntries(ctx, params); err != nil {
+		k.failure(ctx, "unbonding_floor", "", err)
+	}
 }
 
 func (k Keeper) sweepState(ctx context.Context) types.EpochSweep {
@@ -322,6 +337,23 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 	return nil
 }
 
+// unbondingEntriesFull reports whether the module's unbonding delegation to
+// val already holds x/staking's max_entries entries, so another undelegation
+// would be refused.
+func (k Keeper) unbondingEntriesFull(ctx context.Context, val sdk.ValAddress) (bool, error) {
+	maxEntries, err := k.staking.MaxEntries(ctx)
+	if err != nil {
+		return false, err
+	}
+	ubd, err := k.staking.GetUnbondingDelegation(ctx, k.modAddr, val)
+	if errors.Is(err, stakingtypes.ErrNoUnbondingDelegation) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return uint32(len(ubd.Entries)) >= maxEntries, nil
+}
+
 // pendingRecords is v's PENDING records, in epoch order.
 func (k Keeper) pendingRecords(ctx context.Context, valoper string) ([]types.UnbondRecord, error) {
 	return k.pendingRecordsUpTo(ctx, valoper, ^uint64(0))
@@ -423,6 +455,25 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 		target = target.Add(r.Target)
 	}
 	fromQueue := math.ZeroInt()
+	// x/staking refuses an undelegation past max_entries entries for one
+	// (delegator, validator); governance can lower max_entries or raise
+	// unbonding_time after the floor was checked (checkUnbondingEntries).
+	// Rather than fail the whole book every block, the undelegation waits:
+	// its records stay PENDING for the next epoch end, everything else here
+	// goes ahead.
+	if len(records) > 0 || settling {
+		full, err := k.unbondingEntriesFull(ctx, val)
+		if err != nil {
+			return err
+		}
+		if full {
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeUnbondingDeferred,
+				sdk.NewAttribute(types.AttributeKeyValidator, valoper),
+				sdk.NewAttribute(types.AttributeKeyAmount, target.String()),
+			))
+			records, target, settling = nil, math.ZeroInt(), false
+		}
+	}
 	if len(records) > 0 || settling {
 		tokens, _, _, found, err := k.delegation(ctx, val)
 		if err != nil {

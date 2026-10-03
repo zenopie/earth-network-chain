@@ -8,12 +8,15 @@ const (
 	EventTypeEpoch          = "shieldedstaking_epoch"
 	EventTypeEpochValidator = "shieldedstaking_epoch_validator"
 	EventTypeEpochFailure   = "shieldedstaking_epoch_failure"
-	EventTypeMatured        = "shieldedstaking_matured"
-	EventTypeSlashHaircut   = "shieldedstaking_slash_haircut"
-	EventTypeStakeVote      = "shieldedstaking_stake_vote"
-	EventTypeSnapshot       = "shieldedstaking_snapshot"
-	EventTypePosition       = "shieldedstaking_position"
-	EventTypeInvariant      = "shieldedstaking_invariant_broken"
+	// EventTypeUnbondingDeferred: an epoch end left a validator's
+	// undelegation for the next one, its max_entries being full.
+	EventTypeUnbondingDeferred = "shieldedstaking_unbonding_deferred"
+	EventTypeMatured           = "shieldedstaking_matured"
+	EventTypeSlashHaircut      = "shieldedstaking_slash_haircut"
+	EventTypeStakeVote         = "shieldedstaking_stake_vote"
+	EventTypeSnapshot          = "shieldedstaking_snapshot"
+	EventTypePosition          = "shieldedstaking_position"
+	EventTypeInvariant         = "shieldedstaking_invariant_broken"
 	// EventTypeOrphan: uerth at a validator that no derth and no record owns
 	// went to the community pool.
 	EventTypeOrphan   = "shieldedstaking_orphan_to_community_pool"

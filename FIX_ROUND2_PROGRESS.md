@@ -16,5 +16,5 @@ as a regression test asserting the safe outcome.
 - [~] R5 GwEpoch leak: syncValidatorVoter drops GwEpoch[v] when v has no live totals; epoch end no longer runs ReweighGroundworks, voters re-file per book in the bounded sweep (resyncBooks). Test: TestGroundworksIndexNoLeakAndEpochCostBounded (NOT YET RUN)
 - [x] R6 proof chunk canonical: ultrahonk.Verify refuses any 32-byte proof element >= r (bb reduced them). Test: zk/ultrahonk/proof_canonical_test.go
 - [x] R7 tx malleability: private txs refuse AuthInfo.tip and must be byte-equal to TxRaw{marshal(body with each msg re-marshaled), marshal(auth_info)} (ctx.TxBytes). Test: app/reaudit_round2_test.go TestPrivateTxRespellingsRefused
-- [ ] R8 max_entries/unbonding floor at epoch end
+- [~] R8 max_entries/unbonding floor at epoch end: endEpoch reports a violated floor (epoch_failure stage unbonding_floor); processValidator defers an undelegation whose max_entries is full (event shieldedstaking_unbonding_deferred), records stay PENDING. Test: TestEpochEndDefersUndelegationPastMaxEntries (NOT YET RUN)
 - [ ] smaller items
