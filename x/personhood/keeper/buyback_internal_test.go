@@ -391,3 +391,71 @@ func TestBuybackDiscardsTheCounterWithTheTrade(t *testing.T) {
 		t.Fatalf("a discarded window moved the counter: %s -> %s", before, after)
 	}
 }
+
+// TestAudit3BuybackCapsTradePerWindow (audit 3 L7): one trade spends at most
+// buyback_max_trade_seconds of emission; the rest of the (accrual-capped)
+// backlog stays accrued and is bought over the following windows.
+func TestAudit3BuybackCapsTradePerWindow(t *testing.T) {
+	dex := newOracleDex("1.0", "1.0")
+	k, _, _, ctx := newBuybackKeeper(t, dex)
+	ctx = fastForward(t, k, dex, ctx)
+
+	perTrade := math.NewInt(types.EmissionPerSecond).MulRaw(types.DefaultBuybackMaxTradeSeconds)
+	ctx = advance(ctx, 6*time.Hour) // six hours of skipped windows
+	if err := k.buybackAndBurn(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := dex.swaps[len(dex.swaps)-1].Amount
+	if !first.Equal(perTrade) {
+		t.Fatalf("first catch-up trade %s, want the per-trade cap %s", first, perTrade)
+	}
+	// The backlog is carried: the next window's trade is again capped, not
+	// one window's worth.
+	ctx = advance(ctx, 11*time.Minute)
+	if err := k.buybackAndBurn(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second := dex.swaps[len(dex.swaps)-1].Amount
+	if !second.Equal(perTrade) {
+		t.Fatalf("second trade %s, want the per-trade cap %s (backlog carried)", second, perTrade)
+	}
+	// Every trade stays within the cap until the backlog is gone, and the total
+	// bought equals the emission (6h + the windows since), nothing dropped.
+	total := first.Add(second)
+	elapsed := 6*time.Hour + 11*time.Minute
+	for i := 0; i < 20; i++ {
+		ctx = advance(ctx, 11*time.Minute)
+		elapsed += 11 * time.Minute
+		n := len(dex.swaps)
+		if err := k.buybackAndBurn(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if len(dex.swaps) > n {
+			a := dex.swaps[len(dex.swaps)-1].Amount
+			if a.GT(perTrade) {
+				t.Fatalf("trade %s exceeds the cap %s", a, perTrade)
+			}
+			total = total.Add(a)
+		}
+	}
+	want := math.NewInt(types.EmissionPerSecond).MulRaw(int64(elapsed / time.Second))
+	if !total.Equal(want) {
+		t.Fatalf("bought %s over %s, want %s", total, elapsed, want)
+	}
+}
+
+func TestAudit3BuybackMaxTradeValidated(t *testing.T) {
+	p := types.DefaultParams()
+	p.BuybackMaxTradeSeconds = 60 // below the 600s window
+	if p.Validate() == nil {
+		t.Fatal("a per-trade cap below one window accepted")
+	}
+	p.BuybackMaxTradeSeconds = types.DefaultBuybackMaxAccrualSeconds + 1
+	if p.Validate() == nil {
+		t.Fatal("a per-trade cap above the accrual cap accepted")
+	}
+	p.BuybackMaxTradeSeconds = 0
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

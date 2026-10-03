@@ -265,6 +265,15 @@ func (k Keeper) buybackAndBurn(ctx context.Context) error {
 	if maxAccrual := params.BuybackMaxAccrualSecondsOrDefault() * int64(time.Second); elapsed > maxAccrual {
 		elapsed = maxAccrual
 	}
+	// Cap the trade itself. Whatever of the (capped) backlog this trade does
+	// not spend stays accrued: the clock below advances only by what was
+	// bought, so the rest is bought over the following windows, each at most
+	// buyback_max_trade_seconds of emission.
+	carried := int64(0)
+	if maxTrade := params.BuybackMaxTradeSecondsOrDefault() * int64(time.Second); elapsed > maxTrade {
+		carried = elapsed - maxTrade
+		elapsed = maxTrade
+	}
 	amount := math.NewInt(types.EmissionPerSecond).MulRaw(elapsed).QuoRaw(int64(time.Second))
 	if !amount.IsPositive() {
 		return nil
@@ -311,7 +320,7 @@ func (k Keeper) buybackAndBurn(ctx context.Context) error {
 	// Only now that the trade has committed do the clock and the observation
 	// move. Both are set on the success path alone: every early return above
 	// leaves the accrual intact so a refused window is deferred, never dropped.
-	if err := k.LastBuyback.Set(ctx, now); err != nil {
+	if err := k.LastBuyback.Set(ctx, now-carried); err != nil {
 		return err
 	}
 	if err := k.setTwapObservation(ctx, cum, observedAt); err != nil {

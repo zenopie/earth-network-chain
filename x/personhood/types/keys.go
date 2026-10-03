@@ -201,6 +201,11 @@ const (
 	// the deviation gate refused.
 	DefaultBuybackMaxAccrualSeconds = 24 * 60 * 60
 
+	// DefaultBuybackMaxTradeSeconds caps one buyback trade at an hour of
+	// emission (3600 ERTH). A larger backlog is bought over successive
+	// windows rather than in one order sized for a sandwich.
+	DefaultBuybackMaxTradeSeconds = 60 * 60
+
 	// BuybackQuoteToleranceBps is the slack between the output the dex quotes for
 	// the buyback and the min_out it then demands.
 	//

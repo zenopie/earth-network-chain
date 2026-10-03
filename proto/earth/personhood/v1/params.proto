@@ -234,4 +234,12 @@ message Params {
   // now - R - identity_root_window_seconds). Zero falls back to the default
   // (30 days).
   uint64 caretaker_vote_seconds = 24;
+
+  // buyback_max_trade_seconds caps one buyback trade at this many seconds of
+  // emission. A backlog (skipped windows, up to buyback_max_accrual_seconds)
+  // is worked off across successive windows, at most this much per trade,
+  // instead of arriving as one large market order. Zero falls back to the
+  // default (one hour); otherwise it must lie between
+  // buyback_twap_window_seconds and buyback_max_accrual_seconds.
+  uint64 buyback_max_trade_seconds = 25;
 }

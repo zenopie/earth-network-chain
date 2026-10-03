@@ -28,6 +28,7 @@ func DefaultParams() Params {
 	p.BuybackTwapWindowSeconds = DefaultBuybackTwapWindowSeconds
 	p.BuybackMaxDeviationBps = DefaultBuybackMaxDeviationBps
 	p.BuybackMaxAccrualSeconds = DefaultBuybackMaxAccrualSeconds
+	p.BuybackMaxTradeSeconds = DefaultBuybackMaxTradeSeconds
 	p.DscDailyRegistrationFloor = DefaultDscDailyRegistrationFloor
 	p.DscDailyRegistrationShareBps = DefaultDscDailyRegistrationShareBps
 	p.CountryDailyRegistrationFloor = DefaultCountryDailyRegistrationFloor
@@ -37,6 +38,15 @@ func DefaultParams() Params {
 	p.IdentityRootWindowSeconds = DefaultIdentityRootWindowSeconds
 	p.CaretakerVoteSeconds = DefaultCaretakerVoteSeconds
 	return p
+}
+
+// BuybackMaxTradeSecondsOrDefault returns how many seconds of emission one
+// buyback trade may spend.
+func (p Params) BuybackMaxTradeSecondsOrDefault() int64 {
+	if p.BuybackMaxTradeSeconds == 0 {
+		return DefaultBuybackMaxTradeSeconds
+	}
+	return int64(p.BuybackMaxTradeSeconds)
 }
 
 // RegistrationSweepLimitOrDefault returns the shared per-block retirement budget.
@@ -257,6 +267,18 @@ func (p Params) Validate() error {
 		return fmt.Errorf(
 			"buyback_max_deviation_bps must be below %d: %d admits any price the pool can be pushed to",
 			BpsDenominator, p.BuybackMaxDeviationBps)
+	}
+	// A per-trade cap below one window would let the backlog grow faster than
+	// it is bought; above the accrual cap it bounds nothing.
+	if p.BuybackMaxTradeSeconds != 0 {
+		if int64(p.BuybackMaxTradeSeconds) < p.BuybackTwapWindowSecondsOrDefault() {
+			return fmt.Errorf("buyback_max_trade_seconds must be at least buyback_twap_window_seconds (%d)",
+				p.BuybackTwapWindowSecondsOrDefault())
+		}
+		if int64(p.BuybackMaxTradeSeconds) > p.BuybackMaxAccrualSecondsOrDefault() {
+			return fmt.Errorf("buyback_max_trade_seconds must be at most buyback_max_accrual_seconds (%d)",
+				p.BuybackMaxAccrualSecondsOrDefault())
+		}
 	}
 	// A share at or above 100% of the network's registrations is not a bound at
 	// all: one signer could account for everything and still be under it. Zero is
