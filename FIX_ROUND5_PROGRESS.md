@@ -51,5 +51,10 @@ ORCHARD_DESIGN.md section 16.
   largest txs unincludable; the gas caps bound the chamber case). Info:
   AuthorizedNullifiers left (tests use it).
 - [x] VKs: privacy-vks.sh --check: unchanged (no circuit change).
-- [ ] fixtures: personhood (passports + app), dex
-- [ ] genesis, full go test ./...
+- [x] fixtures: personhood (passports + app: personhood-fixtures.sh all),
+  dex (dex-fixtures.sh). Shielded, staking and orchard fixtures unchanged
+  (their tests pass as committed).
+- [x] genesis regenerated: sha256
+  67a6ed4af4a6478852dd9a843ea8a26dd6038ed1c81b09a1ce9c7636823f3212
+  (build-genesis.sh --check: up to date).
+- [x] go test ./... passes; go vet clean.
