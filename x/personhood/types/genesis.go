@@ -67,6 +67,11 @@ func (gs GenesisState) Validate() error {
 		if _, err := privacy.FieldFromBytes(r.Root); err != nil {
 			return fmt.Errorf("identity root %d: %w", i, err)
 		}
+		// InitGenesis checks each record against the rebuilt tree (and the
+		// genesis time); a size past the tree's is refused here already.
+		if r.TreeSize > gs.IdentityTreeSize {
+			return fmt.Errorf("identity root %d: tree_size %d is past the tree's %d", i, r.TreeSize, gs.IdentityTreeSize)
+		}
 	}
 	seenClaim := map[string]struct{}{}
 	for _, c := range gs.ClaimNullifiers {

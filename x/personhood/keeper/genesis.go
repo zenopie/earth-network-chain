@@ -1,13 +1,18 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 
 	"cosmossdk.io/collections"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
+	"github.com/earth-network/earth/zk/merkle"
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // InitGenesis initializes the module's state from a provided genesis state. The
@@ -44,6 +49,31 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		}
 		if err := k.addRegistration(ctx, reg); err != nil {
 			return err
+		}
+	}
+	// Every identity root record is a membership anchor, so none is taken on
+	// faith (audit 4, C3; x/shielded's records are checked the same way): it
+	// must be the root of the rebuilt tree at its tree_size, and must not be
+	// dated after genesis (a future time keeps it inside the anchor window,
+	// and past pruning, for as long as it likes).
+	genesisTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	sizes := make(map[uint64]bool, len(genState.IdentityRoots))
+	for i, r := range genState.IdentityRoots {
+		if r.Time > genesisTime {
+			return fmt.Errorf("identity root %d: time %d is after genesis time %d", i, r.Time, genesisTime)
+		}
+		if r.TreeSize > genState.IdentityTreeSize {
+			return fmt.Errorf("identity root %d: tree_size %d is past the tree's %d", i, r.TreeSize, genState.IdentityTreeSize)
+		}
+		sizes[r.TreeSize] = true
+	}
+	rebuilt, err := identityRootsAt(genState.Registrations, sizes)
+	if err != nil {
+		return err
+	}
+	for i, r := range genState.IdentityRoots {
+		if !bytes.Equal(rebuilt[r.TreeSize], r.Root) {
+			return fmt.Errorf("identity root %d (%X) is not the root of the rebuilt tree at size %d", i, r.Root, r.TreeSize)
 		}
 	}
 	for i, r := range genState.IdentityRoots {
@@ -156,6 +186,28 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	if latestRec != nil {
 		genesis.IdentityRoots = append(genesis.IdentityRoots, *latestRec)
 	}
+	// Only roots InitGenesis can verify are exported: a root from before a
+	// leaf was zeroed (expiry, revocation, a new identity secret) is not the
+	// root of the tree rebuilt from the surviving registrations at its size,
+	// and the import refuses unverifiable roots. Dropping one drops an anchor
+	// only: a proof against it is re-made against the current root.
+	sizes := make(map[uint64]bool, len(genesis.IdentityRoots))
+	for _, r := range genesis.IdentityRoots {
+		if r.TreeSize <= genesis.IdentityTreeSize {
+			sizes[r.TreeSize] = true
+		}
+	}
+	rebuilt, err := identityRootsAt(genesis.Registrations, sizes)
+	if err != nil {
+		return nil, err
+	}
+	kept := genesis.IdentityRoots[:0]
+	for _, r := range genesis.IdentityRoots {
+		if bytes.Equal(rebuilt[r.TreeSize], r.Root) {
+			kept = append(kept, r)
+		}
+	}
+	genesis.IdentityRoots = kept
 
 	if err := k.ClaimNullifiers.Walk(ctx, nil, func(key collections.Pair[uint64, []byte]) (bool, error) {
 		genesis.ClaimNullifiers = append(genesis.ClaimNullifiers, types.ClaimNullifier{Day: key.K1(), Nullifier: key.K2()})
@@ -206,4 +258,53 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return nil, err
 	}
 	return genesis, nil
+}
+
+// identityRootsAt rebuilds the identity tree from regs' leaves (zero at every
+// index no registration holds) and returns its root after each size in
+// sizes. The tree's root does not depend on its size counter, only on its
+// leaves, so the root "at size n" is the root over leaves [0, n).
+func identityRootsAt(regs []types.Registration, sizes map[uint64]bool) (map[uint64][]byte, error) {
+	out := make(map[uint64][]byte, len(sizes))
+	var top uint64
+	for n := range sizes {
+		if n > top {
+			top = n
+		}
+	}
+	leaves := make(map[uint64]fr.Element, len(regs))
+	for _, reg := range regs {
+		if reg.LeafIndex >= top {
+			continue
+		}
+		leaf, err := IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("registration %x: %w", reg.Nullifier, err)
+		}
+		leaves[reg.LeafIndex] = leaf
+	}
+	t := merkle.NewMem()
+	record := func() error {
+		if !sizes[t.Size()] {
+			return nil
+		}
+		r, err := t.Root()
+		if err != nil {
+			return err
+		}
+		out[t.Size()] = privacy.FieldBytes(r)
+		return nil
+	}
+	if err := record(); err != nil {
+		return nil, err
+	}
+	for i := uint64(0); i < top; i++ {
+		if _, err := t.Append(leaves[i]); err != nil {
+			return nil, err
+		}
+		if err := record(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
