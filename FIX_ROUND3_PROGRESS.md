@@ -13,7 +13,14 @@ ported as a regression test asserting the safe outcome.
   (compounds, retirement released, 1 locked uerth left),
   TestAudit3FailingEscrowReleasesDoNotStarveQueues (60 always-failing
   entries in each queue; the good one behind them is released).
-- [ ] 2 unshield into module accounts
+- [x] 2 unshield into module accounts: checkUnshield refuses any module
+  account the app declares (auth GetModulePermissions, materialized or
+  not); x/shielded's ReleaseToModule marks its context
+  (shieldedtypes.WithModuleRelease(ctx, target)) and x/shieldedstaking's
+  send restriction accepts pool -> module only under its own marker.
+  Invariant 1 stays exact (refusal, not a sweep of surplus). Tests:
+  app/audit3_unshield_module_test.go (two new proof fixtures for the
+  unshield to the module; shielded-fixtures.sh -run covers it).
 - [-] 3 stake votes on concurrent proposals: DROPPED by decision. A no-spend
   vote reveals the same nullifier on every vote and again at the later spend
   (linkable). Stake voting is left exactly as it is; a separate job replaces

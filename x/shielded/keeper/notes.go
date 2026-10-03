@@ -238,7 +238,7 @@ func (k Keeper) ReleaseToModule(ctx context.Context, msg types.PrivateMsg, denom
 	if err != nil {
 		return sdk.Coin{}, err
 	}
-	if err := k.bankKeeper.SendCoinsFromModuleToModule(ctx, types.ModuleName, targetModule, sdk.NewCoins(coin)); err != nil {
+	if err := k.bankKeeper.SendCoinsFromModuleToModule(types.WithModuleRelease(ctx, targetModule), types.ModuleName, targetModule, sdk.NewCoins(coin)); err != nil {
 		return sdk.Coin{}, err
 	}
 	if err := k.countOut(ctx, coin.Denom, coin.Amount); err != nil {

@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/core/address"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
 // AuthKeeper defines the expected interface for the Auth module.
@@ -12,6 +13,9 @@ type AuthKeeper interface {
 	AddressCodec() address.Codec
 	GetModuleAddress(moduleName string) sdk.AccAddress
 	GetModuleAccount(ctx context.Context, moduleName string) sdk.ModuleAccountI
+	// GetModulePermissions lists every module account the app declares
+	// (materialized or not): an unshield may pay none of them.
+	GetModulePermissions() map[string]authtypes.PermissionsForAddress
 }
 
 // BankKeeper defines the expected interface for the Bank module.

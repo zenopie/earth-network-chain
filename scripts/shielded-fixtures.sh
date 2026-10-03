@@ -32,5 +32,5 @@ DST="$CHAIN_DIR/x/shielded/testdata/proofs"
 rm -rf "$DST"
 cd "$CHAIN_DIR"
 # One package at a time: both share the cache.
-EARTH_CIRCUITS="$CIRCUITS_SRC" go test -count=1 -p 1 ./x/shielded/... ./app -run 'TestScenario|TestSighash|TestInflation|TestNegated|TestCheckPrivate|TestHandler|TestFeeFromOutput|TestGenesisRoundTrip|TestQueries|TestShielded'
+EARTH_CIRCUITS="$CIRCUITS_SRC" go test -count=1 -p 1 ./x/shielded/... ./app -run 'TestScenario|TestSighash|TestInflation|TestNegated|TestCheckPrivate|TestHandler|TestFeeFromOutput|TestGenesisRoundTrip|TestQueries|TestShielded|TestAudit3UnshieldIntoStakingModuleRefused|TestAudit3AppMempool'
 echo "done: $(ls "$DST" | wc -l | tr -d ' ') proofs in $DST"

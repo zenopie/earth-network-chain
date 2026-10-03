@@ -40,3 +40,20 @@ func SighashOf(ctx context.Context, msg PrivateMsg, ac address.Codec) (fr.Elemen
 	}
 	return Sighash(msg, sdk.UnwrapSDKContext(ctx).ChainID(), f, ac)
 }
+
+// moduleReleaseKey marks the context in which x/shielded's ReleaseToModule
+// pays the pool's coins to a module for one of its private msgs. A module
+// that accepts coins from the pool only that way (x/shieldedstaking's send
+// restriction) checks IsModuleRelease.
+type moduleReleaseKey struct{}
+
+// WithModuleRelease marks ctx as a ReleaseToModule payment to module.
+func WithModuleRelease(ctx context.Context, module string) context.Context {
+	return sdk.UnwrapSDKContext(ctx).WithValue(moduleReleaseKey{}, module)
+}
+
+// IsModuleRelease reports whether ctx is a ReleaseToModule payment to module.
+func IsModuleRelease(ctx context.Context, module string) bool {
+	v, _ := ctx.Value(moduleReleaseKey{}).(string)
+	return v != "" && v == module
+}

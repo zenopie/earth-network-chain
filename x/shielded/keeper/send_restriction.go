@@ -61,6 +61,17 @@ func (k Keeper) checkUnshield(ctx context.Context, coin sdk.Coin, receiver sdk.A
 	if k.bankKeeper.BlockedAddr(receiver) {
 		return types.ErrSendRestricted.Wrap("receiver may not receive funds")
 	}
+	// No module account, blocked or not, materialized or not: what the pool
+	// pays a module goes through that module's own private msg
+	// (ReleaseToModule), which books it. An unshield into one (private
+	// staking's account, say) would be coins no book records -- an exact
+	// solvency invariant broken for good -- or a plain account squatting a
+	// module's address before it exists.
+	for name, perms := range k.authKeeper.GetModulePermissions() {
+		if perms.GetAddress().Equals(receiver) {
+			return types.ErrSendRestricted.Wrapf("receiver is the %s module account", name)
+		}
+	}
 	if err := k.bankKeeper.IsSendEnabledCoins(ctx, coin); err != nil {
 		return err
 	}

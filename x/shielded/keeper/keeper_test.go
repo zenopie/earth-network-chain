@@ -85,6 +85,13 @@ type fakeAuth struct{ ac address.Codec }
 func (a fakeAuth) AddressCodec() address.Codec                               { return a.ac }
 func (fakeAuth) GetModuleAddress(name string) sdk.AccAddress                 { return mod(name) }
 func (fakeAuth) GetModuleAccount(context.Context, string) sdk.ModuleAccountI { return nil }
+func (fakeAuth) GetModulePermissions() map[string]authtypes.PermissionsForAddress {
+	out := map[string]authtypes.PermissionsForAddress{}
+	for _, name := range []string{types.ModuleName, personhood, "shieldedstaking", "dex", "gov"} {
+		out[name] = authtypes.NewPermissionsForAddress(name, nil)
+	}
+	return out
+}
 
 type fixture struct {
 	t      *testing.T

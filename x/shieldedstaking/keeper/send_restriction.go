@@ -5,12 +5,14 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
 // SendRestriction keeps the module account's uerth balance exactly what its
 // books say (see AssertInvariants): coins reach it only from the shielded
-// pool (a private msg's value, through SpendToModule) and from x/distribution
+// pool (a private msg's value, through x/shielded's ReleaseToModule, which
+// marks its context; an unshield naming this account is refused) and from x/distribution
 // (rewards, which it pays on every delegation change). The account cannot be
 // on the bank's blocked list — distribution pays it with
 // SendCoinsFromModuleToAccount, which refuses blocked recipients — so without
@@ -21,8 +23,9 @@ import (
 // only from x/distribution, and pays only its own operator (which only this
 // module does: nobody holds the escrow's key).
 func (k Keeper) SendRestriction(ctx context.Context, from, to sdk.AccAddress, _ sdk.Coins) (sdk.AccAddress, error) {
-	if to.Equals(k.modAddr) && !from.Equals(k.poolAddr) && !from.Equals(k.distAddr) && !from.Equals(k.modAddr) {
-		return to, types.ErrSendRestricted.Wrap("private staking's account takes coins only from the shielded pool and distribution")
+	if to.Equals(k.modAddr) && !from.Equals(k.distAddr) && !from.Equals(k.modAddr) &&
+		!(from.Equals(k.poolAddr) && shieldedtypes.IsModuleRelease(ctx, types.ModuleName)) {
+		return to, types.ErrSendRestricted.Wrap("private staking's account takes coins only from its own private msgs' pool releases and distribution")
 	}
 	if _, escrow, err := k.escrowOwner(ctx, to); err != nil {
 		return to, err
