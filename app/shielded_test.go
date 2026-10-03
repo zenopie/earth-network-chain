@@ -82,6 +82,7 @@ type shieldedEnvOpts struct {
 	keySeed     string
 	maxPrivate  uint32
 	tweak       func(t *testing.T, app *App, appState map[string]json.RawMessage)
+	baseOpts    []func(*baseapp.BaseApp)
 }
 
 func initShieldedEnvWith(t *testing.T, opts shieldedEnvOpts) *shieldedEnv {
@@ -158,7 +159,7 @@ func initShieldedEnvWith(t *testing.T, opts shieldedEnvOpts) *shieldedEnv {
 	appState, err := json.Marshal(doc.AppState)
 	require.NoError(t, err)
 	app := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
-		baseapp.SetChainID(shieldedtest.ChainID), baseapp.SetMinGasPrices("0.005uerth"))
+		append([]func(*baseapp.BaseApp){baseapp.SetChainID(shieldedtest.ChainID), baseapp.SetMinGasPrices("0.005uerth")}, opts.baseOpts...)...)
 	var cpJSON cmttypes.ConsensusParams
 	require.NoError(t, cmtjson.Unmarshal(doc.Consensus.Params, &cpJSON))
 	cp := cpJSON.ToProto()

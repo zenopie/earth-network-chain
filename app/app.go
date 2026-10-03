@@ -27,6 +27,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/mempool"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/auth"
 	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
@@ -59,6 +60,7 @@ import (
 	pkimodulekeeper "github.com/earth-network/earth/x/pki/keeper"
 	shieldedmodulekeeper "github.com/earth-network/earth/x/shielded/keeper"
 	shieldedstakingmodulekeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
+	"github.com/spf13/cast"
 )
 
 const (
@@ -290,6 +292,22 @@ func New(
 	baseAppOptions = append(baseAppOptions, func(bapp *baseapp.BaseApp) {
 		bapp.SetProtocolVersion(AppVersion)
 	})
+
+	// The app mempool is always the no-op one, whatever app.toml says. The
+	// SDK's priority and sender-nonce mempools key txs by signer and refuse
+	// one with none, and baseapp calls mempool.Remove after a block tx's ante
+	// has written: on such a node every private tx in a block fails after its
+	// fee and nullifiers were committed, while a no-op node runs its msg.
+	// Different results, different AppHash -- the node forks off. So the
+	// option is appended last (after whatever server.DefaultBaseappOptions
+	// derived from mempool.max-txs) and a configured value is ignored loudly.
+	if v := appOpts.Get(server.FlagMempoolMaxTxs); v != nil {
+		if n, err := cast.ToIntE(v); err != nil || n != -1 {
+			logger.Error("ignoring app.toml mempool.max-txs: EARTH always runs the no-op app mempool (private txs are unsigned)",
+				"max-txs", v)
+		}
+	}
+	baseAppOptions = append(baseAppOptions, baseapp.SetMempool(mempool.NoOpMempool{}))
 
 	// build app
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)

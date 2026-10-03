@@ -5,10 +5,17 @@ ported as a regression test asserting the safe outcome.
 
 - [ ] 1 escrow poisoning (HIGH)
 - [ ] 2 unshield into module accounts
-- [ ] 3 stake votes on concurrent proposals (no nullifier spend)
+- [-] 3 stake votes on concurrent proposals: DROPPED by decision. A no-spend
+  vote reveals the same nullifier on every vote and again at the later spend
+  (linkable). Stake voting is left exactly as it is; a separate job replaces
+  it with a per-proposal vote nullifier + indexed nullifier-tree
+  non-membership circuit.
 - [ ] 4 gas-check blind to revocations
 - [ ] 5 demoted expedited proposal loses subjects
-- [ ] 6 mempool fork (force NoOpMempool)
+- [x] 6 mempool fork: app.New appends baseapp.SetMempool(NoOpMempool{}) last;
+  a configured mempool.max-txs != -1 is logged and ignored. Test:
+  app/audit3_mempool_test.go TestAudit3AppMempoolForcedNoOp (SenderNonce
+  option given -> still no-op, same tx result).
 - [ ] 7 unbond record growth
 - [ ] 8 vote weight canonical strings
 - [ ] 9 genesis root records
