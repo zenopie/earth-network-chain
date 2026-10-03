@@ -49,14 +49,16 @@ service Query {
     option (google.api.http).get = "/earth/personhood/v1/registrations_by_dsc/{dsc_key}";
   }
 
-  // Referrer reports whether an address holds a live referrer binding.
-  rpc Referrer(QueryReferrerRequest) returns (QueryReferrerResponse) {
-    option (google.api.http).get = "/earth/personhood/v1/referrer/{address}";
+  // Handle returns one handle's record.
+  rpc Handle(QueryHandleRequest) returns (QueryHandleResponse) {
+    option (google.api.http).get = "/earth/personhood/v1/handle/{handle}";
   }
 
-  // ReferrerByCode resolves a referral code to its binding's address.
-  rpc ReferrerByCode(QueryReferrerByCodeRequest) returns (QueryReferrerByCodeResponse) {
-    option (google.api.http).get = "/earth/personhood/v1/referrer_code/{code}";
+  // Handles pages through the whole directory in handle order: a wallet
+  // fetches it all rather than asking about the one it pays, so its lookups
+  // do not say who pays whom.
+  rpc Handles(QueryHandlesRequest) returns (QueryHandlesResponse) {
+    option (google.api.http).get = "/earth/personhood/v1/handles";
   }
 
   // RegistrationCountries returns the registration count per issuing country.
@@ -144,31 +146,41 @@ message QueryRegistrationCountriesResponse {
   repeated CountryCount countries = 1 [(gogoproto.nullable) = false];
 }
 
-// QueryReferrerRequest asks whether address may be named as a registration's
-// affiliate.
-message QueryReferrerRequest {
-  string address = 1;
+// QueryHandleRequest names a handle.
+message QueryHandleRequest {
+  string handle = 1;
 }
 
-// QueryReferrerResponse: live, and until when (unix seconds).
-message QueryReferrerResponse {
-  bool live = 1;
-  int64 expires_at = 2;
-  // code is the binding's referral code, "" for none.
-  string code = 3;
+// HandleEntry is a handle as the directory serves it.
+message HandleEntry {
+  string handle = 1;
+  // address is the shielded address (bech32m "erthz1...").
+  string address = 2;
+  // status: "live" (it resolves: a registration may name it, wallets may
+  // pay it), "renewal" (lease ended; reserved to its owner until
+  // renewal_until, does not resolve) or "free" (unclaimed or released).
+  string status = 3;
+  int64 expires_at = 4;
+  // renewal_until is expires_at + handle_renewal_seconds.
+  int64 renewal_until = 5;
 }
 
-// QueryReferrerByCodeRequest asks what a referral code names.
-message QueryReferrerByCodeRequest {
-  string code = 1;
+// QueryHandleResponse: found (false: free and unclaimed), and the entry.
+message QueryHandleResponse {
+  bool found = 1;
+  HandleEntry handle = 2 [(gogoproto.nullable) = false];
 }
 
-// QueryReferrerByCodeResponse: the address the code names (empty when no
-// live binding holds it), whether a registration may name it now (live),
-// the binding's expiry, and when the code is released (0: unclaimed).
-message QueryReferrerByCodeResponse {
-  string address = 1;
-  bool live = 2;
-  int64 expires_at = 3;
-  int64 releases_at = 4;
+// QueryHandlesRequest pages the directory: handles after start (exclusive;
+// "" from the first), at most limit (0: 100; at most 1000).
+message QueryHandlesRequest {
+  string start = 1;
+  uint32 limit = 2;
+}
+
+// QueryHandlesResponse: the page, and next (the last handle returned, to
+// pass as start; "" when the directory is exhausted).
+message QueryHandlesResponse {
+  repeated HandleEntry handles = 1 [(gogoproto.nullable) = false];
+  string next = 2;
 }

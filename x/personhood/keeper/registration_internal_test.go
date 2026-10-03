@@ -128,8 +128,10 @@ func passportMsg(t *testing.T, name string) *types.MsgRegister {
 		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), PcErth: privacy.FieldBytes(r.ErthPC()),
 		CiphertextAnml: r.CiphertextAnml(), CiphertextErth: r.CiphertextErth(),
 	}
-	if r.Referrer != "" {
-		m.Affiliate = sdk.AccAddress(personhoodtest.ReferralAddress(r.Referrer)).String()
+	if r.ReferrerHandle != "" {
+		m.AffiliateHandle = r.ReferrerHandle
+		m.AffiliatePc = privacy.FieldBytes(r.ReferralNote().PC())
+		m.AffiliateCiphertext = r.ReferralCiphertext()
 	}
 	return m
 }
@@ -186,10 +188,12 @@ func TestRegistrationBinding(t *testing.T) {
 
 	other := privacy.FieldBytes(personhoodtest.Det("someone-else", 0))
 	for name, mutate := range map[string]func(*types.MsgRegister){
-		"idc":       func(m *types.MsgRegister) { m.Idc = other },
-		"pc_anml":   func(m *types.MsgRegister) { m.PcAnml = other },
-		"pc_erth":   func(m *types.MsgRegister) { m.PcErth = other },
-		"affiliate": func(m *types.MsgRegister) { m.Affiliate = sdk.AccAddress(make([]byte, 20)).String() },
+		"idc":     func(m *types.MsgRegister) { m.Idc = other },
+		"pc_anml": func(m *types.MsgRegister) { m.PcAnml = other },
+		"pc_erth": func(m *types.MsgRegister) { m.PcErth = other },
+		"affiliate": func(m *types.MsgRegister) {
+			m.AffiliateHandle, m.AffiliatePc, m.AffiliateCiphertext = "amy", other, personhoodtest.Registrations["C2"].ReferralCiphertext()
+		},
 		// A relayer front-running the registration with garbage ciphertexts
 		// (the notes would land, but the wallet could not find them on chain).
 		"ciphertext_anml": func(m *types.MsgRegister) { m.CiphertextAnml = []byte("garbage") },
@@ -201,22 +205,45 @@ func TestRegistrationBinding(t *testing.T) {
 		_, err := checkAndVerify(k, ctx, m)
 		require.ErrorIs(t, err, types.ErrBadPublicInputs, name)
 	}
-	// C2 names A's referral address: refused while A holds no live binding,
-	// accepted once it does; dropping the affiliate breaks the binding.
+	// C2 names A's handle "amy": refused while no live handle holds it,
+	// accepted once one does; refused again once its lease ends (the renewal
+	// period does not resolve). Swapping the handle, the referral pc or its
+	// ciphertext, or dropping the affiliate, breaks the binding.
 	kC, ctxC := regKeeper(t, stubPki{pubkey: dscKeyOf(t, "C2")})
 	ctxC = ctxC.WithBlockTime(time.Date(2025, 1, 5, 12, 0, 0, 0, time.UTC))
 	mC := passportMsg(t, "C2")
 	_, err = checkAndVerify(kC, ctxC, mC)
 	require.ErrorIs(t, err, types.ErrNoReferrer)
-	aAddr := personhoodtest.ReferralAddress("A")
-	nf := privacy.FieldBytes(personhoodtest.Det("referrer-nf", 0))
-	require.NoError(t, kC.putReferrerBinding(ctxC, types.ReferrerBinding{Nullifier: nf, Address: mC.Affiliate,
-		ExpiresAt: ctxC.BlockTime().Unix() + 60}, aAddr))
-	_, err = checkAndVerify(kC, ctxC, mC)
+	params := leanParams(t)
+	params.CaretakerVoteSeconds = 600 // a short lease, inside the proof's date skew
+	require.NoError(t, kC.Params.Set(ctxC, params))
+	nf := privacy.FieldBytes(personhoodtest.Det("handle-nf", 0))
+	exp, err := kC.applyBindHandle(ctxC, nf, "amy", personhoodtest.ShieldedAddress("A"))
 	require.NoError(t, err)
-	mC.Affiliate = ""
-	_, err = checkAndVerify(kC, ctxC, mC)
-	require.ErrorIs(t, err, types.ErrBadPublicInputs)
+	pC, err := checkAndVerify(kC, ctxC, mC)
+	require.NoError(t, err)
+	require.True(t, pC.referred)
+	_, err = checkAndVerify(kC, ctxC.WithBlockTime(time.Unix(exp, 0)), mC)
+	require.ErrorIs(t, err, types.ErrNoReferrer, "a lapsed handle does not resolve")
+	for name, mutate := range map[string]func(*types.MsgRegister){
+		"handle": func(m *types.MsgRegister) { m.AffiliateHandle = "amy-2" },
+		"pc":     func(m *types.MsgRegister) { m.AffiliatePc = other },
+		"ciphertext": func(m *types.MsgRegister) {
+			m.AffiliateCiphertext = personhoodtest.Registrations["D1"].ReferralCiphertext()
+		},
+		"none": func(m *types.MsgRegister) {
+			m.AffiliateHandle, m.AffiliatePc, m.AffiliateCiphertext = "", nil, nil
+		},
+	} {
+		if name == "handle" {
+			_, err := kC.applyBindHandle(ctxC, privacy.FieldBytes(personhoodtest.Det("handle-nf", 1)), "amy-2", personhoodtest.ShieldedAddress("B"))
+			require.NoError(t, err)
+		}
+		m := passportMsg(t, "C2")
+		mutate(m)
+		_, err := checkAndVerify(kC, ctxC, m)
+		require.ErrorIs(t, err, types.ErrBadPublicInputs, name)
+	}
 }
 
 // The proof's dsc_key must equal the commitment of the certificate x/pki

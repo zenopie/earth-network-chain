@@ -1,0 +1,155 @@
+package keeper
+
+import (
+	"testing"
+	"time"
+
+	storetypes "cosmossdk.io/store/types"
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+	"github.com/cosmos/cosmos-sdk/runtime"
+	"github.com/cosmos/cosmos-sdk/testutil"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	"github.com/stretchr/testify/require"
+
+	personhoodtest "github.com/earth-network/earth/x/personhood/testutil"
+	"github.com/earth-network/earth/x/personhood/types"
+	"github.com/earth-network/earth/zk/privacy"
+)
+
+func handleKeeper(t *testing.T) (Keeper, sdk.Context) {
+	t.Helper()
+	encCfg := moduletestutil.MakeTestEncodingConfig()
+	ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
+	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
+	base := testutil.DefaultContextWithDB(t, storeKey, storetypes.NewTransientStoreKey("transient_test")).Ctx
+	k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac, authtypes.NewModuleAddress(types.GovModuleName),
+		&countingBank{}, stubDex{}, nil, stubAllocation{}, &burnLog{}, stubShielded{})
+	ctx := base.WithBlockTime(time.Unix(1_800_000_000, 0).UTC())
+	p := types.DefaultParams()
+	p.CaretakerVoteSeconds = 1000 // the lease
+	p.HandleRenewalSeconds = 500  // the owner-only renewal period
+	require.NoError(t, k.Params.Set(ctx, p))
+	return k, ctx
+}
+
+func (k Keeper) statusOf(t *testing.T, ctx sdk.Context, h string) string {
+	t.Helper()
+	res, err := NewQueryServerImpl(k).Handle(ctx, &types.QueryHandleRequest{Handle: h})
+	require.NoError(t, err)
+	return res.Handle.Status
+}
+
+// Every handle transition: claim, uniqueness, one per human, the lease, the
+// owner-only renewal period, release after it, a change freeing the old
+// handle at once (claimable by another human in the same block), an
+// explicit release, the sweep, and the genesis round trip.
+func TestHandleLifecycle(t *testing.T) {
+	k, ctx := handleKeeper(t)
+	nfA := privacy.FieldBytes(privacy.U64(1))
+	nfB := privacy.FieldBytes(privacy.U64(2))
+	addrA, addrA2, addrB := personhoodtest.ShieldedAddress("A"), personhoodtest.ShieldedAddress("A2"), personhoodtest.ShieldedAddress("B")
+	at := func(dt int64) sdk.Context { return ctx.WithBlockTime(time.Unix(ctx.BlockTime().Unix()+dt, 0)) }
+	resolves := func(c sdk.Context, h string) bool {
+		_, live, err := k.liveHandle(c, h)
+		require.NoError(t, err)
+		return live
+	}
+
+	// Claim; a second human is refused while it is live.
+	exp, err := k.applyBindHandle(ctx, nfA, "alice", addrA)
+	require.NoError(t, err)
+	require.Equal(t, ctx.BlockTime().Unix()+1000, exp)
+	require.Equal(t, HandleLive, k.statusOf(t, ctx, "alice"))
+	require.True(t, resolves(ctx, "alice"))
+	_, err = k.applyBindHandle(ctx, nfB, "alice", addrB)
+	require.ErrorIs(t, err, types.ErrHandleTaken)
+	require.ErrorIs(t, k.handleClaimable(ctx, nfB, "alice"), types.ErrHandleTaken, "the ante's check")
+
+	// Rebinding keeps the handle and may change the address.
+	_, err = k.applyBindHandle(at(10), nfA, "alice", addrA2)
+	require.NoError(t, err)
+	rec, err := k.Handles.Get(ctx, "alice")
+	require.NoError(t, err)
+	got, err := rec.Address()
+	require.NoError(t, err)
+	require.Equal(t, addrA2, got)
+
+	// The lease ends: it stops resolving, and for the renewal period only
+	// its owner may renew it; an outsider is refused.
+	lapsed := at(1010)
+	require.Equal(t, HandleRenewal, k.statusOf(t, lapsed, "alice"))
+	require.False(t, resolves(lapsed, "alice"))
+	_, err = k.applyBindHandle(lapsed, nfB, "alice", addrB)
+	require.ErrorIs(t, err, types.ErrHandleTaken, "an outsider in the renewal period")
+	exp, err = k.applyBindHandle(lapsed, nfA, "alice", addrA)
+	require.NoError(t, err, "the owner renews in the window")
+	require.Equal(t, lapsed.BlockTime().Unix()+1000, exp)
+	require.True(t, resolves(lapsed, "alice"))
+
+	// Past the renewal period it is free: anyone may claim it.
+	free := lapsed.WithBlockTime(time.Unix(exp+500, 0))
+	require.Equal(t, HandleFree, k.statusOf(t, free, "alice"))
+	_, err = k.applyBindHandle(free, nfB, "alice", addrB)
+	require.NoError(t, err, "claimable after the window")
+	_, ok := k.HandleByNf.Get(free, nfA)
+	require.Error(t, ok, "A lost it")
+
+	// One per human: A claiming another handle holds just that one.
+	_, err = k.applyBindHandle(free, nfA, "amy", addrA)
+	require.NoError(t, err)
+	// A change frees the old handle at once: B claims it in the same block.
+	_, err = k.applyBindHandle(free, nfA, "amy-2", addrA)
+	require.NoError(t, err)
+	require.Equal(t, HandleFree, k.statusOf(t, free, "amy"))
+	cur, err := k.HandleByNf.Get(free, nfA)
+	require.NoError(t, err)
+	require.Equal(t, "amy-2", cur)
+	nfC := privacy.FieldBytes(privacy.U64(3))
+	_, err = k.applyBindHandle(free, nfC, "amy", personhoodtest.ShieldedAddress("C"))
+	require.NoError(t, err, "the old handle is claimable in the same block")
+	// Changing to a handle someone holds is refused, and A keeps its own.
+	_, err = k.applyBindHandle(free, nfA, "amy", addrA)
+	require.ErrorIs(t, err, types.ErrHandleTaken)
+	require.Equal(t, HandleLive, k.statusOf(t, free, "amy-2"))
+
+	// Explicit release: free at once.
+	exp, err = k.applyBindHandle(free, nfA, "", privacy.ShieldedAddress{})
+	require.NoError(t, err)
+	require.Zero(t, exp)
+	require.Equal(t, HandleFree, k.statusOf(t, free, "amy-2"))
+
+	// Directory and genesis round trip.
+	dir, err := NewQueryServerImpl(k).Handles(free, &types.QueryHandlesRequest{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, dir.Handles, 1)
+	require.Equal(t, "alice", dir.Handles[0].Handle)
+	require.Equal(t, "alice", dir.Next)
+	dir, err = NewQueryServerImpl(k).Handles(free, &types.QueryHandlesRequest{Start: dir.Next})
+	require.NoError(t, err)
+	require.Len(t, dir.Handles, 1)
+	require.Equal(t, "amy", dir.Handles[0].Handle)
+	require.Empty(t, dir.Next)
+	gs, err := k.ExportGenesis(free)
+	require.NoError(t, err)
+	require.NoError(t, gs.Validate())
+	require.Len(t, gs.Handles, 2)
+	k2, ctx2 := handleKeeper(t)
+	ctx2 = ctx2.WithBlockTime(free.BlockTime())
+	require.NoError(t, k2.InitGenesis(ctx2, *gs))
+	gs2, err := k2.ExportGenesis(ctx2)
+	require.NoError(t, err)
+	require.Equal(t, gs.Handles, gs2.Handles)
+	require.True(t, func() bool { _, l, _ := k2.liveHandle(ctx2, "amy"); return l }())
+
+	// The sweep deletes handles past their renewal period, not live ones.
+	b, err := k.Handles.Get(free, "alice")
+	require.NoError(t, err)
+	gone := free.WithBlockTime(time.Unix(b.ExpiresAt+500, 0))
+	n, err := k.sweepHandles(gone, 100)
+	require.NoError(t, err)
+	require.Equal(t, 2, n, "alice and amy (claimed in the same block, same lease)")
+	_, err = k.Handles.Get(gone, "alice")
+	require.Error(t, err)
+}

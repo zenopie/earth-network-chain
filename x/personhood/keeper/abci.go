@@ -17,7 +17,7 @@ import (
 )
 
 // BeginBlocker retires lapsed and revoked registrations (zeroing their
-// leaves), clears lapsed caretaker splits and referrer bindings, prunes stale claim nullifiers and
+// leaves), clears lapsed caretaker splits and released handles, prunes stale claim nullifiers and
 // runs the ANML buyback-and-burn (1 ERTH/sec).
 //
 // It must run before x/allocation's BeginBlocker: clearing a lapsed split
@@ -80,7 +80,7 @@ const sweepReserveDivisor = 8
 // caretaker and referrer sweeps each have a reserved share, so a revoked
 // signer with many registrations (a purge lasting many blocks) cannot starve
 // them. A lapsed registration that keeps its leaf, a lapsed caretaker split
-// that keeps its weight, or a lapsed referrer binding that keeps being paid is
+// that keeps its weight, or a released handle still reserved is
 // each a wrong of its own, and none of them should wait on another's backlog.
 //
 // Round one runs each sweep in priority order with its share plus whatever the
@@ -95,9 +95,8 @@ func (k Keeper) runSweeps(ctx context.Context, budget int) error {
 		k.purgeRevokedDscs,
 		k.sweepExpiredRegistrations,
 		k.sweepCaretakerVotes,
-		k.sweepReferrerBindings,
 		k.sweepUsedBindings,
-		k.sweepReferralCodes,
+		k.sweepHandles,
 	}
 	reserve := budget / sweepReserveDivisor
 	if reserve == 0 && budget >= len(sweeps) {

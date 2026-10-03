@@ -101,16 +101,7 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	if err := k.CaretakerCount.Set(ctx, uint64(len(genState.CaretakerVotes))); err != nil {
 		return err
 	}
-	for _, b := range genState.ReferrerBindings {
-		addr, err := k.addressCodec.StringToBytes(b.Address)
-		if err != nil {
-			return fmt.Errorf("referrer binding %x: %w", b.Nullifier, err)
-		}
-		if err := k.putReferrerBinding(ctx, b, addr); err != nil {
-			return err
-		}
-	}
-	if err := k.importReferralCodes(ctx, genState.ReferralCodes); err != nil {
+	if err := k.importHandles(ctx, genState.Handles); err != nil {
 		return err
 	}
 	for _, u := range genState.UsedBindings {
@@ -224,14 +215,8 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}); err != nil {
 		return nil, err
 	}
-	if err := k.ReferrerBindings.Walk(ctx, nil, func(_ []byte, b types.ReferrerBinding) (bool, error) {
-		genesis.ReferrerBindings = append(genesis.ReferrerBindings, b)
-		return false, nil
-	}); err != nil {
-		return nil, err
-	}
-	if err := k.ReferralCodes.Walk(ctx, nil, func(_ string, c types.ReferralCode) (bool, error) {
-		genesis.ReferralCodes = append(genesis.ReferralCodes, c)
+	if err := k.Handles.Walk(ctx, nil, func(_ string, h types.Handle) (bool, error) {
+		genesis.Handles = append(genesis.Handles, h)
 		return false, nil
 	}); err != nil {
 		return nil, err

@@ -15,7 +15,7 @@ option go_package = "github.com/earth-network/earth/x/personhood/types";
 
 // Msg defines the Msg service.
 //
-// Register, ClaimAnml, SetCaretaker and BindReferrer are private msgs:
+// Register, ClaimAnml, SetCaretaker and BindHandle are private msgs:
 // unsigned, carried
 // alone in a tx, their fee paid from the shielded pool by the earth.shielded
 // Bundle each embeds as `fee` (see x/shielded PrivateMsg), whose only balance
@@ -40,9 +40,9 @@ service Msg {
   // SetCaretaker casts or refreshes a registered human's caretaker split.
   rpc SetCaretaker(MsgSetCaretaker) returns (MsgSetCaretakerResponse);
 
-  // BindReferrer names (or clears) the address a registered human is paid
-  // referral rewards at.
-  rpc BindReferrer(MsgBindReferrer) returns (MsgBindReferrerResponse);
+  // BindHandle claims, refreshes, moves or releases a registered human's
+  // handle: a name in the public directory for a shielded address.
+  rpc BindHandle(MsgBindHandle) returns (MsgBindHandleResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -76,16 +76,19 @@ message MsgUpdateParamsResponse {}
 // zk/privacy.RegistrationBinding =
 //   H(TAG_REG, idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
 //     Bytes(ciphertext_erth), affiliate)
-// with affiliate = Bytes(the affiliate's address bytes) when the referrer is
-// named by address, H(TAG_AFFCODE, Bytes(affiliate_code)) when by code
-// (TAG_AFFCODE = the field element of the bytes "earth.affcode"), 0 when
-// none. The two forms are domain-separated (Bytes is H(TAG_BYTES, ...)), so
-// no address names the same affiliate field as a code.
+// with affiliate = 0 when the registration names no referrer, and
+//   H(TAG_AFFILIATE, Bytes(affiliate_handle), affiliate_pc,
+//     Bytes(affiliate_ciphertext))
+// when it does (TAG_AFFILIATE = the field element of the bytes
+// "earth.affiliate"), so whoever relays it cannot swap the handle, the note
+// or its ciphertext.
 //
 // A new registration (or one re-entering after its last lapsed) appends the
 // leaf, mints 1 ANML to pc_anml and the registrant's half of the reward to
-// pc_erth, and pays the referrer's half in transparent ERTH to affiliate,
-// which must hold a live referrer binding (MsgBindReferrer). A live
+// pc_erth, and, when it names affiliate_handle (a live handle: MsgBindHandle),
+// mints the referrer's half as a note to affiliate_pc with
+// affiliate_ciphertext: the registrant's wallet looks the handle's shielded
+// address up (Query/Handle or Query/Handles) and makes the note to it. A live
 // registration is a switch: the old leaf is zeroed and the new one appended,
 // and nothing is paid (affiliate is then not checked). A switch to the idc
 // the live registration already holds is refused (a replay).
@@ -115,19 +118,18 @@ message MsgRegister {
   // pc_erth receives the registrant's half of the registration reward.
   bytes pc_erth = 9;
   bytes ciphertext_erth = 10;
-  // affiliate is the referrer's address (bech32), empty for none. It must
-  // hold a live referrer binding, and receives the referrer's half of the
-  // reward in transparent ERTH.
-  string affiliate = 13 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  // affiliate_code names the referrer by referral code instead (see
-  // ReferralCode): at most one of affiliate and affiliate_code. It must
-  // resolve to a live binding; the referrer's half is paid to that
-  // binding's address.
-  string affiliate_code = 14;
-  // affiliate_pc / affiliate_ciphertext: a private referral note, replaced by
-  // the public affiliate address.
-  reserved 11, 12;
-  reserved "affiliate_pc", "affiliate_ciphertext";
+  // affiliate_handle names the referrer (a live handle), empty for none.
+  string affiliate_handle = 15;
+  // affiliate_pc / affiliate_ciphertext: the referrer's half of the reward,
+  // as a note to the handle's shielded address (a pc of its owner_pk, an
+  // amount-blind v2 ciphertext to its ek_pub, exactly 177 bytes). All three
+  // set, or none.
+  bytes affiliate_pc = 11;
+  bytes affiliate_ciphertext = 12;
+  // affiliate (a public referrer address) and affiliate_code: replaced by
+  // affiliate_handle.
+  reserved 13, 14;
+  reserved "affiliate", "affiliate_code";
 }
 
 // MsgRegisterResponse returns what the registration did.
@@ -193,69 +195,43 @@ message MsgSetCaretakerResponse {
   int64 expires_at = 1;
 }
 
-// MsgBindReferrer binds address as the prover's referral address, or clears
-// the binding (empty address). Referrals are public: a registration naming
-// address pays the referrer's half of its reward there, in transparent ERTH.
-// Who bound it is not public; that a live registration did, is.
+// MsgBindHandle claims, renews, changes or releases the prover's handle
+// (types.Handle): a name in the public directory for a shielded address.
 //
-// membership is proven with scope zk/privacy.ReferrerScope(), excluded_dsc
-// and excluded_country 0 and max_activation this msg's max_activation, which
-// must be at most now - caretaker_vote_seconds (or a held, longer one) - one
-// day (the caretaker rule: a switched-to identity cannot hold a binding beside
-// its predecessor's). The binding lasts caretaker_vote_seconds; the wallet
-// refreshes it. Rebinding under the same nullifier moves it to the new
-// address. An address bound under another live nullifier is refused.
+// A handle is lowercase [a-z0-9-], 3 to 32 characters, no leading or
+// trailing dash. One per human: membership is proven with scope
+// zk/privacy.HandleScope() (Scope("handle")), excluded_dsc and
+// excluded_country 0 and max_activation this msg's max_activation, which
+// must be strictly before now - caretaker_vote_seconds (or a held, longer
+// one) - one day (the caretaker rule: a switched-to identity cannot hold a
+// handle beside its predecessor's).
 //
-// Binding an address takes its owner's consent, so nobody can squat an
-// address they do not control: referrer_pub_key is the address's 33-byte
-// compressed secp256k1 public key (the address must be its RIPEMD160(SHA256))
-// and referrer_signature its 64-byte r||s (low-S) ECDSA signature over
-// SHA-256 of the consent bytes (what cosmos-sdk's secp256k1 PrivKey.Sign
-// produces for them):
+//   - handle and address set: claim a free handle, or renew the prover's
+//     own (live or in its renewal period), with its lease set to now +
+//     caretaker_vote_seconds and its address to address. Naming a handle
+//     other than the prover's current one is a change: the old handle is
+//     released at once, the new one claimed in the same msg. A handle held
+//     by another nullifier (live, or in its renewal period) is refused.
+//   - both empty: release the prover's handle at once.
 //
-//   "earth.referrer.consent.v2" || u8 len(chain_id) || chain_id
-//     || membership.nullifier (32 bytes) || u64be(consent_expiry_height)
-//     || address (raw bytes)
+// address is the shielded address (zk/privacy: bech32m "erthz1...", owner_pk
+// and ek_pub), canonical lowercase. No consent is needed: naming someone
+// else's shielded address only sends the binder's referrals to them.
 //
-// consent_expiry_height is the last block height the consent may be used
-// at: a consent is refused once the chain is past it, and one whose expiry
-// is more than ReferrerConsentMaxBlocks ahead of the block is refused too,
-// so a signature the owner gave once cannot be replayed to rebind their
-// address long after (audit 4, C10). Wallets pick the current height plus
-// a margin for the proof and broadcast (a few hundred blocks).
-//
-// All three are empty/zero when clearing (empty address). They are not
-// sighash fields: the consent itself binds the nullifier and the address.
-//
-// code (optional) claims a referral code for the binding (see ReferralCode):
-// empty keeps the binding's current code, if any; a different code moves
-// the binding to it (the old one stays reserved to this nullifier for the
-// grace period). A code held, or reserved, by another nullifier is
-// refused. Clearing (empty address) takes no code and starts the current
-// code's grace period.
-//
-// sighash fields: Bytes(address bytes), Bytes(code) (Bytes of nothing for an
-// empty address or code).
-message MsgBindReferrer {
+// sighash fields: Bytes(handle), owner_pk, Bytes(ek_pub) (Bytes of nothing,
+// 0 and Bytes of nothing for a release).
+message MsgBindHandle {
   earth.shielded.v1.Bundle fee = 1 [(gogoproto.nullable) = false];
   Membership membership = 2 [(gogoproto.nullable) = false];
-  string address = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string handle = 3;
+  // address is the shielded address the handle resolves to.
+  string address = 4;
   // max_activation is the membership proof's max_activation (unix seconds).
-  uint64 max_activation = 4;
-  // referrer_pub_key and referrer_signature: the address owner's consent
-  // (see above).
-  bytes referrer_pub_key = 5;
-  bytes referrer_signature = 6;
-  // consent_expiry_height: the last height the consent is valid at (see
-  // above).
-  uint64 consent_expiry_height = 7;
-  // code: the referral code to claim or keep (see above); "" keeps the
-  // current one.
-  string code = 8;
+  uint64 max_activation = 5;
 }
 
-// MsgBindReferrerResponse reports when the binding lapses (unix seconds), 0
-// when it was cleared.
-message MsgBindReferrerResponse {
+// MsgBindHandleResponse reports when the lease lapses (unix seconds), 0 when
+// the handle was released.
+message MsgBindHandleResponse {
   int64 expires_at = 1;
 }

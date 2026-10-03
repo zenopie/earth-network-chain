@@ -3,7 +3,6 @@ package types
 import (
 	"encoding/hex"
 	"fmt"
-	"strings"
 
 	"github.com/earth-network/earth/zk/privacy"
 )
@@ -98,26 +97,7 @@ func (gs GenesisState) Validate() error {
 		}
 	}
 
-	seenBinding, seenAddr := map[string]struct{}{}, map[string]struct{}{}
-	for _, b := range gs.ReferrerBindings {
-		if _, err := privacy.FieldFromBytes(b.Nullifier); err != nil {
-			return fmt.Errorf("referrer binding: %w", err)
-		}
-		if _, dup := seenBinding[string(b.Nullifier)]; dup {
-			return fmt.Errorf("referrer binding %x listed twice", b.Nullifier)
-		}
-		seenBinding[string(b.Nullifier)] = struct{}{}
-		if b.Address == "" || b.ExpiresAt <= 0 {
-			return fmt.Errorf("referrer binding %x has no address or expiry", b.Nullifier)
-		}
-		// bech32 is case-insensitive: one address, one store key.
-		if _, dup := seenAddr[strings.ToLower(b.Address)]; dup {
-			return fmt.Errorf("referrer address %s bound twice", b.Address)
-		}
-		seenAddr[strings.ToLower(b.Address)] = struct{}{}
-	}
-
-	if err := validateReferralCodes(gs.ReferralCodes); err != nil {
+	if err := validateHandles(gs.Handles); err != nil {
 		return err
 	}
 

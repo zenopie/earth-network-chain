@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"github.com/earth-network/earth/zk/privacy"
@@ -19,10 +18,9 @@ type Registration struct {
 	Secret   uint64 // which of the human's identity secrets
 	Doc      string // MRZ document number: same doc, same passport nullifier
 	Date     string // the proof's current_date, YYMMDD
-	Referrer string // human whose referral address is named, "" for none
-	// ReferrerCode names the referrer by referral code instead (the code
-	// Referrer's binding claimed); "" names it by address.
-	ReferrerCode string
+	Referrer string // human whose handle is named, "" for none
+	// ReferrerHandle is the handle named (Referrer's).
+	ReferrerHandle string
 }
 
 // Registrations are the passport fixtures the app tests use, by name.
@@ -32,11 +30,11 @@ var Registrations = map[string]Registration{
 	"C1": {Name: "C1", Human: "C", Secret: 1, Doc: "Y87654321", Date: "250101"},
 	// A switches to a new identity secret, same passport, two days in.
 	"A2": {Name: "A2", Human: "A", Secret: 2, Doc: "L898902C3", Date: "250103"},
-	// C's registration lapses and C re-enters, four days in, referred by A.
-	"C2": {Name: "C2", Human: "C", Secret: 2, Doc: "Y87654321", Date: "250105", Referrer: "A"},
-	// D registers four days in, naming A by referral code (A2 claims
-	// "alice" with its binding).
-	"D1": {Name: "D1", Human: "D", Secret: 1, Doc: "Z11223344", Date: "250105", Referrer: "A", ReferrerCode: "alice"},
+	// C's registration lapses and C re-enters, four days in, referred by A
+	// (A2's handle "amy").
+	"C2": {Name: "C2", Human: "C", Secret: 2, Doc: "Y87654321", Date: "250105", Referrer: "A", ReferrerHandle: "amy"},
+	// D registers four days in, also naming A's handle.
+	"D1": {Name: "D1", Human: "D", Secret: 1, Doc: "Z11223344", Date: "250105", Referrer: "A", ReferrerHandle: "amy"},
 }
 
 // RegistrationNames lists Registrations in a stable order.
@@ -70,36 +68,46 @@ func (r Registration) AnmlNote() Note { return r.note("anml", "uanml", 1_000_000
 // paid).
 func (r Registration) ErthPC() fr.Element { return r.note("erth", "uerth", 0).PC() }
 
-// ReferralKey is the secp256k1 key of the account a human binds as their
-// referral address: binding it takes the key's signed consent.
-func ReferralKey(human string) *secp256k1.PrivKey {
-	return secp256k1.GenPrivKeyFromSecret([]byte("referral/" + human))
+// ShieldedAddress is a human's wallet address (its handle resolves to it):
+// the wallet's owner key and a fixed stand-in encryption key.
+func ShieldedAddress(human string) privacy.ShieldedAddress {
+	a := privacy.ShieldedAddress{OwnerPK: privacy.OwnerPK(WalletNK(human))}
+	copy(a.EKPub[:], privacy.FieldBytes(Det("ek/"+human, 0)))
+	return a
 }
 
-// ReferralAddress is the account a human binds as their referral address
-// (raw bytes; bech32 it with the chain's codec): ReferralKey's address.
-func ReferralAddress(human string) []byte {
-	return ReferralKey(human).PubKey().Address()
+// ReferralNote is the referrer's half of r's reward: a note the registrant's
+// wallet makes to the referrer's address (its value is only known once
+// paid).
+func (r Registration) ReferralNote() Note {
+	return Note{NK: WalletNK(r.Referrer), Denom: "uerth",
+		Rho: Det(r.Name+"/referral/rho", 0), Rcm: Det(r.Name+"/referral/rcm", 0)}
+}
+
+// ReferralCiphertext is the referral note's ciphertext stand-in.
+func (r Registration) ReferralCiphertext() []byte {
+	return shieldedtest.BlindCT("personhood-ct:" + r.Name + ":12")
 }
 
 // ReferrerField is the affiliate r names, as the binding carries it:
-// Bytes(address bytes), AffiliateCode(code) when named by code, 0 for none
-// (types.AffiliateField).
+// privacy.AffiliateField(handle, the referral note's pc, its ciphertext),
+// 0 for none (types.MsgRegister.AffiliateField).
 func (r Registration) ReferrerField() fr.Element {
-	if r.ReferrerCode != "" {
-		return privacy.AffiliateCode(r.ReferrerCode)
-	}
-	if r.Referrer == "" {
+	if r.ReferrerHandle == "" {
 		return fr.Element{}
 	}
-	return privacy.Bytes(ReferralAddress(r.Referrer))
+	return privacy.AffiliateField(r.ReferrerHandle, r.ReferralNote().PC(), r.ReferralCiphertext())
 }
 
 // CiphertextAnml and CiphertextErth are the registration's note ciphertexts:
 // fixed stand-ins of an amount-blind ciphertext's length (nothing decrypts
 // them in the tests), bound by Binding.
-func (r Registration) CiphertextAnml() []byte { return shieldedtest.BlindCT("personhood-ct:" + r.Name + ":10") }
-func (r Registration) CiphertextErth() []byte { return shieldedtest.BlindCT("personhood-ct:" + r.Name + ":11") }
+func (r Registration) CiphertextAnml() []byte {
+	return shieldedtest.BlindCT("personhood-ct:" + r.Name + ":10")
+}
+func (r Registration) CiphertextErth() []byte {
+	return shieldedtest.BlindCT("personhood-ct:" + r.Name + ":11")
+}
 
 // Binding is the passport proof's address input.
 func (r Registration) Binding() fr.Element {

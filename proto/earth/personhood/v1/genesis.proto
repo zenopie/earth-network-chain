@@ -46,8 +46,10 @@ message GenesisState {
   // caretaker_votes are the live caretaker splits' leases.
   repeated CaretakerVote caretaker_votes = 7 [(gogoproto.nullable) = false];
 
-  // referrer_bindings are the live referral addresses.
-  repeated ReferrerBinding referrer_bindings = 8 [(gogoproto.nullable) = false];
+  // referrer_bindings (public referrer addresses) and referral_codes:
+  // replaced by handles.
+  reserved 8, 15;
+  reserved "referrer_bindings", "referral_codes";
 
   // used_bindings are the registration bindings still refused for reuse
   // (see UsedRegistrationBinding).
@@ -69,9 +71,9 @@ message GenesisState {
   // activation bound before the leases cast under the old one have lapsed.
   LeaseHold lease_hold = 14 [(gogoproto.nullable) = false];
 
-  // referral_codes are the claimed referral codes: held by a live binding,
-  // or reserved to their last holder until releases_at (see ReferralCode).
-  repeated ReferralCode referral_codes = 15 [(gogoproto.nullable) = false];
+  // handles are the handle directory: live, and in their renewal period
+  // (see Handle).
+  repeated Handle handles = 16 [(gogoproto.nullable) = false];
 }
 
 // DscRateCounter is one Document Signer's rate counter.

@@ -41,9 +41,9 @@ type preparedRegistration struct {
 	// registration under the same passport makes this a switch, which is
 	// neither rate-limited nor paid.
 	switched bool
-	// affiliate is the referrer's address, checked live; nil for none or on
-	// a switch.
-	affiliate sdk.AccAddress
+	// referred: the registration names a live affiliate handle and is paid
+	// (not a switch); the referral note goes to msg.AffiliatePc.
+	referred bool
 }
 
 // checkRegistration runs every check on a MsgRegister short of verifying its
@@ -172,33 +172,20 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 			return preparedRegistration{}, types.ErrRegistrationReplay
 		}
 	}
-	// A paid registration's affiliate must be a live referrer. A switch pays
-	// nothing, so its affiliate is not looked at.
-	var affiliate []byte
-	if !switched && msg.AffiliateCode != "" {
-		// Named by code: resolved now, to the address of the live binding
-		// whose active code it is. The binding commits to the code itself
-		// (types.AffiliateField), so a relayer cannot swap it.
-		addr, live, _, err := k.resolveReferralCode(ctx, msg.AffiliateCode)
+	// A paid registration's affiliate handle must be live (it resolves). A
+	// switch pays nothing, so its affiliate is not looked at. The note's pc
+	// and ciphertext are the registrant's wallet's, made to the handle's
+	// address; the passport binding commits to all three.
+	referred := false
+	if !switched && msg.AffiliateHandle != "" {
+		_, live, err := k.liveHandle(ctx, msg.AffiliateHandle)
 		if err != nil {
 			return preparedRegistration{}, err
 		}
 		if !live {
-			return preparedRegistration{}, errorsmod.Wrapf(types.ErrUnknownReferralCode, "affiliate_code %q", msg.AffiliateCode)
+			return preparedRegistration{}, errorsmod.Wrapf(types.ErrNoReferrer, "affiliate_handle %q", msg.AffiliateHandle)
 		}
-		affiliate = addr
-	}
-	if !switched && msg.Affiliate != "" {
-		if affiliate, err = k.addressCodec.StringToBytes(msg.Affiliate); err != nil {
-			return preparedRegistration{}, errorsmod.Wrapf(types.ErrInvalidMsg, "affiliate: %v", err)
-		}
-		live, _, err := k.liveReferrer(ctx, affiliate)
-		if err != nil {
-			return preparedRegistration{}, err
-		}
-		if !live {
-			return preparedRegistration{}, errorsmod.Wrapf(types.ErrNoReferrer, "affiliate %s", msg.Affiliate)
-		}
+		referred = true
 	}
 	// Rate caps, before the proof: a country at its cap should not cost a
 	// verification per refused attempt. Only once the certificate has chained
@@ -210,7 +197,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		}
 	}
 	return preparedRegistration{vk: vk, pubInputs: pubInputs, nullifier: nullifier, binding: bindingBytes,
-		proofDate: proofUnix, dsc: facts, switched: switched, affiliate: affiliate}, nil
+		proofDate: proofUnix, dsc: facts, switched: switched, referred: referred}, nil
 }
 
 // verifyRegistrationProofIn is verifyRegistrationProof, through the CheckTx

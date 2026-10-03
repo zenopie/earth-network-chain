@@ -338,18 +338,12 @@ var (
 	CaretakerExpiryKey = collections.NewPrefix("caretaker_expiry")
 	CaretakerCountKey  = collections.NewPrefix("caretaker_count")
 
-	// ReferrerBindingsKey maps a referrer nullifier to its ReferrerBinding;
-	// ReferrerByAddrKey is the reverse index (address bytes -> nullifier);
-	// ReferrerExpiryKey orders bindings by expiry for the sweep.
-	ReferrerBindingsKey = collections.NewPrefix("referrer_bindings")
-	ReferrerByAddrKey   = collections.NewPrefix("referrer_by_addr")
-	ReferrerExpiryKey   = collections.NewPrefix("referrer_expiry")
-
-	// Referral codes: code -> record, nullifier -> its active code, and
-	// (releases_at, code) for the sweep.
-	ReferralCodesKey       = collections.NewPrefix("referral_codes")
-	ReferralCodeByNfKey    = collections.NewPrefix("referral_code_by_nf")
-	ReferralCodeReleaseKey = collections.NewPrefix("referral_code_release")
+	// HandlesKey maps a handle to its Handle record; HandleByNfKey is the
+	// reverse index (nullifier -> handle); HandleReleaseKey orders records
+	// by release time (expires_at + ReleaseGraceSeconds) for the sweep.
+	HandlesKey       = collections.NewPrefix("handles")
+	HandleByNfKey    = collections.NewPrefix("handle_by_nf")
+	HandleReleaseKey = collections.NewPrefix("handle_release")
 
 	// UsedBindingsKey maps a landed registration's binding to when it may be
 	// forgotten; UsedBindingExpiryKey orders them by that for the sweep.

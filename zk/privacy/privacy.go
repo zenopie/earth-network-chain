@@ -48,9 +48,8 @@ var (
 	TagBytes  = tag("earth.bytes")
 	// TagScope domain-separates membership scopes (see Scope).
 	TagScope = tag("earth.scope")
-	// TagAffCode domain-separates a registration's affiliate named by
-	// referral code from one named by address (see AffiliateCode).
-	TagAffCode = tag("earth.affcode")
+	// TagAffiliate: a registration's referrer (see AffiliateField).
+	TagAffiliate = tag("earth.affiliate")
 )
 
 func tag(s string) fr.Element {
@@ -215,9 +214,10 @@ func ClaimScope(day uint64) fr.Element { return Scope("claim", U64(day)) }
 // always filed under the same nullifier, so a refresh replaces it.
 func CaretakerScope() fr.Element { return Scope("caretaker") }
 
-// ReferrerScope is the one scope of referrer bindings: a person's binding is
-// always filed under the same nullifier, so a rebind moves it.
-func ReferrerScope() fr.Element { return Scope("referrer") }
+// HandleScope is the one scope of handles: a person's handle is always
+// filed under the same nullifier (one per human), so a rebind refreshes or
+// moves it.
+func HandleScope() fr.Element { return Scope("handle") }
 
 // ProposalScope is the assembly ballot on x/gov proposal id in voting round
 // round (0, or 1 after the chamber demoted an expedited proposal).
@@ -253,11 +253,13 @@ func RegistrationBinding(idc, pcAnml fr.Element, ctAnml []byte, pcErth fr.Elemen
 	return H(TagReg, idc, pcAnml, Bytes(ctAnml), pcErth, Bytes(ctErth), affiliate)
 }
 
-// AffiliateCode is the registration binding's affiliate field for a
-// referrer named by referral code: H(TAG_AFFCODE, Bytes(code)). One named by
-// address is Bytes(address bytes) = H(TAG_BYTES, ...): the tags differ, so
-// the two forms never collide.
-func AffiliateCode(code string) fr.Element { return H(TagAffCode, Bytes([]byte(code))) }
+// AffiliateField is the registration binding's affiliate field for a
+// referrer named by handle, with the referral note the registration mints to
+// it: H(TAG_AFFILIATE, Bytes(handle), affiliate_pc, Bytes(affiliate_ct)). A
+// registration naming no referrer carries 0 there.
+func AffiliateField(handle string, pc fr.Element, ct []byte) fr.Element {
+	return H(TagAffiliate, Bytes([]byte(handle)), pc, Bytes(ct))
+}
 
 // ErrNonCanonical is returned for a 32-byte string that is not a reduced
 // BN254 scalar.

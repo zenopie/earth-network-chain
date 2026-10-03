@@ -278,7 +278,7 @@ func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f *shieldedtest
 		x.Membership = mem
 	case *personhoodtypes.MsgSetCaretaker:
 		x.Membership = mem
-	case *personhoodtypes.MsgBindReferrer:
+	case *personhoodtypes.MsgBindHandle:
 		x.Membership = mem
 	case *assemblytypes.MsgVoteProposal:
 		x.Membership = mem
@@ -342,10 +342,10 @@ func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {
 		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), CiphertextAnml: r.CiphertextAnml(),
 		PcErth: privacy.FieldBytes(r.ErthPC()), CiphertextErth: r.CiphertextErth(),
 	}
-	if r.ReferrerCode != "" {
-		msg.AffiliateCode = r.ReferrerCode
-	} else if r.Referrer != "" {
-		msg.Affiliate = e.bech(personhoodtest.ReferralAddress(r.Referrer))
+	if r.ReferrerHandle != "" {
+		msg.AffiliateHandle = r.ReferrerHandle
+		msg.AffiliatePc = privacy.FieldBytes(r.ReferralNote().PC())
+		msg.AffiliateCiphertext = r.ReferralCiphertext()
 	}
 	e.prove("register/"+name, msg, f, nil)
 	return msg
@@ -378,41 +378,26 @@ func (e *phEnv) caretaker(name, reg string, maxAct int64, split []allocationtype
 	return msg
 }
 
-// bindReferrer binds human's referral address (or clears, human "") as
-// registration reg.
-func (e *phEnv) bindReferrer(name, reg, human string, maxAct int64) *personhoodtypes.MsgBindReferrer {
+// bindHandle binds handle to human's shielded address (or releases, handle
+// "") as registration reg.
+func (e *phEnv) bindHandle(name, reg, handle, human string, maxAct int64) *personhoodtypes.MsgBindHandle {
 	e.t.Helper()
-	return e.bindReferrerCode(name, reg, human, "", maxAct)
-}
-
-// bindReferrerCode is bindReferrer claiming (or, "", keeping) a referral
-// code.
-func (e *phEnv) bindReferrerCode(name, reg, human, code string, maxAct int64) *personhoodtypes.MsgBindReferrer {
-	e.t.Helper()
-	f := e.feeFor("referrer/" + name)
-	msg := &personhoodtypes.MsgBindReferrer{Fee: e.bundle(f), MaxActivation: uint64(maxAct), Code: code}
-	if human != "" {
-		msg.Address = e.bech(personhoodtest.ReferralAddress(human))
+	f := e.feeFor("handle/" + name)
+	msg := &personhoodtypes.MsgBindHandle{Fee: e.bundle(f), MaxActivation: uint64(maxAct), Handle: handle}
+	if handle != "" {
+		msg.Address = personhoodtest.ShieldedAddress(human).Encode()
 	}
-	e.prove("referrer/"+name, msg, f, &member{reg: reg, scope: privacy.ReferrerScope(), maxAct: maxAct})
-	if human != "" {
-		// The address owner's consent, for the nullifier the proof revealed.
-		key := personhoodtest.ReferralKey(human)
-		msg.ConsentExpiryHeight = uint64(e.ctx().BlockHeight()) + 100
-		sig, err := key.Sign(personhoodtypes.ReferrerConsentBytes(shieldedtest.ChainID, msg.Membership.Nullifier,
-			msg.ConsentExpiryHeight, personhoodtest.ReferralAddress(human)))
-		require.NoError(e.t, err)
-		msg.ReferrerPubKey, msg.ReferrerSignature = key.PubKey().Bytes(), sig
-	}
+	e.prove("handle/"+name, msg, f, &member{reg: reg, scope: privacy.HandleScope(), maxAct: maxAct})
 	return msg
 }
 
-func (e *phEnv) referrerLive(human string) bool {
+// handle is the directory's entry for h.
+func (e *phEnv) handle(h string) personhoodtypes.HandleEntry {
 	e.t.Helper()
-	res, err := personhoodkeeper.NewQueryServerImpl(e.app.PersonhoodKeeper).Referrer(e.ctx(),
-		&personhoodtypes.QueryReferrerRequest{Address: e.bech(personhoodtest.ReferralAddress(human))})
+	res, err := personhoodkeeper.NewQueryServerImpl(e.app.PersonhoodKeeper).Handle(e.ctx(),
+		&personhoodtypes.QueryHandleRequest{Handle: h})
 	require.NoError(e.t, err)
-	return res.Live
+	return res.Handle
 }
 
 func (e *phEnv) ballotInputs(req *assemblytypes.QueryBallotInputsRequest) *assemblytypes.QueryBallotInputsResponse {
@@ -682,13 +667,25 @@ func TestPrivatePersonhood(t *testing.T) {
 	caretakerExpiry := e.now.Unix() + phR
 	_ = d1
 
-	// A binds a referral address under the same activation rule. C1 cannot
-	// take an address A holds.
+	// A claims the handle "alice" (its shielded address) under the same
+	// activation rule. C1 cannot take a live handle A holds. The handle and
+	// address are bound by the sighash: a relayer cannot swap them.
 	maxAct := e.now.Unix()/3600*3600 - phR - phDay - 1 // strictly before the bound (audit 4 C7)
-	e.mustDeliver(e.bindReferrer("A1", "A1", "A", maxAct))
-	require.True(t, e.referrerLive("A"))
-	res = e.checkTx(e.tx(e.bindReferrer("C1-taken", "C1", "A", maxAct)))
-	require.Equal(t, personhoodtypes.ErrReferrerBound.ABCICode(), res.Code, res.Log)
+	alice := e.bindHandle("A1", "A1", "alice", "A", maxAct)
+	for _, mutate := range []func(*personhoodtypes.MsgBindHandle){
+		func(m *personhoodtypes.MsgBindHandle) { m.Handle = "mallory" },
+		func(m *personhoodtypes.MsgBindHandle) { m.Address = personhoodtest.ShieldedAddress("M").Encode() },
+	} {
+		bad := *alice
+		mutate(&bad)
+		res = e.checkTx(e.tx(&bad))
+		require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the handle or address")
+	}
+	e.mustDeliver(alice)
+	require.Equal(t, "live", e.handle("alice").Status)
+	require.Equal(t, personhoodtest.ShieldedAddress("A").Encode(), e.handle("alice").Address)
+	res = e.checkTx(e.tx(e.bindHandle("C1-taken", "C1", "alice", "C", maxAct)))
+	require.Equal(t, personhoodtypes.ErrHandleTaken.ABCICode(), res.Code, res.Log)
 
 	// The caretaker split lapses R after it was cast and is swept.
 	e.at(time.Unix(caretakerExpiry+10, 0).UTC())
@@ -767,76 +764,70 @@ func TestPrivatePersonhood(t *testing.T) {
 	_, ok = e.registration("C1")
 	require.False(t, ok)
 	require.True(t, e.leaf(c1Index).IsZero())
-	// A1's binding lapsed R after it was made and was swept: naming A is
-	// refused, before the passport proof is verified.
-	require.False(t, e.referrerLive("A"))
+	// A1's handle lapsed R after it was claimed: it no longer resolves, and
+	// for the renewal period only A1's nullifier may renew it. A2 (A's new
+	// identity, another nullifier) cannot take it, and claims "amy".
+	require.Equal(t, "renewal", e.handle("alice").Status)
+	res = e.checkTx(e.tx(e.bindHandle("A2-alice", "A2", "alice", "A", e.now.Unix()/3600*3600-phR-phDay-1)))
+	require.Equal(t, personhoodtypes.ErrHandleTaken.ABCICode(), res.Code, res.Log)
+	// Naming a handle nobody holds is refused before the passport proof.
 	res = e.checkTx(e.tx(e.register("C2")))
 	require.Equal(t, personhoodtypes.ErrNoReferrer.ABCICode(), res.Code, res.Log)
-	// A2 (switched in on day 2) binds A's address again; C2 then pays A's
-	// half to it in transparent ERTH, and the registrant's half as a note.
-	e.mustDeliver(e.bindReferrer("A2", "A2", "A", e.now.Unix()/3600*3600-phR-phDay-1))
-	require.True(t, e.referrerLive("A"))
-	aAddr := sdk.AccAddress(personhoodtest.ReferralAddress("A"))
-	before := e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount
-	fb = e.mustDeliver(e.register("C2"))
+	e.mustDeliver(e.bindHandle("A2", "A2", "amy", "A", e.now.Unix()/3600*3600-phR-phDay-1))
+	require.Equal(t, "live", e.handle("amy").Status)
+	// C2 names "amy": the referrer's half is minted as a note to the pc
+	// C2's wallet made for A's shielded address, the registrant's half as
+	// C2's own note. The passport binding commits to the handle, the pc and
+	// the ciphertext: a relayer can swap none of them.
+	regC2 := e.register("C2")
+	for _, mutate := range []func(*personhoodtypes.MsgRegister){
+		func(m *personhoodtypes.MsgRegister) { m.AffiliateHandle = "alice" },
+		func(m *personhoodtypes.MsgRegister) { m.AffiliatePc = privacy.FieldBytes(privacy.U64(666)) },
+		func(m *personhoodtypes.MsgRegister) { m.AffiliateCiphertext = shieldedtest.BlindCT("mallory") },
+	} {
+		bad := *regC2
+		mutate(&bad)
+		res = e.checkTx(e.tx(&bad))
+		require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the affiliate")
+	}
+	fb = e.mustDeliver(regC2)
 	regEv = eventsOf(fb.TxResults[0].Events, "register")[0]
 	require.Equal(t, "false", regEv["switched"])
 	rewardC2, ok := math.NewIntFromString(regEv["reward"])
 	require.True(t, ok)
 	require.True(t, rewardC2.IsPositive())
-	paid := e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount.Sub(before)
-	require.True(t, paid.IsPositive())
-	require.True(t, rewardC2.Sub(paid).Abs().LTE(math.OneInt()), "the referrer's half: %s vs %s", paid, rewardC2)
-	require.True(t, hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), rewardC2.Uint64(), personhoodtest.Registrations["C2"].ErthPC())))
-	// ---------------------------------------------------------- referral code
-	// A2 rebinds A's address claiming the code "alice". The code is bound by
-	// the sighash: a relayer cannot claim another with the same proof.
-	e.at(e.now.Add(time.Minute))
-	withCode := e.bindReferrerCode("A2-code", "A2", "A", "alice", e.now.Unix()/3600*3600-phR-phDay-1)
-	swapped := *withCode
-	swapped.Code = "mallory"
-	res = e.checkTx(e.tx(&swapped))
-	require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the claimed code")
-	e.mustDeliver(withCode)
-	byCode, err := personhoodkeeper.NewQueryServerImpl(k).ReferrerByCode(ctxNow(), &personhoodtypes.QueryReferrerByCodeRequest{Code: "alice"})
-	require.NoError(t, err)
-	require.True(t, byCode.Live)
-	require.Equal(t, e.bech(personhoodtest.ReferralAddress("A")), byCode.Address)
-
-	// D1 names its referrer by code: the referrer's half goes to the
-	// address the code is bound to. The passport binding commits to the
-	// code, so a relayer cannot swap it for another code or an address.
-	regD1 := e.register("D1")
-	for _, mutate := range []func(*personhoodtypes.MsgRegister){
-		func(m *personhoodtypes.MsgRegister) { m.AffiliateCode = "mallory" },
-		func(m *personhoodtypes.MsgRegister) {
-			m.AffiliateCode, m.Affiliate = "", e.bech(personhoodtest.ReferralAddress("A"))
-		},
-	} {
-		bad := *regD1
-		mutate(&bad)
-		res = e.checkTx(e.tx(&bad))
-		require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the affiliate")
+	c2 := personhoodtest.Registrations["C2"]
+	referralC2 := false
+	for _, half := range []uint64{rewardC2.Uint64(), rewardC2.Uint64() - 1, rewardC2.Uint64() + 1} {
+		referralC2 = referralC2 || hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), half, c2.ReferralNote().PC()))
 	}
-	before = e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount
-	fb = e.mustDeliver(regD1)
+	require.True(t, referralC2, "the referrer's half, as a note to A's pc")
+	require.True(t, hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), rewardC2.Uint64(), personhoodtest.Registrations["C2"].ErthPC())))
+	// D1 names "amy" too.
+	fb = e.mustDeliver(e.register("D1"))
 	regEv = eventsOf(fb.TxResults[0].Events, "register")[0]
 	rewardD1, ok := math.NewIntFromString(regEv["reward"])
 	require.True(t, ok)
-	paid = e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount.Sub(before)
-	require.True(t, paid.IsPositive())
-	require.True(t, rewardD1.Sub(paid).Abs().LTE(math.OneInt()), "the referrer's half, by code: %s vs %s", paid, rewardD1)
+	d1r := personhoodtest.Registrations["D1"]
+	referralD1 := false
+	for _, half := range []uint64{rewardD1.Uint64(), rewardD1.Uint64() - 1, rewardD1.Uint64() + 1} {
+		referralD1 = referralD1 || hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), half, d1r.ReferralNote().PC()))
+	}
+	require.True(t, referralD1)
 
-	// Rebinding the same nullifier moves the binding, and keeps its code.
+	// Rebinding the same nullifier may change the address and keep the
+	// handle; changing to another handle frees the old one at once.
 	e.at(e.now.Add(time.Minute))
-	e.mustDeliver(e.bindReferrer("A2-move", "A2", "A-alt", e.now.Unix()/3600*3600-phR-phDay-1))
-	require.False(t, e.referrerLive("A"))
-	require.True(t, e.referrerLive("A-alt"))
-	byCode, err = personhoodkeeper.NewQueryServerImpl(k).ReferrerByCode(ctxNow(), &personhoodtypes.QueryReferrerByCodeRequest{Code: "alice"})
-	require.NoError(t, err)
-	require.Equal(t, e.bech(personhoodtest.ReferralAddress("A-alt")), byCode.Address, "the code follows the binding")
+	e.mustDeliver(e.bindHandle("A2-addr", "A2", "amy", "A-alt", e.now.Unix()/3600*3600-phR-phDay-1))
+	require.Equal(t, personhoodtest.ShieldedAddress("A-alt").Encode(), e.handle("amy").Address, "the handle follows the address")
+	e.mustDeliver(e.bindHandle("A2-change", "A2", "amy-2", "A-alt", e.now.Unix()/3600*3600-phR-phDay-1))
+	require.Equal(t, "free", e.handle("amy").Status, "the old handle is freed at once")
+	require.Equal(t, "live", e.handle("amy-2").Status)
 	cnt, _ = k.RegCount.Get(ctxNow())
 	require.Equal(t, uint64(3), cnt)
+	dir, err := personhoodkeeper.NewQueryServerImpl(k).Handles(ctxNow(), &personhoodtypes.QueryHandlesRequest{})
+	require.NoError(t, err)
+	require.Len(t, dir.Handles, 2) // alice (renewal), amy-2
 
 	require.NoError(t, e.app.ShieldedKeeper.AssertInvariants(ctxNow()))
 
@@ -879,7 +870,7 @@ func TestPrivatePersonhoodBypassRefused(t *testing.T) {
 	for _, msg := range []sdk.Msg{
 		&personhoodtypes.MsgClaimAnml{Fee: tr, Membership: mem, Pc: make([]byte, 32), Ciphertext: shieldedtest.BlindCT("c")},
 		&personhoodtypes.MsgSetCaretaker{Fee: tr, Membership: mem},
-		&personhoodtypes.MsgBindReferrer{Fee: tr, Membership: mem},
+		&personhoodtypes.MsgBindHandle{Fee: tr, Membership: mem},
 		&personhoodtypes.MsgRegister{Fee: tr, Proof: make([]byte, shieldedtypes.ProofBytes), PublicSignals: []string{"1"}, SignatureAlgorithm: "lean_poa",
 			Idc: make([]byte, 32), PcAnml: make([]byte, 32), PcErth: make([]byte, 32),
 			CiphertextAnml: shieldedtest.BlindCT("a"), CiphertextErth: shieldedtest.BlindCT("e")},

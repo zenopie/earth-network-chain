@@ -25,20 +25,12 @@ var (
 	ErrInvalidMembership   = errors.Register(ModuleName, 1118, "invalid membership proof")
 	ErrWrongDay            = errors.Register(ModuleName, 1119, "claim is not for today")
 	ErrIdentityTreeFull    = errors.Register(ModuleName, 1120, "identity tree full")
-	ErrNoReferrer          = errors.Register(ModuleName, 1121, "affiliate holds no live referrer binding")
-	ErrReferrerBound       = errors.Register(ModuleName, 1122, "address is bound as another live referrer")
-	// ErrNoReferrerConsent: MsgBindReferrer's consent is missing, not the
-	// address's key, or does not verify.
-	ErrNoReferrerConsent = errors.Register(ModuleName, 1125, "referrer address owner has not consented to the binding")
+	ErrNoReferrer          = errors.Register(ModuleName, 1121, "affiliate_handle is not a live handle")
+	ErrHandleTaken         = errors.Register(ModuleName, 1122, "handle is held by another human")
 	// ErrRegistrationReplay: a switch to the identity commitment the live
 	// registration already holds (a replayed MsgRegister).
 	ErrRegistrationReplay = errors.Register(ModuleName, 1123, "passport is already registered to this identity commitment")
 	// ErrBindingUsed: this registration (its exact binding: idc, notes,
 	// ciphertexts, affiliate) has landed before. A replay of a public proof.
 	ErrBindingUsed = errors.Register(ModuleName, 1124, "this registration has already been used")
-	// ErrReferralCodeTaken: the code is held by another referrer binding, or
-	// reserved to its last holder for the grace period.
-	ErrReferralCodeTaken = errors.Register(ModuleName, 1126, "referral code is taken")
-	// ErrUnknownReferralCode: no live referrer binding holds the code.
-	ErrUnknownReferralCode = errors.Register(ModuleName, 1127, "referral code names no live referrer")
 )

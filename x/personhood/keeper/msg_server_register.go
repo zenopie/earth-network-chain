@@ -100,7 +100,11 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		if _, err := k.mintAnmlNote(ctx, msg.PcAnml, msg.CiphertextAnml); err != nil {
 			return nil, err
 		}
-		reward, err = k.payRegistrationReward(ctx, rewardNote{pc: msg.PcErth, ciphertext: msg.CiphertextErth}, p.affiliate)
+		var referrer *rewardNote
+		if p.referred {
+			referrer = &rewardNote{pc: msg.AffiliatePc, ciphertext: msg.AffiliateCiphertext}
+		}
+		reward, err = k.payRegistrationReward(ctx, rewardNote{pc: msg.PcErth, ciphertext: msg.CiphertextErth}, referrer)
 		if err != nil {
 			return nil, err
 		}

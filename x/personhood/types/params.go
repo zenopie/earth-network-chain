@@ -37,6 +37,7 @@ func DefaultParams() Params {
 	p.NetworkDailyRegistrationGrowthBps = DefaultNetworkDailyRegistrationGrowthBps
 	p.IdentityRootWindowSeconds = DefaultIdentityRootWindowSeconds
 	p.CaretakerVoteSeconds = DefaultCaretakerVoteSeconds
+	p.HandleRenewalSeconds = DefaultHandleRenewalSeconds
 	return p
 }
 
@@ -163,6 +164,15 @@ func (p Params) CaretakerVoteSecondsOrDefault() int64 {
 	return int64(p.CaretakerVoteSeconds)
 }
 
+// HandleRenewalSecondsOrDefault is a lapsed handle's owner-only renewal
+// period.
+func (p Params) HandleRenewalSecondsOrDefault() int64 {
+	if p.HandleRenewalSeconds == 0 {
+		return DefaultHandleRenewalSeconds
+	}
+	return int64(p.HandleRenewalSeconds)
+}
+
 // BuybackTwapWindowSecondsOrDefault returns the buyback's minimum averaging window.
 func (p Params) BuybackTwapWindowSecondsOrDefault() int64 {
 	if p.BuybackTwapWindowSeconds == 0 {
@@ -262,6 +272,9 @@ func (p Params) Validate() error {
 	}
 	if p.CaretakerVoteSeconds > 365*SecondsPerDay {
 		return fmt.Errorf("caretaker_vote_seconds must be at most a year")
+	}
+	if p.HandleRenewalSeconds > 365*SecondsPerDay {
+		return fmt.Errorf("handle_renewal_seconds must be at most a year")
 	}
 	if p.BuybackMaxDeviationBps >= BpsDenominator {
 		return fmt.Errorf(

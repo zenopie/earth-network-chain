@@ -194,7 +194,7 @@ func (k Keeper) leaseSeconds(ctx context.Context, params types.Params) (int64, e
 }
 
 // LeaseActivationBound is the latest activated_at a caretaker split or a
-// referrer binding may prove now: now - lease length - activation margin.
+// handle may prove now: now - lease length - activation margin.
 // A switched-to identity is activated at the switch, and its predecessor's
 // leaf proves for at most a root window (<= the margin) after it, so every
 // lease the predecessor could cast has lapsed before the successor may cast

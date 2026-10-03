@@ -88,23 +88,3 @@ func (q queryServer) RegistrationCountries(ctx context.Context, _ *types.QueryRe
 
 // Referrer reports whether an address may be named as a registration's
 // affiliate now, and until when its binding runs.
-func (q queryServer) Referrer(ctx context.Context, req *types.QueryReferrerRequest) (*types.QueryReferrerResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid request")
-	}
-	addr, err := q.k.addressCodec.StringToBytes(req.Address)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-	live, expiresAt, err := q.k.liveReferrer(ctx, addr)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	res := &types.QueryReferrerResponse{Live: live, ExpiresAt: expiresAt}
-	if nf, err := q.k.ReferrerByAddr.Get(ctx, addr); err == nil {
-		if code, err := q.k.ReferralCodeByNf.Get(ctx, nf); err == nil {
-			res.Code = code
-		}
-	}
-	return res, nil
-}

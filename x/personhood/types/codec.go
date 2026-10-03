@@ -14,7 +14,7 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 		&MsgRegister{},
 		&MsgClaimAnml{},
 		&MsgSetCaretaker{},
-		&MsgBindReferrer{},
+		&MsgBindHandle{},
 		&MsgUpdateParams{},
 	)
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)
@@ -43,6 +43,6 @@ func ProvideSetCaretakerGetSigners() signing.CustomGetSigner {
 	return noSigners("earth.personhood.v1.MsgSetCaretaker")
 }
 
-func ProvideBindReferrerGetSigners() signing.CustomGetSigner {
-	return noSigners("earth.personhood.v1.MsgBindReferrer")
+func ProvideBindHandleGetSigners() signing.CustomGetSigner {
+	return noSigners("earth.personhood.v1.MsgBindHandle")
 }

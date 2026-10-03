@@ -79,16 +79,11 @@ type Keeper struct {
 	CaretakerExpiry collections.KeySet[collections.Pair[int64, []byte]]
 	CaretakerCount  collections.Item[uint64]
 
-	// Referrer bindings: nullifier -> binding, address -> nullifier, and the
-	// expiry order. See referrer.go.
-	ReferrerBindings collections.Map[[]byte, types.ReferrerBinding]
-	ReferrerByAddr   collections.Map[[]byte, []byte]
-	ReferrerExpiry   collections.KeySet[collections.Pair[int64, []byte]]
-	// Referral codes: code -> record, nullifier -> its active code, and
-	// (releases_at, code) for the sweep. See referral_code.go.
-	ReferralCodes       collections.Map[string, types.ReferralCode]
-	ReferralCodeByNf    collections.Map[[]byte, string]
-	ReferralCodeRelease collections.KeySet[collections.Pair[int64, string]]
+	// Handles: handle -> record, nullifier -> its active handle, and
+	// (expires_at + grace, handle) for the sweep. See handle.go.
+	Handles       collections.Map[string, types.Handle]
+	HandleByNf    collections.Map[[]byte, string]
+	HandleRelease collections.KeySet[collections.Pair[int64, string]]
 
 	// Registration bindings that have landed, refused for reuse until their
 	// expiry, and the expiry order. See registration.go.
@@ -174,14 +169,10 @@ func NewKeeper(
 		CaretakerExpiry: collections.NewKeySet(sb, types.CaretakerExpiryKey, "caretaker_expiry", timeBytes),
 		CaretakerCount:  collections.NewItem(sb, types.CaretakerCountKey, "caretaker_count", collections.Uint64Value),
 
-		ReferrerBindings: collections.NewMap(sb, types.ReferrerBindingsKey, "referrer_bindings", collections.BytesKey,
-			codec.CollValue[types.ReferrerBinding](cdc)),
-		ReferrerByAddr: collections.NewMap(sb, types.ReferrerByAddrKey, "referrer_by_addr", collections.BytesKey, collections.BytesValue),
-		ReferrerExpiry: collections.NewKeySet(sb, types.ReferrerExpiryKey, "referrer_expiry", timeBytes),
-		ReferralCodes: collections.NewMap(sb, types.ReferralCodesKey, "referral_codes", collections.StringKey,
-			codec.CollValue[types.ReferralCode](cdc)),
-		ReferralCodeByNf: collections.NewMap(sb, types.ReferralCodeByNfKey, "referral_code_by_nf", collections.BytesKey, collections.StringValue),
-		ReferralCodeRelease: collections.NewKeySet(sb, types.ReferralCodeReleaseKey, "referral_code_release",
+		Handles: collections.NewMap(sb, types.HandlesKey, "handles", collections.StringKey,
+			codec.CollValue[types.Handle](cdc)),
+		HandleByNf: collections.NewMap(sb, types.HandleByNfKey, "handle_by_nf", collections.BytesKey, collections.StringValue),
+		HandleRelease: collections.NewKeySet(sb, types.HandleReleaseKey, "handle_release",
 			collections.PairKeyCodec(collections.Int64Key, collections.StringKey)),
 
 		UsedBindings:      collections.NewMap(sb, types.UsedBindingsKey, "used_bindings", collections.BytesKey, collections.Int64Value),

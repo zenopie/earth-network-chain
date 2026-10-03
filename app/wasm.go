@@ -91,11 +91,10 @@ func wasmAcceptedQueries() wasmkeeper.AcceptedQueries {
 			return &personhoodmoduletypes.QueryParamsResponse{}
 		},
 
-		// The live caretaker count is CaretakerVoterCount above; Referrer
-		// reports whether an address (a contract, say) holds a live referrer
-		// binding, which is public by design.
-		"/earth.personhood.v1.Query/Referrer": func() proto.Message {
-			return &personhoodmoduletypes.QueryReferrerResponse{}
+		// Handle resolves a name in the public handle directory (status and
+		// shielded address), public by design.
+		"/earth.personhood.v1.Query/Handle": func() proto.Message {
+			return &personhoodmoduletypes.QueryHandleResponse{}
 		},
 
 		// x/shielded — the pool's public face: tree size and root, whether a

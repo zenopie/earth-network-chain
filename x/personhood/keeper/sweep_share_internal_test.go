@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/collections"
@@ -11,16 +12,25 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// seedLapsed files n lapsed caretaker splits and n lapsed referrer bindings.
+// seedLapsed files n lapsed caretaker splits and n handles past their
+// renewal period.
 func seedLapsed(t *testing.T, k Keeper, ctx sdk.Context, n int) {
 	t.Helper()
 	at := ctx.BlockTime().Unix() - 1
+	released := at - types.DefaultHandleRenewalSeconds
 	for i := 0; i < n; i++ {
 		nf := privacy.FieldBytes(privacy.U64(uint64(10_000 + i)))
 		require.NoError(t, k.CaretakerExpiry.Set(ctx, collections.Join(at, nf)))
-		require.NoError(t, k.ReferrerBindings.Set(ctx, nf, types.ReferrerBinding{Nullifier: nf, ExpiresAt: at}))
-		require.NoError(t, k.ReferrerExpiry.Set(ctx, collections.Join(at, nf)))
+		require.NoError(t, k.putHandle(ctx, types.Handle{Handle: fmt.Sprintf("h%05d", i), Nullifier: nf, ExpiresAt: released,
+			OwnerPk: make([]byte, 32), EkPub: make([]byte, 32)}))
 	}
+}
+
+func countHandles(t *testing.T, k Keeper, ctx sdk.Context) int {
+	t.Helper()
+	n := 0
+	require.NoError(t, k.HandleRelease.Walk(ctx, nil, func(collections.Pair[int64, string]) (bool, error) { n++; return false, nil }))
+	return n
 }
 
 func countKeys(t *testing.T, ks collections.KeySet[collections.Pair[int64, []byte]], ctx sdk.Context) int {
@@ -68,11 +78,11 @@ func TestLargePurgeDoesNotStarveOtherSweeps(t *testing.T) {
 	purged = 3*budget - purged
 	expired = 2*reserve - expired
 	caretaker := 2*reserve - countKeys(t, k.CaretakerExpiry, ctx)
-	referrer := 2*reserve - countKeys(t, k.ReferrerExpiry, ctx)
+	referrer := 2*reserve - countHandles(t, k, ctx)
 
 	require.GreaterOrEqual(t, expired, reserve, "expiry starved")
 	require.Equal(t, 2*reserve, caretaker, "lapsed caretaker leases have a budget of their own (audit 4 C8)")
-	require.GreaterOrEqual(t, referrer, reserve, "referrer sweep starved")
+	require.GreaterOrEqual(t, referrer, reserve, "handle sweep starved")
 	require.Positive(t, purged)
 	require.Equal(t, budget-3*reserve, purged, "the purge keeps the rest")
 	require.LessOrEqual(t, purged+expired+referrer, budget)

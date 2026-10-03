@@ -1,7 +1,6 @@
 package types
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math/big"
 
@@ -19,12 +18,12 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgRegister)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgClaimAnml)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgSetCaretaker)(nil)
-	_ shieldedtypes.PrivateMsg = (*MsgBindReferrer)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgBindHandle)(nil)
 
 	_ sdk.HasValidateBasic = (*MsgRegister)(nil)
 	_ sdk.HasValidateBasic = (*MsgClaimAnml)(nil)
 	_ sdk.HasValidateBasic = (*MsgSetCaretaker)(nil)
-	_ sdk.HasValidateBasic = (*MsgBindReferrer)(nil)
+	_ sdk.HasValidateBasic = (*MsgBindHandle)(nil)
 )
 
 // MaxPublicSignals bounds a passport proof's public input count. The lean_poa
@@ -121,27 +120,24 @@ func (m *MsgRegister) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m
 const MaxAddressBytes = 128
 
 // AffiliateField is the affiliate's place in the registration binding and
-// signal: Bytes(its address bytes) when named by address,
-// privacy.AffiliateCode(code) when named by referral code, 0 for none. At
-// most one of the two may be set.
-func AffiliateField(ac address.Codec, affiliate, code string) (fr.Element, error) {
-	if affiliate != "" && code != "" {
-		return fr.Element{}, errorsmod.Wrap(ErrInvalidMsg, "name the affiliate by address or by code, not both")
-	}
-	if code != "" {
-		if err := ValidateReferralCode(code); err != nil {
-			return fr.Element{}, err
-		}
-		return privacy.AffiliateCode(code), nil
-	}
-	if affiliate == "" {
+// signal: 0 when the registration names no referrer, and
+// privacy.AffiliateField(affiliate_handle, affiliate_pc,
+// affiliate_ciphertext) when it does. All three are set, or none.
+func (m *MsgRegister) AffiliateField() (fr.Element, error) {
+	if m.AffiliateHandle == "" && len(m.AffiliatePc) == 0 && len(m.AffiliateCiphertext) == 0 {
 		return fr.Element{}, nil
 	}
-	bz, err := canonicalBytes(ac, affiliate)
-	if err != nil {
-		return fr.Element{}, errorsmod.Wrapf(ErrInvalidMsg, "affiliate: %v", err)
+	if err := ValidateHandle(m.AffiliateHandle); err != nil {
+		return fr.Element{}, errorsmod.Wrapf(ErrInvalidMsg, "affiliate_handle: %v", err)
 	}
-	return privacy.Bytes(bz), nil
+	pc, err := Field("affiliate_pc", m.AffiliatePc)
+	if err != nil {
+		return fr.Element{}, err
+	}
+	if err := checkCiphertext("affiliate_ciphertext", m.AffiliateCiphertext); err != nil {
+		return fr.Element{}, err
+	}
+	return privacy.AffiliateField(m.AffiliateHandle, pc, m.AffiliateCiphertext), nil
 }
 
 // canonicalBytes decodes addr and requires it to be the canonical
@@ -175,7 +171,7 @@ func (m *MsgRegister) Binding(ac address.Codec) (fr.Element, error) {
 	if err != nil {
 		return fr.Element{}, err
 	}
-	aff, err := AffiliateField(ac, m.Affiliate, m.AffiliateCode)
+	aff, err := m.AffiliateField()
 	if err != nil {
 		return fr.Element{}, err
 	}
@@ -198,7 +194,7 @@ func (m *MsgRegister) SighashFields(ac address.Codec) ([]fr.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	aff, err := AffiliateField(ac, m.Affiliate, m.AffiliateCode)
+	aff, err := m.AffiliateField()
 	if err != nil {
 		return nil, err
 	}
@@ -240,16 +236,8 @@ func (m *MsgRegister) ValidateBasic() error {
 			return err
 		}
 	}
-	if len(m.Affiliate) > MaxAddressBytes {
-		return errorsmod.Wrapf(ErrInvalidMsg, "affiliate exceeds %d bytes", MaxAddressBytes)
-	}
-	if m.AffiliateCode != "" {
-		if m.Affiliate != "" {
-			return errorsmod.Wrap(ErrInvalidMsg, "name the affiliate by address or by code, not both")
-		}
-		if err := ValidateReferralCode(m.AffiliateCode); err != nil {
-			return err
-		}
+	if _, err := m.AffiliateField(); err != nil {
+		return err
 	}
 	for what, ct := range map[string][]byte{
 		"ciphertext_anml": m.CiphertextAnml, "ciphertext_erth": m.CiphertextErth,
@@ -325,49 +313,60 @@ func (m *MsgSetCaretaker) ValidateBasic() error {
 	return m.Membership.ValidateBasic()
 }
 
-// --- MsgBindReferrer -----------------------------------------------------
+// --- MsgBindHandle -------------------------------------------------------
 
 // PrivateBundles implements PrivateMsg: the fee bundle.
-func (m *MsgBindReferrer) PrivateBundles() []*shieldedtypes.Bundle {
+func (m *MsgBindHandle) PrivateBundles() []*shieldedtypes.Bundle {
 	return []*shieldedtypes.Bundle{&m.Fee}
 }
 
 // PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
-func (m *MsgBindReferrer) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+func (m *MsgBindHandle) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
 
-// SighashFields implements PrivateMsg: Bytes(address bytes), Bytes(code)
-// (Bytes of nothing for an empty address or code). The code is bound so
-// whoever relays the bind cannot claim another code with it.
-func (m *MsgBindReferrer) SighashFields(ac address.Codec) ([]fr.Element, error) {
-	var bz []byte
-	if m.Address != "" {
-		var err error
-		if bz, err = canonicalBytes(ac, m.Address); err != nil {
-			return nil, errorsmod.Wrapf(ErrInvalidMsg, "address: %v", err)
-		}
+// ShieldedAddress is the address the handle is bound to; ok false for a
+// release (empty address).
+func (m *MsgBindHandle) ShieldedAddress() (privacy.ShieldedAddress, bool, error) {
+	if m.Address == "" {
+		return privacy.ShieldedAddress{}, false, nil
 	}
-	return []fr.Element{privacy.Bytes(bz), privacy.Bytes([]byte(m.Code))}, nil
+	a, err := privacy.DecodeShieldedAddress(m.Address)
+	if err != nil {
+		return a, false, errorsmod.Wrapf(ErrInvalidMsg, "address: %v", err)
+	}
+	if a.Encode() != m.Address {
+		return a, false, errorsmod.Wrap(ErrInvalidMsg, "address is not in its canonical (lowercase) form")
+	}
+	return a, true, nil
 }
 
-// ValidateBasic checks everything that needs no state.
-func (m *MsgBindReferrer) ValidateBasic() error {
-	if len(m.Address) > MaxAddressBytes {
-		return errorsmod.Wrapf(ErrInvalidMsg, "address exceeds %d bytes", MaxAddressBytes)
+// SighashFields implements PrivateMsg: Bytes(handle), owner_pk,
+// Bytes(ek_pub) (Bytes of nothing, 0 and Bytes of nothing for a release).
+func (m *MsgBindHandle) SighashFields(address.Codec) ([]fr.Element, error) {
+	a, ok, err := m.ShieldedAddress()
+	if err != nil {
+		return nil, err
 	}
-	if m.Address == "" {
-		if len(m.ReferrerPubKey) != 0 || len(m.ReferrerSignature) != 0 || m.ConsentExpiryHeight != 0 {
-			return errorsmod.Wrap(ErrInvalidMsg, "clearing a binding carries no consent")
+	var ek []byte
+	if ok {
+		ek = a.EKPub[:]
+	}
+	return []fr.Element{privacy.Bytes([]byte(m.Handle)), a.OwnerPK, privacy.Bytes(ek)}, nil
+}
+
+// ValidateBasic checks everything that needs no state: a handle and an
+// address (a bind), or neither (a release).
+func (m *MsgBindHandle) ValidateBasic() error {
+	if len(m.Address) > MaxShieldedAddressBytes {
+		return errorsmod.Wrapf(ErrInvalidMsg, "address exceeds %d bytes", MaxShieldedAddressBytes)
+	}
+	if (m.Handle == "") != (m.Address == "") {
+		return errorsmod.Wrap(ErrInvalidMsg, "a bind names a handle and an address; a release neither")
+	}
+	if m.Handle != "" {
+		if err := ValidateHandle(m.Handle); err != nil {
+			return errorsmod.Wrapf(ErrInvalidMsg, "handle: %v", err)
 		}
-		if m.Code != "" {
-			return errorsmod.Wrap(ErrInvalidMsg, "clearing a binding claims no referral code")
-		}
-	} else if len(m.ReferrerPubKey) != ReferrerPubKeyBytes || len(m.ReferrerSignature) != ReferrerSignatureBytes {
-		return errorsmod.Wrapf(ErrNoReferrerConsent, "referrer_pub_key must be %d bytes and referrer_signature %d",
-			ReferrerPubKeyBytes, ReferrerSignatureBytes)
-	} else if m.ConsentExpiryHeight == 0 {
-		return errorsmod.Wrap(ErrNoReferrerConsent, "consent_expiry_height must be set")
-	} else if m.Code != "" {
-		if err := ValidateReferralCode(m.Code); err != nil {
+		if _, _, err := m.ShieldedAddress(); err != nil {
 			return err
 		}
 	}
@@ -377,37 +376,9 @@ func (m *MsgBindReferrer) ValidateBasic() error {
 	return m.Membership.ValidateBasic()
 }
 
-// Referrer consent sizes: a compressed secp256k1 key, an r||s signature.
-const (
-	ReferrerPubKeyBytes    = 33
-	ReferrerSignatureBytes = 64
-)
-
-// ReferrerConsentDomain prefixes the bytes a referrer address signs. v2
-// added the consent's expiry height (audit 4, C10): a v1 consent never
-// lapsed, so a signature its owner gave once could rebind the address to
-// that identity at any later time.
-const ReferrerConsentDomain = "earth.referrer.consent.v2"
-
-// ReferrerConsentMaxBlocks is how far past the current block a consent's
-// expiry height may be: a consent is a short-lived authorisation for one
-// bind, not a standing one (about three and a half days at 6 s blocks).
-const ReferrerConsentMaxBlocks = 50_000
-
-// ReferrerConsentBytes is what the owner of addr signs (secp256k1 ECDSA over
-// its SHA-256) to let the identity behind nullifier bind addr as its
-// referral address on chainID, at any height up to expiryHeight:
-//
-//	domain || u8 len(chainID) || chainID || nullifier || u64be(expiryHeight) || addr
-func ReferrerConsentBytes(chainID string, nullifier []byte, expiryHeight uint64, addr []byte) []byte {
-	out := make([]byte, 0, len(ReferrerConsentDomain)+1+len(chainID)+len(nullifier)+8+len(addr))
-	out = append(out, ReferrerConsentDomain...)
-	out = append(out, byte(len(chainID)))
-	out = append(out, chainID...)
-	out = append(out, nullifier...)
-	out = binary.BigEndian.AppendUint64(out, expiryHeight)
-	return append(out, addr...)
-}
+// MaxShieldedAddressBytes bounds a shielded address string in a msg (one is
+// 116 characters).
+const MaxShieldedAddressBytes = 128
 
 // MembershipStatement is what a membership proof must prove, beyond holding a
 // leaf of the identity tree at its root: the chain fixes all of it from the

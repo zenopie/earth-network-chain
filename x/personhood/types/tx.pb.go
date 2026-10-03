@@ -139,16 +139,21 @@ var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 //	H(TAG_REG, idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
 //	  Bytes(ciphertext_erth), affiliate)
 //
-// with affiliate = Bytes(the affiliate's address bytes) when the referrer is
-// named by address, H(TAG_AFFCODE, Bytes(affiliate_code)) when by code
-// (TAG_AFFCODE = the field element of the bytes "earth.affcode"), 0 when
-// none. The two forms are domain-separated (Bytes is H(TAG_BYTES, ...)), so
-// no address names the same affiliate field as a code.
+// with affiliate = 0 when the registration names no referrer, and
+//
+//	H(TAG_AFFILIATE, Bytes(affiliate_handle), affiliate_pc,
+//	  Bytes(affiliate_ciphertext))
+//
+// when it does (TAG_AFFILIATE = the field element of the bytes
+// "earth.affiliate"), so whoever relays it cannot swap the handle, the note
+// or its ciphertext.
 //
 // A new registration (or one re-entering after its last lapsed) appends the
 // leaf, mints 1 ANML to pc_anml and the registrant's half of the reward to
-// pc_erth, and pays the referrer's half in transparent ERTH to affiliate,
-// which must hold a live referrer binding (MsgBindReferrer). A live
+// pc_erth, and, when it names affiliate_handle (a live handle: MsgBindHandle),
+// mints the referrer's half as a note to affiliate_pc with
+// affiliate_ciphertext: the registrant's wallet looks the handle's shielded
+// address up (Query/Handle or Query/Handles) and makes the note to it. A live
 // registration is a switch: the old leaf is zeroed and the new one appended,
 // and nothing is paid (affiliate is then not checked). A switch to the idc
 // the live registration already holds is refused (a replay).
@@ -178,15 +183,14 @@ type MsgRegister struct {
 	// pc_erth receives the registrant's half of the registration reward.
 	PcErth         []byte `protobuf:"bytes,9,opt,name=pc_erth,json=pcErth,proto3" json:"pc_erth,omitempty"`
 	CiphertextErth []byte `protobuf:"bytes,10,opt,name=ciphertext_erth,json=ciphertextErth,proto3" json:"ciphertext_erth,omitempty"`
-	// affiliate is the referrer's address (bech32), empty for none. It must
-	// hold a live referrer binding, and receives the referrer's half of the
-	// reward in transparent ERTH.
-	Affiliate string `protobuf:"bytes,13,opt,name=affiliate,proto3" json:"affiliate,omitempty"`
-	// affiliate_code names the referrer by referral code instead (see
-	// ReferralCode): at most one of affiliate and affiliate_code. It must
-	// resolve to a live binding; the referrer's half is paid to that
-	// binding's address.
-	AffiliateCode string `protobuf:"bytes,14,opt,name=affiliate_code,json=affiliateCode,proto3" json:"affiliate_code,omitempty"`
+	// affiliate_handle names the referrer (a live handle), empty for none.
+	AffiliateHandle string `protobuf:"bytes,15,opt,name=affiliate_handle,json=affiliateHandle,proto3" json:"affiliate_handle,omitempty"`
+	// affiliate_pc / affiliate_ciphertext: the referrer's half of the reward,
+	// as a note to the handle's shielded address (a pc of its owner_pk, an
+	// amount-blind v2 ciphertext to its ek_pub, exactly 177 bytes). All three
+	// set, or none.
+	AffiliatePc         []byte `protobuf:"bytes,11,opt,name=affiliate_pc,json=affiliatePc,proto3" json:"affiliate_pc,omitempty"`
+	AffiliateCiphertext []byte `protobuf:"bytes,12,opt,name=affiliate_ciphertext,json=affiliateCiphertext,proto3" json:"affiliate_ciphertext,omitempty"`
 }
 
 func (m *MsgRegister) Reset()         { *m = MsgRegister{} }
@@ -292,18 +296,25 @@ func (m *MsgRegister) GetCiphertextErth() []byte {
 	return nil
 }
 
-func (m *MsgRegister) GetAffiliate() string {
+func (m *MsgRegister) GetAffiliateHandle() string {
 	if m != nil {
-		return m.Affiliate
+		return m.AffiliateHandle
 	}
 	return ""
 }
 
-func (m *MsgRegister) GetAffiliateCode() string {
+func (m *MsgRegister) GetAffiliatePc() []byte {
 	if m != nil {
-		return m.AffiliateCode
+		return m.AffiliatePc
 	}
-	return ""
+	return nil
+}
+
+func (m *MsgRegister) GetAffiliateCiphertext() []byte {
+	if m != nil {
+		return m.AffiliateCiphertext
+	}
+	return nil
 }
 
 // MsgRegisterResponse returns what the registration did.
@@ -621,79 +632,53 @@ func (m *MsgSetCaretakerResponse) GetExpiresAt() int64 {
 	return 0
 }
 
-// MsgBindReferrer binds address as the prover's referral address, or clears
-// the binding (empty address). Referrals are public: a registration naming
-// address pays the referrer's half of its reward there, in transparent ERTH.
-// Who bound it is not public; that a live registration did, is.
+// MsgBindHandle claims, renews, changes or releases the prover's handle
+// (types.Handle): a name in the public directory for a shielded address.
 //
-// membership is proven with scope zk/privacy.ReferrerScope(), excluded_dsc
-// and excluded_country 0 and max_activation this msg's max_activation, which
-// must be at most now - caretaker_vote_seconds (or a held, longer one) - one
-// day (the caretaker rule: a switched-to identity cannot hold a binding beside
-// its predecessor's). The binding lasts caretaker_vote_seconds; the wallet
-// refreshes it. Rebinding under the same nullifier moves it to the new
-// address. An address bound under another live nullifier is refused.
+// A handle is lowercase [a-z0-9-], 3 to 32 characters, no leading or
+// trailing dash. One per human: membership is proven with scope
+// zk/privacy.HandleScope() (Scope("handle")), excluded_dsc and
+// excluded_country 0 and max_activation this msg's max_activation, which
+// must be strictly before now - caretaker_vote_seconds (or a held, longer
+// one) - one day (the caretaker rule: a switched-to identity cannot hold a
+// handle beside its predecessor's).
 //
-// Binding an address takes its owner's consent, so nobody can squat an
-// address they do not control: referrer_pub_key is the address's 33-byte
-// compressed secp256k1 public key (the address must be its RIPEMD160(SHA256))
-// and referrer_signature its 64-byte r||s (low-S) ECDSA signature over
-// SHA-256 of the consent bytes (what cosmos-sdk's secp256k1 PrivKey.Sign
-// produces for them):
+//   - handle and address set: claim a free handle, or renew the prover's
+//     own (live or in its renewal period), with its lease set to now +
+//     caretaker_vote_seconds and its address to address. Naming a handle
+//     other than the prover's current one is a change: the old handle is
+//     released at once, the new one claimed in the same msg. A handle held
+//     by another nullifier (live, or in its renewal period) is refused.
+//   - both empty: release the prover's handle at once.
 //
-//	"earth.referrer.consent.v2" || u8 len(chain_id) || chain_id
-//	  || membership.nullifier (32 bytes) || u64be(consent_expiry_height)
-//	  || address (raw bytes)
+// address is the shielded address (zk/privacy: bech32m "erthz1...", owner_pk
+// and ek_pub), canonical lowercase. No consent is needed: naming someone
+// else's shielded address only sends the binder's referrals to them.
 //
-// consent_expiry_height is the last block height the consent may be used
-// at: a consent is refused once the chain is past it, and one whose expiry
-// is more than ReferrerConsentMaxBlocks ahead of the block is refused too,
-// so a signature the owner gave once cannot be replayed to rebind their
-// address long after (audit 4, C10). Wallets pick the current height plus
-// a margin for the proof and broadcast (a few hundred blocks).
-//
-// All three are empty/zero when clearing (empty address). They are not
-// sighash fields: the consent itself binds the nullifier and the address.
-//
-// code (optional) claims a referral code for the binding (see ReferralCode):
-// empty keeps the binding's current code, if any; a different code moves
-// the binding to it (the old one stays reserved to this nullifier for the
-// grace period). A code held, or reserved, by another nullifier is
-// refused. Clearing (empty address) takes no code and starts the current
-// code's grace period.
-//
-// sighash fields: Bytes(address bytes), Bytes(code) (Bytes of nothing for an
-// empty address or code).
-type MsgBindReferrer struct {
+// sighash fields: Bytes(handle), owner_pk, Bytes(ek_pub) (Bytes of nothing,
+// 0 and Bytes of nothing for a release).
+type MsgBindHandle struct {
 	Fee        types.Bundle `protobuf:"bytes,1,opt,name=fee,proto3" json:"fee"`
 	Membership Membership   `protobuf:"bytes,2,opt,name=membership,proto3" json:"membership"`
-	Address    string       `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	Handle     string       `protobuf:"bytes,3,opt,name=handle,proto3" json:"handle,omitempty"`
+	// address is the shielded address the handle resolves to.
+	Address string `protobuf:"bytes,4,opt,name=address,proto3" json:"address,omitempty"`
 	// max_activation is the membership proof's max_activation (unix seconds).
-	MaxActivation uint64 `protobuf:"varint,4,opt,name=max_activation,json=maxActivation,proto3" json:"max_activation,omitempty"`
-	// referrer_pub_key and referrer_signature: the address owner's consent
-	// (see above).
-	ReferrerPubKey    []byte `protobuf:"bytes,5,opt,name=referrer_pub_key,json=referrerPubKey,proto3" json:"referrer_pub_key,omitempty"`
-	ReferrerSignature []byte `protobuf:"bytes,6,opt,name=referrer_signature,json=referrerSignature,proto3" json:"referrer_signature,omitempty"`
-	// consent_expiry_height: the last height the consent is valid at (see
-	// above).
-	ConsentExpiryHeight uint64 `protobuf:"varint,7,opt,name=consent_expiry_height,json=consentExpiryHeight,proto3" json:"consent_expiry_height,omitempty"`
-	// code: the referral code to claim or keep (see above); "" keeps the
-	// current one.
-	Code string `protobuf:"bytes,8,opt,name=code,proto3" json:"code,omitempty"`
+	MaxActivation uint64 `protobuf:"varint,5,opt,name=max_activation,json=maxActivation,proto3" json:"max_activation,omitempty"`
 }
 
-func (m *MsgBindReferrer) Reset()         { *m = MsgBindReferrer{} }
-func (m *MsgBindReferrer) String() string { return proto.CompactTextString(m) }
-func (*MsgBindReferrer) ProtoMessage()    {}
-func (*MsgBindReferrer) Descriptor() ([]byte, []int) {
+func (m *MsgBindHandle) Reset()         { *m = MsgBindHandle{} }
+func (m *MsgBindHandle) String() string { return proto.CompactTextString(m) }
+func (*MsgBindHandle) ProtoMessage()    {}
+func (*MsgBindHandle) Descriptor() ([]byte, []int) {
 	return fileDescriptor_83fe5bb40ec19165, []int{8}
 }
-func (m *MsgBindReferrer) XXX_Unmarshal(b []byte) error {
+func (m *MsgBindHandle) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *MsgBindReferrer) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *MsgBindHandle) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_MsgBindReferrer.Marshal(b, m, deterministic)
+		return xxx_messageInfo_MsgBindHandle.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -703,92 +688,71 @@ func (m *MsgBindReferrer) XXX_Marshal(b []byte, deterministic bool) ([]byte, err
 		return b[:n], nil
 	}
 }
-func (m *MsgBindReferrer) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MsgBindReferrer.Merge(m, src)
+func (m *MsgBindHandle) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBindHandle.Merge(m, src)
 }
-func (m *MsgBindReferrer) XXX_Size() int {
+func (m *MsgBindHandle) XXX_Size() int {
 	return m.Size()
 }
-func (m *MsgBindReferrer) XXX_DiscardUnknown() {
-	xxx_messageInfo_MsgBindReferrer.DiscardUnknown(m)
+func (m *MsgBindHandle) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBindHandle.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_MsgBindReferrer proto.InternalMessageInfo
+var xxx_messageInfo_MsgBindHandle proto.InternalMessageInfo
 
-func (m *MsgBindReferrer) GetFee() types.Bundle {
+func (m *MsgBindHandle) GetFee() types.Bundle {
 	if m != nil {
 		return m.Fee
 	}
 	return types.Bundle{}
 }
 
-func (m *MsgBindReferrer) GetMembership() Membership {
+func (m *MsgBindHandle) GetMembership() Membership {
 	if m != nil {
 		return m.Membership
 	}
 	return Membership{}
 }
 
-func (m *MsgBindReferrer) GetAddress() string {
+func (m *MsgBindHandle) GetHandle() string {
+	if m != nil {
+		return m.Handle
+	}
+	return ""
+}
+
+func (m *MsgBindHandle) GetAddress() string {
 	if m != nil {
 		return m.Address
 	}
 	return ""
 }
 
-func (m *MsgBindReferrer) GetMaxActivation() uint64 {
+func (m *MsgBindHandle) GetMaxActivation() uint64 {
 	if m != nil {
 		return m.MaxActivation
 	}
 	return 0
 }
 
-func (m *MsgBindReferrer) GetReferrerPubKey() []byte {
-	if m != nil {
-		return m.ReferrerPubKey
-	}
-	return nil
-}
-
-func (m *MsgBindReferrer) GetReferrerSignature() []byte {
-	if m != nil {
-		return m.ReferrerSignature
-	}
-	return nil
-}
-
-func (m *MsgBindReferrer) GetConsentExpiryHeight() uint64 {
-	if m != nil {
-		return m.ConsentExpiryHeight
-	}
-	return 0
-}
-
-func (m *MsgBindReferrer) GetCode() string {
-	if m != nil {
-		return m.Code
-	}
-	return ""
-}
-
-// MsgBindReferrerResponse reports when the binding lapses (unix seconds), 0
-// when it was cleared.
-type MsgBindReferrerResponse struct {
+// MsgBindHandleResponse reports when the lease lapses (unix seconds), 0 when
+// the handle was released.
+type MsgBindHandleResponse struct {
 	ExpiresAt int64 `protobuf:"varint,1,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 }
 
-func (m *MsgBindReferrerResponse) Reset()         { *m = MsgBindReferrerResponse{} }
-func (m *MsgBindReferrerResponse) String() string { return proto.CompactTextString(m) }
-func (*MsgBindReferrerResponse) ProtoMessage()    {}
-func (*MsgBindReferrerResponse) Descriptor() ([]byte, []int) {
+func (m *MsgBindHandleResponse) Reset()         { *m = MsgBindHandleResponse{} }
+func (m *MsgBindHandleResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgBindHandleResponse) ProtoMessage()    {}
+func (*MsgBindHandleResponse) Descriptor() ([]byte, []int) {
 	return fileDescriptor_83fe5bb40ec19165, []int{9}
 }
-func (m *MsgBindReferrerResponse) XXX_Unmarshal(b []byte) error {
+func (m *MsgBindHandleResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *MsgBindReferrerResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *MsgBindHandleResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_MsgBindReferrerResponse.Marshal(b, m, deterministic)
+		return xxx_messageInfo_MsgBindHandleResponse.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -798,19 +762,19 @@ func (m *MsgBindReferrerResponse) XXX_Marshal(b []byte, deterministic bool) ([]b
 		return b[:n], nil
 	}
 }
-func (m *MsgBindReferrerResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MsgBindReferrerResponse.Merge(m, src)
+func (m *MsgBindHandleResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBindHandleResponse.Merge(m, src)
 }
-func (m *MsgBindReferrerResponse) XXX_Size() int {
+func (m *MsgBindHandleResponse) XXX_Size() int {
 	return m.Size()
 }
-func (m *MsgBindReferrerResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_MsgBindReferrerResponse.DiscardUnknown(m)
+func (m *MsgBindHandleResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBindHandleResponse.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_MsgBindReferrerResponse proto.InternalMessageInfo
+var xxx_messageInfo_MsgBindHandleResponse proto.InternalMessageInfo
 
-func (m *MsgBindReferrerResponse) GetExpiresAt() int64 {
+func (m *MsgBindHandleResponse) GetExpiresAt() int64 {
 	if m != nil {
 		return m.ExpiresAt
 	}
@@ -826,83 +790,81 @@ func init() {
 	proto.RegisterType((*MsgClaimAnmlResponse)(nil), "earth.personhood.v1.MsgClaimAnmlResponse")
 	proto.RegisterType((*MsgSetCaretaker)(nil), "earth.personhood.v1.MsgSetCaretaker")
 	proto.RegisterType((*MsgSetCaretakerResponse)(nil), "earth.personhood.v1.MsgSetCaretakerResponse")
-	proto.RegisterType((*MsgBindReferrer)(nil), "earth.personhood.v1.MsgBindReferrer")
-	proto.RegisterType((*MsgBindReferrerResponse)(nil), "earth.personhood.v1.MsgBindReferrerResponse")
+	proto.RegisterType((*MsgBindHandle)(nil), "earth.personhood.v1.MsgBindHandle")
+	proto.RegisterType((*MsgBindHandleResponse)(nil), "earth.personhood.v1.MsgBindHandleResponse")
 }
 
 func init() { proto.RegisterFile("earth/personhood/v1/tx.proto", fileDescriptor_83fe5bb40ec19165) }
 
 var fileDescriptor_83fe5bb40ec19165 = []byte{
-	// 1104 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xc4, 0x56, 0x41, 0x6f, 0xe3, 0x44,
-	0x14, 0xae, 0x9b, 0x6c, 0x9b, 0x4c, 0xd2, 0x6e, 0x77, 0xda, 0x55, 0xdd, 0xc0, 0xa6, 0x21, 0xda,
-	0x85, 0x50, 0x68, 0xa2, 0x04, 0x81, 0x10, 0x07, 0xa4, 0xa4, 0x54, 0xa2, 0xbb, 0x8a, 0xb4, 0x72,
-	0x05, 0x08, 0x2e, 0xd6, 0xc4, 0x9e, 0xd8, 0xa3, 0xda, 0x1e, 0x6b, 0x66, 0x92, 0x26, 0x37, 0xe0,
-	0x82, 0xc4, 0x89, 0x0b, 0xff, 0x81, 0x63, 0x0f, 0xfb, 0x03, 0x38, 0xae, 0x38, 0xad, 0xf6, 0x84,
-	0x38, 0xac, 0x50, 0x7b, 0xe8, 0x01, 0x7e, 0x04, 0xf2, 0x78, 0xec, 0xb8, 0x55, 0x42, 0xab, 0x15,
-	0x12, 0x97, 0x68, 0xde, 0x7b, 0xdf, 0x7b, 0xf3, 0xde, 0x37, 0xef, 0xbd, 0x18, 0xbc, 0x89, 0x11,
-	0x13, 0x6e, 0x2b, 0xc4, 0x8c, 0xd3, 0xc0, 0xa5, 0xd4, 0x6e, 0x8d, 0xdb, 0x2d, 0x31, 0x69, 0x86,
-	0x8c, 0x0a, 0x0a, 0x37, 0xa5, 0xb5, 0x39, 0xb3, 0x36, 0xc7, 0xed, 0xca, 0x3d, 0xe4, 0x93, 0x80,
-	0xb6, 0xe4, 0x6f, 0x8c, 0xab, 0x6c, 0x5b, 0x94, 0xfb, 0x94, 0xb7, 0x7c, 0xee, 0x44, 0xfe, 0x3e,
-	0x77, 0x94, 0x61, 0x27, 0x36, 0x98, 0x52, 0x6a, 0xc5, 0x82, 0x32, 0x3d, 0x8c, 0x6f, 0x46, 0x9e,
-	0x47, 0x2d, 0x24, 0x08, 0x0d, 0x22, 0xcf, 0x99, 0xa4, 0x50, 0xb5, 0x79, 0xf9, 0x85, 0x88, 0x21,
-	0x3f, 0x89, 0xf3, 0xf6, 0x3c, 0x04, 0xc3, 0x0e, 0xe1, 0x82, 0xcd, 0x89, 0xc4, 0x5d, 0x82, 0x3d,
-	0x1b, 0x4b, 0x54, 0x72, 0x56, 0x88, 0x2d, 0x87, 0x3a, 0x34, 0xce, 0x34, 0x3a, 0xc5, 0xda, 0xfa,
-	0xaf, 0x1a, 0xb8, 0xdb, 0xe7, 0xce, 0x17, 0xa1, 0x8d, 0x04, 0x7e, 0x2a, 0x6f, 0x86, 0x1f, 0x81,
-	0x22, 0x1a, 0x09, 0x97, 0x32, 0x22, 0xa6, 0xba, 0x56, 0xd3, 0x1a, 0xc5, 0x9e, 0xfe, 0xf2, 0xd9,
-	0xfe, 0x96, 0x2a, 0xb0, 0x6b, 0xdb, 0x0c, 0x73, 0x7e, 0x2c, 0x18, 0x09, 0x1c, 0x63, 0x06, 0x85,
-	0x9f, 0x82, 0x95, 0x38, 0x77, 0x7d, 0xb9, 0xa6, 0x35, 0x4a, 0x9d, 0x37, 0x9a, 0x73, 0x08, 0x6e,
-	0xc6, 0x97, 0xf4, 0x8a, 0xcf, 0x5f, 0xed, 0x2e, 0xfd, 0x72, 0x79, 0xb6, 0xa7, 0x19, 0xca, 0xeb,
-	0x93, 0x0f, 0xbf, 0xbf, 0x3c, 0xdb, 0x9b, 0xc5, 0xfb, 0xf1, 0xf2, 0x6c, 0xaf, 0x1e, 0x97, 0x35,
-	0xc9, 0x12, 0x70, 0x2d, 0xdd, 0xfa, 0x0e, 0xd8, 0xbe, 0xa6, 0x32, 0x30, 0x0f, 0x69, 0xc0, 0x71,
-	0xfd, 0xef, 0x1c, 0x28, 0xf5, 0xb9, 0x63, 0x48, 0xbe, 0x30, 0x83, 0x6d, 0x90, 0x1b, 0x62, 0x2c,
-	0x6b, 0x2a, 0x75, 0x76, 0x54, 0x7a, 0x29, 0x4f, 0xe3, 0x76, 0xb3, 0x37, 0x0a, 0x6c, 0x0f, 0xf7,
-	0xf2, 0x51, 0x72, 0x46, 0x84, 0x85, 0x5b, 0xe0, 0x4e, 0xc8, 0x28, 0x1d, 0xca, 0x9a, 0xca, 0x46,
-	0x2c, 0xc0, 0x47, 0x60, 0x3d, 0x1c, 0x0d, 0x3c, 0x62, 0x99, 0x9c, 0x38, 0x01, 0xf2, 0xb8, 0x9e,
-	0xab, 0xe5, 0x1a, 0x45, 0x63, 0x2d, 0xd6, 0x1e, 0xc7, 0x4a, 0xd8, 0x02, 0x9b, 0xd2, 0x2e, 0x46,
-	0x0c, 0x9b, 0xc8, 0x73, 0xa2, 0xba, 0x5c, 0x5f, 0xcf, 0x47, 0x9c, 0x1a, 0x30, 0x35, 0x75, 0x13,
-	0x0b, 0xdc, 0x06, 0xab, 0x36, 0xb7, 0x4c, 0x1b, 0x33, 0xfd, 0x8e, 0xbc, 0x6f, 0xc5, 0xe6, 0xd6,
-	0x67, 0x98, 0xc1, 0x0d, 0x90, 0x23, 0xb6, 0xa5, 0xaf, 0x48, 0x65, 0x74, 0x8c, 0xa0, 0xa1, 0x65,
-	0xa2, 0xc0, 0xf7, 0xf4, 0xd5, 0x18, 0x1a, 0x5a, 0xdd, 0xc0, 0xf7, 0xe0, 0x3b, 0xe0, 0xae, 0x45,
-	0x42, 0x17, 0x33, 0x81, 0x27, 0x22, 0x06, 0x14, 0x24, 0x60, 0x7d, 0xa6, 0x96, 0xc0, 0x38, 0x02,
-	0x66, 0xc2, 0xd5, 0x8b, 0x49, 0x84, 0x43, 0x26, 0xdc, 0x6b, 0x11, 0x24, 0x00, 0x5c, 0x8f, 0x20,
-	0x81, 0x51, 0xa7, 0x0c, 0x87, 0xc4, 0x23, 0x48, 0x60, 0x7d, 0xed, 0xc6, 0x4e, 0x49, 0xa0, 0x11,
-	0x7d, 0xa9, 0x60, 0x5a, 0xd4, 0xc6, 0xfa, 0xba, 0xa4, 0x64, 0x2d, 0xd5, 0x1e, 0x50, 0x1b, 0x3f,
-	0xce, 0x17, 0x4a, 0x1b, 0xe5, 0xc7, 0xf9, 0x42, 0x79, 0x63, 0xcd, 0x28, 0xcf, 0x1c, 0x42, 0xcb,
-	0xd8, 0xca, 0xb8, 0xa7, 0x29, 0xd5, 0x7f, 0xd6, 0xc0, 0x66, 0xe6, 0xb9, 0x93, 0x36, 0x80, 0x07,
-	0x60, 0x85, 0xe1, 0x53, 0xc4, 0x6c, 0xd5, 0xcd, 0xef, 0x45, 0xcf, 0xfb, 0xc7, 0xab, 0xdd, 0xfb,
-	0x71, 0x9e, 0xdc, 0x3e, 0x69, 0x12, 0xda, 0xf2, 0x91, 0x70, 0x9b, 0x47, 0x81, 0x78, 0xf9, 0x6c,
-	0x1f, 0xa8, 0x02, 0x8e, 0x02, 0x61, 0x28, 0x57, 0x58, 0x01, 0x05, 0x7e, 0x4a, 0x84, 0xe5, 0x62,
-	0x5b, 0xf6, 0x42, 0xc1, 0x48, 0x65, 0xf8, 0x00, 0x00, 0x0f, 0xa3, 0xa1, 0x49, 0x02, 0x1b, 0x4f,
-	0xf4, 0x5c, 0x4d, 0x6b, 0xe4, 0x8d, 0x62, 0xa4, 0x39, 0x8a, 0x14, 0xf5, 0xdf, 0x34, 0x50, 0xee,
-	0x73, 0xe7, 0xc0, 0x43, 0xc4, 0x97, 0xcc, 0xbf, 0x46, 0x1f, 0x1e, 0x02, 0xe0, 0x63, 0x7f, 0x80,
-	0x19, 0x77, 0x49, 0xa8, 0x06, 0x6c, 0x77, 0xee, 0x80, 0xf5, 0x53, 0x98, 0xf2, 0xcf, 0x38, 0x46,
-	0x7d, 0x64, 0xa3, 0xa9, 0x4a, 0x31, 0x3a, 0xc2, 0x75, 0xb0, 0x1c, 0x5a, 0xb2, 0x25, 0xcb, 0xc6,
-	0x72, 0x68, 0xc1, 0x2a, 0x00, 0x33, 0x4a, 0x55, 0x17, 0x66, 0x34, 0xf5, 0x0e, 0xd8, 0xca, 0xd6,
-	0x92, 0x92, 0x5c, 0x01, 0x85, 0x90, 0x72, 0x12, 0xed, 0x24, 0x59, 0x58, 0xde, 0x48, 0xe5, 0xfa,
-	0x77, 0xcb, 0x72, 0xcb, 0x1c, 0x63, 0x71, 0x80, 0x18, 0x16, 0xe8, 0xe4, 0xf5, 0x66, 0xf1, 0x3f,
-	0xe2, 0xa0, 0x0f, 0x4a, 0x21, 0x66, 0x16, 0x0e, 0x04, 0x72, 0x70, 0x3c, 0xb9, 0xa5, 0xce, 0x23,
-	0x15, 0x27, 0xb3, 0xa3, 0xc7, 0xed, 0x66, 0x37, 0x95, 0xbe, 0xc2, 0xc4, 0x71, 0x85, 0x8a, 0x96,
-	0xf5, 0x8f, 0x9a, 0xd9, 0x47, 0x13, 0x13, 0x59, 0x82, 0x8c, 0x25, 0x54, 0x92, 0x99, 0x37, 0xd6,
-	0x7c, 0x34, 0xe9, 0xa6, 0xca, 0xfa, 0xc7, 0x72, 0x4d, 0x65, 0x29, 0x48, 0xa9, 0x7b, 0x00, 0x00,
-	0x9e, 0x84, 0x84, 0x61, 0x6e, 0x22, 0x21, 0x19, 0xc9, 0x19, 0x45, 0xa5, 0xe9, 0x8a, 0xfa, 0x0f,
-	0x39, 0xc9, 0x5e, 0x8f, 0x04, 0xb6, 0x81, 0x87, 0x98, 0xb1, 0xff, 0x95, 0xbd, 0x0e, 0x58, 0x45,
-	0xf1, 0x5c, 0xcb, 0x2e, 0xfa, 0xb7, 0x89, 0x4f, 0x80, 0xb7, 0xa4, 0x08, 0x36, 0xc0, 0x06, 0x53,
-	0x05, 0x9a, 0xe1, 0x68, 0x60, 0x9e, 0xe0, 0xa9, 0x6a, 0xc0, 0xf5, 0x44, 0xff, 0x74, 0x34, 0x78,
-	0x82, 0xa7, 0x70, 0x1f, 0xc0, 0x14, 0x99, 0xae, 0x51, 0xb5, 0x1d, 0xef, 0x25, 0x96, 0xe3, 0xc4,
-	0x00, 0x3b, 0xe0, 0xbe, 0x15, 0x31, 0x1d, 0x08, 0x53, 0xd2, 0x3a, 0x35, 0x5d, 0xf9, 0x9c, 0x72,
-	0x73, 0xe6, 0x8d, 0x4d, 0x65, 0x3c, 0x94, 0xb6, 0xcf, 0xa5, 0x09, 0x42, 0x90, 0x97, 0x9b, 0xa9,
-	0x20, 0x37, 0x93, 0x3c, 0xab, 0x37, 0xcc, 0x3e, 0xc4, 0x2d, 0xdf, 0xb0, 0xf3, 0x57, 0x0e, 0xe4,
-	0xfa, 0xdc, 0x81, 0x03, 0x50, 0xbe, 0xf2, 0x5f, 0xfb, 0x70, 0xfe, 0x03, 0x5c, 0xfd, 0x3f, 0xab,
-	0xbc, 0x7f, 0x1b, 0x54, 0x9a, 0xca, 0x97, 0xa0, 0x90, 0xfe, 0xe3, 0xd5, 0x16, 0x79, 0x26, 0x88,
-	0x4a, 0xe3, 0x26, 0x44, 0x1a, 0xf7, 0x6b, 0x50, 0x9c, 0xad, 0xb0, 0xb7, 0x16, 0xb9, 0xa5, 0x90,
-	0xca, 0xbb, 0x37, 0x42, 0xd2, 0xd0, 0x03, 0x50, 0xbe, 0xb2, 0x1c, 0x16, 0xd2, 0x92, 0x45, 0x2d,
-	0xa6, 0x65, 0xee, 0x94, 0x0d, 0x40, 0xf9, 0xca, 0x08, 0x2d, 0xbc, 0x23, 0x8b, 0x5a, 0x7c, 0xc7,
-	0xbc, 0x2e, 0xa8, 0xdc, 0xf9, 0x36, 0xfa, 0xa2, 0xe9, 0x3d, 0x79, 0x7e, 0x5e, 0xd5, 0x5e, 0x9c,
-	0x57, 0xb5, 0x3f, 0xcf, 0xab, 0xda, 0x4f, 0x17, 0xd5, 0xa5, 0x17, 0x17, 0xd5, 0xa5, 0xdf, 0x2f,
-	0xaa, 0x4b, 0xdf, 0xb4, 0x1d, 0x22, 0xdc, 0xd1, 0xa0, 0x69, 0x51, 0xbf, 0x25, 0x03, 0xef, 0x07,
-	0x58, 0x9c, 0x52, 0x76, 0xd2, 0x9a, 0xf3, 0xa5, 0x23, 0xa6, 0x21, 0xe6, 0x83, 0x15, 0xf9, 0xa5,
-	0xf6, 0xc1, 0x3f, 0x01, 0x00, 0x00, 0xff, 0xff, 0xb9, 0x74, 0xca, 0xb6, 0xcd, 0x0a, 0x00, 0x00,
+	// 1063 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xc4, 0x56, 0x41, 0x6b, 0xe3, 0xc6,
+	0x17, 0x8f, 0x62, 0xc7, 0xb1, 0x9f, 0x1d, 0x27, 0x7f, 0x25, 0xfb, 0x8f, 0xe2, 0x76, 0x1d, 0xaf,
+	0xd8, 0x6d, 0xb3, 0x69, 0x63, 0xe3, 0x94, 0x2e, 0xa5, 0x87, 0x82, 0x9d, 0x2e, 0x34, 0x5b, 0x0c,
+	0x8b, 0x42, 0x5b, 0x5a, 0x0a, 0x66, 0x2c, 0x4d, 0xa4, 0x21, 0x92, 0x46, 0xcc, 0x4c, 0x12, 0xe7,
+	0xd6, 0x16, 0x7a, 0xe9, 0xa9, 0x97, 0x7e, 0x87, 0x1e, 0x73, 0xd8, 0x0f, 0xd0, 0xe3, 0xd2, 0xd3,
+	0xb2, 0xa7, 0xd2, 0xc3, 0x52, 0x12, 0x4a, 0xbe, 0x46, 0xd1, 0x68, 0x2c, 0x2b, 0x41, 0x26, 0xcb,
+	0x52, 0xe8, 0xc5, 0xe8, 0xbd, 0xf7, 0x7b, 0xbf, 0x79, 0xef, 0xe7, 0x37, 0x4f, 0x82, 0xb7, 0x31,
+	0x62, 0xc2, 0xeb, 0x44, 0x98, 0x71, 0x1a, 0x7a, 0x94, 0x3a, 0x9d, 0x93, 0x6e, 0x47, 0x8c, 0xdb,
+	0x11, 0xa3, 0x82, 0xea, 0xab, 0x32, 0xda, 0x9e, 0x46, 0xdb, 0x27, 0xdd, 0xc6, 0xff, 0x50, 0x40,
+	0x42, 0xda, 0x91, 0xbf, 0x09, 0xae, 0xb1, 0x6e, 0x53, 0x1e, 0x50, 0xde, 0x09, 0xb8, 0x1b, 0xe7,
+	0x07, 0xdc, 0x55, 0x81, 0x8d, 0x24, 0x30, 0x94, 0x56, 0x27, 0x31, 0x54, 0xe8, 0x7e, 0x72, 0x32,
+	0xf2, 0x7d, 0x6a, 0x23, 0x41, 0x68, 0x18, 0x67, 0x4e, 0x2d, 0x85, 0x6a, 0xe5, 0xd5, 0x17, 0x21,
+	0x86, 0x82, 0x09, 0xcf, 0x3b, 0x79, 0x08, 0x86, 0x5d, 0xc2, 0x05, 0xcb, 0x61, 0xe2, 0x1e, 0xc1,
+	0xbe, 0x83, 0x25, 0x6a, 0xf2, 0xac, 0x10, 0x6b, 0x2e, 0x75, 0x69, 0x52, 0x69, 0xfc, 0x94, 0x78,
+	0xcd, 0xdf, 0x34, 0x58, 0x1e, 0x70, 0xf7, 0x8b, 0xc8, 0x41, 0x02, 0x3f, 0x95, 0x27, 0xeb, 0x8f,
+	0xa0, 0x82, 0x8e, 0x85, 0x47, 0x19, 0x11, 0x67, 0x86, 0xd6, 0xd2, 0xb6, 0x2a, 0x7d, 0xe3, 0xe5,
+	0xb3, 0x9d, 0x35, 0xd5, 0x60, 0xcf, 0x71, 0x18, 0xe6, 0xfc, 0x40, 0x30, 0x12, 0xba, 0xd6, 0x14,
+	0xaa, 0x7f, 0x02, 0xa5, 0xa4, 0x76, 0x63, 0xbe, 0xa5, 0x6d, 0x55, 0x77, 0xdf, 0x6a, 0xe7, 0x08,
+	0xdc, 0x4e, 0x0e, 0xe9, 0x57, 0x9e, 0xbf, 0xda, 0x9c, 0xfb, 0xf5, 0xea, 0x7c, 0x5b, 0xb3, 0x54,
+	0xd6, 0xc7, 0x1f, 0xfe, 0x70, 0x75, 0xbe, 0x3d, 0xe5, 0xfb, 0xe9, 0xea, 0x7c, 0xdb, 0x4c, 0xda,
+	0x1a, 0x67, 0x05, 0xb8, 0x51, 0xae, 0xb9, 0x01, 0xeb, 0x37, 0x5c, 0x16, 0xe6, 0x11, 0x0d, 0x39,
+	0x36, 0x7f, 0x2c, 0x42, 0x75, 0xc0, 0x5d, 0x4b, 0xea, 0x85, 0x99, 0xde, 0x85, 0xc2, 0x21, 0xc6,
+	0xb2, 0xa7, 0xea, 0xee, 0x86, 0x2a, 0x2f, 0xd5, 0xe9, 0xa4, 0xdb, 0xee, 0x1f, 0x87, 0x8e, 0x8f,
+	0xfb, 0xc5, 0xb8, 0x38, 0x2b, 0xc6, 0xea, 0x6b, 0xb0, 0x10, 0x31, 0x4a, 0x0f, 0x65, 0x4f, 0x35,
+	0x2b, 0x31, 0xf4, 0x07, 0x50, 0x8f, 0x8e, 0x47, 0x3e, 0xb1, 0x87, 0x9c, 0xb8, 0x21, 0xf2, 0xb9,
+	0x51, 0x68, 0x15, 0xb6, 0x2a, 0xd6, 0x52, 0xe2, 0x3d, 0x48, 0x9c, 0x7a, 0x07, 0x56, 0x65, 0x5c,
+	0x1c, 0x33, 0x3c, 0x44, 0xbe, 0x1b, 0xf7, 0xe5, 0x05, 0x46, 0x31, 0xd6, 0xd4, 0xd2, 0xd3, 0x50,
+	0x6f, 0x12, 0xd1, 0xd7, 0x61, 0xd1, 0xe1, 0xf6, 0xd0, 0xc1, 0xcc, 0x58, 0x90, 0xe7, 0x95, 0x1c,
+	0x6e, 0x7f, 0x8a, 0x99, 0xbe, 0x02, 0x05, 0xe2, 0xd8, 0x46, 0x49, 0x3a, 0xe3, 0xc7, 0x18, 0x1a,
+	0xd9, 0x43, 0x14, 0x06, 0xbe, 0xb1, 0x98, 0x40, 0x23, 0xbb, 0x17, 0x06, 0xbe, 0xfe, 0x2e, 0x2c,
+	0xdb, 0x24, 0xf2, 0x30, 0x13, 0x78, 0x2c, 0x12, 0x40, 0x59, 0x02, 0xea, 0x53, 0xb7, 0x04, 0x26,
+	0x0c, 0x98, 0x09, 0xcf, 0xa8, 0x4c, 0x18, 0x1e, 0x33, 0xe1, 0xdd, 0x60, 0x90, 0x00, 0xb8, 0xc9,
+	0x20, 0x81, 0x0f, 0x61, 0x05, 0x1d, 0x1e, 0x12, 0x9f, 0x20, 0x81, 0x87, 0x1e, 0x8a, 0xb5, 0x33,
+	0x96, 0x65, 0x73, 0xcb, 0xa9, 0xff, 0x33, 0xe9, 0xd6, 0xef, 0x41, 0x6d, 0x0a, 0x8d, 0x6c, 0xa3,
+	0x2a, 0x09, 0xab, 0xa9, 0xef, 0xa9, 0xad, 0x77, 0x61, 0x6d, 0x0a, 0x99, 0x9e, 0x64, 0xd4, 0x24,
+	0x74, 0x35, 0x8d, 0xed, 0xa5, 0xa1, 0x27, 0xc5, 0xf2, 0xd2, 0x4a, 0xfd, 0x49, 0xb1, 0x5c, 0x5f,
+	0x59, 0xb6, 0x2a, 0x29, 0xc0, 0xaa, 0x67, 0x78, 0xa8, 0x83, 0xcd, 0x5f, 0x34, 0x58, 0xcd, 0xcc,
+	0xc1, 0x64, 0x3e, 0xf4, 0x3d, 0x28, 0x31, 0x7c, 0x8a, 0x98, 0xa3, 0xc6, 0xfc, 0xbd, 0xf8, 0x7f,
+	0xff, 0xf3, 0xd5, 0xe6, 0x9d, 0x64, 0xd4, 0xb9, 0x73, 0xd4, 0x26, 0xb4, 0x13, 0x20, 0xe1, 0xb5,
+	0xf7, 0x43, 0xf1, 0xf2, 0xd9, 0x0e, 0xa8, 0x3b, 0xb0, 0x1f, 0x0a, 0x4b, 0xa5, 0xea, 0x0d, 0x28,
+	0xf3, 0x53, 0x22, 0x6c, 0x0f, 0x3b, 0x72, 0x48, 0xca, 0x56, 0x6a, 0xeb, 0x77, 0x01, 0x7c, 0x8c,
+	0x0e, 0x87, 0x24, 0x74, 0xf0, 0xd8, 0x28, 0xb4, 0xb4, 0xad, 0xa2, 0x55, 0x89, 0x3d, 0xfb, 0xb1,
+	0xc3, 0xfc, 0x5d, 0x83, 0xda, 0x80, 0xbb, 0x7b, 0x3e, 0x22, 0x81, 0xfc, 0x4b, 0xde, 0x60, 0x40,
+	0x1f, 0x03, 0x04, 0x38, 0x18, 0x61, 0xc6, 0x3d, 0x12, 0xa9, 0x9b, 0xb7, 0x99, 0x7b, 0xf3, 0x06,
+	0x29, 0x4c, 0xe5, 0x67, 0x12, 0xe3, 0x01, 0x73, 0xd0, 0x99, 0x2a, 0x31, 0x7e, 0xd4, 0xeb, 0x30,
+	0x1f, 0xd9, 0x72, 0x56, 0x6b, 0xd6, 0x7c, 0x64, 0xeb, 0x4d, 0x80, 0xcc, 0x9f, 0x92, 0x8c, 0x67,
+	0xc6, 0x63, 0xee, 0xc2, 0x5a, 0xb6, 0x97, 0x54, 0xe4, 0x06, 0x94, 0x23, 0xca, 0x49, 0xbc, 0xac,
+	0x64, 0x63, 0x45, 0x2b, 0xb5, 0xcd, 0xef, 0xe7, 0xe5, 0xfa, 0x39, 0xc0, 0x62, 0x0f, 0x31, 0x2c,
+	0xd0, 0xd1, 0x9b, 0x5d, 0xd2, 0x7f, 0x49, 0x83, 0x01, 0x54, 0x23, 0xcc, 0x6c, 0x1c, 0x0a, 0xe4,
+	0xe2, 0xe4, 0x4a, 0x57, 0x77, 0x1f, 0x28, 0x9e, 0xcc, 0xf2, 0x3e, 0xe9, 0xb6, 0x7b, 0xa9, 0xf5,
+	0x15, 0x26, 0xae, 0x27, 0x14, 0x5b, 0x36, 0x3f, 0x5e, 0x12, 0x01, 0x1a, 0x0f, 0x91, 0x2d, 0xc8,
+	0x89, 0x84, 0x4a, 0x31, 0x8b, 0xd6, 0x52, 0x80, 0xc6, 0xbd, 0xd4, 0x69, 0x7e, 0x24, 0xf7, 0x57,
+	0x56, 0x82, 0x54, 0xba, 0xbb, 0x00, 0x78, 0x1c, 0x11, 0x86, 0xf9, 0x10, 0x09, 0xa9, 0x48, 0xc1,
+	0xaa, 0x28, 0x4f, 0x4f, 0x98, 0x17, 0x1a, 0x2c, 0x0d, 0xb8, 0xdb, 0x27, 0xa1, 0xa3, 0x6e, 0xd9,
+	0x7f, 0xa7, 0xdd, 0xff, 0xa1, 0xa4, 0x16, 0x40, 0x41, 0x2e, 0x00, 0x65, 0xe9, 0x06, 0x2c, 0xa2,
+	0xe4, 0x85, 0xa1, 0xd6, 0xde, 0xc4, 0xcc, 0x91, 0x67, 0x21, 0x4f, 0x9e, 0x47, 0x70, 0xe7, 0x5a,
+	0x8f, 0xaf, 0x29, 0xce, 0xee, 0xdf, 0x05, 0x28, 0x0c, 0xb8, 0xab, 0x8f, 0xa0, 0x76, 0xed, 0xed,
+	0x76, 0x3f, 0xbf, 0xb7, 0xeb, 0x6f, 0x90, 0xc6, 0xfb, 0xaf, 0x83, 0x4a, 0x4b, 0xf9, 0x12, 0xca,
+	0xe9, 0x3b, 0xa6, 0x35, 0x2b, 0x73, 0x82, 0x68, 0x6c, 0xdd, 0x86, 0x48, 0x79, 0xbf, 0x86, 0xca,
+	0x74, 0x37, 0xdc, 0x9b, 0x95, 0x96, 0x42, 0x1a, 0x0f, 0x6f, 0x85, 0xa4, 0xd4, 0x23, 0xa8, 0x5d,
+	0xbb, 0x75, 0x33, 0x65, 0xc9, 0xa2, 0x66, 0xcb, 0x92, 0x3b, 0xbe, 0xdf, 0x02, 0x64, 0x66, 0xd3,
+	0x9c, 0x95, 0x3b, 0xc5, 0x34, 0xb6, 0x6f, 0xc7, 0x4c, 0xd8, 0x1b, 0x0b, 0xdf, 0xc5, 0x5f, 0x0f,
+	0xfd, 0xcf, 0x9f, 0x5f, 0x34, 0xb5, 0x17, 0x17, 0x4d, 0xed, 0xaf, 0x8b, 0xa6, 0xf6, 0xf3, 0x65,
+	0x73, 0xee, 0xc5, 0x65, 0x73, 0xee, 0x8f, 0xcb, 0xe6, 0xdc, 0x37, 0x5d, 0x97, 0x08, 0xef, 0x78,
+	0xd4, 0xb6, 0x69, 0xd0, 0x91, 0xb4, 0x3b, 0x21, 0x16, 0xa7, 0x94, 0x1d, 0x75, 0x72, 0xbe, 0x2a,
+	0xc4, 0x59, 0x84, 0xf9, 0xa8, 0x24, 0xbf, 0x8a, 0x3e, 0xf8, 0x27, 0x00, 0x00, 0xff, 0xff, 0x15,
+	0xd1, 0x17, 0xf5, 0x39, 0x0a, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -926,9 +888,9 @@ type MsgClient interface {
 	ClaimAnml(ctx context.Context, in *MsgClaimAnml, opts ...grpc.CallOption) (*MsgClaimAnmlResponse, error)
 	// SetCaretaker casts or refreshes a registered human's caretaker split.
 	SetCaretaker(ctx context.Context, in *MsgSetCaretaker, opts ...grpc.CallOption) (*MsgSetCaretakerResponse, error)
-	// BindReferrer names (or clears) the address a registered human is paid
-	// referral rewards at.
-	BindReferrer(ctx context.Context, in *MsgBindReferrer, opts ...grpc.CallOption) (*MsgBindReferrerResponse, error)
+	// BindHandle claims, refreshes, moves or releases a registered human's
+	// handle: a name in the public directory for a shielded address.
+	BindHandle(ctx context.Context, in *MsgBindHandle, opts ...grpc.CallOption) (*MsgBindHandleResponse, error)
 }
 
 type msgClient struct {
@@ -975,9 +937,9 @@ func (c *msgClient) SetCaretaker(ctx context.Context, in *MsgSetCaretaker, opts 
 	return out, nil
 }
 
-func (c *msgClient) BindReferrer(ctx context.Context, in *MsgBindReferrer, opts ...grpc.CallOption) (*MsgBindReferrerResponse, error) {
-	out := new(MsgBindReferrerResponse)
-	err := c.cc.Invoke(ctx, "/earth.personhood.v1.Msg/BindReferrer", in, out, opts...)
+func (c *msgClient) BindHandle(ctx context.Context, in *MsgBindHandle, opts ...grpc.CallOption) (*MsgBindHandleResponse, error) {
+	out := new(MsgBindHandleResponse)
+	err := c.cc.Invoke(ctx, "/earth.personhood.v1.Msg/BindHandle", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -995,9 +957,9 @@ type MsgServer interface {
 	ClaimAnml(context.Context, *MsgClaimAnml) (*MsgClaimAnmlResponse, error)
 	// SetCaretaker casts or refreshes a registered human's caretaker split.
 	SetCaretaker(context.Context, *MsgSetCaretaker) (*MsgSetCaretakerResponse, error)
-	// BindReferrer names (or clears) the address a registered human is paid
-	// referral rewards at.
-	BindReferrer(context.Context, *MsgBindReferrer) (*MsgBindReferrerResponse, error)
+	// BindHandle claims, refreshes, moves or releases a registered human's
+	// handle: a name in the public directory for a shielded address.
+	BindHandle(context.Context, *MsgBindHandle) (*MsgBindHandleResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -1016,8 +978,8 @@ func (*UnimplementedMsgServer) ClaimAnml(ctx context.Context, req *MsgClaimAnml)
 func (*UnimplementedMsgServer) SetCaretaker(ctx context.Context, req *MsgSetCaretaker) (*MsgSetCaretakerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetCaretaker not implemented")
 }
-func (*UnimplementedMsgServer) BindReferrer(ctx context.Context, req *MsgBindReferrer) (*MsgBindReferrerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BindReferrer not implemented")
+func (*UnimplementedMsgServer) BindHandle(ctx context.Context, req *MsgBindHandle) (*MsgBindHandleResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BindHandle not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -1096,20 +1058,20 @@ func _Msg_SetCaretaker_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_BindReferrer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgBindReferrer)
+func _Msg_BindHandle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgBindHandle)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MsgServer).BindReferrer(ctx, in)
+		return srv.(MsgServer).BindHandle(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/earth.personhood.v1.Msg/BindReferrer",
+		FullMethod: "/earth.personhood.v1.Msg/BindHandle",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).BindReferrer(ctx, req.(*MsgBindReferrer))
+		return srv.(MsgServer).BindHandle(ctx, req.(*MsgBindHandle))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1136,8 +1098,8 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_SetCaretaker_Handler,
 		},
 		{
-			MethodName: "BindReferrer",
-			Handler:    _Msg_BindReferrer_Handler,
+			MethodName: "BindHandle",
+			Handler:    _Msg_BindHandle_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1227,19 +1189,26 @@ func (m *MsgRegister) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if len(m.AffiliateCode) > 0 {
-		i -= len(m.AffiliateCode)
-		copy(dAtA[i:], m.AffiliateCode)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.AffiliateCode)))
+	if len(m.AffiliateHandle) > 0 {
+		i -= len(m.AffiliateHandle)
+		copy(dAtA[i:], m.AffiliateHandle)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.AffiliateHandle)))
 		i--
-		dAtA[i] = 0x72
+		dAtA[i] = 0x7a
 	}
-	if len(m.Affiliate) > 0 {
-		i -= len(m.Affiliate)
-		copy(dAtA[i:], m.Affiliate)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Affiliate)))
+	if len(m.AffiliateCiphertext) > 0 {
+		i -= len(m.AffiliateCiphertext)
+		copy(dAtA[i:], m.AffiliateCiphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.AffiliateCiphertext)))
 		i--
-		dAtA[i] = 0x6a
+		dAtA[i] = 0x62
+	}
+	if len(m.AffiliatePc) > 0 {
+		i -= len(m.AffiliatePc)
+		copy(dAtA[i:], m.AffiliatePc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.AffiliatePc)))
+		i--
+		dAtA[i] = 0x5a
 	}
 	if len(m.CiphertextErth) > 0 {
 		i -= len(m.CiphertextErth)
@@ -1547,7 +1516,7 @@ func (m *MsgSetCaretakerResponse) MarshalToSizedBuffer(dAtA []byte) (int, error)
 	return len(dAtA) - i, nil
 }
 
-func (m *MsgBindReferrer) Marshal() (dAtA []byte, err error) {
+func (m *MsgBindHandle) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -1557,51 +1526,32 @@ func (m *MsgBindReferrer) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *MsgBindReferrer) MarshalTo(dAtA []byte) (int, error) {
+func (m *MsgBindHandle) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *MsgBindReferrer) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *MsgBindHandle) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if len(m.Code) > 0 {
-		i -= len(m.Code)
-		copy(dAtA[i:], m.Code)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Code)))
-		i--
-		dAtA[i] = 0x42
-	}
-	if m.ConsentExpiryHeight != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.ConsentExpiryHeight))
-		i--
-		dAtA[i] = 0x38
-	}
-	if len(m.ReferrerSignature) > 0 {
-		i -= len(m.ReferrerSignature)
-		copy(dAtA[i:], m.ReferrerSignature)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.ReferrerSignature)))
-		i--
-		dAtA[i] = 0x32
-	}
-	if len(m.ReferrerPubKey) > 0 {
-		i -= len(m.ReferrerPubKey)
-		copy(dAtA[i:], m.ReferrerPubKey)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.ReferrerPubKey)))
-		i--
-		dAtA[i] = 0x2a
-	}
 	if m.MaxActivation != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.MaxActivation))
 		i--
-		dAtA[i] = 0x20
+		dAtA[i] = 0x28
 	}
 	if len(m.Address) > 0 {
 		i -= len(m.Address)
 		copy(dAtA[i:], m.Address)
 		i = encodeVarintTx(dAtA, i, uint64(len(m.Address)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.Handle) > 0 {
+		i -= len(m.Handle)
+		copy(dAtA[i:], m.Handle)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Handle)))
 		i--
 		dAtA[i] = 0x1a
 	}
@@ -1628,7 +1578,7 @@ func (m *MsgBindReferrer) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *MsgBindReferrerResponse) Marshal() (dAtA []byte, err error) {
+func (m *MsgBindHandleResponse) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -1638,12 +1588,12 @@ func (m *MsgBindReferrerResponse) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *MsgBindReferrerResponse) MarshalTo(dAtA []byte) (int, error) {
+func (m *MsgBindHandleResponse) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *MsgBindReferrerResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *MsgBindHandleResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -1737,11 +1687,15 @@ func (m *MsgRegister) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
-	l = len(m.Affiliate)
+	l = len(m.AffiliatePc)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
-	l = len(m.AffiliateCode)
+	l = len(m.AffiliateCiphertext)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.AffiliateHandle)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
@@ -1835,7 +1789,7 @@ func (m *MsgSetCaretakerResponse) Size() (n int) {
 	return n
 }
 
-func (m *MsgBindReferrer) Size() (n int) {
+func (m *MsgBindHandle) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1845,6 +1799,10 @@ func (m *MsgBindReferrer) Size() (n int) {
 	n += 1 + l + sovTx(uint64(l))
 	l = m.Membership.Size()
 	n += 1 + l + sovTx(uint64(l))
+	l = len(m.Handle)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
 	l = len(m.Address)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
@@ -1852,25 +1810,10 @@ func (m *MsgBindReferrer) Size() (n int) {
 	if m.MaxActivation != 0 {
 		n += 1 + sovTx(uint64(m.MaxActivation))
 	}
-	l = len(m.ReferrerPubKey)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	l = len(m.ReferrerSignature)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	if m.ConsentExpiryHeight != 0 {
-		n += 1 + sovTx(uint64(m.ConsentExpiryHeight))
-	}
-	l = len(m.Code)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	return n
 }
 
-func (m *MsgBindReferrerResponse) Size() (n int) {
+func (m *MsgBindHandleResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -2417,11 +2360,11 @@ func (m *MsgRegister) Unmarshal(dAtA []byte) error {
 				m.CiphertextErth = []byte{}
 			}
 			iNdEx = postIndex
-		case 13:
+		case 11:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Affiliate", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field AffiliatePc", wireType)
 			}
-			var stringLen uint64
+			var byteLen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -2431,27 +2374,63 @@ func (m *MsgRegister) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				byteLen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if byteLen < 0 {
 				return ErrInvalidLengthTx
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + byteLen
 			if postIndex < 0 {
 				return ErrInvalidLengthTx
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Affiliate = string(dAtA[iNdEx:postIndex])
+			m.AffiliatePc = append(m.AffiliatePc[:0], dAtA[iNdEx:postIndex]...)
+			if m.AffiliatePc == nil {
+				m.AffiliatePc = []byte{}
+			}
 			iNdEx = postIndex
-		case 14:
+		case 12:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AffiliateCode", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field AffiliateCiphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.AffiliateCiphertext = append(m.AffiliateCiphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.AffiliateCiphertext == nil {
+				m.AffiliateCiphertext = []byte{}
+			}
+			iNdEx = postIndex
+		case 15:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AffiliateHandle", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -2479,7 +2458,7 @@ func (m *MsgRegister) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.AffiliateCode = string(dAtA[iNdEx:postIndex])
+			m.AffiliateHandle = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -3135,7 +3114,7 @@ func (m *MsgSetCaretakerResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *MsgBindReferrer) Unmarshal(dAtA []byte) error {
+func (m *MsgBindHandle) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -3158,10 +3137,10 @@ func (m *MsgBindReferrer) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: MsgBindReferrer: wiretype end group for non-group")
+			return fmt.Errorf("proto: MsgBindHandle: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MsgBindReferrer: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: MsgBindHandle: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -3232,6 +3211,38 @@ func (m *MsgBindReferrer) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Handle", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Handle = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
 			}
 			var stringLen uint64
@@ -3262,7 +3273,7 @@ func (m *MsgBindReferrer) Unmarshal(dAtA []byte) error {
 			}
 			m.Address = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 4:
+		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field MaxActivation", wireType)
 			}
@@ -3281,125 +3292,6 @@ func (m *MsgBindReferrer) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 5:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ReferrerPubKey", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ReferrerPubKey = append(m.ReferrerPubKey[:0], dAtA[iNdEx:postIndex]...)
-			if m.ReferrerPubKey == nil {
-				m.ReferrerPubKey = []byte{}
-			}
-			iNdEx = postIndex
-		case 6:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ReferrerSignature", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ReferrerSignature = append(m.ReferrerSignature[:0], dAtA[iNdEx:postIndex]...)
-			if m.ReferrerSignature == nil {
-				m.ReferrerSignature = []byte{}
-			}
-			iNdEx = postIndex
-		case 7:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ConsentExpiryHeight", wireType)
-			}
-			m.ConsentExpiryHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ConsentExpiryHeight |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 8:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Code", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Code = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -3421,7 +3313,7 @@ func (m *MsgBindReferrer) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *MsgBindReferrerResponse) Unmarshal(dAtA []byte) error {
+func (m *MsgBindHandleResponse) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -3444,10 +3336,10 @@ func (m *MsgBindReferrerResponse) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: MsgBindReferrerResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: MsgBindHandleResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MsgBindReferrerResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: MsgBindHandleResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:

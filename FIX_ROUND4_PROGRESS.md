@@ -46,11 +46,8 @@ Each PoC is ported as a regression test asserting the safe outcome.
     and runs first on its own budget (types.CaretakerSweepLimit = 1000).
     Test: x/allocation/keeper/audit4_advance_to_test.go;
     TestLargePurgeDoesNotStarveOtherSweeps updated.
-  - C10: referrer consent v2: MsgBindReferrer.consent_expiry_height (7),
-    signed (u64be after the nullifier), refused past it or more than
-    ReferrerConsentMaxBlocks (50,000) ahead; required for a bind, zero for
-    a clear. Tests: TestAudit3ReferrerConsent (v2),
-    TestAudit4ReferrerConsentExpires; app test signs v2.
+  - C10: moot. Referrer consent v2 (expiry height) was implemented
+    (167b586), then removed with public referrer addresses (see 7).
 - [x] 4 buyback C5: window <= max trade <= accrual checked on the effective
   (default-resolved) values; randomising the trade block was considered
   and rejected (the proposer controls the hash inputs), documented in
@@ -89,26 +86,29 @@ Each PoC is ported as a regression test asserting the safe outcome.
     PendingReleases; guarded() re-panics OOG; StakeTally recovers errors
     and panics into an empty (failing) tally.
   - Tests: app/audit4_genesis_test.go (ported PoCs, refused).
-- [x] 7 referral codes (user-approved feature, after the audit items)
-  - x/personhood: ReferralCode {code, nullifier, releases_at}; one active
-    code per binding nullifier (ReferralCodeByNf); held while the binding
-    lives and ReferralCodeGraceSeconds (30 days) after it lapses, is
-    cleared or moves to another code; swept in runSweeps
-    (sweepReferralCodes).
-  - MsgBindReferrer.code (8): claim, "" keeps the current one; sighash
-    fields now Bytes(address), Bytes(code). MsgRegister.affiliate_code
-    (14): at most one of it and affiliate; binding affiliate field
-    privacy.AffiliateCode(code) = H(TAG_AFFCODE, Bytes(code)); resolved to
-    the live binding's address at registration.
-  - Query ReferrerByCode; Referrer returns the code. Genesis
-    referral_codes (active code per nullifier = latest releases_at).
-  - Tests: x/personhood/keeper/referral_code_internal_test.go (claim,
-    uniqueness, one per binding, grace, rebind keeps code, clear, sweep,
-    genesis round trip, format); app TestPrivatePersonhood (A2 claims
-    "alice", relayer cannot swap the code; D1 registers by code and A is
-    paid; relayer cannot swap affiliate_code / address; the code follows a
-    rebind; genesis round trip). New passport fixture D1; passports and
-    app fixtures re-recorded.
+- [x] 7 handles (user decision; replaces the referral-code feature of
+  4b94dcd and public referrer addresses)
+  - x/personhood Handle {handle, owner_pk, ek_pub, nullifier, expires_at}:
+    claimed with MsgBindHandle (membership scope "handle", one per human,
+    caretaker activation rule, lease caretaker_vote_seconds). Lifecycle:
+    live -> renewal period (handle_renewal_seconds, default 30 days; owner
+    only, does not resolve) -> free (swept in runSweeps, sweepHandles). A
+    change frees the old handle at once; an empty bind releases at once.
+  - MsgRegister affiliate_handle (15) + affiliate_pc (11) +
+    affiliate_ciphertext (12): the referrer's half minted as a note there;
+    binding affiliate field H(TAG_AFFILIATE, Bytes(handle), pc,
+    Bytes(ct)). Transparent referral payout, MsgBindReferrer, consent,
+    ReferrerBinding, Referrer query and referral codes removed.
+  - Queries Handle, Handles (directory, start/limit); events handle_bound,
+    handle_released; genesis handles (16).
+  - Tests: x/personhood/keeper/handle_internal_test.go (every transition,
+    directory paging, genesis round trip, sweep);
+    TestRegistrationBinding (handle resolves; lapsed refused; handle / pc /
+    ciphertext / none swaps break the binding); types canonical_test.go;
+    app TestPrivatePersonhood (claim, relayer swaps refused, taken, renewal
+    refused to another identity, unknown refused, C2 and D1 referral
+    notes minted, address change, handle change frees the old one,
+    directory, genesis round trip). Passports and app fixtures re-recorded.
 - [x] 8 fixtures (dex note paths; personhood passports + app), make
   genesis, go build/vet/test ./... pass, make genesis-check passes (sha256
   24f883576256fd96dc4fdf3b49297fa0ac2f4f3bdac7fd19057720c1253bba99), make

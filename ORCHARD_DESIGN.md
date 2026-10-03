@@ -210,7 +210,7 @@ textbook.
 | Module | Msgs | Change |
 | --- | --- | --- |
 | x/shielded | MsgTransfer | `bundle`, `receiver`, `fee`, `fee_from_output`; ante: bundle checks, release map. `TransferArity`, `PublicInputs`, `MultiTransferMsg` go; `Transfer` proto, `transfer` VK → `action` VK. |
-| x/personhood | MsgRegister, MsgClaimAnml, MsgSetCaretaker, MsgBindReferrer | `fee` Transfer → fee bundle; passport/membership proofs bind `sighash` instead of `ActionSignal`. |
+| x/personhood | MsgRegister, MsgClaimAnml, MsgSetCaretaker, MsgBindHandle | `fee` Transfer → fee bundle; passport/membership proofs bind `sighash` instead of `ActionSignal`. |
 | x/assembly | MsgVoteProposal, MsgProposeRemoval, MsgVoteRemoval | same as personhood. |
 | x/shieldedstaking | Delegate, Undelegate, ClaimUnbonding, LockPosition, Update/UnlockPosition, PositionVote | bundle; `Transfer.ValueOut` → the msg's denom balance. |
 | x/shieldedstaking | **MsgStakeVote** | **two bundles**: the vote bundle (anchor = proposal snapshot root, balance = derth/v weight only, no fee) and a fee bundle (current anchor). One anchor per bundle keeps "derth spent against the snapshot" checkable even though assets are hidden per action. |

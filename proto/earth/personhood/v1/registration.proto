@@ -94,33 +94,21 @@ message CaretakerVote {
   int64 expires_at = 2;
 }
 
-// ReferrerBinding is a live referral address: registrations naming address
-// pay the referrer's half there until expires_at. Keyed by the binder's
-// referrer-scope nullifier, which says nothing about who bound it.
-message ReferrerBinding {
-  bytes nullifier = 1;
-  string address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  int64 expires_at = 3;
-}
-
-// ReferralCode is a human-readable name for a referrer binding: lowercase
-// [a-z0-9-], 3 to 32 characters, no leading or trailing dash. One per
-// binding (the binding's nullifier: one per human). A registration may name
-// its referrer by code (MsgRegister.affiliate_code) instead of by address;
-// the code resolves to the binding's address at registration.
-//
-// It is held by its binding while that is live, and stays reserved to the
-// same nullifier for ReferralCodeGraceSeconds after the binding lapses or is
-// cleared (releases_at): nobody else can claim a code someone has just
-// stopped renewing. Past releases_at, anyone may claim it, and the sweep
-// deletes it.
-message ReferralCode {
-  string code = 1;
-  // nullifier is the referrer binding's nullifier (scope referrer).
-  bytes nullifier = 2;
-  // releases_at (unix seconds): the binding's expiry (or its clearing) plus
-  // the grace period.
-  int64 releases_at = 3;
+// Handle is a registered human's name in the public handle directory: the
+// shielded address it resolves to, the handle's binding nullifier (scope
+// "handle": one per human), and its lease. Live (it resolves) while
+// expires_at is in the future; then, for handle_renewal_seconds, reserved to
+// the same nullifier (only its owner may renew it; it does not resolve);
+// then released (swept, free for anyone). A change to another handle or an
+// explicit release frees it at once.
+message Handle {
+  string handle = 1;
+  // owner_pk (32 bytes, canonical BN254 scalar) and ek_pub (32 bytes,
+  // X25519): the shielded address (zk/privacy.ShieldedAddress).
+  bytes owner_pk = 2;
+  bytes ek_pub = 3;
+  bytes nullifier = 4;
+  int64 expires_at = 5;
 }
 
 // UsedRegistrationBinding is a registration binding (the proof's address
@@ -137,7 +125,7 @@ message UsedRegistrationBinding {
 }
 
 // LeaseHold is the lease length (caretaker_vote_seconds) the activation bound
-// of MsgSetCaretaker and MsgBindReferrer keeps using until `until`, after
+// of MsgSetCaretaker and MsgBindHandle keeps using until `until`, after
 // governance lowered it: a lease cast under the old length runs that long,
 // and a switched-to identity must not cast one beside its predecessor's.
 // Zero when no hold is in force.

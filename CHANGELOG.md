@@ -43,28 +43,38 @@ like, because nodes running different versions cannot agree.
     or below the last committed height; PrepareProposal drops expired txs
     before counting the private cap; a verifier panic in a proof worker is
     an action error; a panic in the private ante keeps the gas it charged.
-  - **Wallet-facing:**
-    - MsgSetCaretaker / MsgBindReferrer `max_activation` must be strictly
-      below now - lease length - one day (the bound itself is refused).
-    - MsgBindReferrer consent v2: `consent_expiry_height` (field 7) is
-      required for a bind and signed: "earth.referrer.consent.v2" || u8
-      len(chain_id) || chain_id || nullifier (32) || u64be(expiry_height)
-      || address. Refused past the expiry or more than 50,000 blocks ahead.
-- **Referral codes** (x/personhood). A referrer binding may claim a code
-  (lowercase a-z, 0-9, -; 3-32 chars; no leading/trailing dash): one active
-  code per binding, unique, reserved to its holder for 30 days after the
-  binding lapses, is cleared or moves to another code; swept after.
-  - MsgBindReferrer `code` (field 8): claim, or "" to keep the current one.
-    Sighash fields are now Bytes(address bytes), **Bytes(code)**.
-  - MsgRegister `affiliate_code` (field 14), at most one of it and
-    `affiliate`. The registration binding's affiliate field is
-    H(TAG_AFFCODE, Bytes(code)) (TAG_AFFCODE = "earth.affcode") for a code,
-    Bytes(address bytes) for an address, 0 for none; the referrer's half is
-    paid to the address the code's live binding names. Unknown or lapsed
-    code: ErrUnknownReferralCode (1127); taken: ErrReferralCodeTaken (1126).
-  - Query `ReferrerByCode` (`/earth/personhood/v1/referrer_code/{code}`);
-    `Referrer` also returns the address's code. Genesis carries
-    `referral_codes`.
+  - **Wallet-facing:** MsgSetCaretaker / MsgBindHandle `max_activation`
+    must be strictly below now - lease length - one day (the bound itself
+    is refused).
+- **Handles replace public referrer addresses** (x/personhood). A
+  registered human claims a handle (lowercase a-z, 0-9, -; 3-32 chars; no
+  leading/trailing dash) naming their shielded address; the chain is a
+  public directory, and payments to a handle are wallet-side (look it up,
+  pay its address privately). Referrals are paid as notes.
+  - `MsgBindReferrer` is gone (with its consent signature and the
+    transparent referral payout); **`MsgBindHandle`** `{fee (1), membership
+    (2), handle (3), address (4, "erthz1..." shielded address), max_activation
+    (5)}`, membership scope `Scope("handle")`, sighash fields Bytes(handle),
+    owner_pk, Bytes(ek_pub). Handle and address: claim, renew (lease
+    caretaker_vote_seconds), change address, or change handle (the old one
+    is freed at once); both empty: release at once. One per human.
+  - Lifecycle: live until `expires_at` (resolves); then for
+    `handle_renewal_seconds` (new param 26, default 30 days) reserved to its
+    owner and not resolving; then free (swept).
+  - **MsgRegister:** `affiliate` (13) and the transparent payout are gone;
+    `affiliate_handle` (15), `affiliate_pc` (11), `affiliate_ciphertext`
+    (12, 177-byte blind) name a live handle and the referral note the
+    registrant's wallet made to its address; the chain mints the referrer's
+    half there. Binding affiliate field: 0 for none, else
+    H(TAG_AFFILIATE, Bytes(handle), affiliate_pc, Bytes(affiliate_ciphertext)),
+    TAG_AFFILIATE = "earth.affiliate". Unknown or lapsed handle:
+    ErrNoReferrer (1121); taken: ErrHandleTaken (1122).
+  - Queries `Handle` (`/earth/personhood/v1/handle/{handle}`) and `Handles`
+    (`/earth/personhood/v1/handles?start=&limit=`, the whole directory in
+    order) return `{handle, address, status (live | renewal | free),
+    expires_at, renewal_until}`; `Referrer` is gone. Events `handle_bound`,
+    `handle_released`. Genesis: `handles` (16); `referrer_bindings` (8)
+    removed.
 
 - x/shieldedstaking: **private stake votes no longer spend the note**
   (ORCHARD_DESIGN.md section 15). One stake note can vote on every

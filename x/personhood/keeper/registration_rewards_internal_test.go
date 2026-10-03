@@ -61,20 +61,18 @@ func rewardKeeper(t *testing.T, alloc *recordingAllocation, minted *[]sdk.Coin) 
 	return k, ctx
 }
 
-// A referred registration draws the full rate: the registrant's half is
-// minted as a note, the referrer's paid in transparent ERTH to its address.
+// A referred registration draws the full rate: the registrant's half and
+// the referrer's are each minted as a note.
 func TestRegistrationRewardSplitsWithReferrer(t *testing.T) {
 	alloc := &recordingAllocation{payout: math.NewInt(1001)}
 	var minted []sdk.Coin
 	k, ctx := rewardKeeper(t, alloc, &minted)
-	referrer := sdk.AccAddress{2}
-	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, referrer)
+	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, &rewardNote{pc: []byte{2}})
 	require.NoError(t, err)
 	require.Equal(t, int64(types.RegistrationRewardPpm), alloc.drawnAtPpm)
 	require.Equal(t, math.NewInt(501), got)
-	require.Equal(t, math.NewInt(501), alloc.toModule)
-	require.Equal(t, math.NewInt(500), alloc.toAccount[string(referrer)])
-	require.Equal(t, []sdk.Coin{sdk.NewInt64Coin("uerth", 501)}, minted)
+	require.Equal(t, math.NewInt(1001), alloc.toModule)
+	require.Equal(t, []sdk.Coin{sdk.NewInt64Coin("uerth", 501), sdk.NewInt64Coin("uerth", 500)}, minted)
 }
 
 // An unreferred registration draws half the rate: the registrant is paid what
@@ -95,7 +93,7 @@ func TestRegistrationRewardEmptyPool(t *testing.T) {
 	alloc := &recordingAllocation{payout: math.ZeroInt()}
 	var minted []sdk.Coin
 	k, ctx := rewardKeeper(t, alloc, &minted)
-	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, sdk.AccAddress{2})
+	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, &rewardNote{pc: []byte{2}})
 	require.NoError(t, err)
 	require.True(t, got.IsZero())
 	require.Empty(t, minted)
