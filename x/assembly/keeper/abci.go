@@ -402,6 +402,9 @@ func (k Keeper) resolveDueRemovals(ctx context.Context) error {
 		if err := k.closeRemovalBallot(ctx, key, optionID); err != nil {
 			return err
 		}
+		if err := k.RemovalCooldown.Set(ctx, optionID, now+types.RemovalCooldown); err != nil {
+			return err
+		}
 
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 			"assembly_removal_closed",

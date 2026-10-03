@@ -32,5 +32,9 @@ var (
 	// is among several. The chamber cannot keep every subject out of the vote,
 	// so such a proposal takes no human votes (and so fails) and must be split
 	// per country. See keeper/subjects.go.
+	// ErrRemovalCooldown means a removal ballot on the option closed less than
+	// RemovalCooldown ago.
+	ErrRemovalCooldown = errors.Register(ModuleName, 1108, "a removal ballot on this option closed too recently")
+
 	ErrTooManySubjects = errors.Register(ModuleName, 1107, "proposal's revocations span more than one country or signer; the chamber votes on one country at a time")
 )

@@ -162,6 +162,50 @@ func TestRemovalBallotThatFallsShort(t *testing.T) {
 	require.Empty(t, e.allocation.removed, "one of two is not two thirds")
 }
 
+// After a removal ballot closes, no new one on that option may open for
+// RemovalCooldown; other options are unaffected; the cooldown survives export.
+func TestRemovalCooldown(t *testing.T) {
+	e := newTestEnv(t)
+	e.allocation.removable[7] = true
+	e.allocation.removable[8] = true
+	_, alice := e.addr(t, "alice", "null-alice")
+
+	opened, err := e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
+	require.NoError(t, err)
+	closedAt := opened.ClosesAt + 1
+	e.ctx = e.ctx.WithBlockTime(time.Unix(closedAt, 0))
+	require.NoError(t, e.k.EndBlocker(e.ctx))
+	require.Empty(t, e.allocation.removed, "no votes, no removal")
+
+	_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
+	require.ErrorIs(t, err, types.ErrRemovalCooldown)
+	_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 8})
+	require.NoError(t, err, "another option is not cooling down")
+
+	// Survives a genesis round trip.
+	exported, err := e.k.ExportGenesis(e.ctx)
+	require.NoError(t, err)
+	require.NoError(t, exported.Validate())
+	require.Equal(t, []types.RemovalCooldownEntry{{OptionId: 7, Until: closedAt + types.RemovalCooldown}}, exported.RemovalCooldowns)
+	fresh := newTestEnv(t)
+	fresh.allocation.removable[7] = true
+	require.NoError(t, fresh.k.InitGenesis(fresh.ctx, *exported))
+	fctx := fresh.ctx.WithBlockTime(time.Unix(closedAt+types.RemovalCooldown-1, 0))
+	_, err = fresh.ms.ProposeRemoval(fctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
+	require.ErrorIs(t, err, types.ErrRemovalCooldown)
+
+	// One second short, still refused; at the end, it may open again.
+	e.ctx = e.ctx.WithBlockTime(time.Unix(closedAt+types.RemovalCooldown-1, 0))
+	_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
+	require.ErrorIs(t, err, types.ErrRemovalCooldown)
+	e.ctx = e.ctx.WithBlockTime(time.Unix(closedAt+types.RemovalCooldown, 0))
+	_, err = e.ms.ProposeRemoval(e.ctx, &types.MsgProposeRemoval{Membership: voter(alice), OptionId: 7})
+	require.NoError(t, err)
+	has, err := e.k.RemovalCooldown.Has(e.ctx, 7)
+	require.NoError(t, err)
+	require.False(t, has, "the spent cooldown is dropped when the new ballot opens")
+}
+
 // Only an option x/allocation says is removable can be balloted against.
 func TestRemovalNeedsARemovableOption(t *testing.T) {
 	e := newTestEnv(t)

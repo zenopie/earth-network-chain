@@ -29,6 +29,17 @@ message GenesisState {
   // ballot's id is in its scope, so an imported ballot keeps its id and new
   // ones must not reuse it.
   uint64 ballot_seq = 4;
+
+  // removal_cooldowns are the options a removal ballot closed on recently,
+  // with the time a new ballot on each may open (types.RemovalCooldown).
+  repeated RemovalCooldownEntry removal_cooldowns = 5 [(gogoproto.nullable) = false];
+}
+
+// RemovalCooldownEntry is one option's removal cooldown.
+message RemovalCooldownEntry {
+  uint64 option_id = 1;
+  // until is the earliest unix time a new removal ballot on the option may open.
+  int64 until = 2;
 }
 
 message ProposalRoundEntry {

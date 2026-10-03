@@ -179,6 +179,15 @@ func (k Keeper) checkProposeRemoval(ctx context.Context, optionID uint64) error 
 	} else if has {
 		return errorsmod.Wrapf(types.ErrBallotExists, "option %d", optionID)
 	}
+	// And not again until RemovalCooldown after the last one closed, so a
+	// declined removal cannot be reopened every week.
+	until, err := k.RemovalCooldown.Get(ctx, optionID)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	if now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix(); err == nil && now < until {
+		return errorsmod.Wrapf(types.ErrRemovalCooldown, "option %d: next ballot may open at %d", optionID, until)
+	}
 	return nil
 }
 
