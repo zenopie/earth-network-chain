@@ -74,7 +74,9 @@ const (
 	// One budget rather than one per sweep. BeginBlock runs on an infinite gas
 	// meter and consumes no block gas, so this number is the only ceiling on
 	// that work; splitting it in two would leave the per-block total, which is
-	// what actually decides how long a block takes, chosen by nobody. At roughly
+	// what actually decides how long a block takes, chosen by nobody. Within
+	// it, each sweep after the revoked-signer purge has a reserved share
+	// (keeper.runSweeps), so no backlog starves the others. At roughly
 	// a dozen store operations per retirement, 100 is a small fraction of a
 	// block and drains a large cohort in minutes.
 	DefaultRegistrationSweepLimit = 100

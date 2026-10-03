@@ -46,6 +46,12 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		}
 	}
 
+	for _, c := range gs.RemovalCooldowns {
+		if err := k.RemovalCooldown.Set(ctx, c.OptionId, c.Until); err != nil {
+			return err
+		}
+	}
+
 	for _, entry := range gs.RemovalBallots {
 		record := entry.Ballot
 		// The tally lives with the ballot, not in this record; see removalTally.
@@ -131,6 +137,13 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 			return true, err
 		}
 		gs.RemovalBallots = append(gs.RemovalBallots, entry)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := k.RemovalCooldown.Walk(ctx, nil, func(optionID uint64, until int64) (bool, error) {
+		gs.RemovalCooldowns = append(gs.RemovalCooldowns, types.RemovalCooldownEntry{OptionId: optionID, Until: until})
 		return false, nil
 	}); err != nil {
 		return nil, err

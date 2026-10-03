@@ -53,6 +53,10 @@ func (k msgServer) ProposeRemoval(goCtx context.Context, msg *types.MsgProposeRe
 	if err := k.RemovalBallotID.Set(ctx, msg.OptionId, id); err != nil {
 		return nil, err
 	}
+	// Past its cooldown (checkProposeRemoval): the entry has done its work.
+	if err := k.RemovalCooldown.Remove(ctx, msg.OptionId); err != nil {
+		return nil, err
+	}
 
 	ctx.EventManager().EmitEvent(sdk.NewEvent(
 		"assembly_removal_opened",

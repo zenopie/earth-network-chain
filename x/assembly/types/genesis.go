@@ -69,6 +69,16 @@ func (gs GenesisState) Validate() error {
 			seenVote[hex.EncodeToString(v.Nullifier)] = true
 		}
 	}
+	seenCooldown := map[uint64]bool{}
+	for _, c := range gs.RemovalCooldowns {
+		if seenCooldown[c.OptionId] {
+			return fmt.Errorf("option %d: two removal cooldowns", c.OptionId)
+		}
+		seenCooldown[c.OptionId] = true
+		if c.Until <= 0 {
+			return fmt.Errorf("option %d: removal cooldown has no end", c.OptionId)
+		}
+	}
 	seenRound := map[uint64]bool{}
 	for _, r := range gs.ProposalRounds {
 		if seenRound[r.ProposalId] {

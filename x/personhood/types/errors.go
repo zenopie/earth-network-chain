@@ -27,4 +27,7 @@ var (
 	ErrIdentityTreeFull    = errors.Register(ModuleName, 1120, "identity tree full")
 	ErrNoReferrer          = errors.Register(ModuleName, 1121, "affiliate holds no live referrer binding")
 	ErrReferrerBound       = errors.Register(ModuleName, 1122, "address is bound as another live referrer")
+	// ErrRegistrationReplay: a switch to the identity commitment the live
+	// registration already holds (a replayed MsgRegister).
+	ErrRegistrationReplay = errors.Register(ModuleName, 1123, "passport is already registered to this identity commitment")
 )

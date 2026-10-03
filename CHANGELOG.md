@@ -11,6 +11,28 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
+## [Unreleased]
+
+**Consensus-affecting.**
+
+- x/assembly: a proposal mixing a revocation (MsgRevokeDsc/MsgRevokeCsca)
+  with any other message, or nesting one inside another message (authz
+  MsgExec, ...), takes no human votes and fails.
+- x/assembly: after a removal ballot on a groundworks option closes, another
+  on that option cannot open for 30 days. New genesis field
+  `removal_cooldowns`.
+- x/personhood: a registration switch to the identity commitment already
+  registered is refused (a replayed MsgRegister).
+- x/personhood: **wallet format change.** The passport proof's `address`
+  input (RegistrationBinding) now also binds the two note ciphertexts:
+  `H(TAG_REG, idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
+  Bytes(ciphertext_erth), affiliate)`. No circuit or verifying-key change.
+- x/personhood: the expiry, caretaker and referrer sweeps each have a
+  reserved share of the per-block retirement budget, so a large revoked-signer
+  purge cannot starve them.
+- Removed the transparent gas grant: `earthd gas-check membership`,
+  `Keeper.CheckGasMembership`, `GasScope`/`GasTransparentSignal`.
+
 ## [v0.9.4]
 
 **Not consensus-affecting. Validators need not upgrade.** Adds `earthd

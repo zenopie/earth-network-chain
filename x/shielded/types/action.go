@@ -47,17 +47,6 @@ type PrivateActionHandler interface {
 	VerifyPrivateAction(ctx context.Context, msg PrivateMsg, prepared any) error
 }
 
-// PrivateAnchorAcceptor is implemented by an action handler that may accept,
-// for the actions of its msg's first bundle, an anchor outside the pool's
-// window. A root it accepts must be one the pool once had (the chain stored
-// it), never a value the msg supplies: an action proof's note is only as real
-// as its anchor. x/shieldedstaking accepts a stake vote's proposal snapshot
-// root. Every other bundle (the fee bundle paying for a stake vote) spends
-// against anchors in the window.
-type PrivateAnchorAcceptor interface {
-	AcceptsPrivateAnchor(ctx context.Context, msg PrivateMsg, root []byte) (bool, error)
-}
-
 // PrivateActionExecutor is implemented by an action handler whose action, for
 // some msgs, must be atomic with the spend of its bundles. The private ante
 // then runs the action itself, right after executing the bundles, in its

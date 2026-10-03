@@ -143,6 +143,19 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	if err != nil {
 		return preparedRegistration{}, err
 	}
+	// A switch to the identity already registered changes nothing the holder
+	// wants, and is what a replay of the registration that made it looks like:
+	// the proof is public, and replaying it within the current_date skew would
+	// otherwise zero the holder's leaf and restart its activation delay.
+	if switched {
+		live, err := k.Registrations.Get(ctx, nullifier)
+		if err != nil {
+			return preparedRegistration{}, err
+		}
+		if bytes.Equal(live.Idc, msg.Idc) {
+			return preparedRegistration{}, types.ErrRegistrationReplay
+		}
+	}
 	// A paid registration's affiliate must be a live referrer. A switch pays
 	// nothing, so its affiliate is not looked at.
 	var affiliate []byte

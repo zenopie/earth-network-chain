@@ -98,7 +98,6 @@ func TestScopesDistinct(t *testing.T) {
 		"claim0": ClaimScope(0), "claim1": ClaimScope(1), "caretaker": CaretakerScope(),
 		"proposal1/0": ProposalScope(1, 0), "proposal1/1": ProposalScope(1, 1), "proposal0/1": ProposalScope(0, 1),
 		"removal1": RemovalScope(1), "propose1/0": ProposeRemovalScope(1, 0),
-		"gas202610": GasScope(202610), "gas202611": GasScope(202611),
 	} {
 		k := s.String()
 		if o, ok := seen[k]; ok {
@@ -124,29 +123,21 @@ func TestCountryField(t *testing.T) {
 	}
 }
 
-// Pinned for the wallet: its GasScope and GasTransparentSignal must produce
-// these exact fields.
-func TestGasScopeAndSignalPinned(t *testing.T) {
-	scope := GasScope(202610)
-	addr := make([]byte, 20)
-	for i := range addr {
-		addr[i] = byte(i + 1)
+// Pinned for the wallet: RegistrationBinding (the passport proof's `address`
+// input) over these exact inputs. idc = 1, pc_anml = 2, ciphertext_anml =
+// "anml", pc_erth = 3, ciphertext_erth = "erth", affiliate = 0.
+func TestRegistrationBindingPinned(t *testing.T) {
+	got := RegistrationBinding(U64(1), U64(2), []byte("anml"), U64(3), []byte("erth"), fr.Element{})
+	t.Logf("RegistrationBinding = 0x%x", FieldBytes(got))
+	if want := registrationBindingVector; fmt.Sprintf("%x", FieldBytes(got)) != want {
+		t.Fatalf("RegistrationBinding = %x, want %s", FieldBytes(got), want)
 	}
-	signal := GasTransparentSignal("earth-1", addr)
-	t.Logf("GasScope(202610) = 0x%x", FieldBytes(scope))
-	t.Logf("GasTransparentSignal(earth-1, 0x0102..14) = 0x%x", FieldBytes(signal))
-	if got, want := fmt.Sprintf("%x", FieldBytes(scope)), gasScopeVector; got != want {
-		t.Fatalf("GasScope(202610) = %s, want %s", got, want)
+	if other := RegistrationBinding(U64(1), U64(2), []byte("anmL"), U64(3), []byte("erth"), fr.Element{}); other == got {
+		t.Fatal("binding does not cover ciphertext_anml")
 	}
-	if got, want := fmt.Sprintf("%x", FieldBytes(signal)), gasSignalVector; got != want {
-		t.Fatalf("GasTransparentSignal = %s, want %s", got, want)
-	}
-	if other := GasTransparentSignal("earth-2", addr); other == signal {
-		t.Fatal("signal does not bind the chain id")
+	if other := RegistrationBinding(U64(1), U64(2), []byte("anml"), U64(3), []byte("ertH"), fr.Element{}); other == got {
+		t.Fatal("binding does not cover ciphertext_erth")
 	}
 }
 
-const (
-	gasScopeVector  = "189ca0017ef0d3fb8ebca623f3a5b50b0db38b16ff09ed877b8ed66a9548c9ff"
-	gasSignalVector = "1985e8e50ba97e2b2a44119f927d4c6ea9d58f8cafa89c8c2a60eabe3ba29c80"
-)
+const registrationBindingVector = "20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c"

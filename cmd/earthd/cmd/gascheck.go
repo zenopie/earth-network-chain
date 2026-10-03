@@ -38,11 +38,10 @@ import (
 // state, without a transaction, for the gas-grant backend.
 //
 // The backend funds one fee note per passport per month, to a new human whose
-// registration the chain would accept (`registration`), and one grant of
-// transparent ERTH per membership nullifier per month to an address a live
-// registered human names, without learning which human (`membership`).
-// (There is no "is this address a human" check any more: nothing on chain
-// links an address to a registration.) Both questions are the chain's to answer, and answering them with a copy of its logic means the copy
+// registration the chain would accept (`registration`). (There is no
+// transparent grant to an address any more, and no "is this address a human"
+// check: nothing on chain links an address to a registration.) The question
+// is the chain's to answer, and answering it with a copy of its logic means the copy
 // drifts at the next circuit or parameter change. So this builds the real
 // personhood and pki keepers over a read-only store whose every read is an
 // `abci_query /store/<module>/...` to the node, pinned to one height, and asks
@@ -84,53 +83,6 @@ func gasCheckCmd() *cobra.Command {
 			return emit(map[string]any{"ok": true, "nullifier": hex.EncodeToString(nullifier), "switched": switched, "height": env.height})
 		},
 	})
-
-	membership := &cobra.Command{
-		Use: "membership",
-		Short: "Is the Membership on stdin (proto JSON: proof, root, nullifier) a live human's transparent gas grant " +
-			"for --month to --address? Prints the nullifier",
-		Long: `Checks the membership proof on stdin as x/personhood's CheckGasMembership does:
-  scope            = GasScope(month)  = H(TAG_SCOPE, Bytes("gas"), month)   month = YYYYMM
-  signal           = H(TAG_SIGNAL, Bytes("earth.gas.transparent"), Bytes(chain_id), Bytes(address bytes))
-  excluded_dsc     = excluded_country = 0
-  max_activation   = --max-activation, at most the block time
-against an identity root still inside the chain's identity root window, with
-the membership verifying key in x/shielded's params. The backend keeps the
-replay set (one grant per nullifier per month).`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			addrStr, _ := cmd.Flags().GetString("address")
-			month, _ := cmd.Flags().GetUint64("month")
-			maxAct, _ := cmd.Flags().GetUint64("max-activation")
-			env, err := newGasCheckEnv(cmd)
-			if err != nil {
-				return err
-			}
-			raw, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return err
-			}
-			var m personhoodtypes.Membership
-			if err := env.cdc.UnmarshalJSON(raw, &m); err != nil {
-				return emit(map[string]any{"ok": false, "error": "malformed Membership: " + err.Error(), "height": env.height})
-			}
-			addr, err := env.addrCodec.StringToBytes(addrStr)
-			if err != nil {
-				return emit(map[string]any{"ok": false, "error": "address: " + err.Error(), "height": env.height})
-			}
-			if err := env.personhood.CheckGasMembership(env.ctx, m, month, addr, maxAct); err != nil {
-				return env.refusal(err)
-			}
-			return emit(map[string]any{"ok": true, "nullifier": hex.EncodeToString(m.Nullifier), "height": env.height})
-		},
-	}
-	membership.Flags().String("address", "", "bech32 account the grant pays (bound in the proof's signal)")
-	membership.Flags().Uint64("month", 0, "the grant's month, YYYYMM (UTC), as in the proof's scope")
-	membership.Flags().Uint64("max-activation", 0, "the proof's max_activation (unix seconds)")
-	_ = membership.MarkFlagRequired("address")
-	_ = membership.MarkFlagRequired("month")
-	_ = membership.MarkFlagRequired("max-activation")
-	cmd.AddCommand(membership)
 
 	return cmd
 }
@@ -192,7 +144,7 @@ func newGasCheckEnv(cmd *cobra.Command) (*gasCheckEnv, error) {
 }
 
 // gasCheckCodec decodes what the backend pipes in: a MsgRegister (its fee
-// bundle included) or a Membership, as proto JSON.
+// bundle included), as proto JSON.
 func gasCheckCodec() codec.Codec {
 	registry := codectypes.NewInterfaceRegistry()
 	personhoodtypes.RegisterInterfaces(registry)

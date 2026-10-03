@@ -49,6 +49,9 @@ type Keeper struct {
 	// Subjects is each proposal's subjects, fixed as it enters voting. See
 	// subjects.go.
 	Subjects collections.Map[uint64, types.ProposalSubjects]
+	// RemovalCooldown is, per option, the earliest unix time a new removal
+	// ballot on it may open. See types.RemovalCooldown.
+	RemovalCooldown collections.Map[uint64, int64]
 }
 
 func NewKeeper(
@@ -93,6 +96,8 @@ func NewKeeper(
 			collections.Uint64Key, codec.CollValue[types.ProposalRound](cdc)),
 		Subjects: collections.NewMap(sb, types.SubjectsKey, "subjects",
 			collections.Uint64Key, codec.CollValue[types.ProposalSubjects](cdc)),
+		RemovalCooldown: collections.NewMap(sb, types.RemovalCooldownKey, "removal_cooldown",
+			collections.Uint64Key, collections.Int64Value),
 	}
 
 	schema, err := sb.Build()

@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -39,8 +40,10 @@ import (
 //   - otherwise every revocation — each MsgRevokeDsc's issuing country, each
 //     MsgRevokeCsca's country — must name one and the same known country,
 //     which is excluded as a whole;
-//   - anything else (revocations in two countries, or one of unknown
-//     country among several) cannot be voted on at all: the chamber refuses
+//   - anything else (revocations in two countries, one of unknown country
+//     among several, a revocation alongside any other message, or a
+//     revocation nested inside another message such as authz MsgExec)
+//     cannot be voted on at all: the chamber refuses
 //     every vote with ErrTooManySubjects, the proposal fails for want of
 //     votes, and it must be resubmitted split per country (and an
 //     unknown-country DSC on its own).
@@ -71,19 +74,37 @@ type revocation struct {
 
 // revocations reads a proposal's top-level MsgRevokeDsc and MsgRevokeCsca.
 // Read straight from the messages rather than from a decoded []sdk.Msg: a
-// proposal loaded from the store has not had its Any values unpacked. Only the
-// top level counts; that is where governance puts them, and nothing else signs
-// as the gov authority. A certificate that does not parse revokes nothing
-// when the proposal executes either, so it is no subject.
-func (k Keeper) revocations(ctx context.Context, proposal v1.Proposal) ([]revocation, error) {
+// proposal loaded from the store has not had its Any values unpacked. A
+// certificate that does not parse revokes nothing when the proposal executes
+// either, so it is no subject.
+//
+// It also returns a refusal when the proposal's revocations cannot be
+// isolated: a revocation together with any other message (whose effect the
+// revoked registrations would otherwise get no say in, e.g. a parameter
+// change riding along with the revocation that silences them), or a
+// revocation wrapped inside another message (authz MsgExec, or any other
+// wrapper), which the subjects walk would not see. The nested check is
+// deliberately conservative: any non-revocation message whose encoding
+// contains a revocation's fully-qualified type name is refused, whatever the
+// wrapper or encoding (protobuf Any, JSON).
+func (k Keeper) revocations(ctx context.Context, proposal v1.Proposal) ([]revocation, string, error) {
 	revokeDsc := sdk.MsgTypeURL(&pkitypes.MsgRevokeDsc{})
 	revokeCsca := sdk.MsgTypeURL(&pkitypes.MsgRevokeCsca{})
 	var out []revocation
 	seen := map[string]bool{}
+	revocationMsgs, otherMsgs := 0, 0
 	for _, m := range proposal.Messages {
 		if m == nil {
 			continue
 		}
+		if m.TypeUrl != revokeDsc && m.TypeUrl != revokeCsca {
+			otherMsgs++
+			if containsRevocation(m.Value) {
+				return nil, fmt.Sprintf("message %s wraps a revocation; revoke at the top level, in a proposal of its own", m.TypeUrl), nil
+			}
+			continue
+		}
+		revocationMsgs++
 		switch m.TypeUrl {
 		case revokeDsc:
 			var msg pkitypes.MsgRevokeDsc
@@ -106,7 +127,7 @@ func (k Keeper) revocations(ctx context.Context, proposal v1.Proposal) ([]revoca
 			r := revocation{dsc: append([]byte(nil), b[:]...), placed: true}
 			if k.pki != nil {
 				if r.country, r.placed, err = k.pki.DscIssuerCountry(ctx, msg.CertificateDer); err != nil {
-					return nil, err
+					return nil, "", err
 				}
 			}
 			out = append(out, r)
@@ -122,14 +143,48 @@ func (k Keeper) revocations(ctx context.Context, proposal v1.Proposal) ([]revoca
 			if k.pki != nil {
 				country, err := k.pki.CscaKeyCountry(ctx, msg.CertificateDer)
 				if err != nil {
-					return nil, err
+					return nil, "", err
 				}
 				r.country = country
 			}
 			out = append(out, r)
 		}
 	}
-	return out, nil
+	if revocationMsgs > 0 && otherMsgs > 0 {
+		return nil, "revocations alongside other messages; revoke in a proposal of revocations only", nil
+	}
+	return out, "", nil
+}
+
+// revocationNames are the fully-qualified names of the revocation messages,
+// as they appear inside any type URL that names them.
+var revocationNames = [][]byte{
+	[]byte(sdk.MsgTypeURL(&pkitypes.MsgRevokeDsc{})[1:]),
+	[]byte(sdk.MsgTypeURL(&pkitypes.MsgRevokeCsca{})[1:]),
+}
+
+// containsRevocation reports whether an encoded message carries a revocation
+// anywhere inside it: protobuf strings are stored verbatim, so a nested Any's
+// type URL (at any depth) appears in the encoding as is.
+func containsRevocation(value []byte) bool {
+	for _, n := range revocationNames {
+		if bytes.Contains(value, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// subjectsFor classifies a proposal.
+func (k Keeper) subjectsFor(ctx context.Context, proposal v1.Proposal) (types.ProposalSubjects, error) {
+	revs, refusal, err := k.revocations(ctx, proposal)
+	if err != nil {
+		return types.ProposalSubjects{}, err
+	}
+	if refusal != "" {
+		return types.ProposalSubjects{Refusal: refusal}, nil
+	}
+	return classify(revs), nil
 }
 
 // classify turns a proposal's revocations into its subjects.
@@ -172,11 +227,11 @@ func (k Keeper) classifyProposal(ctx context.Context, proposal v1.Proposal) erro
 	if ok, err := k.Subjects.Has(ctx, proposal.Id); err != nil || ok {
 		return err
 	}
-	revs, err := k.revocations(ctx, proposal)
+	s, err := k.subjectsFor(ctx, proposal)
 	if err != nil {
 		return err
 	}
-	return k.Subjects.Set(ctx, proposal.Id, classify(revs))
+	return k.Subjects.Set(ctx, proposal.Id, s)
 }
 
 // subjectsOf is a proposal's stored subjects, classifying it now when it has
@@ -189,11 +244,7 @@ func (k Keeper) subjectsOf(ctx context.Context, proposal v1.Proposal) (types.Pro
 	if !errors.Is(err, collections.ErrNotFound) {
 		return s, err
 	}
-	revs, err := k.revocations(ctx, proposal)
-	if err != nil {
-		return s, err
-	}
-	return classify(revs), nil
+	return k.subjectsFor(ctx, proposal)
 }
 
 // forgetSubjects drops a proposal's subjects once its voting is over.

@@ -212,8 +212,7 @@ textbook.
 | x/dex | MsgNoteSwap | bundle, balance = asset in. |
 | x/dex | MsgAddLiquidityShielded | **one bundle** with ANML and ERTH balances (was two transfers). |
 
-`PrivateActionHandler`, `PrivateAnchorAcceptor` (now per bundle),
-`PrivateActionExecutor`, authorization-by-nullifiers and the unsigned-tx ante
+`PrivateActionHandler`, `PrivateActionExecutor`, authorization-by-nullifiers and the unsigned-tx ante
 route stay as they are.
 
 ## 8. Measurements (Apple M2, 8 cores; bb v5.0.0, nargo 1.0.0-beta.22)
@@ -324,7 +323,7 @@ signature, value-base canonicality and the bundle release accounting.
 
 | Spike | Production (x/shielded, zk/orchard) |
 | --- | --- |
-| One anchor per bundle | **One anchor per action** (`Action.anchor`), every one checked against the window, dummies included. Bundle 0's actions may be vouched for by the msg's `PrivateAnchorAcceptor` (stake votes); other bundles must be in the window. |
+| One anchor per bundle | **One anchor per action** (`Action.anchor`), every one checked against the window, dummies included. (The `PrivateAnchorAcceptor` hook for out-of-window stake-vote anchors had no implementer and was removed.) |
 | `digest = H(TAG_BUNDLE, anchor, N, ...)` | `digest = H(TAG_BUNDLE, N, [anchor_i, nf_i, cm_i, cvx_i, cvy_i, Bytes(ct_i)]..., M, [asset_j, value_j]...)` |
 | `sighash = Signal(type, chain, D_0, ...)` | `sighash = Signal(type URL, chain id, K, D_0..D_{K-1}, msg fields)`; K (bundle count) keeps a digest from posing as a field. MsgSend's fields: `Bytes(receiver raw address), fee`. |
 | `MsgTransfer{bundle, receiver, fee, fee_from_output}` | `MsgSend{bundle, receiver, fee}`. Release map: the uerth balance pays `fee` to fee_collector; every remainder (all denoms) goes to `receiver`, paid **in the ante** (atomic with the spend); no receiver ⇔ balances == fee. An unshield of uerth pays its fee from what it releases, with no fee note. `FeeFromOutputMsg` + `PayFeeFromModule` stay for Phase 2 executors (claims, swaps). |

@@ -50,6 +50,17 @@ const (
 	// yes-or-no about one option that is already public and already being paid,
 	// not a proposal anyone needs to go read.
 	RemovalVotingPeriod = 7 * 24 * 60 * 60
+
+	// RemovalCooldown is how long after a removal ballot on an option closes,
+	// in seconds, before another may be opened on it: thirty days.
+	//
+	// Opening a ballot is cheap (one membership proof a day per person) and
+	// any one human can do it, so without a pause an option the chamber has
+	// just declined to remove could be kept under a permanent rolling vote,
+	// its payees never knowing from one week to the next whether they would
+	// be paid. A cooldown lets the chamber's answer stand for a while. It is
+	// a constant, not a param, for the reason every rule here is.
+	RemovalCooldown = 30 * 24 * 60 * 60
 )
 
 // Approves reports whether a tally carries at the ordinary two-thirds bar. Used
@@ -117,6 +128,10 @@ var (
 
 	// SubjectsKey is each proposal's subjects, fixed as it enters voting.
 	SubjectsKey = collections.NewPrefix("subjects") // proposal id -> ProposalSubjects
+
+	// RemovalCooldownKey is, per option, the earliest time a new removal
+	// ballot on it may open (RemovalCooldown after its last one closed).
+	RemovalCooldownKey = collections.NewPrefix("removal_cooldown") // option id -> unix seconds
 )
 
 // ClosedVotePurgeLimit caps how many votes of closed ballots one block clears.

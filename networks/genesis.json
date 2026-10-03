@@ -16,7 +16,8 @@
       "ballot_seq": "0",
       "proposal_rounds": [],
       "proposal_votes": [],
-      "removal_ballots": []
+      "removal_ballots": [],
+      "removal_cooldowns": []
     },
     "auth": {
       "accounts": [
