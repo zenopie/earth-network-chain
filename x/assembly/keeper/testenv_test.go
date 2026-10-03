@@ -2,6 +2,8 @@ package keeper
 
 import (
 	"context"
+	"github.com/cosmos/cosmos-sdk/x/authz"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"testing"
 	"time"
 
@@ -231,6 +233,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	// any message a test puts in a proposal has to be known here — as it is in
 	// the app, where every module registers its own.
 	pkitypes.RegisterInterfaces(encCfg.InterfaceRegistry)
+	banktypes.RegisterInterfaces(encCfg.InterfaceRegistry)
+	authz.RegisterInterfaces(encCfg.InterfaceRegistry)
 	ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
 
 	govStoreKey := storetypes.NewKVStoreKey(govtypes.StoreKey)
