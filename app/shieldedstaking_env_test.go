@@ -670,6 +670,9 @@ func unproven(msg shieldedtypes.PrivateMsg) {
 	if sm, ok := msg.(sstypes.StakeMsg); ok {
 		sm.StakeProofOf().Proof = make([]byte, 14656)
 	}
+	if m, ok := msg.(*sstypes.MsgStakeVote); ok {
+		m.Proof = make([]byte, 14656)
+	}
 }
 
 // settle marks a bundle executed: inputs spent, outputs tracked.

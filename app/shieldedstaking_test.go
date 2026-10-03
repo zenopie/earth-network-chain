@@ -601,7 +601,7 @@ func TestTransparentStakingBlocked(t *testing.T) {
 		&sstypes.MsgClaimUnbonding{Bundle: &claimFee, Validator: valoper, Epoch: 1, Amount: 1, Pc: pc,
 			Ciphertext: shieldedtest.BlindCT("c"), Stake: st},
 		&sstypes.MsgStakeVote{Bundle: tr("v", "", 0, ssFee), ProposalId: 1, Validator: valoper, Options: opts,
-			Weight: 1, Stake: stMint},
+			Weight: 1, Proof: make([]byte, shieldedtypes.ProofBytes), VoteNullifier: pc},
 		&sstypes.MsgLockPosition{Bundle: tr("l", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st},
 		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Stake: none},
 		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Stake: noneMint},
@@ -673,49 +673,6 @@ func (e *stakeEnv) submitProposal() uint64 {
 	return id
 }
 
-// stakeVoteMsg is a stake note's vote: the stake proof spends all of n
-// against the proposal's snapshot stake root (or, current, against the
-// current one, which the chain refuses), a fee bundle pays the fee from any
-// current ERTH note, and the derth is re-minted to a fresh stake note of the
-// same owner.
-func (e *stakeEnv) stakeVoteMsg(n *snote, proposalID uint64, opts []*v1.WeightedVoteOption, prove, current bool) (*sstypes.MsgStakeVote, *pendingBundle, *stakePlan, *snote) {
-	e.t.Helper()
-	snap, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), proposalID)
-	require.NoError(e.t, err)
-	v, ok := sstypes.ParseDerthDenom(n.denom)
-	require.True(e.t, ok)
-	back := e.freshStake(n.denom, 0)
-	plan := &stakePlan{denom: n.denom, ins: []*snote{n}, vOut: n.amount, mint: back, atSize: snap.TreeSize}
-	if current {
-		plan.atSize = 0
-	}
-	sp := e.stake(plan)
-	if !current {
-		require.Equal(e.t, snap.Root, sp.proof.Anchor)
-	}
-	fee := e.feeOnly()
-	m := &sstypes.MsgStakeVote{Bundle: fee.b, ProposalId: proposalID, Validator: v, Options: opts,
-		Weight: n.amount, Stake: sp.proof}
-	if !prove {
-		unproven(m)
-		return m, fee, sp, back
-	}
-	e.prove(m, fee)
-	e.proveStake(m, sp)
-	return m, fee, sp, back
-}
-
-// stakeVote votes all of n and returns the re-minted note.
-func (e *stakeEnv) stakeVote(n *snote, proposalID uint64, opt v1.VoteOption) *snote {
-	e.t.Helper()
-	m, p, sp, back := e.stakeVoteMsg(n, proposalID, v1.NewNonSplitVoteOption(opt), true, false)
-	res := e.run(e.privateTx(m))
-	require.Equal(e.t, uint32(0), res.Code, res.Log)
-	e.settle(p)
-	e.settleStake(sp)
-	return e.mintedStake(res, back)
-}
-
 // positionVoteMsg votes position id as the owner of salt (proven).
 func (e *stakeEnv) positionVoteMsg(id uint64, salt fr.Element, proposalID uint64, opt v1.VoteOption) (*sstypes.MsgPositionVote, *pendingBundle, *stakePlan) {
 	p := e.feeOnly()
@@ -728,7 +685,7 @@ func (e *stakeEnv) positionVoteMsg(id uint64, salt fr.Element, proposalID uint64
 type tallyNums struct{ yes, abstain, no, veto math.LegacyDec }
 
 // Stake votes on the real gov path: transparent validator and delegator
-// votes, private spend-to-vote note votes, a position vote, inheritance of
+// votes, private note votes (nothing spent), a position vote, inheritance of
 // the un-voted derth, a residual third-party delegation — and the refusals
 // that keep one unit of stake from voting twice.
 func TestStakeVoteTally(t *testing.T) {
@@ -787,28 +744,33 @@ func TestStakeVoteTally(t *testing.T) {
 	require.Equal(t, math.NewIntFromUint64(n3.amount), supplyAt(vA))
 	supply := map[string]math.Int{e.valoper(vA): supplyAt(vA), e.valoper(vB): supplyAt(vB)}
 
-	// A position locked after the snapshot may not vote; nor may the note it
-	// came from (spent), nor the note behind P (spent into P before).
+	// A position locked after the snapshot may not vote: the note it came
+	// from was unspent at the snapshot and votes instead (its nullifier is
+	// not under the snapshot's nf_root; TestStakeVoteConcurrentProposals).
 	p2Key := positionKey(2)
 	p2 := e.lock(n5, n5.amount, p2Key, nil)
 	m, _, _ := e.positionVoteMsg(p2, p2Key, prop, v1.OptionYes)
 	unproven(m)
 	res := e.checkTx(e.privateTx(m))
 	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)
-	for _, spent := range []*snote{n5, n4} {
-		sv, _, _, _ := e.stakeVoteMsg(spent, prop, v1.NewNonSplitVoteOption(v1.OptionNo), false, false)
-		res = e.checkTx(e.privateTx(sv))
-		require.Equal(t, sstypes.ErrStakeNullifierSpent.ABCICode(), res.Code, res.Log)
-	}
-	// Nor a derth note made after the snapshot: it is not in the snapshot
-	// root, and a vote spending against any other root is refused.
+	// The note behind P was spent into P before the snapshot: it cannot
+	// prove its nullifier absent (P votes for it).
+	sv, _, vp := e.stakeVoteMsg(n4, prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
+	_, err = e.tryProveVote(sv, vp)
+	requireRefused(t, err)
+	// Nor a derth note made after the snapshot: it is not under the
+	// snapshot's note root.
 	n6 := e.delegate(vB, uint64(100*ssErth))
 	// The supply checkpoint keeps vB's snapshot supply as it was.
 	require.Equal(t, math.NewIntFromUint64(n1.amount+n2.amount+n4.amount+n5.amount), supplyAt(vB))
 	require.True(t, e.app.ShieldedStakingKeeper.Supply(e.ctx(), e.valoper(vB)).GT(supplyAt(vB)))
-	sv, _, _, _ := e.stakeVoteMsg(n6, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, true)
+	sv, _, vp = e.stakeVoteMsg(n6, prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
+	_, err = e.tryProveVote(sv, vp)
+	requireRefused(t, err)
+	// ...and a vote whose proof does not verify is refused.
+	unproven(sv)
 	res = e.checkTx(e.privateTx(sv))
-	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)
+	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), res.Code, res.Log)
 
 	// --- votes. Transparent: vA No, vB Yes, the third party Abstain.
 	voteTx := func(key *secp256k1.PrivKey, opt v1.VoteOption) {
@@ -818,9 +780,8 @@ func TestStakeVoteTally(t *testing.T) {
 	voteTx(e.val, v1.OptionNo)
 	voteTx(vBKey, v1.OptionYes)
 	require.NoError(t, e.app.GovKeeper.AddVote(e.ctx(), prop, third, v1.NewNonSplitVoteOption(v1.OptionAbstain), ""))
-	// Private: n1 Abstain, by spending it; its derth comes straight back as a
-	// new stake note of the same owner, which cannot vote again (final), nor
-	// can n1 (spent).
+	// Private: n1 Abstain. Nothing is spent or minted; n1 cannot vote on
+	// this proposal again (its vote nullifier is used).
 	supplyB := e.app.ShieldedStakingKeeper.Supply(e.ctx(), e.valoper(vB))
 	// Its fee comes from an ERTH note made after the snapshot: the fee
 	// bundle spends against the pool's current roots, so it need not be in
@@ -831,17 +792,16 @@ func TestStakeVoteTally(t *testing.T) {
 			e.reserved = append(e.reserved, n)
 		}
 	}
-	n1b := e.stakeVote(n1, prop, v1.OptionAbstain)
+	e.stakeVote(n1, prop, v1.OptionAbstain)
 	e.reserved = []*wnote{snapErth}
 	require.True(t, late.spent, "the vote's fee was paid from the post-snapshot note")
-	require.Equal(t, n1.amount, n1b.amount)
-	require.Equal(t, supplyB, e.app.ShieldedStakingKeeper.Supply(e.ctx(), e.valoper(vB)), "re-minted, not created")
-	again, _, _, _ := e.stakeVoteMsg(n1b, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, true)
+	require.Equal(t, supplyB, e.app.ShieldedStakingKeeper.Supply(e.ctx(), e.valoper(vB)), "nothing minted")
+	again, againFee, againPlan := e.stakeVoteMsg(n1, prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
+	e.prove(again, againFee)
+	again.Proof, err = e.tryProveVote(again, againPlan) // a valid proof: the note may vote, once
+	require.NoError(t, err)
 	res = e.checkTx(e.privateTx(again))
-	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)
-	replay, _, _, _ := e.stakeVoteMsg(n1, prop, v1.NewNonSplitVoteOption(v1.OptionNo), false, false)
-	res = e.checkTx(e.privateTx(replay))
-	require.Equal(t, sstypes.ErrStakeNullifierSpent.ABCICode(), res.Code, res.Log)
+	require.Equal(t, sstypes.ErrVoteNullifierUsed.ABCICode(), res.Code, res.Log)
 	// The snapshot root stays good for a stake vote after it leaves the
 	// stake tree's window; for anything else it is gone.
 	{
@@ -861,26 +821,26 @@ func TestStakeVoteTally(t *testing.T) {
 	res = e.checkTx(e.privateTx(old))
 	require.Equal(t, sstypes.ErrStakeTree.ABCICode(), res.Code, res.Log)
 	// n3 Yes; position P Yes; n2 does not vote (vB inherits it).
-	// One sighash binds the stake proof and the fee bundle: n3's vote with
+	// One sighash binds the vote proof and the fee bundle: n3's vote with
 	// another vote's (valid) fee bundle verifies no binding signature.
-	sa, pa, spa, ba := e.stakeVoteMsg(n3, prop, v1.NewNonSplitVoteOption(v1.OptionYes), true, false)
-	sb, _, _, _ := e.stakeVoteMsg(n2, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, false)
+	sa, pa, _ := e.stakeVoteMsg(n3, prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, true)
+	sb, _, _ := e.stakeVoteMsg(n2, prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, true)
 	spliced := *sa
 	spliced.Bundle = sb.Bundle
 	res = e.checkTx(e.privateTx(&spliced))
 	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), res.Code, res.Log)
-	// A vote re-creates nothing itself: the chain re-mints its weight.
-	making := *sa
-	making.Stake.Commitments = [][]byte{privacy.FieldBytes(ssDet("made", 0)), sa.Stake.Commitments[1]}
-	making.Stake.Ciphertexts = [][]byte{shieldedtest.StakeCT("made"), sa.Stake.Ciphertexts[1]}
-	res = e.checkTx(e.privateTx(&making))
-	require.NotEqual(t, uint32(0), res.Code)
-	require.Contains(t, res.Log, "creates no note")
+	// Nor does n3's vote proof verify for another weight (with a bundle
+	// proven for the changed sighash).
+	heavier := *sa
+	heavier.Weight = sa.Weight - 1
+	hp := e.feeOnly()
+	heavier.Bundle = hp.b
+	e.prove(&heavier, hp)
+	res = e.checkTx(e.privateTx(&heavier))
+	require.Equal(t, sstypes.ErrInvalidStakeProof.ABCICode(), res.Code, res.Log)
 	fb0 := e.run(e.privateTx(sa))
 	require.Equal(t, uint32(0), fb0.Code, fb0.Log)
 	e.settle(pa)
-	e.settleStake(spa)
-	e.mintedStake(fb0, ba)
 	pv, pp, psp := e.positionVoteMsg(pid, pKey, prop, v1.OptionYes)
 	e.prove(pv, pp)
 	e.proveStake(pv, psp)

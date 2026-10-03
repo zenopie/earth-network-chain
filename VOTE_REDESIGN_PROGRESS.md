@@ -12,7 +12,6 @@ only one of several open proposals (decoy-proposal attack).
 - [x] MsgStakeVote v2 (vote proof, vnf; no spend, no re-mint); gas; sighash
 - [x] x/shielded CircuitVote; privacy-vks; genesis
 - [x] genesis export/import (insertion order, vote nullifiers, snapshot nf roots checked)
-- [ ] app tests with real proofs; fixtures
+- [x] app tests with real proofs; fixtures (TestStakeVoteConcurrentProposals, TestStakeVoteTally reworked; staking fixtures re-recorded, 145)
 - [ ] docs: ORCHARD_DESIGN §15, CHANGELOG (wallet format, indexer)
 
-Next: app tests (app/shieldedstaking_test.go stakeVoteMsg etc. still use the old Stake field).
