@@ -55,7 +55,7 @@ const (
 	phFeeNotes = 40
 	phDay      = int64(86400)
 	// phR is the test chain's caretaker_vote_seconds (lease length R).
-	phR = int64(4 * 3600)
+	phR = int64(6 * 3600)
 )
 
 var (
