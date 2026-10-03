@@ -12,6 +12,8 @@ import (
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 
 	"github.com/earth-network/earth/x/assembly/types"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // EndBlocker resolves both of the chamber's clocks: the proposals whose voting
@@ -62,91 +64,135 @@ func (k Keeper) resolveDueProposals(ctx context.Context) error {
 
 	for _, entry := range due {
 		id := entry.Key.K2()
-
-		proposal, err := k.gov.Proposals.Get(ctx, id)
-		if err != nil {
-			// A proposal x/gov itself cannot decode is x/gov's to fail, and it
-			// has a path for exactly that. Leaving it alone is what keeps this
-			// module from having to reimplement that handling.
-			if errors.Is(err, collections.ErrEncoding) {
-				if err := k.endProposalRound(ctx, id); err != nil {
-					return err
-				}
-				if err := k.ProposalRound.Remove(ctx, id); err != nil {
-					return err
-				}
-				if err := k.forgetSubjects(ctx, id); err != nil {
-					return err
-				}
-				continue
+		// Per proposal, on its own branch, recovering panics. A proposal the
+		// chamber cannot resolve must not slip through to x/gov unratified,
+		// and must not halt the chain either: it is refused outright
+		// (failUnresolved). Only if that too fails is the error returned.
+		if err := safeexec.Cached(sdkCtx, func(c sdk.Context) error {
+			return k.resolveDueProposal(c, id)
+		}); err != nil {
+			sdkCtx.Logger().Error("assembly: resolving a due proposal failed; refusing it", "proposal_id", id, "err", err)
+			if ferr := safeexec.Cached(sdkCtx, func(c sdk.Context) error {
+				return k.failUnresolved(c, id, err)
+			}); ferr != nil {
+				return errors.Join(err, ferr)
 			}
-			return err
-		}
-
-		// Decided on the running tally as it stands.
-		tally, err := k.proposalTally(ctx, id)
-		if err != nil {
-			return err
-		}
-
-		// The expedited track buys a one-day voting period instead of seven and
-		// pays for it in agreement: three quarters rather than two thirds, the
-		// same trade the stake house makes on the same proposal.
-		approved := types.Approves(tally.Yes, tally.No)
-		if proposal.Expedited {
-			approved = types.ApprovesExpedited(tally.Yes, tally.No)
-		}
-
-		// This round of voting is over in all three outcomes, so its ballot
-		// closes in all three: O(1), its votes cleared later. For a demotion
-		// that is not tidying. The regular round is a longer deliberation under
-		// a different bar, and it opens a ballot of its own rather than inherit
-		// a one-day tally.
-		if err := k.endProposalRound(ctx, id); err != nil {
-			return err
-		}
-
-		if approved {
-			if err := k.ProposalRound.Remove(ctx, id); err != nil {
-				return err
-			}
-			// Subjects are kept: x/gov tallies the proposal next, and if it
-			// is expedited and stake does not pass it, x/gov demotes it to a
-			// regular round, still voting. AfterProposalVotingPeriodEnded
-			// forgets them once x/gov has really ended its voting.
-			continue
-		}
-
-		// An expedited proposal the chamber declines is demoted, not killed —
-		// the same thing x/gov does when its own expedited tally falls short
-		// (x/gov/abci.go, the `case proposal.Expedited` branch). Declining it
-		// here can as easily mean "not on the fast track" as "never", and the
-		// regular round costs those who refused it nothing, because silence
-		// fails that round too.
-		if proposal.Expedited {
-			demoted, err := k.demoteExpedited(ctx, proposal, tally)
-			if err != nil {
-				return err
-			}
-			if demoted {
-				continue
-			}
-			// Could not be demoted — see demoteExpedited. Falls through to an
-			// outright refusal rather than being left in the queue for x/gov to
-			// pass unratified.
-		}
-
-		if err := k.ProposalRound.Remove(ctx, id); err != nil {
-			return err
-		}
-		if err := k.forgetSubjects(ctx, id); err != nil {
-			return err
-		}
-		if err := k.failProposal(ctx, proposal, tally, barFor(proposal)); err != nil {
-			return err
 		}
 	}
 	return nil
+}
+
+// resolveDueProposal applies the human result to one due proposal.
+func (k Keeper) resolveDueProposal(ctx context.Context, id uint64) error {
+
+	proposal, err := k.gov.Proposals.Get(ctx, id)
+	if err != nil {
+		// A proposal x/gov itself cannot decode is x/gov's to fail, and it
+		// has a path for exactly that. Leaving it alone is what keeps this
+		// module from having to reimplement that handling.
+		if errors.Is(err, collections.ErrEncoding) {
+			if err := k.endProposalRound(ctx, id); err != nil {
+				return err
+			}
+			if err := k.ProposalRound.Remove(ctx, id); err != nil {
+				return err
+			}
+			if err := k.forgetSubjects(ctx, id); err != nil {
+				return err
+			}
+			return nil
+		}
+		return err
+	}
+
+	// Decided on the running tally as it stands.
+	tally, err := k.proposalTally(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// The expedited track buys a one-day voting period instead of seven and
+	// pays for it in agreement: three quarters rather than two thirds, the
+	// same trade the stake house makes on the same proposal.
+	approved := types.Approves(tally.Yes, tally.No)
+	if proposal.Expedited {
+		approved = types.ApprovesExpedited(tally.Yes, tally.No)
+	}
+
+	// This round of voting is over in all three outcomes, so its ballot
+	// closes in all three: O(1), its votes cleared later. For a demotion
+	// that is not tidying. The regular round is a longer deliberation under
+	// a different bar, and it opens a ballot of its own rather than inherit
+	// a one-day tally.
+	if err := k.endProposalRound(ctx, id); err != nil {
+		return err
+	}
+
+	if approved {
+		if err := k.ProposalRound.Remove(ctx, id); err != nil {
+			return err
+		}
+		// Subjects are kept: x/gov tallies the proposal next, and if it
+		// is expedited and stake does not pass it, x/gov demotes it to a
+		// regular round, still voting. AfterProposalVotingPeriodEnded
+		// forgets them once x/gov has really ended its voting.
+		return nil
+	}
+
+	// An expedited proposal the chamber declines is demoted, not killed —
+	// the same thing x/gov does when its own expedited tally falls short
+	// (x/gov/abci.go, the `case proposal.Expedited` branch). Declining it
+	// here can as easily mean "not on the fast track" as "never", and the
+	// regular round costs those who refused it nothing, because silence
+	// fails that round too.
+	if proposal.Expedited {
+		demoted, err := k.demoteExpedited(ctx, proposal, tally)
+		if err != nil {
+			return err
+		}
+		if demoted {
+			return nil
+		}
+		// Could not be demoted — see demoteExpedited. Falls through to an
+		// outright refusal rather than being left in the queue for x/gov to
+		// pass unratified.
+	}
+
+	if err := k.ProposalRound.Remove(ctx, id); err != nil {
+		return err
+	}
+	if err := k.forgetSubjects(ctx, id); err != nil {
+		return err
+	}
+	if err := k.failProposal(ctx, proposal, tally, barFor(proposal)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// failUnresolved refuses a due proposal whose resolution failed: its round
+// ends, its subjects are forgotten, and it is failed with an empty human
+// tally, so x/gov never tallies it as if the chamber had ratified it.
+func (k Keeper) failUnresolved(ctx context.Context, id uint64, cause error) error {
+	if err := k.endProposalRound(ctx, id); err != nil {
+		return err
+	}
+	if err := k.ProposalRound.Remove(ctx, id); err != nil {
+		return err
+	}
+	if err := k.forgetSubjects(ctx, id); err != nil {
+		return err
+	}
+	proposal, err := k.gov.Proposals.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		"assembly_resolve_failed",
+		sdk.NewAttribute("proposal_id", strconv.FormatUint(id, 10)),
+		sdk.NewAttribute("error", cause.Error()),
+	))
+	return k.failProposal(ctx, proposal, types.Tally{}, barFor(proposal))
 }
 
 // demoteExpedited converts an expedited proposal the chamber declined into an
@@ -226,10 +272,24 @@ func (k Keeper) demoteExpedited(ctx context.Context, proposal v1.Proposal, tally
 func (k Keeper) failProposal(ctx context.Context, proposal v1.Proposal, tally types.Tally, bar string) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	_, burnDeposits, stakeResult, err := k.gov.Tally(ctx, proposal)
-	if err != nil {
+	// Stake's tally runs the chain's custom tally function (x/shieldedstaking
+	// StakeTally) over validator state: on its own branch, recovering panics.
+	// If it cannot be computed the proposal is still refused (the chamber
+	// said no), with an empty stake result and its deposits refunded: there
+	// is no stake judgement to burn them on.
+	var (
+		burnDeposits bool
+		stakeResult  v1.TallyResult
+	)
+	if terr := safeexec.Cached(sdkCtx, func(c sdk.Context) error {
+		var err error
+		_, burnDeposits, stakeResult, err = k.gov.Tally(c, proposal)
 		return err
+	}); terr != nil {
+		sdkCtx.Logger().Error("assembly: stake tally of a refused proposal failed", "proposal_id", proposal.Id, "err", terr)
+		burnDeposits, stakeResult = false, v1.EmptyTallyResult()
 	}
+	var err error
 
 	proposal.FinalTallyResult = &stakeResult
 	proposal.Status = v1.StatusFailed
@@ -399,16 +459,15 @@ func (k Keeper) resolveDueRemovals(ctx context.Context) error {
 			// closes as if it had fallen short; governance can strike the
 			// option by proposal. Halting is not a proportionate response to
 			// one option failing to come off the slate.
-			cacheCtx, write := sdkCtx.CacheContext()
-			if err := k.allocation.RemoveGroundworksOption(cacheCtx, k.chamberAddr, optionID); err != nil {
+			if err := safeexec.Cached(sdkCtx, func(cacheCtx sdk.Context) error {
+				return k.allocation.RemoveGroundworksOption(cacheCtx, k.chamberAddr, optionID)
+			}); err != nil {
 				sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 					"assembly_removal_failed",
 					sdk.NewAttribute("option_id", strconv.FormatUint(optionID, 10)),
 					sdk.NewAttribute("error", err.Error()),
 				))
 				carried = false
-			} else {
-				write()
 			}
 		}
 

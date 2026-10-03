@@ -2,9 +2,13 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/math"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	"github.com/earth-network/earth/internal/safeexec"
 	"github.com/earth-network/earth/x/allocation/types"
 )
 
@@ -54,11 +58,25 @@ func (k Keeper) resolveIntegrated(ctx context.Context, stream types.StreamId) er
 		settleOption(&opt, rewardIndex)
 
 		if h, ok := k.integratedHandlers[opt.Handler]; ok && h.stream == stream && opt.Accumulated.IsPositive() {
-			resolved, err := h.fn(ctx, opt.Accumulated)
-			if err != nil {
-				return err
+			// The handler is another module's code (the dex's LP rewards, ...)
+			// run from BeginBlock: on its own branch, recovering panics. A
+			// handler that fails resolves nothing this block; the balance stays
+			// accrued on the option and is offered again next block.
+			var resolved math.Int
+			acc := opt.Accumulated
+			if safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, "resolve_integrated", func(c sdk.Context) error {
+				r, err := h.fn(c, acc)
+				if err != nil {
+					return err
+				}
+				if r.IsNil() || r.IsNegative() || r.GT(acc) {
+					return fmt.Errorf("handler %s resolved %s of %s", opt.Handler, r, acc)
+				}
+				resolved = r
+				return nil
+			}) {
+				opt.Accumulated = opt.Accumulated.Sub(resolved)
 			}
-			opt.Accumulated = opt.Accumulated.Sub(resolved)
 		}
 
 		// Through setOption like every other write, even though resolving an

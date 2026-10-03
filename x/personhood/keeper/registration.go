@@ -17,6 +17,8 @@ import (
 	"github.com/earth-network/earth/x/pki/certs"
 	"github.com/earth-network/earth/zk/privacy"
 	"github.com/earth-network/earth/zk/ultrahonk"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // dscFacts is what the chain learns about the Document Signer behind a
@@ -393,9 +395,11 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int,
 		} else if err != nil {
 			return 0, err
 		}
-		if err := k.removeRegistration(ctx, reg); err != nil {
-			return 0, err
-		}
+		// Per entry, recovering panics: one registration that cannot be
+		// retired is skipped, not a halt and not the end of the sweep.
+		safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, "expire_registration", func(c sdk.Context) error {
+			return k.removeRegistration(c, reg)
+		})
 	}
 	if len(expired) >= budget {
 		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(

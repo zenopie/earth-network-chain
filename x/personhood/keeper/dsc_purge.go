@@ -7,6 +7,8 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // Retiring the registrations a revoked Document Signer produced.
@@ -111,9 +113,9 @@ func (k Keeper) purgeRevokedDscs(ctx context.Context, budget int) (int, error) {
 			}
 			return 0, err
 		}
-		if err := k.removeRegistration(ctx, reg); err != nil {
-			return 0, err
-		}
+		safeexec.Item(sdk.UnwrapSDKContext(ctx), "personhood", "purge_registration", func(c sdk.Context) error {
+			return k.removeRegistration(c, reg)
+		})
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(

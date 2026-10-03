@@ -16,6 +16,8 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // The EndBlocker runs after x/gov and before x/staking. It NEVER returns an
@@ -62,20 +64,11 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 }
 
 // guarded runs fn in a cache context, writing it only on success. A panic is
-// an error.
-func (k Keeper) guarded(ctx context.Context, fn func(cc context.Context) error) (err error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	cc, write := sdkCtx.CacheContext()
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("panic: %v", r)
-		}
-	}()
-	if err = fn(cc); err != nil {
-		return err
-	}
-	write()
-	return nil
+// an error, except out-of-gas: in a tx context that is the gas meter's
+// control flow (the tx must fail out of gas, not carry on with the work
+// skipped), so safeexec re-panics it. Block hooks run on an infinite meter.
+func (k Keeper) guarded(ctx context.Context, fn func(cc context.Context) error) error {
+	return safeexec.Cached(sdk.UnwrapSDKContext(ctx), func(cc sdk.Context) error { return fn(cc) })
 }
 
 func (k Keeper) failure(ctx context.Context, stage, validator string, err error) {

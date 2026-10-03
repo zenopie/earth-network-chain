@@ -12,6 +12,8 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/allocation/types"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // IntegratedHandler resolves an INTEGRATED option's accrued ERTH each block
@@ -274,8 +276,14 @@ func (k Keeper) SweepResidue(ctx context.Context) error {
 	if !amount.IsPositive() {
 		return nil
 	}
-	if err := k.residueSink.fn(ctx, amount); err != nil {
-		return err
-	}
-	return k.Residue.Set(ctx, math.ZeroInt())
+	// The sink is another module's code run from EndBlock: on its own
+	// branch, recovering panics. A sink that fails leaves the residue for the
+	// next block instead of halting the chain.
+	safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, "sweep_residue", func(c sdk.Context) error {
+		if err := k.residueSink.fn(c, amount); err != nil {
+			return err
+		}
+		return k.Residue.Set(c, math.ZeroInt())
+	})
+	return nil
 }

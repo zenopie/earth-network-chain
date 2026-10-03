@@ -11,6 +11,8 @@ import (
 
 	"github.com/earth-network/earth/x/allocation/types"
 	earthtypes "github.com/earth-network/earth/x/earth/types"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // Dead options do not stay forever.
@@ -159,71 +161,12 @@ func (k Keeper) SweepPrunableOptions(ctx context.Context) error {
 			return err
 		}
 
-		opt, err := k.Options.Get(ctx, kk)
-		if errors.Is(err, collections.ErrNotFound) {
-			continue // already gone; the schedule entry was the last of it
-		} else if err != nil {
-			return err
-		}
-		// Re-checked rather than trusted. The schedule is maintained on every
-		// write, so a scheduled option that is no longer dead would be a bug —
-		// and one that removed a live option would be unrecoverable.
-		if !prunable(opt) {
-			continue
-		}
-		if err := k.Options.Remove(ctx, kk); err != nil {
-			return err
-		}
-
-		// forfeited is ERTH the option had earned and nobody claimed. The coins
-		// exist — AdvanceIndex minted them as they accrued — so they are burned
-		// rather than merely reported, which is what keeps the module's balance
-		// equal to what its live options are owed.
-		forfeited := math.ZeroInt()
-		if !opt.Accumulated.IsNil() {
-			forfeited = opt.Accumulated
-		}
-		// Both halves of the ledger, or neither. The removal above bypasses
-		// setOption — deliberately, see the note at the top of this file, because
-		// a zero-weight option cannot move TotalWeight or SummedWeight — but
-		// SummedAccrued is a second running sum that setOption also maintains,
-		// and it is over Accumulated rather than AmountAllocated. A prunable
-		// option has zero weight by definition; it does NOT have a zero balance,
-		// which is the entire reason the burn below exists.
-		//
-		// Left out, the burn drops Held by forfeited while SummedAccrued keeps
-		// counting it, CheckSolvency reads Short, and AssertHotInvariants halts
-		// the chain in this very block — the sweep runs in BeginBlock and the
-		// assertion in EndBlock. The burn was added to protect solvency and
-		// would have been the thing that broke it.
-		if forfeited.IsPositive() {
-			acc, err := k.GetSummedAccrued(ctx)
-			if err != nil {
-				return err
-			}
-			if err := k.SummedAccrued.Set(ctx, acc.Sub(forfeited)); err != nil {
-				return err
-			}
-
-			denom, err := k.HubDenom(ctx)
-			if err != nil {
-				return err
-			}
-			burned := sdk.NewCoins(sdk.NewCoin(denom, forfeited))
-			if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, burned); err != nil {
-				return err
-			}
-			if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceAllocation, burned); err != nil {
-				return err
-			}
-		}
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"prune_allocation_option",
-			sdk.NewAttribute("stream", stream.String()),
-			sdk.NewAttribute("option_id", strconv.FormatUint(id, 10)),
-			sdk.NewAttribute("recipient", opt.Recipient),
-			sdk.NewAttribute("forfeited", forfeited.String()),
-		))
+		// Per entry, recovering panics: an option that cannot be pruned is
+		// skipped (its schedule entry is gone; the next write that touches it
+		// reschedules it) instead of halting the chain from BeginBlock.
+		safeexec.Item(sdkCtx, types.ModuleName, "prune_option", func(c sdk.Context) error {
+			return k.pruneOption(c, stream, id, kk)
+		})
 	}
 
 	if capped {
@@ -232,5 +175,75 @@ func (k Keeper) SweepPrunableOptions(ctx context.Context) error {
 			sdk.NewAttribute("limit", strconv.Itoa(types.OptionPruneSweepLimit)),
 		))
 	}
+	return nil
+}
+
+// pruneOption removes one due, prunable option and burns what it forfeits.
+func (k Keeper) pruneOption(ctx sdk.Context, stream types.StreamId, id uint64, kk collections.Pair[uint32, uint64]) error {
+	opt, err := k.Options.Get(ctx, kk)
+	if errors.Is(err, collections.ErrNotFound) {
+		return nil // already gone; the schedule entry was the last of it
+	} else if err != nil {
+		return err
+	}
+	// Re-checked rather than trusted. The schedule is maintained on every
+	// write, so a scheduled option that is no longer dead would be a bug —
+	// and one that removed a live option would be unrecoverable.
+	if !prunable(opt) {
+		return nil
+	}
+	if err := k.Options.Remove(ctx, kk); err != nil {
+		return err
+	}
+
+	// forfeited is ERTH the option had earned and nobody claimed. The coins
+	// exist — AdvanceIndex minted them as they accrued — so they are burned
+	// rather than merely reported, which is what keeps the module's balance
+	// equal to what its live options are owed.
+	forfeited := math.ZeroInt()
+	if !opt.Accumulated.IsNil() {
+		forfeited = opt.Accumulated
+	}
+	// Both halves of the ledger, or neither. The removal above bypasses
+	// setOption — deliberately, see the note at the top of this file, because
+	// a zero-weight option cannot move TotalWeight or SummedWeight — but
+	// SummedAccrued is a second running sum that setOption also maintains,
+	// and it is over Accumulated rather than AmountAllocated. A prunable
+	// option has zero weight by definition; it does NOT have a zero balance,
+	// which is the entire reason the burn below exists.
+	//
+	// Left out, the burn drops Held by forfeited while SummedAccrued keeps
+	// counting it, CheckSolvency reads Short, and AssertHotInvariants halts
+	// the chain in this very block — the sweep runs in BeginBlock and the
+	// assertion in EndBlock. The burn was added to protect solvency and
+	// would have been the thing that broke it.
+	if forfeited.IsPositive() {
+		acc, err := k.GetSummedAccrued(ctx)
+		if err != nil {
+			return err
+		}
+		if err := k.SummedAccrued.Set(ctx, acc.Sub(forfeited)); err != nil {
+			return err
+		}
+
+		denom, err := k.HubDenom(ctx)
+		if err != nil {
+			return err
+		}
+		burned := sdk.NewCoins(sdk.NewCoin(denom, forfeited))
+		if err := k.bankKeeper.BurnCoins(ctx, types.ModuleName, burned); err != nil {
+			return err
+		}
+		if err := k.burnRecorder.RecordBurn(ctx, earthtypes.SourceAllocation, burned); err != nil {
+			return err
+		}
+	}
+	ctx.EventManager().EmitEvent(sdk.NewEvent(
+		"prune_allocation_option",
+		sdk.NewAttribute("stream", stream.String()),
+		sdk.NewAttribute("option_id", strconv.FormatUint(id, 10)),
+		sdk.NewAttribute("recipient", opt.Recipient),
+		sdk.NewAttribute("forfeited", forfeited.String()),
+	))
 	return nil
 }

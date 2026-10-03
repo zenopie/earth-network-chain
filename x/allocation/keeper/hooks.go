@@ -8,6 +8,8 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/allocation/types"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // Hooks implements staking hooks that keep each capital-stream voter's weight in
@@ -110,11 +112,10 @@ func (k Keeper) ResyncSlashed(ctx context.Context) {
 	})
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	for _, v := range vals {
-		cache, write := sdkCtx.CacheContext()
-		if err := k.resyncFromBonded(cache, sdk.AccAddress(v), nil); err != nil {
+		if err := safeexec.Cached(sdkCtx, func(cache sdk.Context) error {
+			return k.resyncFromBonded(cache, sdk.AccAddress(v), nil)
+		}); err != nil {
 			sdkCtx.Logger().Error("allocation: post-slash resync failed", "operator", sdk.AccAddress(v).String(), "err", err)
-		} else {
-			write()
 		}
 		_ = k.SlashedValidators.Remove(ctx, v)
 	}

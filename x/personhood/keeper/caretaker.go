@@ -11,6 +11,8 @@ import (
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"github.com/earth-network/earth/x/personhood/types"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // The caretaker stream's voters are anonymous. A split is filed in
@@ -128,14 +130,17 @@ func (k Keeper) sweepCaretakerVotes(ctx context.Context, budget int) (int, error
 		return 0, err
 	}
 	for _, key := range lapsed {
-		if err := k.allocationKeeper.ClearVoter(ctx, types.AllocationStream, key.K2()); err != nil {
-			return 0, err
-		}
-		if err := k.CaretakerExpiry.Remove(ctx, key); err != nil {
-			return 0, err
-		}
-		if err := k.CaretakerVotes.Remove(ctx, key.K2()); err != nil {
-			return 0, err
+		// Per entry, recovering panics (ClearVoter settles allocation maths).
+		if !safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, "expire_caretaker", func(c sdk.Context) error {
+			if err := k.allocationKeeper.ClearVoter(c, types.AllocationStream, key.K2()); err != nil {
+				return err
+			}
+			if err := k.CaretakerExpiry.Remove(c, key); err != nil {
+				return err
+			}
+			return k.CaretakerVotes.Remove(c, key.K2())
+		}) {
+			continue
 		}
 		if count > 0 {
 			count--

@@ -12,6 +12,8 @@ import (
 
 	earthtypes "github.com/earth-network/earth/x/earth/types"
 	"github.com/earth-network/earth/x/personhood/types"
+
+	"github.com/earth-network/earth/internal/safeexec"
 )
 
 // BeginBlocker retires lapsed and revoked registrations (zeroing their
@@ -36,7 +38,27 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 		return err
 	}
 
-	return k.buybackAndBurn(ctx)
+	// The buyback on its own branch, recovering panics (TWAP and quote maths
+	// on dex state): a buyback that cannot run is skipped this block, its
+	// emission still accrued, instead of halting the chain from BeginBlock.
+	safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, "buyback", func(c sdk.Context) error {
+		return k.buybackAndBurn(c)
+	})
+	return nil
+}
+
+// runSweep runs one sweep on its own branch, recovering panics: a sweep that
+// fails retires nothing this block (used 0) and the others still run.
+func (k Keeper) runSweep(ctx context.Context, sweep func(context.Context, int) (int, error), allowance int) int {
+	used := 0
+	if !safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, "sweep", func(c sdk.Context) error {
+		u, err := sweep(c, allowance)
+		used = u
+		return err
+	}) {
+		return 0
+	}
+	return used
 }
 
 // sweepReserveDivisor sets each later sweep's guaranteed share of the block's
@@ -87,10 +109,7 @@ func (k Keeper) runSweeps(ctx context.Context, budget int) error {
 		if allowance > remaining {
 			allowance = remaining
 		}
-		used, err := sweep(ctx, allowance)
-		if err != nil {
-			return err
-		}
+		used := k.runSweep(ctx, sweep, allowance)
 		remaining -= used
 		carry = allowance - used
 		saturated[i] = allowance > 0 && used >= allowance
@@ -102,11 +121,7 @@ func (k Keeper) runSweeps(ctx context.Context, budget int) error {
 		if !saturated[i] {
 			continue
 		}
-		used, err := sweep(ctx, remaining)
-		if err != nil {
-			return err
-		}
-		remaining -= used
+		remaining -= k.runSweep(ctx, sweep, remaining)
 	}
 	return nil
 }

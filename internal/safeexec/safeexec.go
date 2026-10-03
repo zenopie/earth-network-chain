@@ -46,3 +46,21 @@ func Cached(ctx sdk.Context, fn func(cache sdk.Context) error) error {
 	write()
 	return nil
 }
+
+// Item is Cached for one entry of a block hook's loop: a failure (error or
+// panic) is logged and reported as a "block_item_failed" event naming the
+// module and stage, and the hook carries on. It reports whether fn
+// committed.
+func Item(ctx sdk.Context, module, stage string, fn func(cache sdk.Context) error) bool {
+	err := Cached(ctx, fn)
+	if err == nil {
+		return true
+	}
+	ctx.Logger().Error("block hook item failed; skipped", "module", module, "stage", stage, "height", ctx.BlockHeight(), "err", err)
+	ctx.EventManager().EmitEvent(sdk.NewEvent("block_item_failed",
+		sdk.NewAttribute("module", module),
+		sdk.NewAttribute("stage", stage),
+		sdk.NewAttribute("error", err.Error()),
+	))
+	return false
+}
