@@ -1240,9 +1240,9 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 	e.invariants()
 }
 
-// A validator operator's self-bond rewards (uerth, not commission) are
+// A validator operator's self-bond rewards and its commission (uerth) are
 // re-delegated to its validator at every epoch end: the bond grows by them,
-// the operator's Groundworks weight follows, commission stays withdrawable.
+// the operator's Groundworks weight follows, no commission is left accrued.
 // A jailed validator is skipped; a validator whose compounding fails is
 // skipped and reported while the others compound and the block commits.
 func TestSelfBondCompounds(t *testing.T) {
@@ -1283,8 +1283,8 @@ func TestSelfBondCompounds(t *testing.T) {
 		return v.Weight
 	}
 
-	// --- an epoch: both self-bonds grow by their rewards; the event says by
-	// how much; commission keeps accruing.
+	// --- an epoch: both self-bonds grow by their rewards and commission;
+	// the event says by how much.
 	e.next(time.Hour)
 	a0, b0 := selfBond(opA, e.genesisValidator()), selfBond(opB, vB)
 	balB := e.app.BankKeeper.GetBalance(e.ctx(), opB, "uerth").Amount
@@ -1311,6 +1311,7 @@ func TestSelfBondCompounds(t *testing.T) {
 		got := selfBond(c.op, c.v)
 		add := compounded[e.valoper(c.v)]
 		require.True(t, add.IsPositive(), "%s", e.valoper(c.v))
+		require.True(t, commission(c.v).IsZero(), "%s: commission compounded", e.valoper(c.v))
 		require.True(t, got.Sub(c.was).Sub(add).Abs().LTE(math.OneInt()), "%s: %s -> %s, compounded %s", e.valoper(c.v), c.was, got, add)
 	}
 	require.Equal(t, balB, e.app.BankKeeper.GetBalance(e.ctx(), opB, "uerth").Amount, "the rewards were bonded, not paid out")
@@ -1320,14 +1321,10 @@ func TestSelfBondCompounds(t *testing.T) {
 	require.NoError(t, e.app.AllocationKeeper.AssertHotInvariants(e.ctx()))
 	e.invariants()
 
-	// Commission is not compounded: it stays withdrawable, to the account.
-	comm := commission(vB)
-	require.True(t, comm.IsPositive())
-	before := e.app.BankKeeper.GetBalance(e.ctx(), opB, "uerth").Amount
-	fb = e.run(e.signedTx(vBKey, 300_000, 5_000, &distrtypes.MsgWithdrawValidatorCommission{ValidatorAddress: e.valoper(vB)}))
-	require.Equal(t, uint32(0), fb.Code, fb.Log)
-	got := e.app.BankKeeper.GetBalance(e.ctx(), opB, "uerth").Amount.Sub(before).AddRaw(5_000)
-	require.True(t, got.GTE(comm), "commission %s withdrawn %s", comm, got)
+	// Commission accrues again, and compounds at the next epoch end: it
+	// cannot be withdrawn (TestOperatorRewardClaimRefused).
+	e.next(time.Hour)
+	require.True(t, commission(vB).IsPositive())
 
 	// --- halt safety: vB's compounding panics (its distribution starting
 	// info claims more stake than it has). The epoch still ends, vA still

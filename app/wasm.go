@@ -295,7 +295,7 @@ func (app *App) registerWasmKeeper(appOpts servertypes.AppOptions) error {
 		app.IBCKeeper.ChannelKeeper,
 		app.IBCKeeper.ChannelKeeperV2,
 		app.TransferKeeper,
-		app.MsgServiceRouter(),
+		app.rewardsRouter, // refuses an operator's reward claim: app/operator_router.go
 		app.GRPCQueryRouter(),
 		homeDir,
 		nodeConfig,

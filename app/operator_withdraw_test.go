@@ -175,3 +175,60 @@ func TestGenesisOperatorWithdrawAddr(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ValidateOperatorWithdrawAddrs(a.AppCodec(), dec, state))
 }
+
+// A validator's self-bond rewards and commission compound at the epoch end
+// and cannot be claimed: MsgWithdrawDelegatorReward from an operator and
+// every MsgWithdrawValidatorCommission are refused in the ante (top level and
+// inside authz MsgExec) and by the app's message router, which authz
+// dispatch, gov and group execution (depinject binding), the ICA host and
+// contracts use. A non-operator's claim is not refused by the filter.
+func TestOperatorRewardClaimRefused(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, vBKey := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.next(time.Hour)
+	opB := sdk.AccAddress(vB)
+	user := e.userAddr()
+	claims := []sdk.Msg{
+		distrtypes.NewMsgWithdrawDelegatorReward(e.bech(opB), e.valoper(vB)),
+		distrtypes.NewMsgWithdrawValidatorCommission(e.valoper(vB)),
+	}
+	code := sstypes.ErrOperatorRewardClaim.ABCICode()
+
+	for _, m := range claims {
+		// Top level.
+		res := e.checkTx(e.signedTx(vBKey, 300_000, 5_000, m))
+		require.Equal(t, code, res.Code, "%T: %s", m, res.Log)
+
+		// Inside authz MsgExec (the ante recurses).
+		require.NoError(t, e.app.AuthzKeeper.SaveGrant(e.ctx(), user, opB,
+			authz.NewGenericAuthorization(sdk.MsgTypeURL(m)), nil))
+		exec := authz.NewMsgExec(user, []sdk.Msg{m})
+		res = e.checkTx(e.signedTx(e.user, 300_000, 5_000, &exec))
+		require.Equal(t, code, res.Code, "%T: %s", m, res.Log)
+
+		// Past the ante: authz dispatch (its router is the filtering one,
+		// bound by depinject, as gov's and group's are) and the router as the
+		// ICA host and contracts call it.
+		cc, _ := e.ctx().CacheContext()
+		_, err := e.app.AuthzKeeper.DispatchActions(cc, user, []sdk.Msg{m})
+		require.ErrorIs(t, err, sstypes.ErrOperatorRewardClaim, "%T", m)
+		cc, _ = e.ctx().CacheContext()
+		_, err = e.app.rewardsRouter.Handler(m)(cc, m)
+		require.ErrorIs(t, err, sstypes.ErrOperatorRewardClaim, "%T", m)
+	}
+
+	// Nothing was paid: the commission is still accrued.
+	c, err := e.app.DistrKeeper.GetValidatorAccumulatedCommission(e.ctx(), vB)
+	require.NoError(t, err)
+	require.True(t, c.Commission.AmountOf("uerth").IsPositive())
+
+	// A non-operator is not refused by the filter (it holds no delegation,
+	// so x/distribution refuses it for its own reason).
+	m := distrtypes.NewMsgWithdrawDelegatorReward(e.bech(user), e.valoper(vB))
+	cc, _ := e.ctx().CacheContext()
+	_, err = e.app.rewardsRouter.Handler(m)(cc, m)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, sstypes.ErrOperatorRewardClaim)
+	e.invariants()
+}

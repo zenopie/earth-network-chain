@@ -11,6 +11,7 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
@@ -29,7 +30,8 @@ import (
 //     it.
 //  2. epoch end, once end_time has passed: per validator withdraw rewards,
 //     delegate the queue plus the rewards, undelegate the epoch's unbond
-//     notes; compound every active validator operator's self-bond rewards;
+//     notes; compound every active validator's self-bond rewards and
+//     commission into its self-bond;
 //     re-weigh positions; sweep non-ERTH rewards to the community pool.
 //  3. forget proposals whose voting has ended (x/gov has tallied them).
 //
@@ -118,10 +120,15 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 }
 
 // compoundSelfBonds re-delegates, for every active (bonded, unjailed)
-// validator, its operator's self-bond rewards to the same validator from the
-// operator account: a validator's self-bond auto-compounds as the module's
-// delegations do. Only the delegation's own rewards, in uerth: commission is
-// untouched and stays withdrawable. Every operator compounds: one whose
+// validator, its operator's self-bond rewards and its commission to the same
+// validator from the operator account: a validator's self-bond
+// auto-compounds as the module's delegations do. Only uerth is re-delegated
+// (another denom has no use as stake and stays in the operator account).
+// Neither can be withdrawn by a msg (the ante and app's message router
+// refuse MsgWithdrawDelegatorReward and MsgWithdrawValidatorCommission on
+// every route), so the operator's only exit for them is unbonding the
+// self-bond. A jailed validator's commission accrues until it is active
+// again. Every operator compounds: one whose
 // withdraw address points elsewhere has it reset first (withdraw_addr.go);
 // only a jailed validator is skipped. Each
 // validator runs in its own cache context; a failure is logged, emitted and
@@ -164,8 +171,12 @@ func (k Keeper) compoundSelfBond(ctx context.Context, val stakingtypes.Validator
 	if _, err := k.distr.WithdrawDelegationRewards(ctx, op, valAddr); err != nil {
 		return err
 	}
-	// What the withdrawal paid the operator in uerth: its self-bond's
-	// rewards, and nothing it held before.
+	if _, err := k.distr.WithdrawValidatorCommission(ctx, valAddr); err != nil &&
+		!errors.Is(err, distrtypes.ErrNoValidatorCommission) {
+		return err
+	}
+	// What the withdrawals paid the operator in uerth: its self-bond's
+	// rewards and its commission, and nothing it held before.
 	amt := k.bank.GetBalance(ctx, op, types.BondDenom).Amount.Sub(before)
 	if !amt.IsPositive() {
 		return nil

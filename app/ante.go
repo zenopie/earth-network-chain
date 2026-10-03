@@ -123,7 +123,9 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		shieldedstakingante.StakingMsgFilterDecorator{
 			AddressCodec: options.AccountKeeper.AddressCodec(), ValidatorCodec: options.StakingValidatorCodec,
 		},
-		// An operator's self-bond compounds: its rewards stay in its account.
+		// A validator's self-bond rewards and commission compound: no claim
+		// (MsgWithdrawDelegatorReward/ValidatorCommission) and no withdraw
+		// address elsewhere. app/operator_router.go covers the other routes.
 		shieldedstakingante.WithdrawAddrFilterDecorator{
 			AddressCodec: options.AccountKeeper.AddressCodec(), K: options.WithdrawChecker,
 		},

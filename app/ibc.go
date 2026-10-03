@@ -88,7 +88,7 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		app.IBCKeeper.ChannelKeeper, // ICS4Wrapper
 		app.IBCKeeper.ChannelKeeper,
 		app.AuthKeeper,
-		app.MsgServiceRouter(),
+		app.rewardsRouter, // refuses an operator's reward claim: app/operator_router.go
 		app.GRPCQueryRouter(),
 		govModuleAddr,
 	)

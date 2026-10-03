@@ -50,6 +50,9 @@ type StakingKeeper interface {
 // DistrKeeper is x/distribution: rewards and the community pool.
 type DistrKeeper interface {
 	WithdrawDelegationRewards(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) (sdk.Coins, error)
+	// WithdrawValidatorCommission pays a validator's commission to its
+	// operator: the epoch end compounds it into the self-bond.
+	WithdrawValidatorCommission(ctx context.Context, valAddr sdk.ValAddress) (sdk.Coins, error)
 	IncrementValidatorPeriod(ctx context.Context, val stakingtypes.ValidatorI) (uint64, error)
 	CalculateDelegationRewards(ctx context.Context, val stakingtypes.ValidatorI, del stakingtypes.DelegationI, endingPeriod uint64) (sdk.DecCoins, error)
 	FundCommunityPool(ctx context.Context, amount sdk.Coins, sender sdk.AccAddress) error

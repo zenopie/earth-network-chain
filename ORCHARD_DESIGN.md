@@ -397,6 +397,22 @@ the fee bundle, so a proof is never reusable). Rates, epochs, slashing,
 MaxEntries, gov tally, Groundworks weight and self-bond compounding are
 unchanged.
 
+**Validator income compounds; the only exit is unbonding.** At each epoch
+end every active (unjailed) validator's self-bond rewards and its
+commission (uerth) are withdrawn to the operator account and self-delegated
+to the same validator. Neither can be withdrawn by a msg:
+MsgWithdrawDelegatorReward (from an operator), MsgWithdrawValidatorCommission
+and MsgSetWithdrawAddress (to another account) are refused by the ante (top
+level, authz MsgExec) and by app/operator_router.go, the message router
+authz dispatch, gov and group execution, the ICA host and contracts use.
+Liquid validator income would back a staking-derivative scheme, so an
+operator's only way to take rewards or commission out is to unbond its
+self-bond (21-day unbonding). Minor, documented leak: a self-bond change
+(operator MsgDelegate/MsgUndelegate) pays the self-bond's rewards accrued
+since the last epoch end to the operator (x/distribution's hook); they
+cannot be re-delegated in the same tx (x/staking writes a stale validator
+after its hooks), see x/shieldedstaking/keeper/withdraw_addr.go.
+
 **Future option (noted for the user).** If selling of whole accounts
 (mnemonics) appears, stake notes can additionally be bound to a personhood
 identity: the stake circuit would also prove an identity leaf (or bind

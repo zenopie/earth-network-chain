@@ -68,5 +68,21 @@ Phase 2 complete (incl. the user's three additions). Plan file updated.
   staking validators + gentxs vs delegator_withdraw_infos) refuse one in
   genesis; compounding resets a foreign address
   (shieldedstaking_withdraw_addr_reset) instead of skipping. Only jailed
-  validators skip. Open: an operator can still MsgWithdrawDelegatorReward
-  its self-bond rewards mid-epoch (not refused; ask).
+  validators skip.
+- Validator commission compounds too, and nothing is claimable (user
+  decision, SUPERSEDES "commission stays withdrawable"; liquid income would
+  back a staking-derivative scheme). Each epoch end, per active validator
+  (guarded cache ctx): withdraw self-bond rewards + commission, self-delegate
+  the uerth delta. Refused on every route: operator
+  MsgWithdrawDelegatorReward, every MsgWithdrawValidatorCommission (plus
+  operator MsgSetWithdrawAddress elsewhere) — ante (top level + authz
+  MsgExec, ErrOperatorRewardClaim 1117) and app.OperatorRewardsRouter, bound
+  by depinject as baseapp.MessageRouter for authz/gov/group and passed by
+  hand to the ICA host and wasm; so no route executes a claim and nothing
+  needs epoch recovery. Operators' only exit: unbond the self-bond (21
+  days). Minor, documented: a self-bond change auto-withdraws the self-bond
+  rewards accrued since the last epoch (distribution hook); same-tx
+  re-delegation from a hook is unsafe (x/staking writes a stale validator
+  after hooks), so left liquid. Non-uerth rewards/commission stay liquid in
+  the operator account. Tests: TestOperatorRewardClaimRefused,
+  TestSelfBondCompounds (commission compounded).

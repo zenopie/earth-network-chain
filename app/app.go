@@ -128,6 +128,10 @@ type App struct {
 	ShieldedKeeper   shieldedmodulekeeper.Keeper
 
 	ShieldedStakingKeeper shieldedstakingmodulekeeper.Keeper
+
+	// rewardsRouter is the msg router handed to every module that dispatches
+	// msgs on someone's behalf. See app/operator_router.go.
+	rewardsRouter *OperatorRewardsRouter
 }
 
 func init() {
@@ -153,6 +157,11 @@ func AppConfig() depinject.Config {
 		// fixed 1 ERTH/sec emission — one of the chain's four pillars, and the
 		// only one that pays stakers. See app/mint.go.
 		depinject.Provide(ProvideEarthMintFn),
+		// Every module that dispatches msgs on someone's behalf (authz, gov,
+		// group) gets the router that refuses an operator's reward claim and
+		// foreign withdraw address. See app/operator_router.go.
+		depinject.Provide(ProvideOperatorRewardsRouter),
+		depinject.BindInterface(messageRouterTypeName, operatorRouterTypeName),
 	)
 }
 
@@ -213,9 +222,11 @@ func New(
 		&app.PkiKeeper,
 		&app.ShieldedKeeper,
 		&app.ShieldedStakingKeeper,
+		&app.rewardsRouter,
 	); err != nil {
 		panic(err)
 	}
+	app.rewardsRouter.SetChecker(app.AuthKeeper.AddressCodec(), app.ShieldedStakingKeeper)
 
 	// The capital stream's emergency fund pays the SDK community pool, so its
 	// handler is registered here rather than from the owning module's wiring the

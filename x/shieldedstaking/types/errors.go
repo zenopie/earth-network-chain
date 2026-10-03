@@ -21,4 +21,5 @@ var (
 	ErrStakeNullifierSpent = errors.Register(ModuleName, 1114, "stake nullifier already spent")
 	ErrInvalidStakeProof   = errors.Register(ModuleName, 1115, "stake proof does not verify")
 	ErrOperatorWithdraw    = errors.Register(ModuleName, 1116, "a validator operator's rewards are paid to the operator account: its self-bond compounds")
+	ErrOperatorRewardClaim = errors.Register(ModuleName, 1117, "a validator's self-bond rewards and commission compound into its self-bond at the epoch end: they cannot be withdrawn (unbond the self-bond to exit)")
 )

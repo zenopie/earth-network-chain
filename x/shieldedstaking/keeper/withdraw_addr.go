@@ -29,6 +29,21 @@ import (
 //   - compoundSelfBond resets a foreign withdraw address it finds rather
 //     than skipping the operator, so no route the refusals miss can opt a
 //     self-bond out of compounding.
+//
+// The same holds for claiming: an operator's MsgWithdrawDelegatorReward and
+// every MsgWithdrawValidatorCommission are refused, by the ante (top level,
+// authz MsgExec) and by app's message router (app/operator_router.go), which
+// authz dispatch, gov and group proposal execution, the ICA host and
+// contracts all go through. Only a self-bond change reaches the rewards
+// another way: x/distribution's delegation hook pays the self-bond's accrued
+// rewards to the operator when its shares change (MsgDelegate/
+// MsgUndelegate by the operator). They cannot be re-delegated in the same
+// tx: x/staking writes the validator it read before the hooks after they
+// return (Unbond -> RemoveValidatorTokensAndShares; Delegate ->
+// AddValidatorTokensAndShares), so a nested Delegate from a hook would be
+// clobbered. That leak is minor: it needs the operator to move its own
+// self-bond, is at most the rewards accrued since the last epoch end, and
+// commission is not paid by it.
 
 // IsOperator reports whether acc is a validator's operator account.
 func (k Keeper) IsOperator(ctx context.Context, acc sdk.AccAddress) (bool, error) {
@@ -105,5 +120,23 @@ func (k Keeper) resetOperatorWithdrawAddr(ctx context.Context, op sdk.AccAddress
 		sdk.NewAttribute(types.AttributeKeyValidator, sdk.ValAddress(op).String()),
 		sdk.NewAttribute(types.AttributeKeyWithdrawAddr, wa.String()),
 	))
+	return nil
+}
+
+// CheckRewardWithdraw refuses MsgWithdrawDelegatorReward from a validator
+// operator: its self-bond rewards compound at the epoch end
+// (compoundSelfBond), and a mid-epoch claim would leave nothing to compound.
+// Commission compounds too; MsgWithdrawValidatorCommission is refused for
+// every validator (x/shieldedstaking/ante.CheckOperatorRewardsMsg).
+// Operators can only delegate to their own validator, so the validator is
+// not consulted.
+func (k Keeper) CheckRewardWithdraw(ctx context.Context, del sdk.AccAddress) error {
+	op, err := k.IsOperator(ctx, del)
+	if err != nil {
+		return err
+	}
+	if op {
+		return errorsmod.Wrapf(types.ErrOperatorRewardClaim, "operator %s", del)
+	}
 	return nil
 }
