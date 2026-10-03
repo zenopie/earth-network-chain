@@ -297,6 +297,12 @@ func (k Keeper) reweighSlashed(ctx context.Context) {
 			if err != nil {
 				return err
 			}
+			// The live rate also counts the rewards accrued since the epoch
+			// end (and the queue), which positions only take at the next
+			// epoch: a slash may only lower the epoch rate, never raise it.
+			if !vs.EpochRate.IsNil() && vs.EpochRate.IsPositive() && rate.GT(vs.EpochRate) {
+				rate = vs.EpochRate
+			}
 			vs.EpochRate = rate
 			return k.Validators.Set(cc, v, vs)
 		})

@@ -220,12 +220,18 @@ func (p *StakeProof) ValidateBasic() error {
 	if !isZero(p.Nullifiers[0]) && bytes.Equal(p.Nullifiers[0], p.Nullifiers[1]) {
 		return errorsmod.Wrap(ErrInvalidMsg, "duplicate stake nullifier")
 	}
-	if len(p.Ciphertexts) > 2 {
-		return errorsmod.Wrap(ErrInvalidMsg, "at most one ciphertext per commitment")
+	// One ciphertext slot per commitment, always both: empty for an unused
+	// (zero) output, present for a created note. A missing slot and an empty
+	// one sighash alike, so allowing both was two encodings of one msg.
+	if len(p.Ciphertexts) != 2 {
+		return errorsmod.Wrap(ErrInvalidMsg, "a stake proof carries exactly two ciphertexts (empty for a zero commitment)")
 	}
-	for _, ct := range p.Ciphertexts {
+	for i, ct := range p.Ciphertexts {
 		if len(ct) > shieldedtypes.MaxCiphertextBytes {
 			return errorsmod.Wrapf(ErrInvalidMsg, "ciphertext exceeds %d bytes", shieldedtypes.MaxCiphertextBytes)
+		}
+		if isZero(p.Commitments[i]) != (len(ct) == 0) {
+			return errorsmod.Wrapf(ErrInvalidMsg, "ciphertext %d must be present iff commitment %d is non-zero", i, i)
 		}
 	}
 	return nil
