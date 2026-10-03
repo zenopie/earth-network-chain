@@ -1,12 +1,14 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strconv"
 
 	"cosmossdk.io/collections"
 	errorsmod "cosmossdk.io/errors"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/personhood/types"
@@ -14,7 +16,8 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// Referrals are public. A registered human binds an address with
+// Referrals are public. A registered human binds an address, with its
+// owner's signed consent (see checkReferrerConsent), with
 // MsgBindReferrer (a membership proof in the referrer scope: one nullifier per
 // identity secret, the same every time); a registration naming that address
 // as its affiliate pays the referrer's half of its reward there, in
@@ -180,8 +183,36 @@ func (k Keeper) sweepReferrerBindings(ctx context.Context, budget int) (int, err
 type referrerAction struct{ k Keeper }
 
 func (a referrerAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.PrivateMsg) (uint64, error) {
-	// The binding, its two indexes, and the old binding's removal.
-	return a.k.MembershipActionGas(ctx, 4)
+	// The binding, its two indexes, and the old binding's removal; and the
+	// consent signature.
+	g, err := a.k.MembershipActionGas(ctx, 4)
+	if err != nil {
+		return 0, err
+	}
+	return g + ReferrerConsentGas, nil
+}
+
+// ReferrerConsentGas prices the consent's secp256k1 verification (x/auth's
+// sig_verify_cost_secp256k1 default).
+const ReferrerConsentGas = 1000
+
+// checkReferrerConsent refuses a binding of addr its owner did not sign for:
+// the pubkey must be addr's, and its signature must verify over
+// ReferrerConsentBytes for this chain, this nullifier and this address. So
+// nobody can squat an address they do not control (and keep its owner from
+// binding it for a lease length at a time).
+func checkReferrerConsent(chainID string, m *types.MsgBindReferrer, addr []byte) error {
+	if len(m.ReferrerPubKey) != types.ReferrerPubKeyBytes || len(m.ReferrerSignature) != types.ReferrerSignatureBytes {
+		return types.ErrNoReferrerConsent.Wrap("consent missing")
+	}
+	pk := &secp256k1.PubKey{Key: m.ReferrerPubKey}
+	if !bytes.Equal(pk.Address(), addr) {
+		return types.ErrNoReferrerConsent.Wrap("referrer_pub_key is not the address's key")
+	}
+	if !pk.VerifySignature(types.ReferrerConsentBytes(chainID, m.Membership.Nullifier, addr), m.ReferrerSignature) {
+		return types.ErrNoReferrerConsent.Wrap("consent signature does not verify")
+	}
+	return nil
 }
 
 // referrerStatement: scope referrer, and the caretaker activation rule (see
@@ -215,6 +246,9 @@ func (k Keeper) checkBindReferrer(ctx context.Context, m *types.MsgBindReferrer)
 		// Read-only here: a lapsed holder is only removed in the handler.
 		if k.bankKeeper.BlockedAddr(addr) {
 			return MembershipStatement{}, errorsmod.Wrap(types.ErrInvalidMsg, "a module account cannot be a referrer")
+		}
+		if err := checkReferrerConsent(sdk.UnwrapSDKContext(ctx).ChainID(), m, addr); err != nil {
+			return MembershipStatement{}, err
 		}
 		if holder, err := k.ReferrerByAddr.Get(ctx, addr); err == nil && string(holder) != string(m.Membership.Nullifier) {
 			if live, _, err := k.liveReferrer(ctx, addr); err != nil {

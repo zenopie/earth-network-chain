@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"github.com/earth-network/earth/zk/privacy"
@@ -63,12 +64,16 @@ func (r Registration) AnmlNote() Note { return r.note("anml", "uanml", 1_000_000
 // paid).
 func (r Registration) ErthPC() fr.Element { return r.note("erth", "uerth", 0).PC() }
 
+// ReferralKey is the secp256k1 key of the account a human binds as their
+// referral address: binding it takes the key's signed consent.
+func ReferralKey(human string) *secp256k1.PrivKey {
+	return secp256k1.GenPrivKeyFromSecret([]byte("referral/" + human))
+}
+
 // ReferralAddress is the account a human binds as their referral address
-// (raw bytes; bech32 it with the chain's codec).
+// (raw bytes; bech32 it with the chain's codec): ReferralKey's address.
 func ReferralAddress(human string) []byte {
-	d := Det("referral/"+human, 0)
-	b := d.Bytes()
-	return b[:20]
+	return ReferralKey(human).PubKey().Address()
 }
 
 // ReferrerField is the affiliate r names, as the binding carries it:

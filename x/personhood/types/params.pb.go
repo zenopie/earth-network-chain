@@ -206,7 +206,8 @@ type Params struct {
 	// registration lapses or switches, so every split lapses on its own and the
 	// wallet refreshes it; a new identity secret may cast its first split only
 	// once any split its predecessor cast has lapsed (activated at most
-	// now - R - identity_root_window_seconds). Zero falls back to the default
+	// now - R - one day; a lowered R keeps the old one in that bound until the
+	// splits cast under it have lapsed). Zero falls back to the default
 	// (30 days).
 	CaretakerVoteSeconds uint64 `protobuf:"varint,24,opt,name=caretaker_vote_seconds,json=caretakerVoteSeconds,proto3" json:"caretaker_vote_seconds,omitempty"`
 	// buyback_max_trade_seconds caps one buyback trade at this many seconds of

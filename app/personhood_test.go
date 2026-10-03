@@ -54,6 +54,8 @@ const (
 	phFeeNote  = 2_000_000
 	phFeeNotes = 40
 	phDay      = int64(86400)
+	// phR is the test chain's caretaker_vote_seconds (lease length R).
+	phR = int64(4 * 3600)
 )
 
 var (
@@ -130,7 +132,7 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 			require.NoError(t, cdc.UnmarshalJSON(st[personhoodtypes.ModuleName], &ph))
 			ph.Params.VerifyingKeys = map[string][]byte{"lean_poa": leanVK}
 			ph.Params.RegistrationValiditySeconds = 4 * 86400
-			ph.Params.CaretakerVoteSeconds = 86400
+			ph.Params.CaretakerVoteSeconds = uint64(phR)
 			st[personhoodtypes.ModuleName] = cdc.MustMarshalJSON(&ph)
 
 			var pki pkitypes.GenesisState
@@ -209,7 +211,9 @@ func (e *phEnv) identityTree() *merkle.Tree {
 	return t
 }
 
-func ct(name string, i int) []byte { return shieldedtest.BlindCT(fmt.Sprintf("personhood-ct:%s:%d", name, i)) }
+func ct(name string, i int) []byte {
+	return shieldedtest.BlindCT(fmt.Sprintf("personhood-ct:%s:%d", name, i))
+}
 
 // feeFor plans the msg's fee bundle: the next fee note pays phFee, its
 // change back to the payer, padded with a dummy action.
@@ -382,6 +386,14 @@ func (e *phEnv) bindReferrer(name, reg, human string, maxAct int64) *personhoodt
 		msg.Address = e.bech(personhoodtest.ReferralAddress(human))
 	}
 	e.prove("referrer/"+name, msg, f, &member{reg: reg, scope: privacy.ReferrerScope(), maxAct: maxAct})
+	if human != "" {
+		// The address owner's consent, for the nullifier the proof revealed.
+		key := personhoodtest.ReferralKey(human)
+		sig, err := key.Sign(personhoodtypes.ReferrerConsentBytes(shieldedtest.ChainID, msg.Membership.Nullifier,
+			personhoodtest.ReferralAddress(human)))
+		require.NoError(e.t, err)
+		msg.ReferrerPubKey, msg.ReferrerSignature = key.PubKey().Bytes(), sig
+	}
 	return msg
 }
 
@@ -434,7 +446,7 @@ func (e *phEnv) proposeRemoval(name, reg string, option uint64) *assemblytypes.M
 	msg := &assemblytypes.MsgProposeRemoval{Fee: e.bundle(f), OptionId: option}
 	now := e.now.Unix()
 	e.prove("propose/"+name, msg, f, &member{reg: reg,
-		scope: privacy.ProposeRemovalScope(option, uint64(now/phDay)), maxAct: now/phDay*phDay - 3600})
+		scope: privacy.ProposeRemovalScope(option, uint64(now/phDay)), maxAct: now/phDay*phDay - personhoodtypes.ActivationMarginSeconds})
 	return msg
 }
 
@@ -566,9 +578,10 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Equal(t, uint64(1), b.LeafIndex)
 
 	// ---------------------------------------------------------------- assembly
-	// A proposal enters voting two hours after genesis; A and B were activated
-	// before voting opened minus the root window, so both may vote.
-	e.at(phGenesis.Add(2*time.Hour + 10*time.Minute))
+	// A proposal enters voting a day and two hours after genesis; A and B were
+	// activated before voting opened minus the activation margin (a day), so
+	// both may vote.
+	e.at(phGenesis.Add(24*time.Hour + 2*time.Hour + 10*time.Minute))
 	prop, err := govv1.NewMsgSubmitProposal(nil, e.fee(1_000_000), e.bech(e.userAddr()), "private-personhood-test", "private personhood", "test", false)
 	require.NoError(t, err)
 	fb = e.finalize(e.signedTx(1_000_000, e.fee(10_000), prop))
@@ -576,9 +589,9 @@ func TestPrivatePersonhood(t *testing.T) {
 	const pid = uint64(1)
 	in := e.ballotInputs(&assemblytypes.QueryBallotInputsRequest{ProposalId: pid})
 	require.Equal(t, privacy.FieldBytes(privacy.ProposalScope(pid, 0)), in.Scope)
-	require.Equal(t, uint64(e.now.Unix()-3600), in.MaxActivation)
+	require.Equal(t, uint64(e.now.Unix()-personhoodtypes.ActivationMarginSeconds), in.MaxActivation)
 
-	e.at(phGenesis.Add(3*time.Hour + 20*time.Minute))
+	e.at(phGenesis.Add(24*time.Hour + 3*time.Hour + 20*time.Minute))
 	e.mustDeliver(e.voteProposal("A-yes", "A1", pid, assemblytypes.VOTE_OPTION_YES))
 	aq := assemblykeeper.NewQueryServerImpl(e.app.AssemblyKeeper)
 	tallyOf := func() assemblytypes.Tally {
@@ -623,7 +636,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	// B proves membership against today's root, then B's Document Signer is
 	// revoked: the purge zeroes B's leaf. Within the root window the old root
 	// still anchors; after it, B's proof is refused.
-	e.at(phGenesis.Add(3*time.Hour + 40*time.Minute))
+	e.at(phGenesis.Add(24*time.Hour + 3*time.Hour + 40*time.Minute))
 	stale := e.voteProposal("B-stale", "B", pid, assemblytypes.VOTE_OPTION_NO)
 	pk, err := e.app.PkiKeeper.VerifyDsc(ctxNow(), loadPassport(t, "B").dscDER)
 	require.NoError(t, err)
@@ -639,42 +652,40 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Equal(t, personhoodtypes.ErrUnknownIdentityRoot.ABCICode(), res.Code, res.Log)
 
 	// ---------------------------------------------------------------- caretaker
-	// A's first split needs activated_at <= max_activation <= now - R - window.
-	// One minute short of that, a proof bounded by A's own activated_at is
-	// refused.
+	// A's first split needs activated_at <= max_activation <= now - R - the
+	// activation margin (a day). One minute short of that, a proof bounded by
+	// A's own activated_at is refused.
 	d1 := dayStart(phDay0 + 1)
-	early := a1.ActivatedAt + phDay + 3600 - 60
+	early := a1.ActivatedAt + phR + phDay - 60
 	e.at(time.Unix(early, 0).UTC())
 	split := []allocationtypes.AllocationWeight{{OptionId: allocationtypes.RegistrationRewardOptionID, Percent: 100}}
 	res = e.checkTx(e.tx(e.caretaker("A-early", "A1", a1.ActivatedAt, split)))
 	require.Equal(t, personhoodtypes.ErrInvalidMsg.ABCICode(), res.Code, res.Log)
-	e.at(time.Unix(a1.ActivatedAt+phDay+2*3600+60, 0).UTC())
-	ok2 := e.caretaker("A", "A1", e.now.Unix()/3600*3600-phDay-3600, split)
+	e.at(time.Unix(a1.ActivatedAt+phR+phDay+3600+60, 0).UTC())
+	ok2 := e.caretaker("A", "A1", e.now.Unix()/3600*3600-phR-phDay, split)
 	fb = e.mustDeliver(ok2)
 	require.Equal(t, uint64(1), e.caretakers())
 	voter, err := e.app.AllocationKeeper.Voters.Get(ctxNow(),
 		collections.Join(uint32(allocationtypes.STREAM_ID_CARETAKER), ok2.Membership.Nullifier))
 	require.NoError(t, err, "the split is filed under the caretaker nullifier")
 	require.Equal(t, int64(personhoodtypes.VoterWeight), voter.Weight.Int64())
-	caretakerExpiry := e.now.Unix() + phDay
+	caretakerExpiry := e.now.Unix() + phR
 	_ = d1
 
 	// A binds a referral address under the same activation rule. C1 cannot
 	// take an address A holds.
-	maxAct := e.now.Unix()/3600*3600 - phDay - 3600
+	maxAct := e.now.Unix()/3600*3600 - phR - phDay
 	e.mustDeliver(e.bindReferrer("A1", "A1", "A", maxAct))
 	require.True(t, e.referrerLive("A"))
 	res = e.checkTx(e.tx(e.bindReferrer("C1-taken", "C1", "A", maxAct)))
 	require.Equal(t, personhoodtypes.ErrReferrerBound.ABCICode(), res.Code, res.Log)
 
-	// A removal ballot on groundworks option 1, opened and voted anonymously
-	// (opening needs an identity activated before today began).
-	e.mustDeliver(e.proposeRemoval("A", "A1", 1))
-	e.mustDeliver(e.voteRemoval("A", "A1", 1, assemblytypes.VOTE_OPTION_YES))
-	ballots, err := aq.RemovalBallots(ctxNow(), &assemblytypes.QueryRemovalBallotsRequest{})
-	require.NoError(t, err)
-	require.Len(t, ballots.Ballots, 1)
-	require.Equal(t, assemblytypes.Tally{Yes: 1}, ballots.Ballots[0].Tally)
+	// The caretaker split lapses R after it was cast and is swept.
+	e.at(time.Unix(caretakerExpiry+10, 0).UTC())
+	require.Equal(t, uint64(0), e.caretakers())
+	_, err = e.app.AllocationKeeper.Voters.Get(ctxNow(),
+		collections.Join(uint32(allocationtypes.STREAM_ID_CARETAKER), ok2.Membership.Nullifier))
+	require.Error(t, err, "cleared from the stream")
 
 	// ---------------------------------------------------------------- claims
 	// Day 2: A claims. A second claim the same day (same nullifier) is refused.
@@ -691,6 +702,17 @@ func TestPrivatePersonhood(t *testing.T) {
 	wrong.Fee = e.unverified(e.feeFor("wrong-day"))
 	res = e.checkTx(e.tx(&wrong))
 	require.Equal(t, personhoodtypes.ErrWrongDay.ABCICode(), res.Code, res.Log)
+
+	// A removal ballot on groundworks option 1, opened and voted anonymously
+	// (opening needs an identity activated the activation margin, a day,
+	// before today began).
+	e.at(dayStart(d2).Add(35 * time.Minute))
+	e.mustDeliver(e.proposeRemoval("A", "A1", 1))
+	e.mustDeliver(e.voteRemoval("A", "A1", 1, assemblytypes.VOTE_OPTION_YES))
+	ballots, err := aq.RemovalBallots(ctxNow(), &assemblytypes.QueryRemovalBallotsRequest{})
+	require.NoError(t, err)
+	require.Len(t, ballots.Ballots, 1)
+	require.Equal(t, assemblytypes.Tally{Yes: 1}, ballots.Ballots[0].Tally)
 	// A1 proves tomorrow's claim now, before switching away.
 	e.at(dayStart(d2).Add(40 * time.Minute))
 	a1Tomorrow := e.claim("A1-d3", "A1", d2+1, -1)
@@ -710,13 +732,6 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Equal(t, e.now.Unix(), a2.ActivatedAt)
 	cnt, _ = k.RegCount.Get(ctxNow())
 	require.Equal(t, uint64(2), cnt)
-
-	// The caretaker split cast on day 1 lapses R later and is swept.
-	e.at(time.Unix(caretakerExpiry+10, 0).UTC())
-	require.Equal(t, uint64(0), e.caretakers())
-	_, err = e.app.AllocationKeeper.Voters.Get(ctxNow(),
-		collections.Join(uint32(allocationtypes.STREAM_ID_CARETAKER), ok2.Membership.Nullifier))
-	require.Error(t, err, "cleared from the stream")
 
 	// Day 3: A1's proof, made against a root from before the switch, is past
 	// its window. A2 cannot claim yet (activated yesterday): a proof over its
@@ -742,14 +757,14 @@ func TestPrivatePersonhood(t *testing.T) {
 	_, ok = e.registration("C1")
 	require.False(t, ok)
 	require.True(t, e.leaf(c1Index).IsZero())
-	// A1's binding lapsed a day after it was made and was swept: naming A is
+	// A1's binding lapsed R after it was made and was swept: naming A is
 	// refused, before the passport proof is verified.
 	require.False(t, e.referrerLive("A"))
 	res = e.checkTx(e.tx(e.register("C2")))
 	require.Equal(t, personhoodtypes.ErrNoReferrer.ABCICode(), res.Code, res.Log)
 	// A2 (switched in on day 2) binds A's address again; C2 then pays A's
 	// half to it in transparent ERTH, and the registrant's half as a note.
-	e.mustDeliver(e.bindReferrer("A2", "A2", "A", e.now.Unix()/3600*3600-phDay-3600))
+	e.mustDeliver(e.bindReferrer("A2", "A2", "A", e.now.Unix()/3600*3600-phR-phDay))
 	require.True(t, e.referrerLive("A"))
 	aAddr := sdk.AccAddress(personhoodtest.ReferralAddress("A"))
 	before := e.app.BankKeeper.GetBalance(ctxNow(), aAddr, "uerth").Amount
@@ -765,7 +780,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.True(t, hasCommitment(fb.TxResults[0], privacy.CM(privacy.AssetID("uerth"), rewardC2.Uint64(), personhoodtest.Registrations["C2"].ErthPC())))
 	// Rebinding the same nullifier moves the binding.
 	e.at(e.now.Add(time.Minute))
-	e.mustDeliver(e.bindReferrer("A2-move", "A2", "A-alt", e.now.Unix()/3600*3600-phDay-3600))
+	e.mustDeliver(e.bindReferrer("A2-move", "A2", "A-alt", e.now.Unix()/3600*3600-phR-phDay))
 	require.False(t, e.referrerLive("A"))
 	require.True(t, e.referrerLive("A-alt"))
 	cnt, _ = k.RegCount.Get(ctxNow())

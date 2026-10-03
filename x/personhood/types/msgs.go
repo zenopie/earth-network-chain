@@ -330,13 +330,42 @@ func (m *MsgBindReferrer) SighashFields(ac address.Codec) ([]fr.Element, error) 
 
 // ValidateBasic checks everything that needs no state.
 func (m *MsgBindReferrer) ValidateBasic() error {
-	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
-		return err
-	}
 	if len(m.Address) > MaxAddressBytes {
 		return errorsmod.Wrapf(ErrInvalidMsg, "address exceeds %d bytes", MaxAddressBytes)
 	}
+	if m.Address == "" {
+		if len(m.ReferrerPubKey) != 0 || len(m.ReferrerSignature) != 0 {
+			return errorsmod.Wrap(ErrInvalidMsg, "clearing a binding carries no consent")
+		}
+	} else if len(m.ReferrerPubKey) != ReferrerPubKeyBytes || len(m.ReferrerSignature) != ReferrerSignatureBytes {
+		return errorsmod.Wrapf(ErrNoReferrerConsent, "referrer_pub_key must be %d bytes and referrer_signature %d",
+			ReferrerPubKeyBytes, ReferrerSignatureBytes)
+	}
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
+		return err
+	}
 	return m.Membership.ValidateBasic()
+}
+
+// Referrer consent sizes: a compressed secp256k1 key, an r||s signature.
+const (
+	ReferrerPubKeyBytes    = 33
+	ReferrerSignatureBytes = 64
+)
+
+// ReferrerConsentDomain prefixes the bytes a referrer address signs.
+const ReferrerConsentDomain = "earth.referrer.consent.v1"
+
+// ReferrerConsentBytes is what the owner of addr signs (secp256k1 ECDSA over
+// its SHA-256) to let the identity behind nullifier bind addr as its
+// referral address on chainID.
+func ReferrerConsentBytes(chainID string, nullifier, addr []byte) []byte {
+	out := make([]byte, 0, len(ReferrerConsentDomain)+1+len(chainID)+len(nullifier)+len(addr))
+	out = append(out, ReferrerConsentDomain...)
+	out = append(out, byte(len(chainID)))
+	out = append(out, chainID...)
+	out = append(out, nullifier...)
+	return append(out, addr...)
 }
 
 // MembershipStatement is what a membership proof must prove, beyond holding a

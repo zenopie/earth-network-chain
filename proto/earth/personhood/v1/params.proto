@@ -231,7 +231,8 @@ message Params {
   // registration lapses or switches, so every split lapses on its own and the
   // wallet refreshes it; a new identity secret may cast its first split only
   // once any split its predecessor cast has lapsed (activated at most
-  // now - R - identity_root_window_seconds). Zero falls back to the default
+  // now - R - one day; a lowered R keeps the old one in that bound until the
+  // splits cast under it have lapsed). Zero falls back to the default
   // (30 days).
   uint64 caretaker_vote_seconds = 24;
 
