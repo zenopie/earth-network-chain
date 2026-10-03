@@ -20,6 +20,9 @@ type Registration struct {
 	Doc      string // MRZ document number: same doc, same passport nullifier
 	Date     string // the proof's current_date, YYMMDD
 	Referrer string // human whose referral address is named, "" for none
+	// ReferrerCode names the referrer by referral code instead (the code
+	// Referrer's binding claimed); "" names it by address.
+	ReferrerCode string
 }
 
 // Registrations are the passport fixtures the app tests use, by name.
@@ -31,6 +34,9 @@ var Registrations = map[string]Registration{
 	"A2": {Name: "A2", Human: "A", Secret: 2, Doc: "L898902C3", Date: "250103"},
 	// C's registration lapses and C re-enters, four days in, referred by A.
 	"C2": {Name: "C2", Human: "C", Secret: 2, Doc: "Y87654321", Date: "250105", Referrer: "A"},
+	// D registers four days in, naming A by referral code (A2 claims
+	// "alice" with its binding).
+	"D1": {Name: "D1", Human: "D", Secret: 1, Doc: "Z11223344", Date: "250105", Referrer: "A", ReferrerCode: "alice"},
 }
 
 // RegistrationNames lists Registrations in a stable order.
@@ -77,8 +83,12 @@ func ReferralAddress(human string) []byte {
 }
 
 // ReferrerField is the affiliate r names, as the binding carries it:
-// Bytes(address bytes), 0 for none (types.AffiliateField).
+// Bytes(address bytes), AffiliateCode(code) when named by code, 0 for none
+// (types.AffiliateField).
 func (r Registration) ReferrerField() fr.Element {
+	if r.ReferrerCode != "" {
+		return privacy.AffiliateCode(r.ReferrerCode)
+	}
 	if r.Referrer == "" {
 		return fr.Element{}
 	}

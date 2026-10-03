@@ -43,7 +43,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = passports ]; then
       && bb write_vk -b target/lean_poa.json -o "$WORK/vk" -t noir-recursive >/dev/null 2>&1 )
   DST="$CHAIN_DIR/x/personhood/testdata/passports"
   rm -rf "$DST"
-  for name in A1 A2 B C1 C2; do
+  for name in A1 A2 B C1 C2 D1; do
     echo "==> passport $name"
     out="$WORK/$name"
     # shellcheck disable=SC2046
