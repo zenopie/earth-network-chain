@@ -216,7 +216,7 @@ func (p Params) Validate() error {
 	}
 	// Bounded so now + skew (the used-binding expiry) cannot overflow, and
 	// because a skew of more than a year is no expiry check at all.
-	if p.CurrentDateMaxSkewSeconds > 365*SecondsPerDay {
+	if p.CurrentDateMaxSkewSeconds > MaxCurrentDateMaxSkewSeconds {
 		return fmt.Errorf("current_date_max_skew_seconds must be at most a year")
 	}
 	// Zero takes the default. Otherwise at least one per sweep (runSweeps

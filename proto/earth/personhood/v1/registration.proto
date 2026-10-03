@@ -108,10 +108,20 @@ message ReferrerBinding {
 // affiliate) that has been registered, refused for reuse until expires_at.
 // A passport proof is public once it lands; without this record anyone could
 // replay a holder's earlier registration (A -> B -> A) as a switch back to A
-// while its current_date is still inside the skew. expires_at is the
-// registration time plus current_date_max_skew_seconds plus a day, past which
-// the date check refuses the proof anyway.
+// while its current_date is still inside the skew. expires_at is the proof's
+// current_date plus the largest skew governance may set (a year) plus a day,
+// past which the date check refuses the proof anyway, whatever the skew.
 message UsedRegistrationBinding {
   bytes binding = 1;
   int64 expires_at = 2;
+}
+
+// LeaseHold is the lease length (caretaker_vote_seconds) the activation bound
+// of MsgSetCaretaker and MsgBindReferrer keeps using until `until`, after
+// governance lowered it: a lease cast under the old length runs that long,
+// and a switched-to identity must not cast one beside its predecessor's.
+// Zero when no hold is in force.
+message LeaseHold {
+  int64 seconds = 1;
+  int64 until = 2;
 }

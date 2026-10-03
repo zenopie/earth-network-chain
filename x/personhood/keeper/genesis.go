@@ -85,6 +85,31 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 	}
+	for _, dsc := range genState.PendingDscPurges {
+		if err := k.PendingDscPurge.Set(ctx, dsc); err != nil {
+			return err
+		}
+	}
+	for _, r := range genState.DscRates {
+		if err := k.DscRate.Set(ctx, r.DscKey, r.Counter); err != nil {
+			return err
+		}
+	}
+	for _, r := range genState.CountryRates {
+		if err := k.CountryRate.Set(ctx, r.Country, r.Counter); err != nil {
+			return err
+		}
+	}
+	if genState.NetworkRate != (types.RateCounter{}) {
+		if err := k.NetworkRate.Set(ctx, genState.NetworkRate); err != nil {
+			return err
+		}
+	}
+	if genState.LeaseHold != (types.LeaseHold{}) {
+		if err := k.LeaseHold.Set(ctx, genState.LeaseHold); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -154,6 +179,30 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		genesis.UsedBindings = append(genesis.UsedBindings, types.UsedRegistrationBinding{Binding: b, ExpiresAt: until})
 		return false, nil
 	}); err != nil {
+		return nil, err
+	}
+	if err := k.PendingDscPurge.Walk(ctx, nil, func(dsc []byte) (bool, error) {
+		genesis.PendingDscPurges = append(genesis.PendingDscPurges, dsc)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.DscRate.Walk(ctx, nil, func(dsc []byte, c types.RateCounter) (bool, error) {
+		genesis.DscRates = append(genesis.DscRates, types.DscRateCounter{DscKey: dsc, Counter: c})
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.CountryRate.Walk(ctx, nil, func(country string, c types.RateCounter) (bool, error) {
+		genesis.CountryRates = append(genesis.CountryRates, types.CountryRateCounter{Country: country, Counter: c})
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if genesis.NetworkRate, err = k.NetworkRate.Get(ctx); err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
+	if genesis.LeaseHold, err = k.LeaseHold.Get(ctx); err != nil && !errors.Is(err, collections.ErrNotFound) {
 		return nil, err
 	}
 	return genesis, nil

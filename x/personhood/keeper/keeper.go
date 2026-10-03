@@ -90,6 +90,9 @@ type Keeper struct {
 	UsedBindings      collections.Map[[]byte, int64]
 	UsedBindingExpiry collections.KeySet[collections.Pair[int64, []byte]]
 
+	// LeaseHold: see types.LeaseHold and leaseSeconds.
+	LeaseHold collections.Item[types.LeaseHold]
+
 	// buyback-and-burn clock
 	LastBuyback     collections.Item[int64]
 	TwapObservation collections.Item[math.LegacyDec]
@@ -173,6 +176,8 @@ func NewKeeper(
 
 		UsedBindings:      collections.NewMap(sb, types.UsedBindingsKey, "used_bindings", collections.BytesKey, collections.Int64Value),
 		UsedBindingExpiry: collections.NewKeySet(sb, types.UsedBindingExpiryKey, "used_binding_expiry", timeBytes),
+
+		LeaseHold: collections.NewItem(sb, types.LeaseHoldKey, "lease_hold", codec.CollValue[types.LeaseHold](cdc)),
 
 		checkTxProofs: ultrahonk.NewVerifiedCache(256),
 

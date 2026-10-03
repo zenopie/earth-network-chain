@@ -52,7 +52,7 @@ func TestRegistrationABAReplayRefused(t *testing.T) {
 	p, err := k.checkRegistration(ctx, replayed)
 	require.NoError(t, err)
 	// It lands (what Register records), then the holder switches to idc B.
-	require.NoError(t, k.markBindingUsed(ctx, p.binding))
+	require.NoError(t, k.markBindingUsed(ctx, p.binding, p.proofDate))
 	b := privacy.FieldBytes(privacy.U64(424242))
 	require.NoError(t, k.addRegistration(ctx, types.Registration{Nullifier: nf, RegisteredAt: ctx.BlockTime().Unix(),
 		ActivatedAt: ctx.BlockTime().Unix(), Idc: b}))
@@ -76,7 +76,7 @@ func TestRegistrationABAReplayRefused(t *testing.T) {
 	// The entry outlives the skew: once it is swept, the date check refuses.
 	until, err := k.UsedBindings.Get(ctx, p.binding)
 	require.NoError(t, err)
-	require.Equal(t, passportTime.Unix()+int64(params.CurrentDateMaxSkewSeconds)+types.UsedBindingGraceSeconds, until)
+	require.Equal(t, p.proofDate+types.MaxCurrentDateMaxSkewSeconds+types.UsedBindingGraceSeconds, until)
 	ctx3 := ctx.WithBlockTime(time.Unix(until, 0))
 	n, err := k.sweepUsedBindings(ctx3, 10)
 	require.NoError(t, err)

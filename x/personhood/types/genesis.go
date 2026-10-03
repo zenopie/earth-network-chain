@@ -126,6 +126,40 @@ func (gs GenesisState) Validate() error {
 		}
 	}
 
+	seenPurge := map[string]struct{}{}
+	for _, dsc := range gs.PendingDscPurges {
+		if _, err := privacy.FieldFromBytes(dsc); err != nil {
+			return fmt.Errorf("pending dsc purge: %w", err)
+		}
+		if _, dup := seenPurge[string(dsc)]; dup {
+			return fmt.Errorf("pending dsc purge %x listed twice", dsc)
+		}
+		seenPurge[string(dsc)] = struct{}{}
+	}
+	seenDscRate := map[string]struct{}{}
+	for _, r := range gs.DscRates {
+		if len(r.DscKey) == 0 {
+			return fmt.Errorf("dsc rate counter without a dsc key")
+		}
+		if _, dup := seenDscRate[string(r.DscKey)]; dup {
+			return fmt.Errorf("dsc rate counter %x listed twice", r.DscKey)
+		}
+		seenDscRate[string(r.DscKey)] = struct{}{}
+	}
+	seenCountryRate := map[string]struct{}{}
+	for _, r := range gs.CountryRates {
+		if r.Country == "" {
+			return fmt.Errorf("country rate counter without a country")
+		}
+		if _, dup := seenCountryRate[r.Country]; dup {
+			return fmt.Errorf("country rate counter %s listed twice", r.Country)
+		}
+		seenCountryRate[r.Country] = struct{}{}
+	}
+	if h := gs.LeaseHold; h.Seconds < 0 || h.Until < 0 || h.Seconds > 365*SecondsPerDay || (h.Seconds == 0) != (h.Until == 0) {
+		return fmt.Errorf("lease_hold %+v: seconds and until must both be set (seconds at most a year) or both zero", h)
+	}
+
 	if gs.LastBuyback < 0 {
 		return fmt.Errorf("last_buyback must not be negative")
 	}

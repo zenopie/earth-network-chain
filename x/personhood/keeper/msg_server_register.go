@@ -68,7 +68,7 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		return nil, types.ErrInvalidMsg.Wrap("registration state changed since the ante")
 	}
 
-	if err := k.markBindingUsed(ctx, p.binding); err != nil {
+	if err := k.markBindingUsed(ctx, p.binding, p.proofDate); err != nil {
 		return nil, err
 	}
 

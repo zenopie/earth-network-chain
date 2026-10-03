@@ -33,6 +33,7 @@ type preparedRegistration struct {
 	pubInputs [][]byte
 	nullifier []byte
 	binding   []byte // the address input, recorded as used once it lands
+	proofDate int64  // current_date as unix seconds (midnight UTC)
 	dsc       dscFacts
 	// switched is decided here, before anything is written: a live
 	// registration under the same passport makes this a switch, which is
@@ -194,7 +195,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		}
 	}
 	return preparedRegistration{vk: vk, pubInputs: pubInputs, nullifier: nullifier, binding: bindingBytes,
-		dsc: facts, switched: switched, affiliate: affiliate}, nil
+		proofDate: proofUnix, dsc: facts, switched: switched, affiliate: affiliate}, nil
 }
 
 // verifyRegistrationProofIn is verifyRegistrationProof, through the CheckTx
@@ -240,7 +241,15 @@ func yymmddToUnix(b []byte) (int64, error) {
 	if mm < 1 || mm > 12 || dd < 1 || dd > 31 {
 		return 0, errors.New("current_date has an invalid month or day")
 	}
-	return time.Date(2000+yy, time.Month(mm), dd, 0, 0, 0, 0, time.UTC).Unix(), nil
+	// time.Date normalises an impossible date (Feb 31 -> Mar 3). The circuit
+	// compares YYMMDD numerically (expiry >= current_date), so 250231 would
+	// pass a passport that expired 250301 while the chain dated the proof
+	// Mar 3: only a date that round-trips is a date.
+	t := time.Date(2000+yy, time.Month(mm), dd, 0, 0, 0, 0, time.UTC)
+	if t.Year() != 2000+yy || int(t.Month()) != mm || t.Day() != dd {
+		return 0, errors.New("current_date is not a calendar date")
+	}
+	return t.Unix(), nil
 }
 
 // hexOf renders an id for an event attribute.
@@ -400,16 +409,17 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int,
 }
 
 // markBindingUsed records a landed registration's binding, refused for reuse
-// until now + current_date_max_skew_seconds + a day: past that, the proof's
-// current_date is out of the skew and the date check refuses it anyway.
-// A later skew increase by governance does not extend existing entries; the
-// next registration under the new skew gets the new window.
-func (k Keeper) markBindingUsed(ctx context.Context, binding []byte) error {
-	params, err := k.Params.Get(ctx)
-	if err != nil {
-		return err
+// until its proof's current_date + the largest skew governance may ever set
+// (types.MaxCurrentDateMaxSkewSeconds) + a day. A replay at time t is only
+// accepted while |t - current_date| <= the skew in force at t, which is never
+// more than that maximum, so no skew change (a raise included) reopens a
+// replay, and a proof dated ahead of the block (inside the skew) is covered
+// for its whole window.
+func (k Keeper) markBindingUsed(ctx context.Context, binding []byte, proofDate int64) error {
+	until := proofDate + types.MaxCurrentDateMaxSkewSeconds + types.UsedBindingGraceSeconds
+	if now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix(); until <= now {
+		until = now + types.UsedBindingGraceSeconds
 	}
-	until := sdk.UnwrapSDKContext(ctx).BlockTime().Unix() + int64(params.CurrentDateMaxSkewSeconds) + types.UsedBindingGraceSeconds
 	return k.putUsedBinding(ctx, binding, until)
 }
 

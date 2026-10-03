@@ -340,6 +340,9 @@ var (
 	// forgotten; UsedBindingExpiryKey orders them by that for the sweep.
 	UsedBindingsKey      = collections.NewPrefix("used_bindings")
 	UsedBindingExpiryKey = collections.NewPrefix("used_binding_expiry")
+
+	// LeaseHoldKey: types.LeaseHold, the lowered-lease-length hold.
+	LeaseHoldKey = collections.NewPrefix("lease_hold")
 )
 
 // UsedBindingGraceSeconds is added to current_date_max_skew_seconds for how
@@ -347,3 +350,8 @@ var (
 // granular, so a proof dated today stays inside the skew up to a day longer
 // than the skew alone.
 const UsedBindingGraceSeconds = 24 * 60 * 60
+
+// MaxCurrentDateMaxSkewSeconds is the largest current_date_max_skew_seconds
+// governance may set (a year). A used binding is held for it whatever the
+// skew in force, so raising the skew never reopens a replay.
+const MaxCurrentDateMaxSkewSeconds = 365 * SecondsPerDay
