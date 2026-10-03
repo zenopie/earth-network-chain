@@ -2,10 +2,11 @@
 #
 # The privacy circuits' verifying keys, regenerated from the circuits.
 #
-# x/shielded verifies every private tx against three UltraHonk keys: action
+# x/shielded verifies every private tx against four UltraHonk keys: action
 # (every action of every shielded bundle: spends, outputs, fees), membership
-# (personhood's claims, votes, caretaker splits, referrer bindings) and stake
-# (x/shieldedstaking's owner-locked stake notes). With one missing from
+# (personhood's claims, votes, caretaker splits, referrer bindings), stake
+# (x/shieldedstaking's owner-locked stake notes) and vote (a stake note's
+# vote on a proposal, without spending it). With one missing from
 # genesis the msgs needing it are refused. This script compiles the circuits
 # from the mobile repo and writes each key everywhere the chain reads it:
 #
@@ -14,6 +15,7 @@
 #   x/shielded/testdata/action.vk                                 tests (raw)
 #   x/personhood/testdata/app/membership.vk                       tests (raw)
 #   x/shieldedstaking/testdata/stake.vk                           tests (raw)
+#   x/shieldedstaking/testdata/vote.vk                            tests (raw)
 #
 #   ./scripts/privacy-vks.sh [--check] [path-to-earth-network-mobile/circuits]
 #
@@ -32,7 +34,7 @@ export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 for bin in nargo bb; do
   command -v "$bin" >/dev/null || { echo "error: $bin not on PATH" >&2; exit 1; }
 done
-for c in action membership stake; do
+for c in action membership stake vote; do
   [ -d "$CIRCUITS_SRC/$c" ] || { echo "error: no $c circuit under $CIRCUITS_SRC" >&2; exit 1; }
 done
 
@@ -40,7 +42,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cp -R "$CIRCUITS_SRC" "$WORK/circuits"
 rm -rf "$WORK/circuits/target"
-for c in action membership stake; do
+for c in action membership stake vote; do
   ( cd "$WORK/circuits" && nargo compile --package "$c" >/dev/null \
       && bb write_vk -b "target/$c.json" -o "$WORK/vk-$c" -t noir-recursive >/dev/null 2>&1 )
   base64 < "$WORK/vk-$c/vk" | tr -d '\n' > "$WORK/$c.vk.b64"
@@ -51,11 +53,12 @@ raw_targets() {
   echo "action $CHAIN_DIR/x/shielded/testdata/action.vk"
   echo "membership $CHAIN_DIR/x/personhood/testdata/app/membership.vk"
   echo "stake $CHAIN_DIR/x/shieldedstaking/testdata/stake.vk"
+  echo "vote $CHAIN_DIR/x/shieldedstaking/testdata/vote.vk"
 }
 
 if [ "$CHECK" -eq 1 ]; then
   fail=0
-  for c in action membership stake; do
+  for c in action membership stake vote; do
     cmp -s "$WORK/$c.vk.b64" "$GEN/$c.vk.b64" || { echo "stale: $GEN/$c.vk.b64" >&2; fail=1; }
   done
   while read -r c f; do
@@ -65,7 +68,7 @@ if [ "$CHECK" -eq 1 ]; then
 import sys, yaml
 cfg = yaml.safe_load(open(sys.argv[1]))
 vks = cfg['genesis']['app_state']['shielded']['params']['verifying_keys']
-bad = [c for c in ('action', 'membership', 'stake') if vks.get(c) != open(f'{sys.argv[2]}/{c}.vk.b64').read()]
+bad = [c for c in ('action', 'membership', 'stake', 'vote') if vks.get(c) != open(f'{sys.argv[2]}/{c}.vk.b64').read()]
 if bad:
     sys.exit('stale: config.yml shielded verifying_keys: ' + ', '.join(bad))
 PY
@@ -76,13 +79,13 @@ fi
 
 mkdir -p "$GEN"
 rm -f "$GEN/transfer.vk.b64" # the retired 3-in/3-out transfer circuit
-for c in action membership stake; do cp "$WORK/$c.vk.b64" "$GEN/$c.vk.b64"; done
+for c in action membership stake vote; do cp "$WORK/$c.vk.b64" "$GEN/$c.vk.b64"; done
 while read -r c f; do cp "$WORK/vk-$c/vk" "$f"; done < <(raw_targets)
 python3 - "$CHAIN_DIR/config.yml" "$WORK" <<'PY'
 import re, sys
 path, work = sys.argv[1], sys.argv[2]
 s = open(path).read()
-keys = {c: open(f'{work}/{c}.vk.b64').read() for c in ('action', 'membership', 'stake')}
+keys = {c: open(f'{work}/{c}.vk.b64').read() for c in ('action', 'membership', 'stake', 'vote')}
 block = ('    # x/shielded verifies every private tx against these (bb v5.0.0\n'
          '    # UltraHonk, noir-recursive), written by scripts/privacy-vks.sh from the\n'
          '    # circuits. Without them every private msg is refused.\n'

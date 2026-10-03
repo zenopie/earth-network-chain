@@ -150,6 +150,7 @@ func initStakeEnvWith(t *testing.T, mutate func(appState map[string]json.RawMess
 	gs.Params.VerifyingKeys = map[string][]byte{
 		shieldedtypes.CircuitAction: mustRead(t, "../x/shielded/testdata/action.vk"),
 		shieldedtypes.CircuitStake:  mustRead(t, "../x/shieldedstaking/testdata/stake.vk"),
+		shieldedtypes.CircuitVote:   mustRead(t, "../x/shieldedstaking/testdata/vote.vk"),
 	}
 	doc.AppState[shieldedtypes.ModuleName], err = app0.AppCodec().MarshalJSON(gs)
 	require.NoError(t, err)

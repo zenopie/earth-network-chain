@@ -363,6 +363,7 @@ func TestShieldedVerifyingKeysAreSeeded(t *testing.T) {
 		"action":     "../x/shielded/testdata/action.vk",
 		"membership": "../x/personhood/testdata/app/membership.vk",
 		"stake":      "../x/shieldedstaking/testdata/stake.vk",
+		"vote":       "../x/shieldedstaking/testdata/vote.vk",
 	}
 	if got := len(g.AppState.Shielded.Params.VerifyingKeys); got != len(tests) {
 		t.Errorf("genesis carries %d shielded verifying keys, want %d", got, len(tests))

@@ -10,7 +10,7 @@ only one of several open proposals (decoy-proposal attack).
 - [x] zk/indexed: Go indexed tree + privacy.NFLeaf/VoteNF; parity vectors with Noir (mobile: test_go_parity)
 - [x] x/shieldedstaking: nullifier set -> indexed tree (value index, index->value, nodes, size, latest root at end block); snapshot nf root/size
 - [x] MsgStakeVote v2 (vote proof, vnf; no spend, no re-mint); gas; sighash
-- [ ] x/shielded CircuitVote; privacy-vks; genesis
+- [x] x/shielded CircuitVote; privacy-vks; genesis
 - [x] genesis export/import (insertion order, vote nullifiers, snapshot nf roots checked)
 - [ ] app tests with real proofs; fixtures
 - [ ] docs: ORCHARD_DESIGN §15, CHANGELOG (wallet format, indexer)
