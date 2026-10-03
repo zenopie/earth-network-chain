@@ -20,7 +20,9 @@ ported as a regression test asserting the safe outcome.
 - [x] 8 vote weight canonical strings: ValidateOptions requires
   weight == LegacyDec.String() (18 decimals). Test:
   x/shieldedstaking/types/audit3_weights_test.go
-- [ ] 9 genesis root records
+- [x] 9 genesis root records: InitGenesis checks each record against the
+  rebuilt tree at its tree_size, refuses Time > genesis time and two roots
+  for one size. Tests: x/shielded/keeper/audit3_genesis_test.go
 - [ ] 10 personhood L1/L2/L4/L5/L6/I1
 - [ ] 11 dex L3 rounding / L7 buyback cap
 - [ ] 12 info: shieldedstaking perms, genesis delegation rule, F5

@@ -7,13 +7,15 @@ import (
 	"fmt"
 
 	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
 // InitGenesis loads the pool. The tree's inner nodes are rebuilt from the
-// leaves; the root history is loaded as exported, and the rebuilt root is
+// leaves; each exported root record is checked against the rebuilt tree at
+// its tree_size (and must not postdate genesis) and loaded, and the rebuilt root is
 // recorded as the latest anchor if it is not already (a fresh chain records
 // the empty root here). Turnstiles are checked against the balances the bank
 // module has already loaded.
@@ -35,8 +37,44 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		}
 	}
 
+	// Every root record must be the root of the first tree_size commitments
+	// and must not be dated after genesis: a record is an anchor, and a root
+	// taken on faith (or dated into the future, which keeps it inside the
+	// anchor window for as long as it likes) would make any note "in" it
+	// spendable against the pool. Records are checked as the tree is rebuilt.
+	genesisTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	want := make(map[uint64][]byte, len(gs.Roots))
+	for i, r := range gs.Roots {
+		if r.Time > genesisTime {
+			return fmt.Errorf("root %d: time %d is after genesis time %d", i, r.Time, genesisTime)
+		}
+		if prev, dup := want[r.TreeSize]; dup && !bytes.Equal(prev, r.Root) {
+			return fmt.Errorf("root %d: tree_size %d already has a different root", i, r.TreeSize)
+		}
+		want[r.TreeSize] = r.Root
+	}
 	t, err := k.tree(ctx)
 	if err != nil {
+		return err
+	}
+	if t.Size() != 0 {
+		return fmt.Errorf("note tree is not empty at genesis")
+	}
+	checkRoot := func() error {
+		r, ok := want[t.Size()]
+		if !ok {
+			return nil
+		}
+		got, err := t.Root()
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(privacy.FieldBytes(got), r) {
+			return fmt.Errorf("root record %X is not the root of the first %d commitments", r, t.Size())
+		}
+		return nil
+	}
+	if err := checkRoot(); err != nil {
 		return err
 	}
 	for i, cm := range gs.Commitments {
@@ -45,6 +83,9 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			return fmt.Errorf("commitment %d: %w", i, err)
 		}
 		if _, err := t.Append(leaf); err != nil {
+			return err
+		}
+		if err := checkRoot(); err != nil {
 			return err
 		}
 	}

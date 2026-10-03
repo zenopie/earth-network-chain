@@ -624,6 +624,7 @@ func TestGenesisRoundTrip(t *testing.T) {
 	bad := *gs
 	bad.Turnstiles = nil
 	g3 := initFixtureEmpty(t, f.bank)
+	g3.ctx = g3.ctx.WithBlockTime(f.ctx.BlockTime()).WithBlockHeight(f.ctx.BlockHeight())
 	require.ErrorIs(t, g3.k.InitGenesis(g3.ctx, bad), types.ErrInvariant)
 }
 
