@@ -8,6 +8,7 @@ import (
 	"cosmossdk.io/core/address"
 	corestore "cosmossdk.io/core/store"
 	"cosmossdk.io/log"
+	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -88,6 +89,22 @@ type Keeper struct {
 	// RewardEscrows maps each validator's reward escrow account to the
 	// validator's address (escrow.go). Rebuilt from x/staking at genesis.
 	RewardEscrows collections.Map[[]byte, []byte]
+
+	// Lazy gov snapshots (votes.go).
+	SnapshotSeq       collections.Sequence
+	SupplyCheckpoints collections.Map[collections.Pair[string, uint64], math.Int]
+	CheckpointsBySeq  collections.KeySet[collections.Pair[uint64, string]]
+	SnapshotsBySeq    collections.KeySet[collections.Pair[uint64, uint64]]
+
+	// EpochSweep is the epoch-end book sweep's progress (epoch.go).
+	EpochSweep collections.Item[types.EpochSweep]
+	// PositionCount is the number of Positions.
+	PositionCount collections.Item[uint64]
+	// RetiringEscrows: (release time ns, validator) for operators that
+	// removed their whole self-bond; PendingReleases: removed validators
+	// whose escrow release failed and is retried (escrow.go).
+	RetiringEscrows collections.KeySet[collections.Pair[int64, []byte]]
+	PendingReleases collections.KeySet[[]byte]
 }
 
 type govRef struct{ k *govkeeper.Keeper }
@@ -161,6 +178,18 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
 		StakeLatestRoot: collections.NewItem(sb, types.StakeLatestRootKey, "stake_latest_root", collections.BytesValue),
 		RewardEscrows:   collections.NewMap(sb, types.RewardEscrowsKey, "reward_escrows", collections.BytesKey, collections.BytesValue),
+		SnapshotSeq:     collections.NewSequence(sb, types.SnapshotSeqKey, "snapshot_seq"),
+		SupplyCheckpoints: collections.NewMap(sb, types.SupplyCheckpointsKey, "supply_checkpoints",
+			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key), sdk.IntValue),
+		CheckpointsBySeq: collections.NewKeySet(sb, types.CheckpointsBySeqKey, "checkpoints_by_seq",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey)),
+		SnapshotsBySeq: collections.NewKeySet(sb, types.SnapshotsBySeqKey, "snapshots_by_seq",
+			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key)),
+		EpochSweep:    collections.NewItem(sb, types.EpochSweepKey, "epoch_sweep", codec.CollValue[types.EpochSweep](cdc)),
+		PositionCount: collections.NewItem(sb, types.PositionCountKey, "position_count", collections.Uint64Value),
+		RetiringEscrows: collections.NewKeySet(sb, types.RetiringEscrowsKey, "retiring_escrows",
+			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
+		PendingReleases: collections.NewKeySet(sb, types.PendingReleasesKey, "pending_releases", collections.BytesKey),
 	}
 	schema, err := sb.Build()
 	if err != nil {
@@ -184,10 +213,21 @@ func (k Keeper) logger(ctx context.Context) log.Logger {
 	return sdk.UnwrapSDKContext(ctx).Logger().With("module", "x/"+types.ModuleName)
 }
 
+// valAddr decodes a validator operator string, refusing any but the
+// canonical encoding of its bytes: this module keys its books by the string,
+// x/staking by the bytes, so an alias (an uppercase bech32 string decodes to
+// the same bytes) would be a second book over the same delegation.
 func (k Keeper) valAddr(valoper string) (sdk.ValAddress, error) {
 	bz, err := k.staking.ValidatorAddressCodec().StringToBytes(valoper)
 	if err != nil {
 		return nil, types.ErrValidator.Wrapf("%s: %v", valoper, err)
+	}
+	canon, err := k.staking.ValidatorAddressCodec().BytesToString(bz)
+	if err != nil {
+		return nil, types.ErrValidator.Wrapf("%s: %v", valoper, err)
+	}
+	if canon != valoper {
+		return nil, types.ErrValidator.Wrapf("%q is not canonical (%s)", valoper, canon)
 	}
 	return bz, nil
 }

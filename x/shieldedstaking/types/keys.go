@@ -34,15 +34,26 @@ const (
 	// MaxOptionsPerVote bounds a stake vote's weighted options (x/gov has four).
 	MaxOptionsPerVote = 4
 
-	// EpochValidatorLimit caps how many validators one epoch end processes.
-	// A validator the cap leaves out keeps its queue until the next epoch.
+	// EpochValidatorLimit caps how many validator books one block processes.
+	// An epoch end starts a sweep over every book, in key order from a
+	// persistent cursor; it goes on in the following blocks, this many books a
+	// block, until it reaches the last book (EpochSweep). Every book is
+	// processed within ceil(books / EpochValidatorLimit) blocks of the epoch
+	// end, whatever the books' keys.
 	EpochValidatorLimit = 200
 
-	// MaturityLimit caps how many unbonding records one block matures. The
-	// rest wait a block: their SDK entries also wait for x/staking, which pays
-	// every mature entry each block, so a record that misses its block is
-	// read at the next block with its entry already gone — see matureRecords.
-	MaturityLimit = 500
+	// InvariantBookLimit bounds the epoch end's invariant check: with more
+	// books or unbond records than this it is skipped (and an event says so)
+	// rather than walk them all in EndBlock. Tests and genesis run it in full.
+	InvariantBookLimit = 1_000
+
+	// CheckpointPruneLimit caps how many dead supply checkpoints one block
+	// deletes.
+	CheckpointPruneLimit = 500
+
+	// EscrowRetireLimit caps how many retired operators' escrows one block
+	// releases.
+	EscrowRetireLimit = 50
 
 	// SnapshotSweepLimit caps how many finished proposals one block forgets.
 	SnapshotSweepLimit = 20
@@ -83,6 +94,23 @@ var (
 	// RewardEscrowsKey maps each validator's reward escrow account to the
 	// validator (escrow.go).
 	RewardEscrowsKey = collections.NewPrefix(20)
+
+	// Lazy per-validator gov snapshots (votes.go): the last snapshot sequence
+	// issued, each book's supply checkpoints by (validator, seq) and by
+	// (seq, validator) for pruning, and the open snapshots by (seq, proposal).
+	SnapshotSeqKey       = collections.NewPrefix(21)
+	SupplyCheckpointsKey = collections.NewPrefix(22)
+	CheckpointsBySeqKey  = collections.NewPrefix(23)
+	SnapshotsBySeqKey    = collections.NewPrefix(24)
+	// EpochSweepKey is the epoch-end sweep's state (epoch.go).
+	EpochSweepKey = collections.NewPrefix(25)
+	// PositionCountKey counts Positions.
+	PositionCountKey = collections.NewPrefix(26)
+	// RetiringEscrowsKey schedules (time, validator) the release of a reward
+	// escrow whose operator removed its whole self-bond (escrow.go);
+	// PendingReleasesKey holds removed validators whose release failed.
+	RetiringEscrowsKey = collections.NewPrefix(27)
+	PendingReleasesKey = collections.NewPrefix(28)
 )
 
 // DerthDenom is validator's delegation token.

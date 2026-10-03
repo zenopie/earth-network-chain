@@ -57,6 +57,30 @@ message ValidatorState {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+  // checkpoint_seq is the latest snapshot sequence for which this book's
+  // derth_supply was checkpointed (SupplyCheckpoint) before it changed.
+  uint64 checkpoint_seq = 6;
+}
+
+// SupplyCheckpoint is a book's derth supply just before its first change
+// after the snapshot with sequence seq: the supply every snapshot with a
+// sequence in (the book's previous checkpoint, seq] saw.
+message SupplyCheckpoint {
+  string validator = 1;
+  uint64 seq = 2;
+  string supply = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// EpochSweep is the epoch-end processing of validator books, spread over
+// blocks: active while a sweep is under way, cursor the last book processed.
+message EpochSweep {
+  bool active = 1;
+  string cursor = 2;
 }
 
 // UnbondStatus is where an epoch's undelegation for one validator stands.
@@ -174,7 +198,12 @@ message ProposalSnapshot {
   int64 height = 4;
   // voting_end, unix nanoseconds. Votes are accepted before it.
   int64 voting_end = 5;
+  // validators is the per-validator snapshot of snapshots taken before
+  // seq existed (genesis compatibility); empty for newer ones, whose supplies
+  // are read from the books' SupplyCheckpoints.
   repeated ValidatorSnapshot validators = 6 [(gogoproto.nullable) = false];
+  // seq is this snapshot's sequence number (1, 2, ...); 0 for the legacy form.
+  uint64 seq = 7;
 }
 
 // ValidatorSnapshot is one validator's derth supply and rate at a snapshot.

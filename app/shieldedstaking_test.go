@@ -772,12 +772,15 @@ func TestStakeVoteTally(t *testing.T) {
 	snap, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), prop)
 	require.NoError(t, err)
 	require.NotEmpty(t, snap.Root)
-	supply := map[string]math.Int{}
-	for _, vs := range snap.Validators {
-		supply[vs.Validator] = vs.Supply
+	supplyAt := func(v sdk.ValAddress) math.Int {
+		s, err := e.app.ShieldedStakingKeeper.SnapshotSupply(e.ctx(), prop, e.valoper(v))
+		require.NoError(t, err)
+		return s
 	}
-	require.Equal(t, math.NewIntFromUint64(n1.amount+n2.amount+n4.amount+n5.amount), supply[e.valoper(vB)])
-	require.Equal(t, math.NewIntFromUint64(n3.amount), supply[e.valoper(vA)])
+	require.Empty(t, snap.Validators, "snapshots are O(1): supplies are read lazily")
+	require.Equal(t, math.NewIntFromUint64(n1.amount+n2.amount+n4.amount+n5.amount), supplyAt(vB))
+	require.Equal(t, math.NewIntFromUint64(n3.amount), supplyAt(vA))
+	supply := map[string]math.Int{e.valoper(vA): supplyAt(vA), e.valoper(vB): supplyAt(vB)}
 
 	// A position locked after the snapshot may not vote; nor may the note it
 	// came from (spent), nor the note behind P (spent into P before).
@@ -795,6 +798,9 @@ func TestStakeVoteTally(t *testing.T) {
 	// Nor a derth note made after the snapshot: it is not in the snapshot
 	// root, and a vote spending against any other root is refused.
 	n6 := e.delegate(vB, uint64(100*ssErth))
+	// The supply checkpoint keeps vB's snapshot supply as it was.
+	require.Equal(t, math.NewIntFromUint64(n1.amount+n2.amount+n4.amount+n5.amount), supplyAt(vB))
+	require.True(t, e.app.ShieldedStakingKeeper.Supply(e.ctx(), e.valoper(vB)).GT(supplyAt(vB)))
 	sv, _, _, _ := e.stakeVoteMsg(n6, prop, v1.NewNonSplitVoteOption(v1.OptionNo), true, true)
 	res = e.checkTx(e.privateTx(sv))
 	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), res.Code, res.Log)

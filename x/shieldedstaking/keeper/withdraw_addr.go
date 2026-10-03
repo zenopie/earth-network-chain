@@ -137,6 +137,15 @@ func (k Keeper) initGenesisEscrows(ctx context.Context) error {
 		if err := k.setOperatorEscrow(ctx, bz, true); err != nil {
 			return errorsmod.Wrap(err, "genesis")
 		}
+		// An operator already without a self-bond retires a full
+		// unbonding time from now (escrow.go).
+		if _, err := k.staking.GetDelegation(ctx, sdk.AccAddress(bz), bz); errors.Is(err, stakingtypes.ErrNoDelegation) {
+			if err := k.scheduleRetirement(ctx, bz); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
 	}
 	return nil
 }

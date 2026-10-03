@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 
 	"cosmossdk.io/math"
 
@@ -116,10 +117,11 @@ func (gs GenesisState) Validate() error {
 	seen := make(map[string]struct{}, len(gs.AuctionBids))
 	bidTotal := math.ZeroInt()
 	for _, b := range gs.AuctionBids {
-		if _, ok := seen[b.Bidder]; ok {
+		// bech32 is case-insensitive: one bidder, one store key.
+		if _, ok := seen[strings.ToLower(b.Bidder)]; ok {
 			return fmt.Errorf("duplicated auction bid for %s", b.Bidder)
 		}
-		seen[b.Bidder] = struct{}{}
+		seen[strings.ToLower(b.Bidder)] = struct{}{}
 		if b.Amount.IsNil() || !b.Amount.IsPositive() {
 			return fmt.Errorf("auction bid for %s must be positive", b.Bidder)
 		}
@@ -202,7 +204,7 @@ func (gs GenesisState) Validate() error {
 		// Completion time and pool and address (or a private withdrawal's id)
 		// form the store key, so a repeat would silently overwrite rather than
 		// restore both.
-		k := fmt.Sprintf("%d/%d/%s/%x", u.CompletionTime, u.PoolId, u.Address, u.WithdrawalId)
+		k := fmt.Sprintf("%d/%d/%s/%x", u.CompletionTime, u.PoolId, strings.ToLower(u.Address), u.WithdrawalId)
 		if _, ok := unbondSeen[k]; ok {
 			return fmt.Errorf("duplicated lp unbonding for %s in pool %d at %d",
 				u.Address, u.PoolId, u.CompletionTime)

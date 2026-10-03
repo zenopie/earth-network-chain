@@ -164,12 +164,7 @@ func released(msg shieldedtypes.PrivateMsg, denom string) uint64 {
 	return 0
 }
 
-func checkValidator(v string) error {
-	if v == "" || len(v) > 128 || bytes.ContainsAny([]byte(v), "/ ") {
-		return errorsmod.Wrap(ErrInvalidMsg, "invalid validator")
-	}
-	return nil
-}
+func checkValidator(v string) error { return CanonicalValoper(v) }
 
 func bundle(b *shieldedtypes.Bundle) []*shieldedtypes.Bundle { return []*shieldedtypes.Bundle{b} }
 

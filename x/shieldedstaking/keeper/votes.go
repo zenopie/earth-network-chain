@@ -37,6 +37,114 @@ import (
 // exceeds bonded stake. Those shares are deducted from v, which (as in the
 // SDK's default tally) then votes whatever was not deducted: its self-bond,
 // the module's un-voted derth, and any delegator that did not vote.
+//
+// A vote outlives the stake that cast it (audit F6, by design): the notes a
+// stake vote spent are re-minted to their owner, who may then undelegate
+// them, and a position may unlock after voting; the vote still counts. The
+// chain cannot tell which derth left (the notes are private), so it counts
+// a vote as a fraction of the validator's snapshot supply applied to the
+// module's current shares: undelegations during the vote shrink every
+// private vote at v pro rata (voters' and non-voters' alike), never the
+// total past the module's bonded stake at v. A voter that exits therefore
+// keeps a diluted voice until the proposal ends, as in a snapshot-weighted
+// vote. Tracking each voted note to its exit would mean linking the vote to
+// later spends, which the privacy model forbids.
+
+// Snapshots are O(1) (audit F2: walking every book, with a reward
+// computation each, inside the deposit tx that activates voting let enough
+// books make every such deposit run out of gas).
+//
+// A snapshot records the stake root and takes the next sequence number seq.
+// A validator's derth supply as of the snapshot is recovered lazily, when a
+// vote or the tally needs it, from supply checkpoints written copy-on-write:
+// the first time a book's derth supply changes after snapshot seq was taken
+// (Delegate, Undelegate: checkpointSupply), the supply it had until then is
+// stored under (validator, seq) unless an entry is there already. The
+// supply snapshot s saw for v is then the entry (v, q) with the smallest
+// q >= s.seq — the supply just before v's first change after s — or, with
+// no such entry, v's current supply (it has not changed since s). Each
+// change writes at most one entry, so a delegation pays O(1) for the
+// snapshots it might affect, and a deposit pays O(1) whatever the book
+// count. Entries no open snapshot can need (q below the oldest open
+// snapshot's seq) are pruned, a bounded number a block.
+
+// checkpointSupply must run before vs's derth supply changes: it records
+// the supply open snapshots saw, if this is the book's first change since
+// the latest snapshot. vs is updated; the caller stores it.
+func (k Keeper) checkpointSupply(ctx context.Context, vs *types.ValidatorState) error {
+	cur, err := k.SnapshotSeq.Peek(ctx)
+	if err != nil {
+		return err
+	}
+	if cur == 0 || vs.CheckpointSeq >= cur {
+		return nil
+	}
+	open, err := k.anyOpenSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if open {
+		key := collections.Join(vs.Validator, cur)
+		has, err := k.SupplyCheckpoints.Has(ctx, key)
+		if err != nil {
+			return err
+		}
+		if !has {
+			supply := vs.DerthSupply
+			if supply.IsNil() {
+				supply = math.ZeroInt()
+			}
+			if err := k.SupplyCheckpoints.Set(ctx, key, supply); err != nil {
+				return err
+			}
+			if err := k.CheckpointsBySeq.Set(ctx, collections.Join(cur, vs.Validator)); err != nil {
+				return err
+			}
+		}
+	}
+	vs.CheckpointSeq = cur
+	return nil
+}
+
+func (k Keeper) anyOpenSnapshot(ctx context.Context) (bool, error) {
+	it, err := k.SnapshotsBySeq.Iterate(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer it.Close()
+	return it.Valid(), nil
+}
+
+// snapshotSupply is valoper's derth supply as of snap.
+func (k Keeper) snapshotSupply(ctx context.Context, snap types.ProposalSnapshot, valoper string) (math.Int, error) {
+	if snap.Seq == 0 {
+		for _, vs := range snap.Validators {
+			if vs.Validator == valoper {
+				return vs.Supply, nil
+			}
+		}
+		return math.ZeroInt(), nil
+	}
+	rng := collections.NewPrefixedPairRange[string, uint64](valoper).StartInclusive(snap.Seq)
+	it, err := k.SupplyCheckpoints.Iterate(ctx, rng)
+	if err != nil {
+		return math.Int{}, err
+	}
+	defer it.Close()
+	if it.Valid() {
+		return it.Value()
+	}
+	return k.Supply(ctx, valoper), nil
+}
+
+// SnapshotSupply is valoper's derth supply as of proposalID's snapshot.
+func (k Keeper) SnapshotSupply(ctx context.Context, proposalID uint64, valoper string) (math.Int, error) {
+	snap, err := k.Snapshots.Get(ctx, proposalID)
+	if err != nil {
+		return math.Int{}, err
+	}
+	return k.snapshotSupply(ctx, snap, valoper)
+}
 
 // snapshotProposal records proposalID's snapshot if it has entered voting.
 func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
@@ -64,20 +172,15 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 	} else if !errors.Is(err, collections.ErrNotFound) {
 		return err
 	}
-	err = k.Validators.Walk(ctx, nil, func(v string, _ types.ValidatorState) (bool, error) {
-		b, s, err := k.Backing(ctx, v)
-		if err != nil {
-			return true, err
-		}
-		if s.IsPositive() {
-			snap.Validators = append(snap.Validators, types.ValidatorSnapshot{Validator: v, Supply: s, Rate: rateOf(b, s)})
-		}
-		return false, nil
-	})
+	seq, err := k.SnapshotSeq.Next(ctx)
 	if err != nil {
 		return err
 	}
+	snap.Seq = seq + 1
 	if err := k.Snapshots.Set(ctx, proposalID, snap); err != nil {
+		return err
+	}
+	if err := k.SnapshotsBySeq.Set(ctx, collections.Join(snap.Seq, proposalID)); err != nil {
 		return err
 	}
 	if err := k.SnapshotExpiry.Set(ctx, collections.Join(snap.VotingEnd, proposalID)); err != nil {
@@ -90,27 +193,68 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 	return nil
 }
 
-// openSnapshot returns proposalID's snapshot and valoper's entry in it, if
-// the proposal is still open to stake votes.
-func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper string) (types.ProposalSnapshot, types.ValidatorSnapshot, error) {
+// openSnapshot returns proposalID's snapshot and valoper's derth supply as
+// of it, if the proposal is still open to stake votes.
+func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper string) (types.ProposalSnapshot, math.Int, error) {
 	snap, err := k.Snapshots.Get(ctx, proposalID)
 	if errors.Is(err, collections.ErrNotFound) {
-		return snap, types.ValidatorSnapshot{}, types.ErrNoVoting.Wrapf("proposal %d has no stake-vote snapshot", proposalID)
+		return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d has no stake-vote snapshot", proposalID)
 	} else if err != nil {
-		return snap, types.ValidatorSnapshot{}, err
+		return snap, math.Int{}, err
 	}
 	if sdk.UnwrapSDKContext(ctx).BlockTime().UnixNano() >= snap.VotingEnd {
-		return snap, types.ValidatorSnapshot{}, types.ErrNoVoting.Wrapf("voting on proposal %d has ended", proposalID)
+		return snap, math.Int{}, types.ErrNoVoting.Wrapf("voting on proposal %d has ended", proposalID)
 	}
 	if len(snap.Root) == 0 {
-		return snap, types.ValidatorSnapshot{}, types.ErrNoVoting.Wrap("the stake tree was empty when voting began")
+		return snap, math.Int{}, types.ErrNoVoting.Wrap("the stake tree was empty when voting began")
 	}
-	for _, vs := range snap.Validators {
-		if vs.Validator == valoper {
-			return snap, vs, nil
+	supply, err := k.snapshotSupply(ctx, snap, valoper)
+	if err != nil {
+		return snap, math.Int{}, err
+	}
+	if !supply.IsPositive() {
+		return snap, math.Int{}, types.ErrNoVoting.Wrapf("%s had no derth when voting began", valoper)
+	}
+	return snap, supply, nil
+}
+
+// pruneCheckpoints deletes supply checkpoints no open snapshot can need:
+// those with a seq below the oldest open snapshot's (all of them when none
+// is open). Bounded per block.
+func (k Keeper) pruneCheckpoints(ctx context.Context) error {
+	limit := ^uint64(0)
+	it, err := k.SnapshotsBySeq.Iterate(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if it.Valid() {
+		key, err := it.Key()
+		if err != nil {
+			it.Close()
+			return err
+		}
+		limit = key.K1()
+	}
+	it.Close()
+	var dead []collections.Pair[uint64, string]
+	if err := k.CheckpointsBySeq.Walk(ctx, nil, func(key collections.Pair[uint64, string]) (bool, error) {
+		if key.K1() >= limit || len(dead) >= types.CheckpointPruneLimit {
+			return true, nil
+		}
+		dead = append(dead, key)
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	for _, key := range dead {
+		if err := k.SupplyCheckpoints.Remove(ctx, collections.Join(key.K2(), key.K1())); err != nil {
+			return err
+		}
+		if err := k.CheckpointsBySeq.Remove(ctx, key); err != nil {
+			return err
 		}
 	}
-	return snap, types.ValidatorSnapshot{}, types.ErrNoVoting.Wrapf("%s had no derth when voting began", valoper)
+	return nil
 }
 
 func zeroTally() types.VoteTally {
@@ -193,6 +337,9 @@ func (k Keeper) sweepSnapshots(ctx context.Context) {
 		due = append(due, key)
 		return false, nil
 	})
+	if err := k.guarded(ctx, k.pruneCheckpoints); err != nil {
+		k.failure(ctx, "prune_checkpoints", "", err)
+	}
 	budget := 2_000
 	for _, key := range due {
 		id := key.K2()
@@ -221,6 +368,13 @@ func (k Keeper) sweepSnapshots(ctx context.Context) {
 				return nil // more next block
 			}
 			if err := k.Tallies.Clear(cc, collections.NewPrefixedPairRange[uint64, string](id)); err != nil {
+				return err
+			}
+			snap, err := k.Snapshots.Get(cc, id)
+			if err != nil {
+				return err
+			}
+			if err := k.SnapshotsBySeq.Remove(cc, collections.Join(snap.Seq, id)); err != nil {
 				return err
 			}
 			if err := k.Snapshots.Remove(cc, id); err != nil {
@@ -319,16 +473,18 @@ func (k Keeper) privateTally(ctx context.Context, proposalID uint64, validators 
 	} else if err != nil {
 		return err
 	}
-	supply := map[string]math.Int{}
-	for _, vs := range snap.Validators {
-		supply[vs.Validator] = vs.Supply
-	}
 	return k.Tallies.Walk(ctx, collections.NewPrefixedPairRange[uint64, string](proposalID),
 		func(key collections.Pair[uint64, string], t types.VoteTally) (bool, error) {
 			valoper := key.K2()
 			val, ok := validators[valoper]
-			s := supply[valoper]
-			if !ok || s.IsNil() || !s.IsPositive() || val.DelegatorShares.IsZero() {
+			if !ok || val.DelegatorShares.IsZero() {
+				return false, nil
+			}
+			s, err := k.snapshotSupply(ctx, snap, valoper)
+			if err != nil {
+				return true, err
+			}
+			if s.IsNil() || !s.IsPositive() {
 				return false, nil // not bonded, or no snapshot: no power, as in the default
 			}
 			valAddr, err := k.valAddr(valoper)

@@ -118,9 +118,16 @@ func (StakingHooks) BeforeValidatorModified(context.Context, sdk.ValAddress) err
 // AfterValidatorRemoved releases the removed validator's reward escrow to its
 // operator (escrow.go). x/staking calls it from its EndBlocker, so it never
 // fails: a failure is logged and the escrow keeps its balance.
+//
+// A failed release is queued (PendingReleases) and retried at each epoch
+// end; until it succeeds the escrow stays recorded, and invariant 5 accepts
+// it for a removed validator.
 func (h StakingHooks) AfterValidatorRemoved(ctx context.Context, _ sdk.ConsAddress, val sdk.ValAddress) error {
 	if err := h.k.guarded(ctx, func(cc context.Context) error { return h.k.releaseEscrow(cc, val) }); err != nil {
 		h.k.failure(ctx, "escrow_release", val.String(), err)
+		if err := h.k.PendingReleases.Set(ctx, val); err != nil {
+			h.k.failure(ctx, "escrow_release", val.String(), err)
+		}
 	}
 	return nil
 }
@@ -130,7 +137,16 @@ func (StakingHooks) AfterValidatorBonded(context.Context, sdk.ConsAddress, sdk.V
 func (StakingHooks) AfterValidatorBeginUnbonding(context.Context, sdk.ConsAddress, sdk.ValAddress) error {
 	return nil
 }
-func (StakingHooks) BeforeDelegationRemoved(context.Context, sdk.AccAddress, sdk.ValAddress) error {
+
+// BeforeDelegationRemoved schedules the retirement of an operator that
+// removes its whole self-bond (escrow.go). Never fails the undelegation.
+func (h StakingHooks) BeforeDelegationRemoved(ctx context.Context, del sdk.AccAddress, val sdk.ValAddress) error {
+	if !sdk.AccAddress(val).Equals(del) {
+		return nil
+	}
+	if err := h.k.guarded(ctx, func(cc context.Context) error { return h.k.scheduleRetirement(cc, val) }); err != nil {
+		h.k.failure(ctx, "escrow_retire", val.String(), err)
+	}
 	return nil
 }
 func (StakingHooks) AfterDelegationModified(context.Context, sdk.AccAddress, sdk.ValAddress) error {

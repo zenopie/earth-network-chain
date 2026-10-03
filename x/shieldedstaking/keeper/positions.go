@@ -22,13 +22,25 @@ func (k Keeper) setPosition(ctx context.Context, p types.Position) error {
 	return k.Positions.Set(ctx, p.Id, p)
 }
 
+// positionCount is the number of positions, O(1) (PositionCount is kept by
+// Lock/Unlock and rebuilt at genesis).
 func (k Keeper) positionCount(ctx context.Context) (uint64, error) {
-	var n uint64
-	err := k.Positions.Walk(ctx, nil, func(uint64, types.Position) (bool, error) {
-		n++
-		return false, nil
-	})
+	n, err := k.PositionCount.Get(ctx)
+	if errors.Is(err, collections.ErrNotFound) {
+		return 0, nil
+	}
 	return n, err
+}
+
+func (k Keeper) addPositionCount(ctx context.Context, delta int64) error {
+	n, err := k.positionCount(ctx)
+	if err != nil {
+		return err
+	}
+	if delta < 0 && n < uint64(-delta) {
+		return types.ErrInvariant.Wrap("position count underflow")
+	}
+	return k.PositionCount.Set(ctx, uint64(int64(n)+delta))
 }
 
 // epochRate is v's rate at the last epoch end, 1 before its first.

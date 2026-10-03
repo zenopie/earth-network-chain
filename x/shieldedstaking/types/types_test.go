@@ -1,6 +1,8 @@
 package types
 
 import (
+	"github.com/cosmos/cosmos-sdk/types/bech32"
+	"strings"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -32,4 +34,18 @@ func TestDenoms(t *testing.T) {
 	require.EqualValues(t, 1<<40+7, id)
 	require.Len(t, PositionVoterKey(1), 17)
 	require.NoError(t, sdk.ValidateDenom(UnbondDenom("earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", ^uint64(0))))
+}
+
+func TestCanonicalValoper(t *testing.T) {
+	hrp := sdk.GetConfig().GetBech32ValidatorAddrPrefix()
+	canon, err := bech32.ConvertAndEncode(hrp, make([]byte, 20))
+	require.NoError(t, err)
+	require.NoError(t, CanonicalValoper(canon))
+	require.Error(t, CanonicalValoper(strings.ToUpper(canon)))
+	require.Error(t, CanonicalValoper(""))
+	other, _ := bech32.ConvertAndEncode("other", make([]byte, 20))
+	require.Error(t, CanonicalValoper(other))
+	short, _ := bech32.ConvertAndEncode(hrp, make([]byte, 5))
+	require.Error(t, CanonicalValoper(short))
+	require.Error(t, (&MsgDelegate{Validator: strings.ToUpper(canon)}).ValidateBasic())
 }

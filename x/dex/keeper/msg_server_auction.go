@@ -133,7 +133,11 @@ func (k msgServer) BidLiquidityAuction(ctx context.Context, msg *types.MsgBidLiq
 		if !errors.Is(err, collections.ErrNotFound) {
 			return nil, err
 		}
-		bid = types.AuctionBid{Bidder: msg.Bidder, Amount: math.ZeroInt()}
+		canon, err := k.addressCodec.BytesToString(bidderBz)
+		if err != nil {
+			return nil, err
+		}
+		bid = types.AuctionBid{Bidder: canon, Amount: math.ZeroInt()}
 	}
 	bid.Amount = bid.Amount.Add(msg.Amount.Amount)
 	if err := k.AuctionBids.Set(ctx, bidderBz, bid); err != nil {

@@ -33,6 +33,9 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicate validator %s", v.Validator)
 		}
 		vals[v.Validator] = true
+		if err := CanonicalValoper(v.Validator); err != nil {
+			return fmt.Errorf("book: %w", err)
+		}
 		if err := nonNeg("pending_delegation", v.PendingDelegation); err != nil {
 			return err
 		}
@@ -53,6 +56,9 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicate unbond record %s", key)
 		}
 		recs[key] = true
+		if err := CanonicalValoper(r.Validator); err != nil {
+			return fmt.Errorf("unbond record: %w", err)
+		}
 		for what, x := range map[string]math.Int{
 			"requested": r.Requested, "target": r.Target, "undelegated": r.Undelegated,
 			"payout": r.Payout, "outstanding": r.Outstanding, "paid": r.Paid,
@@ -71,6 +77,9 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("position %d duplicated or not below next_position_id", p.Id)
 		}
 		ids[p.Id] = true
+		if err := CanonicalValoper(p.Validator); err != nil {
+			return fmt.Errorf("position %d: %w", p.Id, err)
+		}
 		if p.Derth.IsNil() || !p.Derth.IsPositive() {
 			return fmt.Errorf("position %d is invalid", p.Id)
 		}
@@ -79,18 +88,57 @@ func (gs GenesisState) Validate() error {
 		}
 	}
 	snaps := map[uint64]bool{}
+	seqs := map[uint64]bool{}
 	for _, s := range gs.Snapshots {
+		if s.Seq > 0 {
+			if seqs[s.Seq] || s.Seq > gs.SnapshotSeq {
+				return fmt.Errorf("snapshot %d: seq %d repeated or above snapshot_seq %d", s.ProposalId, s.Seq, gs.SnapshotSeq)
+			}
+			seqs[s.Seq] = true
+		}
 		if snaps[s.ProposalId] {
 			return fmt.Errorf("duplicate snapshot %d", s.ProposalId)
 		}
 		snaps[s.ProposalId] = true
+		for _, vs := range s.Validators {
+			if err := CanonicalValoper(vs.Validator); err != nil {
+				return fmt.Errorf("snapshot %d: %w", s.ProposalId, err)
+			}
+		}
 	}
 	for _, v := range gs.Votes {
 		if !snaps[v.ProposalId] {
 			return fmt.Errorf("vote on proposal %d without a snapshot", v.ProposalId)
 		}
+		if err := CanonicalValoper(v.Validator); err != nil {
+			return fmt.Errorf("vote on proposal %d: %w", v.ProposalId, err)
+		}
 		if err := ValidateOptions(v.Options); err != nil {
 			return err
+		}
+	}
+	cps := map[string]bool{}
+	for _, c := range gs.SupplyCheckpoints {
+		key := fmt.Sprintf("%s/%d", c.Validator, c.Seq)
+		if cps[key] || c.Seq == 0 || c.Seq > gs.SnapshotSeq {
+			return fmt.Errorf("supply checkpoint %s repeated or out of range", key)
+		}
+		cps[key] = true
+		if err := CanonicalValoper(c.Validator); err != nil {
+			return fmt.Errorf("supply checkpoint: %w", err)
+		}
+		if err := nonNeg("supply checkpoint "+key, c.Supply); err != nil {
+			return err
+		}
+	}
+	for _, v := range gs.Validators {
+		if v.CheckpointSeq > gs.SnapshotSeq {
+			return fmt.Errorf("%s: checkpoint_seq %d above snapshot_seq %d", v.Validator, v.CheckpointSeq, gs.SnapshotSeq)
+		}
+	}
+	if gs.EpochSweep != nil && gs.EpochSweep.Cursor != "" {
+		if err := CanonicalValoper(gs.EpochSweep.Cursor); err != nil {
+			return fmt.Errorf("epoch sweep cursor: %w", err)
 		}
 	}
 	for i, cm := range gs.StakeCommitments {

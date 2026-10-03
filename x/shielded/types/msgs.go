@@ -208,6 +208,11 @@ func (m *MsgSend) UnshieldReceiver(ac address.Codec) ([]byte, error) {
 	if err != nil {
 		return nil, errorsmod.Wrapf(ErrInvalidBundle, "receiver: %v", err)
 	}
+	// The proof binds the bytes, not the string: refuse a re-spelling
+	// (uppercase bech32) that would pass as the same tx under another hash.
+	if s, err := ac.BytesToString(bz); err != nil || s != m.Receiver {
+		return nil, errorsmod.Wrapf(ErrInvalidBundle, "receiver %q is not the canonical encoding of its address", m.Receiver)
+	}
 	return bz, nil
 }
 

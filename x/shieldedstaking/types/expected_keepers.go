@@ -47,6 +47,11 @@ type StakingKeeper interface {
 	// GetAllValidators is every validator, for the genesis check that no
 	// operator's withdraw address points elsewhere.
 	GetAllValidators(ctx context.Context) ([]stakingtypes.Validator, error)
+	// UnbondingTime and MaxEntries bound the module's unbonding entries
+	// per validator (Params.MaxEpochUnbondings) and time an operator's
+	// retirement (escrow.go).
+	UnbondingTime(ctx context.Context) (time.Duration, error)
+	MaxEntries(ctx context.Context) (uint32, error)
 }
 
 // DistrKeeper is x/distribution: rewards and the community pool.

@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 
 	"cosmossdk.io/math"
 )
@@ -136,10 +137,12 @@ func (gs GenesisState) Validate() error {
 
 		seenVoter := make(map[string]struct{}, len(st.Voters))
 		for _, v := range st.Voters {
-			if _, dup := seenVoter[v.Address]; dup {
+			// bech32 is case-insensitive (all lower or all upper): one
+			// address, two spellings, one store key.
+			if _, dup := seenVoter[strings.ToLower(v.Address)]; dup {
 				return fmt.Errorf("stream %s: duplicated voter %s", st.Stream, v.Address)
 			}
-			seenVoter[v.Address] = struct{}{}
+			seenVoter[strings.ToLower(v.Address)] = struct{}{}
 
 			if v.Voter.Weight.IsNil() || v.Voter.Weight.IsNegative() {
 				return fmt.Errorf("stream %s: voter %s has a negative weight", st.Stream, v.Address)

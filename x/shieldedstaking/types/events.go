@@ -14,7 +14,10 @@ const (
 	EventTypeSnapshot       = "shieldedstaking_snapshot"
 	EventTypePosition       = "shieldedstaking_position"
 	EventTypeInvariant      = "shieldedstaking_invariant_broken"
-	EventTypeSelfBond       = "shieldedstaking_self_bond_compounded"
+	// EventTypeOrphan: uerth at a validator that no derth and no record owns
+	// went to the community pool.
+	EventTypeOrphan   = "shieldedstaking_orphan_to_community_pool"
+	EventTypeSelfBond = "shieldedstaking_self_bond_compounded"
 	// A removed validator's reward escrow was released to its operator.
 	EventTypeEscrowReleased = "shieldedstaking_reward_escrow_released"
 	// An operator's withdraw address pointed elsewhere than its reward escrow
