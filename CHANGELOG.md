@@ -15,6 +15,57 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Audit round 4 (see FIX_ROUND4_PROGRESS.md):
+  - x/dex: **pool cap 2^120** on reserves, LP share supply, a swap input and
+    the auction raise (ErrPoolCap, code 1120); payout / POL / deposit maths
+    in big.Int. Before this an IBC voucher of 2^200 seeded a pool whose
+    withdrawal payout overflowed math.Int in the EndBlocker: a permanent
+    halt. Deposits now pull each leg rounded **up**; a pool drained to 0/0
+    exports and validates.
+  - Block hooks (all modules): per-entry work runs on a cache branch that
+    recovers panics (internal/safeexec); a failing entry is skipped or
+    dropped, not a halt. x/assembly refuses a proposal it cannot resolve;
+    x/shieldedstaking's stake tally fails safe (empty result).
+  - Genesis: x/personhood identity roots and x/shieldedstaking stake /
+    snapshot roots are checked against the rebuilt trees and must not
+    postdate genesis; x/shieldedstaking refuses open snapshots at or above
+    the initial height and any withdraw address on its module account
+    (also `genesis validate`, for every module account, and invariant 5);
+    x/assembly exports proposal subjects (`proposal_subjects`).
+  - x/shieldedstaking: a snapshot's derth supply is the supply at the start
+    of its block (new ValidatorState fields `supply_height`,
+    `supply_at_block_start`); stake and nullifier roots are recorded in one
+    guarded call.
+  - x/personhood: lapsed caretaker leases stop earning at their expiry
+    (x/allocation AdvanceIndexTo; own sweep budget); buyback params need
+    window <= max trade <= accrual on the effective values.
+  - Core: CheckTx/ReCheckTx refuse a private tx whose timeout_height is at
+    or below the last committed height; PrepareProposal drops expired txs
+    before counting the private cap; a verifier panic in a proof worker is
+    an action error; a panic in the private ante keeps the gas it charged.
+  - **Wallet-facing:**
+    - MsgSetCaretaker / MsgBindReferrer `max_activation` must be strictly
+      below now - lease length - one day (the bound itself is refused).
+    - MsgBindReferrer consent v2: `consent_expiry_height` (field 7) is
+      required for a bind and signed: "earth.referrer.consent.v2" || u8
+      len(chain_id) || chain_id || nullifier (32) || u64be(expiry_height)
+      || address. Refused past the expiry or more than 50,000 blocks ahead.
+- **Referral codes** (x/personhood). A referrer binding may claim a code
+  (lowercase a-z, 0-9, -; 3-32 chars; no leading/trailing dash): one active
+  code per binding, unique, reserved to its holder for 30 days after the
+  binding lapses, is cleared or moves to another code; swept after.
+  - MsgBindReferrer `code` (field 8): claim, or "" to keep the current one.
+    Sighash fields are now Bytes(address bytes), **Bytes(code)**.
+  - MsgRegister `affiliate_code` (field 14), at most one of it and
+    `affiliate`. The registration binding's affiliate field is
+    H(TAG_AFFCODE, Bytes(code)) (TAG_AFFCODE = "earth.affcode") for a code,
+    Bytes(address bytes) for an address, 0 for none; the referrer's half is
+    paid to the address the code's live binding names. Unknown or lapsed
+    code: ErrUnknownReferralCode (1127); taken: ErrReferralCodeTaken (1126).
+  - Query `ReferrerByCode` (`/earth/personhood/v1/referrer_code/{code}`);
+    `Referrer` also returns the address's code. Genesis carries
+    `referral_codes`.
+
 - x/shieldedstaking: **private stake votes no longer spend the note**
   (ORCHARD_DESIGN.md section 15). One stake note can vote on every
   concurrently open proposal (the decoy-proposal attack on spend-to-vote).
