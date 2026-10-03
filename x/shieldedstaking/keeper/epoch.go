@@ -94,7 +94,7 @@ func (k Keeper) endEpoch(ctx context.Context, epoch types.Epoch) {
 	}
 	k.sweepBooks(ctx, sweep, epoch.Number)
 	k.compoundSelfBonds(ctx)
-	k.reweighPositions(ctx)
+	k.ReweighGroundworks(ctx)
 	if err := k.guarded(ctx, k.sweepForeignRewards); err != nil {
 		k.failure(ctx, "sweep", "", err)
 	}
@@ -126,22 +126,16 @@ func (k Keeper) sweepState(ctx context.Context) types.EpochSweep {
 }
 
 // continueSweep goes on with an epoch-end sweep in a block after the epoch
-// end; the books it processes re-weigh their positions at once (the epoch
-// end re-weighed every position at the rates it had then).
+// end; the books it processes re-weigh their positions voter at once (the
+// epoch end re-weighed every validator's voter at the rates it had then).
 func (k Keeper) continueSweep(ctx context.Context, maxEpoch uint64) {
 	sweep := k.sweepState(ctx)
 	if !sweep.Active {
 		return
 	}
 	for _, v := range k.sweepBooks(ctx, sweep, maxEpoch) {
-		var ids []uint64
-		_ = k.PositionsByVal.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](v),
-			func(key collections.Pair[string, uint64]) (bool, error) {
-				ids = append(ids, key.K2())
-				return false, nil
-			})
-		for _, id := range ids {
-			k.reweighPosition(ctx, id)
+		if _, err := k.GwEpoch.Get(ctx, v); err == nil {
+			k.resyncValidatorVoter(ctx, v)
 		}
 	}
 }
@@ -198,9 +192,17 @@ func (k Keeper) reportInvariants(ctx context.Context) {
 			return n > types.InvariantBookLimit, nil
 		})
 	}
+	if n <= types.InvariantBookLimit {
+		// Positions are uncapped: the walks over them (invariants 2 and 6)
+		// count against the same bound.
+		_ = k.Positions.Walk(ctx, nil, func(uint64, types.Position) (bool, error) {
+			n++
+			return n > types.InvariantBookLimit, nil
+		})
+	}
 	if n > types.InvariantBookLimit {
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeInvariant,
-			sdk.NewAttribute(types.AttributeKeyError, "skipped: too many books and unbond records for one block")))
+			sdk.NewAttribute(types.AttributeKeyError, "skipped: too many books, unbond records and positions for one block")))
 		return
 	}
 	err := func() (err error) {

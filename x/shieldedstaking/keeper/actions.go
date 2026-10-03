@@ -346,13 +346,6 @@ func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
 	if math.NewIntFromUint64(m.Amount).LT(params.MinPosition) {
 		return types.ErrPosition.Wrapf("a position locks at least %s derth", params.MinPosition)
 	}
-	n, err := k.positionCount(ctx)
-	if err != nil {
-		return err
-	}
-	if n >= params.MaxPositions {
-		return types.ErrPosition.Wrapf("%d positions exist already", n)
-	}
 	if err := k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits); err != nil {
 		return err
 	}

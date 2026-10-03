@@ -620,9 +620,9 @@ func TestTransparentStakingBlocked(t *testing.T) {
 func positionKey(i int) fr.Element { return ssDet("position-salt", uint64(i)) }
 
 func (e *stakeEnv) position(id uint64) sstypes.Position {
-	p, err := e.app.ShieldedStakingKeeper.Positions.Get(e.ctx(), id)
+	res, err := sskeeper.NewQueryServerImpl(e.app.ShieldedStakingKeeper).Position(e.ctx(), &sstypes.QueryPositionRequest{Id: id})
 	require.NoError(e.t, err)
-	return p
+	return res.Position
 }
 
 // lock moves amount of a derth stake note into a position owned by (the
@@ -1026,9 +1026,12 @@ func TestGroundworksPositions(t *testing.T) {
 	p := e.position(id)
 	wantW := rate.MulInt64(500 * ssErth).TruncateInt()
 	require.Equal(t, wantW, p.Weight)
-	voter, err := ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), sstypes.PositionVoterKey(id)))
+	// All of vB's positions are one weighted voter: here just this one.
+	vkey := sstypes.ValidatorVoterKey(vB)
+	voter, err := ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), vkey))
 	require.NoError(t, err)
 	require.Equal(t, wantW, voter.Weight)
+	require.Equal(t, []allocationtypes.OptionWeight{{OptionId: 1, Weight: wantW}}, voter.OptionWeights)
 	o, err := ak.Options.Get(e.ctx(), collections.Join(uint32(gw), uint64(1)))
 	require.NoError(t, err)
 	require.Equal(t, wantW, o.AmountAllocated)
@@ -1040,7 +1043,7 @@ func TestGroundworksPositions(t *testing.T) {
 	rate2 := e.state(vB).EpochRate
 	require.True(t, rate2.GT(rate))
 	require.Equal(t, rate2.MulInt64(500*ssErth).TruncateInt(), p.Weight)
-	voter, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), sstypes.PositionVoterKey(id)))
+	voter, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), vkey))
 	require.NoError(t, err)
 	require.Equal(t, p.Weight, voter.Weight)
 	// The stream now carries weight, so its emission index runs.
@@ -1062,7 +1065,7 @@ func TestGroundworksPositions(t *testing.T) {
 	fb := e.run(e.privateTx(m))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
 	e.settle(pt)
-	_, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), sstypes.PositionVoterKey(id)))
+	_, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), vkey))
 	require.ErrorIs(t, err, collections.ErrNotFound)
 	res := e.checkTx(e.privateTx(m))
 	require.Equal(t, shieldedtypes.ErrNullifierSpent.ABCICode(), res.Code, res.Log)
@@ -1164,7 +1167,7 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 	posW := e.position(id).Weight
 	require.True(t, posW.IsPositive())
 	sumVoters := func() math.Int {
-		return voterW(op).Add(voterW(sstypes.PositionVoterKey(id))).Add(voterW(sstypes.PositionVoterKey(idA)))
+		return voterW(op).Add(voterW(sstypes.ValidatorVoterKey(vB))).Add(voterW(sstypes.ValidatorVoterKey(vA)))
 	}
 
 	// The operator votes with its self-bond (100 ERTH, plus the rewards the
@@ -1194,12 +1197,12 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 	require.False(t, src.TracksBonded(mod))
 	_, err = ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), []byte(mod)))
 	require.ErrorIs(t, err, collections.ErrNotFound)
-	require.Equal(t, posW, voterW(sstypes.PositionVoterKey(id)))
+	require.Equal(t, posW, voterW(sstypes.ValidatorVoterKey(vB)))
 	w1 := voterW(op)
 	e.days(1) // an epoch: positions reweigh; the operator's self-bond compounds its rewards
 	require.True(t, bonded().GT(w1), "self-bond compounded: %s", bonded())
 	require.Equal(t, bonded(), voterW(op), "the weight follows the compounded bond")
-	require.Equal(t, e.position(id).Weight, voterW(sstypes.PositionVoterKey(id)))
+	require.Equal(t, e.position(id).Weight, voterW(sstypes.ValidatorVoterKey(vB)))
 	o, err := ak.Options.Get(e.ctx(), collections.Join(uint32(gw), uint64(1)))
 	require.NoError(t, err)
 	require.Equal(t, sumVoters(), o.AmountAllocated)
@@ -1233,12 +1236,12 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 	pA := e.position(idA)
 	require.True(t, pA.Weight.LT(posABefore), "position on the slashed validator: %s -> %s", posABefore, pA.Weight)
 	require.Equal(t, stA.EpochRate.MulInt(pA.Derth).TruncateInt(), pA.Weight)
-	require.Equal(t, pA.Weight, voterW(sstypes.PositionVoterKey(idA)))
+	require.Equal(t, pA.Weight, voterW(sstypes.ValidatorVoterKey(vA)))
 	live, err := e.app.ShieldedStakingKeeper.Rate(e.ctx(), e.valoper(vA))
 	require.NoError(t, err)
 	require.True(t, live.Sub(stA.EpochRate).Abs().LT(math.LegacyNewDecWithPrec(1, 6)), "epoch rate %s live %s", stA.EpochRate, live)
 	require.Equal(t, posBBefore, e.position(id).Weight)
-	require.Equal(t, posBBefore, voterW(sstypes.PositionVoterKey(id)))
+	require.Equal(t, posBBefore, voterW(sstypes.ValidatorVoterKey(vB)))
 	o, err = ak.Options.Get(e.ctx(), collections.Join(uint32(gw), uint64(1)))
 	require.NoError(t, err)
 	require.Equal(t, sumVoters(), o.AmountAllocated)

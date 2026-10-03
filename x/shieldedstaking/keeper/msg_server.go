@@ -12,7 +12,6 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
@@ -277,27 +276,17 @@ func (k msgServer) LockPosition(goCtx context.Context, m *types.MsgLockPosition)
 		return nil, err
 	}
 	p := types.Position{
-		Id: id, Validator: m.Validator, Derth: math.NewIntFromUint64(m.Amount), Splits: m.Splits,
+		Id: id, Validator: m.Validator, Derth: math.NewIntFromUint64(m.Amount),
 		OwnerTag: m.Stake.OwnerTag, CreatedHeight: ctx.BlockHeight(), Weight: math.ZeroInt(),
+	}
+	if p, err = k.applyPositionSplit(ctx, p, m.Splits, false); err != nil {
+		return nil, err
 	}
 	if err := k.setPosition(ctx, p); err != nil {
 		return nil, err
 	}
 	if err := k.PositionsByVal.Set(ctx, collections.Join(p.Validator, id)); err != nil {
 		return nil, err
-	}
-	if err := k.addPositionCount(ctx, 1); err != nil {
-		return nil, err
-	}
-	if len(m.Splits) > 0 {
-		w, err := k.allocation.ApplySplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.PositionVoterKey(id), m.Splits)
-		if err != nil {
-			return nil, err
-		}
-		p.Weight = w
-		if err := k.setPosition(ctx, p); err != nil {
-			return nil, err
-		}
 	}
 	k.positionEvent(ctx, "lock", p)
 	return &types.MsgLockPositionResponse{PositionId: id}, nil
@@ -313,13 +302,8 @@ func (k msgServer) UpdatePosition(goCtx context.Context, m *types.MsgUpdatePosit
 	if err != nil {
 		return nil, err
 	}
-	w, err := k.allocation.ApplySplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.PositionVoterKey(p.Id), m.Splits)
-	if err != nil {
+	if p, err = k.applyPositionSplit(ctx, p, m.Splits, true); err != nil {
 		return nil, err
-	}
-	p.Splits, p.Weight = m.Splits, w
-	if len(m.Splits) == 0 {
-		p.Weight = math.ZeroInt()
 	}
 	if err := k.setPosition(ctx, p); err != nil {
 		return nil, err
@@ -339,7 +323,7 @@ func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosit
 	if err != nil {
 		return nil, err
 	}
-	if err := k.allocation.RemoveVoter(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.PositionVoterKey(p.Id)); err != nil {
+	if _, err := k.applyPositionSplit(ctx, p, nil, true); err != nil {
 		return nil, err
 	}
 	pos, err := k.mintStake(ctx, types.DerthDenom(p.Validator), p.Derth, m.Stake.SpcMint)
@@ -350,9 +334,6 @@ func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosit
 		return nil, err
 	}
 	if err := k.PositionsByVal.Remove(ctx, collections.Join(p.Validator, p.Id)); err != nil {
-		return nil, err
-	}
-	if err := k.addPositionCount(ctx, -1); err != nil {
 		return nil, err
 	}
 	k.positionEvent(ctx, "unlock", p)
@@ -380,6 +361,10 @@ func (k msgServer) PositionVote(goCtx context.Context, m *types.MsgPositionVote)
 }
 
 func (k Keeper) positionEvent(ctx sdk.Context, action string, p types.Position) {
+	p = k.withLiveWeight(ctx, p)
+	if action == "unlock" {
+		p.Weight = math.ZeroInt()
+	}
 	ctx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypePosition,
 		sdk.NewAttribute(types.AttributeKeyAction, action),
 		sdk.NewAttribute(types.AttributeKeyPosition, strconv.FormatUint(p.Id, 10)),

@@ -44,7 +44,9 @@ app/audit_regression_test.go (each now asserts the fail-safe outcome).
   or to an orphan record (payout -> community pool), queue -> community
   pool. Tests TestAuditOrphanBackingNotCaptured,
   TestAuditOrphanDelegationToCommunityPool.
-- Positions: PositionCount O(1); default min_position 100 ERTH.
+- Positions: PositionCount O(1); default min_position 100 ERTH. SUPERSEDED
+  2026-10-02: positions weighed per validator, no count/cap, min_position
+  1 ERTH (FIX_SHIELDED_PROGRESS.md, G).
 - F6 documented (votes.go).
 - F7: BeforeDelegationRemoved(operator self-bond) schedules retirement;
   releaseRetiredEscrows pays the escrow after unbonding_time if no self

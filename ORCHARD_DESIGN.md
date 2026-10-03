@@ -396,6 +396,31 @@ the fee bundle, so a proof is never reusable). Rates, epochs, slashing,
 MaxEntries, gov tally, Groundworks weight and self-bond compounding are
 unchanged.
 
+**Groundworks positions are weighed per validator (2026-10-02, user
+decision).** A position no longer is its own Groundworks voter. x/shieldedstaking
+keeps, per (validator v, option o), `T[v][o] = sum over v's live positions
+of derth x percent` (exact integers, `GwTotals`); Lock, Update and Unlock
+add or take off exactly the position's own `derth x percent` terms, so
+totals return to zero when the positions go. All of v's positions are ONE
+weighted voter in x/allocation, key `"gwpos/" || val_bytes` (26 or 38
+bytes, never an account's 20/32 or a nullifier's 32), with an absolute
+weight per option `trunc(epoch_rate_v x T[v][o] / 100)`
+(`Voter.option_weights`, `allocation.SetWeightedVoter`). The epoch end, a
+book processed later in the sweep, and a slash re-file one voter per
+validator: O(validators), never O(positions). So positions are uncapped
+(`max_positions` and the position count are gone) and `min_position` is
+back to 1 ERTH. Versus voting each position on its own, an option gets at
+least as much and at most 2 uerth-weight more per position (one truncation
+instead of two). A position's `weight` is no longer stored; queries fill in
+derth x epoch rate while its split is live. A governance reset of the
+Groundworks stream is honoured lazily: each position records the stream
+epoch its split was cast in (`split_epoch`) and each validator's totals
+theirs (`GwEpoch`); stale ones count as zero (dropped at the next touch or
+epoch end) and the owner re-votes with MsgUpdatePosition. InitGenesis
+rebuilds the totals from the positions; invariant 6 checks them. Position
+votes on x/gov proposals (stake-tree snapshot) and the self-bond weight path
+are unchanged.
+
 **Validator income compounds; the only exit is unbonding.** Each
 validator has a REWARD ESCROW, `types.RewardEscrowAddress(val) =
 address.Module("shieldedstaking", "reward_escrow", val)` (32 bytes, no key,

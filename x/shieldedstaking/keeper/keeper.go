@@ -98,8 +98,11 @@ type Keeper struct {
 
 	// EpochSweep is the epoch-end book sweep's progress (epoch.go).
 	EpochSweep collections.Item[types.EpochSweep]
-	// PositionCount is the number of Positions.
-	PositionCount collections.Item[uint64]
+	// GwTotals is, per (validator, option), the sum of derth x percent over
+	// the validator's live positions (positions.go); GwEpoch the Groundworks
+	// allocation epoch each validator's totals belong to.
+	GwTotals collections.Map[collections.Pair[string, uint64], math.Int]
+	GwEpoch  collections.Map[string, uint64]
 	// RetiringEscrows: (release time ns, validator) for operators that
 	// removed their whole self-bond; PendingReleases: removed validators
 	// whose escrow release failed and is retried (escrow.go).
@@ -186,7 +189,9 @@ func NewKeeper(
 		SnapshotsBySeq: collections.NewKeySet(sb, types.SnapshotsBySeqKey, "snapshots_by_seq",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key)),
 		EpochSweep:    collections.NewItem(sb, types.EpochSweepKey, "epoch_sweep", codec.CollValue[types.EpochSweep](cdc)),
-		PositionCount: collections.NewItem(sb, types.PositionCountKey, "position_count", collections.Uint64Value),
+		GwTotals: collections.NewMap(sb, types.GwTotalsKey, "gw_totals",
+			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key), sdk.IntValue),
+		GwEpoch: collections.NewMap(sb, types.GwEpochKey, "gw_epoch", collections.StringKey, collections.Uint64Value),
 		RetiringEscrows: collections.NewKeySet(sb, types.RetiringEscrowsKey, "retiring_escrows",
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
 		PendingReleases: collections.NewKeySet(sb, types.PendingReleasesKey, "pending_releases", collections.BytesKey),

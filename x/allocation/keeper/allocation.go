@@ -342,6 +342,36 @@ func settleOption(opt *types.AllocationOption, rewardIndex math.Int) {
 	opt.LastRewardIndex = rewardIndex
 }
 
+// contribution is one option's share of a voter's weight.
+type contribution struct {
+	option uint64
+	amt    math.Int
+}
+
+// splitContributions is a percentage split at weight: weight * percent / 100
+// per option.
+func splitContributions(percentages []types.AllocationWeight, weight math.Int) []contribution {
+	out := make([]contribution, 0, len(percentages))
+	for _, w := range percentages {
+		out = append(out, contribution{w.OptionId, weight.MulRaw(int64(w.Percent)).QuoRaw(100)})
+	}
+	return out
+}
+
+// voterContributions is what a stored voter puts on each option: its
+// absolute option weights for a weighted voter (SetWeightedVoter), else its
+// split at its weight.
+func voterContributions(v types.Voter) []contribution {
+	if len(v.OptionWeights) > 0 {
+		out := make([]contribution, 0, len(v.OptionWeights))
+		for _, w := range v.OptionWeights {
+			out = append(out, contribution{w.OptionId, w.Weight})
+		}
+		return out
+	}
+	return splitContributions(v.Percentages, v.Weight)
+}
+
 // resyncVoter re-applies a voter's split within one stream at the given weight:
 // it removes the voter's previous contribution from each option and from the
 // stream total, then adds the new contribution. The stream's reward index must
@@ -352,6 +382,16 @@ func settleOption(opt *types.AllocationOption, rewardIndex math.Int) {
 // or a staker's normalized bonded stake. Nothing here knows which stream it is
 // working on, which is the point.
 func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz []byte, percentages []types.AllocationWeight, weight math.Int) error {
+	rec := types.Voter{Percentages: percentages, Weight: weight}
+	keep := len(percentages) > 0 && weight.IsPositive()
+	return k.writeVoter(ctx, stream, addrBz, rec, splitContributions(percentages, weight), keep)
+}
+
+// writeVoter replaces a voter's contribution: the stored record's (if it
+// belongs to the current epoch) comes off every option and the stream total,
+// add goes on, and rec is stored (with the current epoch) when keep, else the
+// record is removed. The stream's reward index must already be current.
+func (k Keeper) writeVoter(ctx context.Context, stream types.StreamId, addrBz []byte, rec types.Voter, add []contribution, keep bool) error {
 	rewardIndex, err := k.getRewardIndex(ctx, stream)
 	if err != nil {
 		return err
@@ -369,8 +409,8 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 	// current epoch. A reset already zeroed the aggregates wholesale, so
 	// subtracting a stale record's weight again would drive options negative.
 	if old, err := k.Voters.Get(ctx, voterKey(stream, addrBz)); err == nil && old.Epoch == epoch {
-		for _, w := range old.Percentages {
-			opt, err := k.Options.Get(ctx, optionKey(stream, w.OptionId))
+		for _, c := range voterContributions(old) {
+			opt, err := k.Options.Get(ctx, optionKey(stream, c.option))
 			if err != nil {
 				continue
 			}
@@ -382,9 +422,8 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 				continue
 			}
 			settleOption(&opt, rewardIndex)
-			amt := old.Weight.MulRaw(int64(w.Percent)).QuoRaw(100)
-			opt.AmountAllocated = opt.AmountAllocated.Sub(amt)
-			total = total.Sub(amt)
+			opt.AmountAllocated = opt.AmountAllocated.Sub(c.amt)
+			total = total.Sub(c.amt)
 			if err := k.setOption(ctx, stream, opt); err != nil {
 				return err
 			}
@@ -402,8 +441,8 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 	// split is cast; by the time it is being replayed, refusing is not an option,
 	// because the error would come out of a staking hook and leave the voter
 	// unable to bond or unbond at all.
-	for _, w := range percentages {
-		opt, err := k.Options.Get(ctx, optionKey(stream, w.OptionId))
+	for _, c := range add {
+		opt, err := k.Options.Get(ctx, optionKey(stream, c.option))
 		if err != nil {
 			// The option is gone: struck long enough ago that the idle sweep has
 			// collected it, or pruned after the voter's own weight fell to zero
@@ -418,9 +457,8 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 			continue
 		}
 		settleOption(&opt, rewardIndex)
-		amt := weight.MulRaw(int64(w.Percent)).QuoRaw(100)
-		opt.AmountAllocated = opt.AmountAllocated.Add(amt)
-		total = total.Add(amt)
+		opt.AmountAllocated = opt.AmountAllocated.Add(c.amt)
+		total = total.Add(c.amt)
 		if err := k.setOption(ctx, stream, opt); err != nil {
 			return err
 		}
@@ -433,10 +471,11 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 		return err
 	}
 
-	if len(percentages) == 0 || !weight.IsPositive() {
+	if !keep {
 		return k.Voters.Remove(ctx, voterKey(stream, addrBz))
 	}
-	return k.Voters.Set(ctx, voterKey(stream, addrBz), types.Voter{Percentages: percentages, Weight: weight, Epoch: epoch})
+	rec.Epoch = epoch
+	return k.Voters.Set(ctx, voterKey(stream, addrBz), rec)
 }
 
 // ClearVoter retires an address's vote in one stream, returning the weight it

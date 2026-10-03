@@ -43,7 +43,7 @@ const (
 	EpochValidatorLimit = 200
 
 	// InvariantBookLimit bounds the epoch end's invariant check: with more
-	// books or unbond records than this it is skipped (and an event says so)
+	// books, unbond records and positions than this it is skipped (and an event says so)
 	// rather than walk them all in EndBlock. Tests and genesis run it in full.
 	InvariantBookLimit = 1_000
 
@@ -58,9 +58,9 @@ const (
 	// SnapshotSweepLimit caps how many finished proposals one block forgets.
 	SnapshotSweepLimit = 20
 
-	// PositionKeyPrefix starts a position's voter key in x/allocation (17
-	// bytes: cannot collide with a 20- or 32-byte account address).
-	PositionKeyPrefix = "position:"
+	// ValidatorVoterPrefix starts a validator's Groundworks voter key in
+	// x/allocation (ValidatorVoterKey).
+	ValidatorVoterPrefix = "gwpos/"
 )
 
 // Storage prefixes.
@@ -104,13 +104,17 @@ var (
 	SnapshotsBySeqKey    = collections.NewPrefix(24)
 	// EpochSweepKey is the epoch-end sweep's state (epoch.go).
 	EpochSweepKey = collections.NewPrefix(25)
-	// PositionCountKey counts Positions.
-	PositionCountKey = collections.NewPrefix(26)
+	// 26 was PositionCountKey (positions are no longer counted or capped).
 	// RetiringEscrowsKey schedules (time, validator) the release of a reward
 	// escrow whose operator removed its whole self-bond (escrow.go);
 	// PendingReleasesKey holds removed validators whose release failed.
 	RetiringEscrowsKey = collections.NewPrefix(27)
 	PendingReleasesKey = collections.NewPrefix(28)
+	// Groundworks totals (positions.go): per (validator, option) the sum of
+	// derth x percent over the validator's live positions, and per validator
+	// the Groundworks allocation epoch those totals belong to.
+	GwTotalsKey = collections.NewPrefix(29)
+	GwEpochKey  = collections.NewPrefix(30)
 )
 
 // DerthDenom is validator's delegation token.
@@ -144,20 +148,15 @@ func ParseUnbondDenom(denom string) (string, uint64, bool) {
 	return rest[:i], e, true
 }
 
-// PositionVoterKey is position id's voter key in x/allocation.
-func PositionVoterKey(id uint64) []byte {
-	b := []byte(PositionKeyPrefix)
-	return append(b, byte(id>>56), byte(id>>48), byte(id>>40), byte(id>>32), byte(id>>24), byte(id>>16), byte(id>>8), byte(id))
+// ValidatorVoterKey is the Groundworks voter key under which x/allocation
+// weighs all of validator's positions together: "gwpos/" || the validator's
+// address bytes (26 or 38 bytes, never an account's 20 or 32).
+func ValidatorVoterKey(valBz []byte) []byte {
+	return append([]byte(ValidatorVoterPrefix), valBz...)
 }
 
-// ParsePositionVoterKey is PositionVoterKey's inverse.
-func ParsePositionVoterKey(key []byte) (uint64, bool) {
-	if len(key) != len(PositionKeyPrefix)+8 || string(key[:len(PositionKeyPrefix)]) != PositionKeyPrefix {
-		return 0, false
-	}
-	var id uint64
-	for _, b := range key[len(PositionKeyPrefix):] {
-		id = id<<8 | uint64(b)
-	}
-	return id, true
+// IsValidatorVoterKey reports whether key is a ValidatorVoterKey.
+func IsValidatorVoterKey(key []byte) bool {
+	n := len(key) - len(ValidatorVoterPrefix)
+	return (n == 20 || n == 32) && string(key[:len(ValidatorVoterPrefix)]) == ValidatorVoterPrefix
 }

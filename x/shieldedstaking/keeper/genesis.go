@@ -67,7 +67,7 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.PositionSeq.Set(ctx, gs.NextPositionId); err != nil {
 		return err
 	}
-	if err := k.PositionCount.Set(ctx, uint64(len(gs.Positions))); err != nil {
+	if err := k.rebuildGwTotals(ctx); err != nil {
 		return err
 	}
 	if err := k.SnapshotSeq.Set(ctx, gs.SnapshotSeq); err != nil {

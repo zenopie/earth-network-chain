@@ -76,7 +76,7 @@ func (q queryServer) Position(ctx context.Context, req *types.QueryPositionReque
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	return &types.QueryPositionResponse{Position: p}, nil
+	return &types.QueryPositionResponse{Position: q.k.withLiveWeight(ctx, p)}, nil
 }
 
 func (q queryServer) Positions(ctx context.Context, req *types.QueryPositionsRequest) (*types.QueryPositionsResponse, error) {
@@ -85,7 +85,7 @@ func (q queryServer) Positions(ctx context.Context, req *types.QueryPositionsReq
 		pr = req.Pagination
 	}
 	ps, page, err := query.CollectionPaginate(ctx, q.k.Positions, pr,
-		func(_ uint64, p types.Position) (types.Position, error) { return p, nil })
+		func(_ uint64, p types.Position) (types.Position, error) { return q.k.withLiveWeight(ctx, p), nil })
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

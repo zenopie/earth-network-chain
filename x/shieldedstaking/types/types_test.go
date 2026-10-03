@@ -29,10 +29,12 @@ func TestDenoms(t *testing.T) {
 	require.Equal(t, "earthvaloper1abc", v)
 	_, ok = ParseDerthDenom("derth/a/b")
 	require.False(t, ok)
-	id, ok := ParsePositionVoterKey(PositionVoterKey(1<<40 + 7))
-	require.True(t, ok)
-	require.EqualValues(t, 1<<40+7, id)
-	require.Len(t, PositionVoterKey(1), 17)
+	vk := ValidatorVoterKey(make([]byte, 20))
+	require.Len(t, vk, 26)
+	require.True(t, IsValidatorVoterKey(vk))
+	require.True(t, IsValidatorVoterKey(ValidatorVoterKey(make([]byte, 32))))
+	require.False(t, IsValidatorVoterKey(make([]byte, 20)))
+	require.False(t, IsValidatorVoterKey(make([]byte, 32)))
 	require.NoError(t, sdk.ValidateDenom(UnbondDenom("earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", ^uint64(0))))
 }
 

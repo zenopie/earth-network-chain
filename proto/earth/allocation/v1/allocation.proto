@@ -123,4 +123,20 @@ message Voter {
   // instead of subtracting weight that has already been cleared. Epochs are per
   // stream: resetting one stream leaves the other untouched.
   uint64 epoch = 3;
+  // option_weights, when set, replace percentages and weight's split: the
+  // voter puts an absolute weight on each option, and weight is their sum.
+  // For a module that aggregates many splits into one voter
+  // (x/shieldedstaking files every Groundworks position of a validator as
+  // one voter, SetWeightedVoter). Never set together with percentages.
+  repeated OptionWeight option_weights = 4 [(gogoproto.nullable) = false];
+}
+
+// OptionWeight is one option's absolute weight in a weighted voter.
+message OptionWeight {
+  uint64 option_id = 1;
+  string weight = 2 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
 }

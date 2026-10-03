@@ -15,6 +15,14 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- x/shieldedstaking + x/allocation: Groundworks positions are weighed per
+  validator. Each validator with live positions is one weighted Groundworks
+  voter (`gwpos/` + validator bytes; new `Voter.option_weights`) carrying
+  trunc(rate x sum(derth x percent) / 100) per option; the epoch end
+  re-weighs validators, not positions. Param `max_positions` removed (proto
+  field 3 reserved), `min_position` default 1 ERTH; new `Position.split_epoch`;
+  a position's `weight` is filled in by queries, not stored.
+
 - x/assembly: a proposal mixing a revocation (MsgRevokeDsc/MsgRevokeCsca)
   with any other message, or nesting one inside another message (authz
   MsgExec, ...), takes no human votes and fails.

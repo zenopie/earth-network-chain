@@ -16,8 +16,9 @@ message Params {
   // queued during an epoch are executed, and rewards compounded, at its end.
   uint64 epoch_seconds = 1;
 
-  // min_position is the smallest derth a Groundworks position may lock. Every
-  // position is re-weighed at every epoch end, so this bounds that work.
+  // min_position is the smallest derth a Groundworks position may lock.
+  // Positions are weighed per validator (one Groundworks voter each), so no
+  // epoch work grows with their number; this only keeps dust out.
   string min_position = 2 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
@@ -25,8 +26,9 @@ message Params {
     (amino.dont_omitempty) = true
   ];
 
-  // max_positions caps how many positions exist at once, for the same reason.
-  uint64 max_positions = 3;
+  // max_positions (3) is retired: positions are aggregated per validator.
+  reserved 3;
+  reserved "max_positions";
 
   // stake_root_window_seconds is how long a superseded stake-tree root stays
   // an anchor (the latest never expires; a vote's snapshot root is accepted

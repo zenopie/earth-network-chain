@@ -36,6 +36,8 @@ import (
 //  5. Reward escrows: every validator has its escrow recorded and its
 //     operator's withdraw address is that escrow; no other escrow is
 //     recorded (a removed validator's was released).
+//  6. Groundworks: per (validator, option), the stored total (current epoch)
+//     == the sum of derth x percent over the validator's live positions.
 func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertERTH(ctx); err != nil {
 		return err
@@ -47,6 +49,9 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 		return err
 	}
 	if err := k.assertRates(ctx); err != nil {
+		return err
+	}
+	if err := k.assertGwTotals(ctx); err != nil {
 		return err
 	}
 	return k.assertEscrows(ctx)

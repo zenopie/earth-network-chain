@@ -166,8 +166,42 @@ func (gs GenesisState) Validate() error {
 			if len(v.Voter.Percentages) > 0 && pct > 100 {
 				return fmt.Errorf("stream %s: voter %s allocates %d%%", st.Stream, v.Address, pct)
 			}
+			if err := validateWeightedVoter(v, seenOption); err != nil {
+				return fmt.Errorf("stream %s: %w", st.Stream, err)
+			}
 		}
 	}
 
 	return gs.Params.Validate()
+}
+
+// validateWeightedVoter checks a weighted voter (option_weights set): no
+// percentages beside them, each weight positive on a distinct existing
+// option, and weight their sum.
+func validateWeightedVoter(v VoterEntry, options map[uint64]struct{}) error {
+	if len(v.Voter.OptionWeights) == 0 {
+		return nil
+	}
+	if len(v.Voter.Percentages) > 0 {
+		return fmt.Errorf("voter %s has both percentages and option weights", v.Address)
+	}
+	sum := math.ZeroInt()
+	seen := make(map[uint64]struct{}, len(v.Voter.OptionWeights))
+	for _, w := range v.Voter.OptionWeights {
+		if _, ok := options[w.OptionId]; !ok {
+			return fmt.Errorf("voter %s weighs option %d, which does not exist", v.Address, w.OptionId)
+		}
+		if _, dup := seen[w.OptionId]; dup {
+			return fmt.Errorf("voter %s weighs option %d twice", v.Address, w.OptionId)
+		}
+		seen[w.OptionId] = struct{}{}
+		if w.Weight.IsNil() || !w.Weight.IsPositive() {
+			return fmt.Errorf("voter %s has a non-positive weight on option %d", v.Address, w.OptionId)
+		}
+		sum = sum.Add(w.Weight)
+	}
+	if !sum.Equal(v.Voter.Weight) {
+		return fmt.Errorf("voter %s weight %s is not the sum of its option weights %s", v.Address, v.Voter.Weight, sum)
+	}
+	return nil
 }

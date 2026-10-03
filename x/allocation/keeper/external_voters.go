@@ -146,6 +146,11 @@ func (k Keeper) ResyncVoter(ctx context.Context, stream types.StreamId, key []by
 	if voter.Epoch != epoch {
 		return k.Voters.Remove(ctx, voterKey(stream, key))
 	}
+	// A weighted voter's option weights are its module's to set
+	// (SetWeightedVoter); the stream's weight source has nothing to add.
+	if len(voter.OptionWeights) > 0 {
+		return nil
+	}
 	src, err := k.weightSource(stream)
 	if err != nil {
 		return err
@@ -167,4 +172,53 @@ func (k Keeper) RemoveVoter(ctx context.Context, stream types.StreamId, key []by
 		return err
 	}
 	return k.ClearVoter(ctx, stream, key)
+}
+
+// SetWeightedVoter files key in stream as a weighted voter: an absolute
+// weight on each option (zero entries dropped) instead of a split at one
+// weight, replacing whatever key carried before. No weights clears key's
+// vote. For a module that aggregates many splits into one voter:
+// x/shieldedstaking files all the Groundworks positions of a validator as one
+// voter, so its epoch work grows with validators, not positions.
+//
+// Like a replayed split, a weight on a struck or vanished option is skipped
+// rather than refused (the module re-files its totals every epoch, with no
+// one to tell). A duplicate option or a negative weight is the caller's bug
+// and is refused.
+func (k Keeper) SetWeightedVoter(ctx context.Context, stream types.StreamId, key []byte, weights []types.OptionWeight) error {
+	if err := ValidateStream(stream); err != nil {
+		return err
+	}
+	ws := make([]types.OptionWeight, 0, len(weights))
+	seen := make(map[uint64]struct{}, len(weights))
+	sum := math.ZeroInt()
+	for _, w := range weights {
+		if w.Weight.IsNil() || w.Weight.IsNegative() {
+			return errorsmod.Wrapf(types.ErrBadPercentages, "option %d has a negative weight", w.OptionId)
+		}
+		if _, dup := seen[w.OptionId]; dup {
+			return errorsmod.Wrapf(types.ErrBadPercentages, "duplicate option %d", w.OptionId)
+		}
+		seen[w.OptionId] = struct{}{}
+		if w.Weight.IsZero() {
+			continue
+		}
+		ws = append(ws, w)
+		sum = sum.Add(w.Weight)
+	}
+	if err := k.AdvanceIndex(ctx, stream); err != nil {
+		return err
+	}
+	add := make([]contribution, len(ws))
+	for i, w := range ws {
+		add[i] = contribution{w.OptionId, w.Weight}
+	}
+	return k.writeVoter(ctx, stream, key, types.Voter{OptionWeights: ws, Weight: sum}, add, len(ws) > 0)
+}
+
+// StreamEpoch is stream's allocation epoch: 0 until governance first resets
+// it (ResetAllocations), then bumped by each reset. A split cast in an older
+// epoch no longer counts.
+func (k Keeper) StreamEpoch(ctx context.Context, stream types.StreamId) (uint64, error) {
+	return k.getEpoch(ctx, stream)
 }
