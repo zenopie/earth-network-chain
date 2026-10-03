@@ -56,7 +56,23 @@ like, because nodes running different versions cannot agree.
     its bound.
   - x/shieldedstaking: **wallet format rule.** `StakeProof.ciphertexts` has
     exactly two entries, entry i empty iff `commitments[i]` is zero (an
-    unused output slot sends an empty ciphertext, not none).
+    unused output slot sends an empty ciphertext, not none), and a present
+    one is exactly 153 bytes (the wallet stake note: epk || AEAD of 0x03 ||
+    asset_id || amount u64 BE || rho || rcm, salt "earth.stake.v1", info
+    epk || cm; PRIVACY_FORMATS.md §3). A 177-byte blind stake ciphertext
+    there is refused.
+  - x/shielded: **wallet format rule.** Every bundle action's output
+    ciphertext is exactly 217 bytes (the v1 note ciphertext, salt
+    "earth.note.v1"), dummy outputs included: a dummy is encrypted to a
+    throwaway key, never left empty or short. Applies to every bundle (sends,
+    fee bundles, staking, dex, personhood). Wallets must send:
+    bundle outputs 217; StakeProof outputs 153 or empty (zero cm);
+    StakeProof.spc_ciphertext 177 when the msg mints a stake note, else
+    empty; every chain-minted note's ciphertext 177 (unchanged).
+  - Proof fixtures re-recorded with real-length ciphertexts; genesis
+    regenerated for the new (empty) genesis fields:
+    networks/genesis.json sha256
+    c27341544f40c402a31a8b4de0339a057820904c953562beacc35456fd81f5c1.
   - x/assembly: a removal ballot that carried grants no cooldown (a struck
     option leaves no entry; a strike that failed to apply may be balloted
     again at once). A declined ballot still grants 30 days, even one opened
