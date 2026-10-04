@@ -141,3 +141,17 @@ func (p Params) PrivateMsgGas(bundles []*Bundle) uint64 {
 	}
 	return g
 }
+
+// PrivateGasCeilingFactor bounds a private tx's gas_limit to this multiple of
+// the gas it uses (audit 6 A-L1). Wallets declare the simulated gas plus 10%;
+// the factor leaves room for a fixed limit per tx kind.
+const PrivateGasCeilingFactor = 5
+
+// PrivateGasCeiling is the most gas_limit a private tx that used `used` gas
+// may declare: PrivateGasCeilingFactor x used.
+func PrivateGasCeiling(used uint64) uint64 {
+	if used > ^uint64(0)/PrivateGasCeilingFactor {
+		return ^uint64(0)
+	}
+	return used * PrivateGasCeilingFactor
+}

@@ -298,6 +298,22 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 		ctx.GasMeter().ConsumeGas(g, "shielded: private action")
 	}
 
+	// A private tx's gas is all charged by here (tx size, the fixed charge,
+	// the action's; its handlers run on an infinite meter), so the chain
+	// knows what it uses. Its gas_limit is the block space it claims: block
+	// building stops at the first tx whose gas_wanted overflows max_gas, so
+	// one cheap tx claiming 100M would be its block's only tx (audit 6 A-L1).
+	// The limit may exceed the use by types.PrivateGasCeilingFactor, no more:
+	// one tx claims at most that multiple of the block space it uses. Not in
+	// simulate, whose limit is not a claim.
+	if !simulate {
+		used := ctx.GasMeter().GasConsumed()
+		if limit, ceil := p.AuthInfo.Fee.GasLimit, types.PrivateGasCeiling(used); limit > ceil {
+			return ctx, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest,
+				"gas_limit %d exceeds what this private tx uses (%d) by more than its margin: at most %d", limit, used, ceil)
+		}
+	}
+
 	// Past this point every read and write is prepaid.
 	pool := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
 
