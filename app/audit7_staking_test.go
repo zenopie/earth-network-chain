@@ -1,11 +1,18 @@
 package app
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/log"
 	"cosmossdk.io/math"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	dbm "github.com/cosmos/cosmos-db"
+	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
@@ -142,6 +149,88 @@ func TestAuditA7QueueOnlyWithoutBondedStake(t *testing.T) {
 	_, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), e.app.ShieldedStakingKeeper.ModuleAddress(), vA, vB)
 	require.Error(t, err, "no x/staking entry")
 	e.invariants()
+}
+
+// Audit 7, A7-2: a zero-height export with open moves did not re-import:
+// x/staking's prep moves every redelegation entry to height 0 while the
+// moves kept their entry heights. The open moves are now dropped (no slash on
+// the new chain reaches a height-0 entry); their debt rows stay, so a label
+// still clears at its row's value, or whole when its move was never
+// slashed. Two entries of one pair at height 0 are accepted, and every
+// invariant holds after the prep and after the import.
+func TestAuditA7ZeroHeightExportWithMoves(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(20_000 * ssErth)
+	vA, _ := e.createValidator(1000 * ssErth)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.auditDelegate(vA, uint64(4_000*ssErth), "a")
+	e.auditDelegate(vB, uint64(1_000*ssErth), "b")
+	e.days(1)
+	e.next(time.Hour)
+	k := e.app.ShieldedStakingKeeper
+
+	// A slashed move (a debt row) and, in a later block, one never slashed.
+	e.next(5 * time.Second)
+	infraction := e.height
+	e.next(5 * time.Second)
+	e.next(5 * time.Second)
+	_, err := e.fakeRedelegate(vA, vB, uint64(1_000*ssErth), "slashed")
+	require.NoError(t, err)
+	e.doubleSign(vA, infraction)
+	slashedKey, cleanKey := fakeMoveKey("slashed"), fakeMoveKey("clean")
+	row, err := k.DebtRetained.Get(e.ctx(), slashedKey)
+	require.NoError(t, err, "the slashed move's debt row")
+	e.next(5 * time.Second)
+	_, err = e.fakeRedelegate(vA, vB, uint64(500*ssErth), "clean")
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	_, ok := e.move(cleanKey)
+	require.True(t, ok)
+	red, err := e.app.StakingKeeper.GetRedelegation(e.ctx(), k.ModuleAddress(), vA, vB)
+	require.NoError(t, err)
+	require.Len(t, red.Entries, 2)
+	e.invariants()
+
+	// The prep alone keeps every invariant (10 included).
+	ctx, _ := e.ctx().CacheContext()
+	e.app.prepForZeroHeightGenesis(ctx, nil)
+	require.NoError(t, k.AssertInvariants(ctx))
+	n := 0
+	require.NoError(t, k.Moves.Walk(ctx, nil, func([]byte, sstypes.Move) (bool, error) { n++; return false, nil }))
+	require.Zero(t, n, "the open moves are dropped")
+
+	// The export re-imports, with both entries at height 0, no moves, and
+	// the debt rows kept.
+	exported, err := e.app.ExportAppStateAndValidators(true, nil, nil)
+	require.NoError(t, err)
+	var appState map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(exported.AppState, &appState))
+	fresh := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
+		baseapp.SetChainID(ssChainID))
+	fctx := fresh.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: 1, Time: e.now})
+	_, err = fresh.ModuleManager.InitGenesis(fctx, fresh.AppCodec(), appState)
+	require.NoError(t, err, "InitGenesis runs AssertInvariants")
+	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
+	fred, err := fresh.StakingKeeper.GetRedelegation(fctx, k.ModuleAddress(), vA, vB)
+	require.NoError(t, err)
+	require.Len(t, fred.Entries, 2)
+	for _, en := range fred.Entries {
+		require.Zero(t, en.CreationHeight)
+	}
+	gs, err := fresh.ShieldedStakingKeeper.ExportGenesis(fctx)
+	require.NoError(t, err)
+	require.Empty(t, gs.Moves)
+	got, err := fresh.ShieldedStakingKeeper.DebtRetained.Get(fctx, slashedKey)
+	require.NoError(t, err, "the slashed label still clears at its row")
+	require.Equal(t, row, got)
+	_, err = fresh.ShieldedStakingKeeper.DebtRetained.Get(fctx, cleanKey)
+	require.Error(t, err, "the clean label clears whole: no row")
+	r0, _, err := k.DebtRoot(e.ctx())
+	require.NoError(t, err)
+	r1, _, err := fresh.ShieldedStakingKeeper.DebtRoot(fctx)
+	require.NoError(t, err)
+	require.Equal(t, r0, r1, "the same debt tree")
 }
 
 // Audit 7, A7-L2: which entries a slash reached was inferred from the count

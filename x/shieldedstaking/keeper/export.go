@@ -54,15 +54,41 @@ func (k Keeper) BookRewardsForZeroHeight(ctx context.Context) error {
 	return nil
 }
 
-// ResetHeightsForZeroHeight follows x/staking's reset of its unbonding
-// entries' creation heights to 0: every UNBONDING record's creation height
-// becomes 0 too. Heights this module compares with the new chain's (a
-// position's created_height against a snapshot's height, which refuses a
-// position made after voting began) are shifted below 1 keeping their order:
-// h becomes h - height - 1, with height the export height, so every
-// position or snapshot made on the new chain sorts after every old one.
+// ResetHeightsForZeroHeight follows x/staking's reset of its unbonding and
+// redelegation entries' creation heights to 0: every UNBONDING record's
+// creation height becomes 0 too. Heights this module compares with the new
+// chain's (a position's created_height against a snapshot's height, which
+// refuses a position made after voting began) are shifted below 1 keeping
+// their order: h becomes h - height - 1, with height the export height, so
+// every position or snapshot made on the new chain sorts after every old
+// one.
+//
+// The open moves are dropped (audit 7, A7-2): their entries are at height 0
+// now, which a slash on the new chain reaches only for a double sign at its
+// first block (x/evidence slashes from the infraction height less one; that
+// slash, should it ever come, falls on the destination's book), so there is
+// nothing left for them to owe. Their
+// debt rows stay: a label still clears against the debt tree alone, at its
+// row's retained value, or at its whole exposure when the move was never
+// slashed. The module's height-0 entries keep their shares until they
+// mature, unowned (checkRedelegationRecord checks no shares at height 0).
 func (k Keeper) ResetHeightsForZeroHeight(ctx context.Context, height int64) error {
 	shift := func(h int64) int64 { return h - height - 1 }
+	var moves []types.Move
+	if err := k.Moves.Walk(ctx, nil, func(_ []byte, mv types.Move) (bool, error) {
+		moves = append(moves, mv)
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	for _, mv := range moves {
+		if err := k.removeMoveIndexes(ctx, mv); err != nil {
+			return err
+		}
+		if err := k.Moves.Remove(ctx, mv.Key); err != nil {
+			return err
+		}
+	}
 	var recs []types.UnbondRecord
 	if err := k.UnbondRecords.Walk(ctx, nil, func(_ collections.Pair[string, uint64], r types.UnbondRecord) (bool, error) {
 		if r.Status == types.UNBOND_STATUS_UNBONDING {

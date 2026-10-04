@@ -634,74 +634,146 @@ func (k Keeper) checkGenesisDelegations(ctx context.Context, gs types.GenesisSta
 	if bad != nil {
 		return bad
 	}
+	held := 0
 	if err := k.staking.IterateRedelegations(ctx, func(_ int64, r stakingtypes.Redelegation) bool {
-		if err := k.checkRedelegationRecord(ctx, r); err != nil {
+		n, err := k.checkRedelegationRecord(ctx, r)
+		if err != nil {
 			bad = fmt.Errorf("genesis %w", err)
 		}
+		held += n
 		return bad != nil
 	}); err != nil {
 		return err
 	}
-	return bad
+	if bad != nil {
+		return bad
+	}
+	if err := k.checkOpenMoves(ctx, held); err != nil {
+		return fmt.Errorf("genesis: %w", err)
+	}
+	return nil
 }
 
 // checkRedelegationRecord is the rule for an x/staking redelegation, at
 // genesis and in invariant 9: only this module redelegates (a private
 // redelegation; an operator's self-bond cannot move), between two different
-// canonical validators, with 1..MaxEntryHeightsPerPair entries, and every
-// entry a slash can still reach owned by moves whose shares are exactly its
-// shares (so a slash of it is owed by them: moves.go).
-func (k Keeper) checkRedelegationRecord(ctx context.Context, r stakingtypes.Redelegation) error {
+// canonical validators, with at least one entry and at most
+// MaxEntryHeightsPerPair of positive height, in creation-height order (a
+// slash's replay relies on it: moves.go slashedEntries). An entry is known
+// by its creation height and completion (two can share a height: a move in
+// the block where the source began unbonding, and one after, at the
+// source's unbonding height). Every unmatured entry of positive height is
+// the only one with its height and completion, and its moves (those at its
+// height with its completion) hold exactly its shares, so a slash of it is
+// owed by them. An entry at height 0 or below
+// is a zero-height export's (x/staking reset its height; the export dropped
+// its moves): no slash on this chain reaches it, so no shares are checked;
+// a move there (a source unbonding since the export) must still match one
+// such entry's completion. Returns how many unmatured moves the record's
+// entries hold: every unmatured move must be one (invariant 10, genesis).
+func (k Keeper) checkRedelegationRecord(ctx context.Context, r stakingtypes.Redelegation) (int, error) {
 	del, err := k.addressCodec.StringToBytes(r.DelegatorAddress)
 	if err != nil {
-		return fmt.Errorf("redelegation delegator %q: %w", r.DelegatorAddress, err)
+		return 0, fmt.Errorf("redelegation delegator %q: %w", r.DelegatorAddress, err)
 	}
 	if !sdk.AccAddress(del).Equals(k.modAddr) {
-		return errorsmod.Wrapf(types.ErrTransparentStaking, "redelegation %s: %s -> %s (only private staking redelegates)",
+		return 0, errorsmod.Wrapf(types.ErrTransparentStaking, "redelegation %s: %s -> %s (only private staking redelegates)",
 			r.DelegatorAddress, r.ValidatorSrcAddress, r.ValidatorDstAddress)
 	}
 	src, err := k.valAddr(r.ValidatorSrcAddress)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	dst, err := k.valAddr(r.ValidatorDstAddress)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if src.Equals(dst) {
-		return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s -> itself", r.ValidatorSrcAddress)
+		return 0, errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s -> itself", r.ValidatorSrcAddress)
 	}
-	if len(r.Entries) == 0 || len(r.Entries) > types.MaxEntryHeightsPerPair {
-		return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s -> %s has %d entries (1..%d)",
-			r.ValidatorSrcAddress, r.ValidatorDstAddress, len(r.Entries), types.MaxEntryHeightsPerPair)
+	id := entryID(r.ValidatorSrcAddress, r.ValidatorDstAddress)
+	if n := countedEntries(r.Entries); len(r.Entries) == 0 || n > types.MaxEntryHeightsPerPair {
+		return 0, errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s has %d entries, %d of positive height (1.., at most %d)",
+			id, len(r.Entries), n, types.MaxEntryHeightsPerPair)
 	}
 	now := sdk.UnwrapSDKContext(ctx).BlockTime()
-	id := entryID(r.ValidatorSrcAddress, r.ValidatorDstAddress)
-	seen := map[int64]bool{}
-	for _, e := range r.Entries {
+	// The unmatured entries' completions, by height.
+	open := map[int64]map[int64]math.LegacyDec{}
+	var heights []int64
+	for i, e := range r.Entries {
+		if i > 0 && e.CreationHeight < r.Entries[i-1].CreationHeight {
+			return 0, errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s: entries out of creation-height order", id)
+		}
 		if e.IsMature(now) {
 			continue
 		}
-		if seen[e.CreationHeight] {
-			return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s: two entries at height %d", id, e.CreationHeight)
+		h, c := e.CreationHeight, e.CompletionTime.UnixNano()
+		if open[h] == nil {
+			open[h] = map[int64]math.LegacyDec{}
+			heights = append(heights, h)
 		}
-		seen[e.CreationHeight] = true
-		sum := math.LegacyZeroDec()
-		rng := collections.NewSuperPrefixedTripleRange[string, int64, []byte](id, e.CreationHeight)
+		if _, dup := open[h][c]; dup && h > 0 {
+			return 0, errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s: two entries at height %d completing at %d", id, h, c)
+		}
+		open[h][c] = e.SharesDst
+	}
+	moves := 0
+	for _, h := range heights {
+		sum := map[int64]math.LegacyDec{}
+		rng := collections.NewSuperPrefixedTripleRange[string, int64, []byte](id, h)
 		if err := k.MovesByEntry.Walk(ctx, rng, func(key collections.Triple[string, int64, []byte]) (bool, error) {
 			mv, err := k.Moves.Get(ctx, key.K3())
 			if err != nil {
 				return true, err
 			}
-			sum = sum.Add(mv.Shares)
+			if mv.SrcValidator != r.ValidatorSrcAddress || mv.DstValidator != r.ValidatorDstAddress || mv.EntryHeight != h {
+				return true, errorsmod.Wrapf(types.ErrRedelegation, "move %X is indexed under %s at height %d", mv.Key, id, h)
+			}
+			if _, ok := open[h][mv.Completion]; !ok {
+				return true, errorsmod.Wrapf(types.ErrRedelegation, "move %X: completion %d, no entry of %s at height %d has it", mv.Key, mv.Completion, id, h)
+			}
+			moves++
+			if s, ok := sum[mv.Completion]; ok {
+				sum[mv.Completion] = s.Add(mv.Shares)
+			} else {
+				sum[mv.Completion] = mv.Shares
+			}
 			return false, nil
 		}); err != nil {
-			return err
+			return 0, err
 		}
-		if !sum.Equal(e.SharesDst) {
-			return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s at height %d: its moves hold %s shares, the entry %s",
-				id, e.CreationHeight, sum, e.SharesDst)
+		if h <= 0 {
+			continue
 		}
+		for c, shares := range open[h] {
+			got, ok := sum[c]
+			if !ok {
+				got = math.LegacyZeroDec()
+			}
+			if !got.Equal(shares) {
+				return 0, errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s at height %d: its moves hold %s shares, the entry %s",
+					id, h, got, shares)
+			}
+		}
+	}
+	return moves, nil
+}
+
+// checkOpenMoves: every unmatured move is one of the held moves the module's
+// unmatured redelegation entries hold (checkRedelegationRecord counts them).
+func (k Keeper) checkOpenMoves(ctx context.Context, held int) error {
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixNano()
+	open := 0
+	if err := k.Moves.Walk(ctx, nil, func(_ []byte, mv types.Move) (bool, error) {
+		if mv.Completion > now {
+			open++
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	if open != held {
+		return errorsmod.Wrapf(types.ErrRedelegation, "%d unmatured moves, %d of them in an unmatured entry of theirs", open, held)
 	}
 	return nil
 }

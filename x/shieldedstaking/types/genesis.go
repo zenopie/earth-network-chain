@@ -306,14 +306,24 @@ func checkVoteNullifiers(v StakeVote, used map[string]bool) error {
 // validateMoves: the debt rows' keys are canonical, nonzero and distinct;
 // every move names two different canonical validators, a canonical nonzero
 // key of its own, a positive credit that fits a note, retained in
-// 0..credited, positive shares and an entry (height, completion), and a cut
-// exposure has its row.
+// 0..credited, positive shares and an entry (height >= 0, completion), and a
+// cut exposure has its row. Every debt row's key and every move's key is a
+// spent stake nullifier (a move key is its redelegation's credit nullifier,
+// inserted with it): a row keyed elsewhere could stand for a label no
+// redelegation made.
 func (gs GenesisState) validateMoves() error {
+	spent := make(map[string]bool, len(gs.StakeNullifiers))
+	for _, nf := range gs.StakeNullifiers {
+		spent[string(nf)] = true
+	}
 	rows := map[string]uint64{}
 	for i, r := range gs.DebtRows {
 		k, err := privacy.FieldFromBytes(r.Key)
 		if err != nil || k.IsZero() {
 			return fmt.Errorf("debt row %d: key is not a canonical nonzero field element", i)
+		}
+		if !spent[string(r.Key)] {
+			return fmt.Errorf("debt row %d: key %X is not a spent stake nullifier", i, r.Key)
 		}
 		if _, dup := rows[string(r.Key)]; dup {
 			return fmt.Errorf("debt row %d: repeated key", i)
@@ -327,6 +337,9 @@ func (gs GenesisState) validateMoves() error {
 			return fmt.Errorf("move %X: key is malformed or repeated", mv.Key)
 		}
 		keys[string(mv.Key)] = true
+		if !spent[string(mv.Key)] {
+			return fmt.Errorf("move %X: key is not a spent stake nullifier", mv.Key)
+		}
 		if err := CanonicalValoper(mv.SrcValidator); err != nil {
 			return fmt.Errorf("move %X: %w", mv.Key, err)
 		}
@@ -342,7 +355,7 @@ func (gs GenesisState) validateMoves() error {
 		if mv.Retained.IsNil() || mv.Retained.IsNegative() || mv.Retained.GT(mv.Credited) {
 			return fmt.Errorf("move %X: retained must be 0..credited", mv.Key)
 		}
-		if mv.Shares.IsNil() || !mv.Shares.IsPositive() || mv.EntryHeight <= 0 || mv.Completion <= 0 || mv.MoveTime == 0 {
+		if mv.Shares.IsNil() || !mv.Shares.IsPositive() || mv.EntryHeight < 0 || mv.Completion <= 0 || mv.MoveTime == 0 {
 			return fmt.Errorf("move %X: needs positive shares, an entry height, a completion and a move time", mv.Key)
 		}
 		if r, ok := rows[string(mv.Key)]; ok && !math.NewIntFromUint64(r).Equal(mv.Retained) {

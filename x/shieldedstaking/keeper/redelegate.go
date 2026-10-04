@@ -360,8 +360,10 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 		return nil, err
 	}
 
-	// 7. The move, while a slash of the source can reach its entry.
-	if entryHeight != 0 {
+	// 7. The move, while a slash of the source can reach its entry (an
+	// entry has a completion; its height may be 0 for a source unbonding
+	// since a zero-height export).
+	if completion != 0 {
 		mv := types.Move{
 			Key: m.MoveKey(), SrcValidator: m.SrcValidator, DstValidator: m.DstValidator,
 			Height: ctx.BlockHeight(), MoveTime: m.MoveTime, Credited: credited, Shares: shares,

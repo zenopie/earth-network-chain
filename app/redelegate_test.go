@@ -958,6 +958,20 @@ func TestRedelegateGenesisRoundTrip(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = importExport(edit(func(gs *sstypes.GenesisState) { gs.DebtRows[0].Retained++ }))
 	require.Error(t, err)
+	// Audit 7: a move whose completion is not its entry's (it would be
+	// pruned early); a debt row or move keyed by no spent stake nullifier.
+	_, _, err = importExport(edit(func(gs *sstypes.GenesisState) { gs.Moves[0].Completion-- }))
+	require.ErrorContains(t, err, "completion")
+	_, _, err = importExport(edit(func(gs *sstypes.GenesisState) {
+		for i, nf := range gs.StakeNullifiers {
+			if string(nf) == string(gs.DebtRows[0].Key) {
+				gs.StakeNullifiers = append(gs.StakeNullifiers[:i:i], gs.StakeNullifiers[i+1:]...)
+				return
+			}
+		}
+		t.Fatal("the row's key is a spent stake nullifier")
+	}))
+	require.ErrorContains(t, err, "not a spent stake nullifier")
 	// Anyone else's redelegation is refused at genesis.
 	_, _, err = importExport(func(appState map[string]json.RawMessage) {
 		var st map[string]any

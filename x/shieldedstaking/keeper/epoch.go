@@ -231,9 +231,9 @@ func (k Keeper) sweepBooks(ctx context.Context, sweep types.EpochSweep, maxEpoch
 }
 
 // reportInvariants runs AssertInvariants at the epoch end, bounded (skipped,
-// with an event, past InvariantBookLimit books, unbond records, positions and
+// with an event, past InvariantBookLimit books, unbond records, positions,
 // validators (counted by their reward escrows, twice: invariant 5 walks
-// both)) and
+// both), moves and redelegation entries) and
 // guarded: it reports a broken invariant or a panic, it never halts EndBlock.
 func (k Keeper) reportInvariants(ctx context.Context) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -273,9 +273,18 @@ func (k Keeper) reportInvariants(ctx context.Context) {
 		})
 	}
 	if n <= types.InvariantBookLimit {
-		// Invariant 9 walks the module's redelegations.
-		_ = k.staking.IterateRedelegations(ctx, func(int64, stakingtypes.Redelegation) bool {
-			n++
+		// Invariants 9 and 10 decode each redelegation once and walk its
+		// entries and their moves: every move counts (up to
+		// MaxEntryHeightsPerPair entries a record), and the moves once more
+		// (invariant 10 walks them all; audit 7, A7-L1).
+		_ = k.Moves.Walk(ctx, nil, func([]byte, types.Move) (bool, error) {
+			n += 2
+			return n > types.InvariantBookLimit, nil
+		})
+	}
+	if n <= types.InvariantBookLimit {
+		_ = k.staking.IterateRedelegations(ctx, func(_ int64, r stakingtypes.Redelegation) bool {
+			n += 1 + len(r.Entries)
 			return n > types.InvariantBookLimit
 		})
 	}

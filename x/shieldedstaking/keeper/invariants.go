@@ -48,15 +48,18 @@ import (
 //     retry time; every MATURED record with untried payouts is marked for
 //     the sweep.
 //  9. Redelegations: every x/staking redelegation is this module's,
-//     between two different validators, with 1..MaxEntryHeightsPerPair
-//     entries, every unmatured entry's shares exactly its moves' shares
-//     (checkRedelegationRecord, as at genesis); no unbonding delegation is
-//     left set aside (ShelteredUnbondings is empty outside BeginBlock).
-//  10. Slash debt: every unmatured move belongs to an entry of its (src,
-//     dst) at its entry height; its retained is its debt row's, or its
-//     credit when it has none; the debt tree's size is 0 or 1 + its last
-//     leaf index, with one key and one retained value per leaf; no slash
-//     is left watched outside BeginBlock.
+//     between two different validators, with at least one entry and at most
+//     MaxEntryHeightsPerPair of positive height, in creation-height order,
+//     every unmatured entry of positive height (known by height and
+//     completion) holding exactly its moves' shares (checkRedelegationRecord,
+//     as at genesis); no unbonding delegation is left set aside
+//     (ShelteredUnbondings is empty outside BeginBlock).
+//  10. Slash debt: every unmatured move is one an unmatured entry of its
+//     (src, dst) holds, at its height with its completion (counted from the
+//     records' side in 9: each record is decoded once); its retained is its
+//     debt row's, or its credit when it has none; the debt tree's size is 0
+//     or 1 + its last leaf index, with one key and one retained value per
+//     leaf; no slash is left watched outside BeginBlock.
 func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertERTH(ctx); err != nil {
 		return err
@@ -126,7 +129,6 @@ func (k Keeper) assertDebt(ctx context.Context) error {
 	if t.Size() != want || idx != leaves || rows != leaves {
 		return types.ErrInvariant.Wrapf("debt tree: size %d (want %d), %d leaves, %d keys, %d rows", t.Size(), want, leaves, idx, rows)
 	}
-	now := sdk.UnwrapSDKContext(ctx).BlockTime()
 	return k.Moves.Walk(ctx, nil, func(key []byte, mv types.Move) (bool, error) {
 		r, err := k.DebtRetained.Get(ctx, key)
 		switch {
@@ -137,27 +139,9 @@ func (k Keeper) assertDebt(ctx context.Context) error {
 		case err != nil && !errors.Is(err, collections.ErrNotFound):
 			return true, err
 		}
-		if mv.Completion <= now.UnixNano() {
-			return false, nil // matured: pruned at the end of the block
-		}
-		src, err := k.valAddr(mv.SrcValidator)
-		if err != nil {
-			return true, err
-		}
-		dst, err := k.valAddr(mv.DstValidator)
-		if err != nil {
-			return true, err
-		}
-		red, err := k.staking.GetRedelegation(ctx, k.modAddr, src, dst)
-		if err != nil {
-			return true, types.ErrInvariant.Wrapf("move %X: no redelegation %s -> %s", key, mv.SrcValidator, mv.DstValidator)
-		}
-		for _, e := range red.Entries {
-			if e.CreationHeight == mv.EntryHeight {
-				return false, nil
-			}
-		}
-		return true, types.ErrInvariant.Wrapf("move %X: no entry at height %d", key, mv.EntryHeight)
+		// That it is in an unmatured entry of its (src, dst) is checked
+		// with the redelegations (assertRedelegations: one decode a record).
+		return false, nil
 	})
 }
 
@@ -537,13 +521,24 @@ func (k Keeper) assertRedelegations(ctx context.Context) error {
 		return types.ErrInvariant.Wrapf("%d unbonding delegations still set aside after a slash", sheltered)
 	}
 	var bad error
+	held := 0
 	if err := k.staking.IterateRedelegations(ctx, func(_ int64, r stakingtypes.Redelegation) bool {
-		if err := k.checkRedelegationRecord(ctx, r); err != nil {
+		n, err := k.checkRedelegationRecord(ctx, r)
+		if err != nil {
 			bad = types.ErrInvariant.Wrap(err.Error())
 		}
+		held += n
 		return bad != nil
 	}); err != nil {
 		return err
 	}
-	return bad
+	if bad != nil {
+		return bad
+	}
+	// Invariant 10's other half: each record is decoded once, here, and every
+	// unmatured move must be in one of their entries (audit 7, A7-L1).
+	if err := k.checkOpenMoves(ctx, held); err != nil {
+		return types.ErrInvariant.Wrap(err.Error())
+	}
+	return nil
 }
