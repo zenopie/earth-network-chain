@@ -73,6 +73,7 @@ type StakingKeeper interface {
 	SetRedelegationEntry(ctx context.Context, delegatorAddr sdk.AccAddress, validatorSrcAddr, validatorDstAddr sdk.ValAddress,
 		creationHeight int64, minTime time.Time, balance math.Int, sharesSrc, sharesDst math.LegacyDec) (stakingtypes.Redelegation, error)
 	SetRedelegation(ctx context.Context, red stakingtypes.Redelegation) error
+	DeleteUnbondingIndex(ctx context.Context, id uint64) error
 	InsertRedelegationQueue(ctx context.Context, red stakingtypes.Redelegation, completionTime time.Time) error
 	GetRedelegation(ctx context.Context, delAddr sdk.AccAddress, valSrcAddr, valDstAddr sdk.ValAddress) (stakingtypes.Redelegation, error)
 	GetRedelegationsFromSrcValidator(ctx context.Context, valAddr sdk.ValAddress) ([]stakingtypes.Redelegation, error)

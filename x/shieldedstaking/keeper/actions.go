@@ -141,7 +141,11 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	case *types.MsgPositionVote:
 		base = gasPosVote
 	case *types.MsgRedelegate:
-		base = gasRedelegate
+		g, err := h.k.redelegateGas(ctx, msg.(*types.MsgRedelegate))
+		if err != nil {
+			return 0, err
+		}
+		base = g
 	default:
 		return 0, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}

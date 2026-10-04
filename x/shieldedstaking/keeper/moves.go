@@ -198,43 +198,152 @@ func (k Keeper) moveBonded(ctx sdk.Context, src, dst sdk.ValAddress, bonded math
 }
 
 // recordEntry adds the move to the module's (src, dst) redelegation: into the
-// entry of the same creation height if there is one; past
-// MaxEntryHeightsPerPair entries, into the latest, which keeps its height
-// and completion; else as a new entry, queued for completion. Returns the
-// entry's height and completion (ns), which the move records.
-//
-// Joining the latest entry keeps the books sound: every move in an entry
-// was made at or after its creation height, so a slash of it charges no
-// move made before the infraction, and the entry matures no later than any
-// of its moves' labels clear, so no slash reaches a move whose label has
-// cleared. What it gives up, only past the cap: an infraction between the
-// entry's height and the joining move's is charged to the source's stake
-// instead of the move.
+// latest entry when it has the same creation height and completion (moves in
+// one block, or from one unbonding source); else as a new entry, queued for
+// completion, after merging the two oldest when the pair already holds
+// MaxEntryHeightsPerPair (mergeOldEntries). Only if no two entries can be
+// merged does the move join the latest entry, which keeps its height and
+// completion. Returns the entry's height and completion (ns), which the move
+// records.
 func (k Keeper) recordEntry(ctx sdk.Context, src, dst sdk.ValAddress, height int64, completion time.Time,
 	balance math.Int, sharesSrc, sharesDst math.LegacyDec,
 ) (int64, int64, error) {
 	red, err := k.staking.GetRedelegation(ctx, k.modAddr, src, dst)
-	if errors.Is(err, stakingtypes.ErrNoRedelegation) {
-		red, err = k.staking.SetRedelegationEntry(ctx, k.modAddr, src, dst, height, completion, balance, sharesSrc, sharesDst)
-		if err != nil {
-			return 0, 0, err
-		}
-		return height, completion.UnixNano(), k.staking.InsertRedelegationQueue(ctx, red, completion)
-	} else if err != nil {
+	switch {
+	case errors.Is(err, stakingtypes.ErrNoRedelegation):
+	case err != nil:
 		return 0, 0, err
+	default:
+		n := len(red.Entries)
+		joinLast := n > 0 && red.Entries[n-1].CreationHeight == height && red.Entries[n-1].CompletionTime.Equal(completion)
+		if !joinLast && countedEntries(red.Entries) >= types.MaxEntryHeightsPerPair {
+			merged, err := k.mergeOldEntries(ctx, &red)
+			if err != nil {
+				return 0, 0, err
+			}
+			joinLast = !merged
+		}
+		if joinLast {
+			e := &red.Entries[n-1]
+			e.InitialBalance = e.InitialBalance.Add(balance)
+			e.SharesDst = e.SharesDst.Add(sharesDst)
+			return e.CreationHeight, e.CompletionTime.UnixNano(), k.staking.SetRedelegation(ctx, red)
+		}
 	}
-	n := len(red.Entries)
-	if n > 0 && (n >= types.MaxEntryHeightsPerPair ||
-		red.Entries[n-1].CreationHeight == height && red.Entries[n-1].CompletionTime.Equal(completion)) {
-		e := &red.Entries[n-1]
-		e.InitialBalance = e.InitialBalance.Add(balance)
-		e.SharesDst = e.SharesDst.Add(sharesDst)
-		return e.CreationHeight, e.CompletionTime.UnixNano(), k.staking.SetRedelegation(ctx, red)
-	}
-	if red, err = k.staking.SetRedelegationEntry(ctx, k.modAddr, src, dst, height, completion, balance, sharesSrc, sharesDst); err != nil {
+	red, err = k.staking.SetRedelegationEntry(ctx, k.modAddr, src, dst, height, completion, balance, sharesSrc, sharesDst)
+	if err != nil {
 		return 0, 0, err
 	}
 	return height, completion.UnixNano(), k.staking.InsertRedelegationQueue(ctx, red, completion)
+}
+
+// countedEntries is how many entries count against MaxEntryHeightsPerPair:
+// those of positive creation height (an entry at height 0 or below is a
+// zero-height export's, never slashed on this chain, and matures away).
+func countedEntries(es []stakingtypes.RedelegationEntry) int {
+	n := 0
+	for _, e := range es {
+		if e.CreationHeight > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// mergeOldEntries merges two adjacent entries of red, the oldest pair whose
+// moves (at most MaxMergeMoves together) can be re-filed, trying at most
+// MergeTries pairs, and saves red. The merged entry takes the later
+// creation height (a slash for an infraction between the two heights now
+// charges the older entry's moves too: never less than x/staking would) and
+// the earlier completion (it matures before any of its moves' labels can
+// clear: no slash reaches a cleared label). Its moves' entry height and
+// completion follow. Returns false, with nothing changed, when no pair
+// qualifies.
+func (k Keeper) mergeOldEntries(ctx context.Context, red *stakingtypes.Redelegation) (bool, error) {
+	id := entryID(red.ValidatorSrcAddress, red.ValidatorDstAddress)
+	var idx []int
+	for i, e := range red.Entries {
+		if e.CreationHeight > 0 {
+			idx = append(idx, i)
+		}
+	}
+	for a := 0; a+1 < len(idx) && a < types.MergeTries; a++ {
+		i, j := idx[a], idx[a+1]
+		ei, ej := red.Entries[i], red.Entries[j]
+		mi, ok, err := k.entryMoves(ctx, id, ei, types.MaxMergeMoves)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			continue
+		}
+		mj, ok, err := k.entryMoves(ctx, id, ej, types.MaxMergeMoves-len(mi))
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			continue
+		}
+		m := ej
+		if ei.CreationHeight > m.CreationHeight {
+			m.CreationHeight = ei.CreationHeight
+		}
+		if ei.CompletionTime.Before(m.CompletionTime) {
+			m.CompletionTime = ei.CompletionTime
+		}
+		m.InitialBalance = ei.InitialBalance.Add(ej.InitialBalance)
+		m.SharesDst = ei.SharesDst.Add(ej.SharesDst)
+		entries := make([]stakingtypes.RedelegationEntry, 0, len(red.Entries)-1)
+		entries = append(entries, red.Entries[:i]...)
+		entries = append(entries, red.Entries[i+1:j]...)
+		entries = append(entries, m)
+		entries = append(entries, red.Entries[j+1:]...)
+		red.Entries = entries
+		if err := k.staking.SetRedelegation(ctx, *red); err != nil {
+			return false, err
+		}
+		// The merged-away entry's unbonding id indexes nothing now (its
+		// queue slot finds the record and completes nothing, or completes
+		// the merged entry if it matured).
+		if err := k.staking.DeleteUnbondingIndex(ctx, ei.UnbondingId); err != nil {
+			return false, err
+		}
+		for _, mv := range append(mi, mj...) {
+			if err := k.removeMoveIndexes(ctx, mv); err != nil {
+				return false, err
+			}
+			mv.EntryHeight, mv.Completion = m.CreationHeight, m.CompletionTime.UnixNano()
+			if err := k.putMove(ctx, mv); err != nil {
+				return false, err
+			}
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// entryMoves is the moves of entry e of the pair id (its height and
+// completion), or false when there are more than limit.
+func (k Keeper) entryMoves(ctx context.Context, id string, e stakingtypes.RedelegationEntry, limit int) ([]types.Move, bool, error) {
+	var out []types.Move
+	over := false
+	rng := collections.NewSuperPrefixedTripleRange[string, int64, []byte](id, e.CreationHeight)
+	err := k.MovesByEntry.Walk(ctx, rng, func(key collections.Triple[string, int64, []byte]) (bool, error) {
+		mv, err := k.Moves.Get(ctx, key.K3())
+		if err != nil {
+			return true, err
+		}
+		if mv.Completion != e.CompletionTime.UnixNano() {
+			return false, nil // another entry at the same height (height <= 0 only)
+		}
+		if len(out) >= limit {
+			over = true
+			return true, nil
+		}
+		out = append(out, mv)
+		return false, nil
+	})
+	return out, !over, err
 }
 
 func (k Keeper) valString(v sdk.ValAddress) string {
@@ -251,6 +360,14 @@ func (k Keeper) putMove(ctx context.Context, mv types.Move) error {
 		return err
 	}
 	return k.MovesByCompletion.Set(ctx, collections.Join(mv.Completion, mv.Key))
+}
+
+// removeMoveIndexes removes a move's two indexes (not the move).
+func (k Keeper) removeMoveIndexes(ctx context.Context, mv types.Move) error {
+	if err := k.MovesByEntry.Remove(ctx, collections.Join3(entryID(mv.SrcValidator, mv.DstValidator), mv.EntryHeight, mv.Key)); err != nil {
+		return err
+	}
+	return k.MovesByCompletion.Remove(ctx, collections.Join(mv.Completion, mv.Key))
 }
 
 // pruneMoves forgets moves whose entry has matured (x/staking no longer

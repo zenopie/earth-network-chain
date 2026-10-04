@@ -204,16 +204,34 @@ var (
 // covers the x/staking entry's maturity from any block time in range.
 const MoveTimeSlackSeconds = 600
 
+// ClearBeforeSlackSeconds is how far below the label window's current
+// clear_before (keeper ClearBefore) a stake proof's clear_before may be:
+// every stake proof names it (audit 7, B L-1), made against a block at most
+// this long before the one that includes it.
+const ClearBeforeSlackSeconds = 3600
+
 // MaxEntryHeightsPerPair bounds the module's x/staking redelegation entries
-// per (src, dst): one per block with a bonded move (moves in one block share
-// it). Past it a move joins the latest entry, which keeps its height and
-// completion (keeper recordEntry: no slash ever reaches a move whose label
-// has cleared, and none charges a move made before the infraction; an
-// infraction between the entry's height and the move's falls on the
-// source's stake instead). Reaching it takes this many blocks with bonded
-// moves of at least min_delegation each, the exposure of each locked in
-// place for the unbonding time.
-const MaxEntryHeightsPerPair = 4096
+// of positive creation height per (src, dst): one per block with a bonded
+// move (moves in one block share it). A move that would make one more first
+// merges the two oldest into one (keeper mergeOldEntries): the later height,
+// so a slash charges each of their moves at least as x/staking would charge
+// its own, and the earlier completion, so no slash reaches a move whose label
+// may have cleared. A move is never in an entry older than itself, so a
+// slash for an infraction before it always reaches it (with no pair of
+// entries small enough to merge, the move joins the latest entry instead,
+// as a last resort, and an infraction between that entry's height and the
+// move's falls on the source's stake). Each bonded move rewrites the pair's whole record, and pays gas for it
+// (GasPerRedelegationEntry). Entries at height 0 or below (a zero-height
+// export's) are never slashed again, are not counted and never merge.
+const MaxEntryHeightsPerPair = 1024
+
+// MaxMergeMoves bounds the moves one merge of two entries re-files (their
+// entry height and completion change); a pair of entries holding more is
+// passed over for the next (MergeTries pairs, oldest first).
+const (
+	MaxMergeMoves = 128
+	MergeTries    = 8
+)
 
 // UnbondPayoutRetryDelay is how long after its attempts-th failure a payout
 // is retried.

@@ -90,6 +90,44 @@ var bondedDust = math.NewInt(1_000)
 // and the move's record.
 const gasRedelegate uint64 = 700_000
 
+// gasPerRedelegationEntry is what each entry of the pair's x/staking record
+// adds: a bonded move reads the record twice and writes it whole (x/staking
+// keeps a pair's entries in one record; ~70 bytes an entry, at 3 gas a byte
+// read and 30 written, and its decoding). gasMergeEntries is added while
+// the pair holds MaxEntryHeightsPerPair entries: the merge writes the record
+// once more and re-files up to MaxMergeMoves moves (audit 7, A7-L1).
+const (
+	gasPerRedelegationEntry uint64 = 2_500
+	gasPerMergedEntry       uint64 = 2_500
+	gasMergeMove            uint64 = 20_000
+)
+
+// redelegateGas is MsgRedelegate's gas before its proof and writes: the base,
+// plus the pair's record at its current size (it may grow by the block's
+// other moves before this one runs: a wallet simulates it, with headroom).
+func (k Keeper) redelegateGas(ctx context.Context, m *types.MsgRedelegate) (uint64, error) {
+	src, err := k.valAddr(m.SrcValidator)
+	if err != nil {
+		return 0, err
+	}
+	dst, err := k.valAddr(m.DstValidator)
+	if err != nil {
+		return 0, err
+	}
+	red, err := k.staking.GetRedelegation(ctx, k.modAddr, src, dst)
+	if errors.Is(err, stakingtypes.ErrNoRedelegation) {
+		return gasRedelegate, nil
+	} else if err != nil {
+		return 0, err
+	}
+	n := uint64(len(red.Entries))
+	g := gasRedelegate + n*gasPerRedelegationEntry
+	if countedEntries(red.Entries) >= types.MaxEntryHeightsPerPair {
+		g += n*gasPerMergedEntry + types.MaxMergeMoves*gasMergeMove
+	}
+	return g, nil
+}
+
 // checkRedelegate refuses, read-only, what executeRedelegate would: the
 // same validator twice, a destination this module will not delegate to (or
 // whose book is settling), more derth than exists, a value or a credit below
