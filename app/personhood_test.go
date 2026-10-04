@@ -740,9 +740,13 @@ func TestPrivatePersonhood(t *testing.T) {
 		res = e.checkTx(e.tx(&bad))
 		require.NotEqual(t, uint32(0), res.Code, "a relayer swapped the handle or address")
 	}
-	e.mustDeliver(alice)
+	fb = e.mustDeliver(alice)
 	require.Equal(t, "live", e.handle("alice").Status)
 	require.Equal(t, personhoodtest.ShieldedAddress("A").Encode(), e.handle("alice").Address)
+	// owner: the handle-scope nullifier holding it, the bind's own (public)
+	// membership nullifier, in the query and the event.
+	require.Equal(t, hex.EncodeToString(alice.Membership.Nullifier), e.handle("alice").Owner)
+	require.Equal(t, hex.EncodeToString(alice.Membership.Nullifier), eventsOf(fb.TxResults[0].Events, "handle_bound")[0]["owner"])
 	res = e.checkTx(e.tx(e.bindHandle("C1-taken", "C1", "alice", "C", 0)))
 	require.Equal(t, personhoodtypes.ErrHandleTaken.ABCICode(), res.Code, res.Log)
 
@@ -792,8 +796,13 @@ func TestPrivatePersonhood(t *testing.T) {
 	e.mustDeliver(e.caretaker("A-again", "A1", 0, split))
 	fb = e.mustDeliver(e.moveCaretaker("A1-A2", "A1", "A2"))
 	require.Equal(t, uint64(1), e.caretakers(), "moved, not added")
-	e.mustDeliver(e.moveHandle("A1-A2", "A1", "alice", "A2"))
+	mv := e.moveHandle("A1-A2", "A1", "alice", "A2")
+	fb = e.mustDeliver(mv)
 	require.Equal(t, "live", e.handle("alice").Status)
+	require.Equal(t, hex.EncodeToString(mv.NewOwner), e.handle("alice").Owner, "the move's (public) new_owner")
+	movedEv := eventsOf(fb.TxResults[0].Events, "handle_moved")[0]
+	require.Equal(t, hex.EncodeToString(mv.NewOwner), movedEv["owner"])
+	require.Equal(t, hex.EncodeToString(mv.Membership.Nullifier), movedEv["previous_owner"])
 	res = e.checkTx(e.tx(e.caretaker("A1-again", "A1", 0, split)))
 	require.Equal(t, personhoodtypes.ErrCaretakerMovedOut.ABCICode(), res.Code, res.Log)
 	res = e.checkTx(e.tx(e.bindHandle("A1-again", "A1", "alice-2", "A", 0)))

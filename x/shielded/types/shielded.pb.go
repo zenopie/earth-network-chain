@@ -32,8 +32,8 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 // sighash from the enclosing msg (zk/orchard.Sighash), so it is not carried.
 type Action struct {
 	// anchor is the note-tree root the spend is proven against: 32 bytes, a
-	// root recorded within root_window_seconds (or one the msg's action
-	// handler vouches for). Required of dummy spends too.
+	// root recorded within root_window_seconds, the same for every action of
+	// the bundle. Required of dummy spends too.
 	Anchor []byte `protobuf:"bytes,1,opt,name=anchor,proto3" json:"anchor,omitempty"`
 	// nullifier of the spent note, 32 bytes, distinct across the msg. A dummy
 	// (value-0) spend still publishes, and spends, a fresh nullifier.

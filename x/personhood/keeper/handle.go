@@ -144,7 +144,8 @@ func (k Keeper) deleteHandle(ctx context.Context, handle string) error {
 		return err
 	}
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeHandleReleased,
-		sdk.NewAttribute(types.AttributeKeyHandle, handle)))
+		sdk.NewAttribute(types.AttributeKeyHandle, handle),
+		sdk.NewAttribute(types.AttributeKeyOwner, hexOf(rec.Nullifier))))
 	return nil
 }
 
@@ -249,7 +250,8 @@ func (k Keeper) handleEntry(ctx context.Context, rec types.Handle) (types.Handle
 	if err != nil {
 		return types.HandleEntry{}, err
 	}
-	return types.HandleEntry{Handle: rec.Handle, Address: a.Encode(), Status: st, ExpiresAt: rec.ExpiresAt, RenewalUntil: until}, nil
+	return types.HandleEntry{Handle: rec.Handle, Address: a.Encode(), Status: st, ExpiresAt: rec.ExpiresAt, RenewalUntil: until,
+		Owner: hexOf(rec.Nullifier)}, nil
 }
 
 // Handle implements the query.
@@ -455,6 +457,7 @@ func (k msgServer) BindHandle(goCtx context.Context, msg *types.MsgBindHandle) (
 			sdk.NewAttribute(types.AttributeKeyHandle, msg.Handle),
 			sdk.NewAttribute(types.AttributeKeyAddress, msg.Address),
 			sdk.NewAttribute(types.AttributeKeyNullifier, hexOf(nf)),
+			sdk.NewAttribute(types.AttributeKeyOwner, hexOf(nf)),
 			sdk.NewAttribute(types.AttributeKeyExpiresAt, strconv.FormatInt(expiresAt, 10)),
 		))
 	}
@@ -564,6 +567,8 @@ func (k msgServer) MoveHandle(goCtx context.Context, msg *types.MsgMoveHandle) (
 	ctx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeHandleMoved,
 		sdk.NewAttribute(types.AttributeKeyHandle, msg.Handle),
 		sdk.NewAttribute(types.AttributeKeyNullifier, hexOf(msg.NewOwner)),
+		sdk.NewAttribute(types.AttributeKeyOwner, hexOf(msg.NewOwner)),
+		sdk.NewAttribute(types.AttributeKeyPreviousOwner, hexOf(msg.Membership.Nullifier)),
 	))
 	return &types.MsgMoveHandleResponse{}, nil
 }

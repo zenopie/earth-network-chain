@@ -208,6 +208,13 @@ message HandleEntry {
   int64 expires_at = 4;
   // renewal_until is expires_at + handle_renewal_seconds.
   int64 renewal_until = 5;
+  // owner is the handle-scope nullifier that holds the handle, as 64
+  // lowercase hex characters ("" for a handle never claimed). Already
+  // public: it is the membership nullifier of the MsgBindHandle that claimed
+  // or renewed the handle, or the new_owner of the MsgMoveHandle that moved
+  // it here, and the handle events carry it. A wallet compares it with its
+  // own handle-scope nullifier to know a handle is its own.
+  string owner = 6;
 }
 
 // QueryHandleResponse: found (false: free and unclaimed), and the entry.

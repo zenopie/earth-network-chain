@@ -98,4 +98,10 @@ const (
 	AttributeKeyAddress     = "address"
 	AttributeKeyNullifier   = "nullifier"
 	AttributeKeyExpiresAt   = "expires_at"
+	// AttributeKeyOwner is the handle-scope nullifier that holds (or, on
+	// handle_released, held) the handle, hex: what Query/Handle reports as
+	// owner. On handle_moved it is the new owner and previous_owner the
+	// mover (both already public in MsgMoveHandle).
+	AttributeKeyOwner         = "owner"
+	AttributeKeyPreviousOwner = "previous_owner"
 )

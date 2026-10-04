@@ -13,8 +13,8 @@ option go_package = "github.com/earth-network/earth/x/shielded/types";
 // sighash from the enclosing msg (zk/orchard.Sighash), so it is not carried.
 message Action {
   // anchor is the note-tree root the spend is proven against: 32 bytes, a
-  // root recorded within root_window_seconds (or one the msg's action
-  // handler vouches for). Required of dummy spends too.
+  // root recorded within root_window_seconds, the same for every action of
+  // the bundle. Required of dummy spends too.
   bytes anchor = 1;
   // nullifier of the spent note, 32 bytes, distinct across the msg. A dummy
   // (value-0) spend still publishes, and spends, a fresh nullifier.
