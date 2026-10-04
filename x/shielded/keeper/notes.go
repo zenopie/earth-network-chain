@@ -35,8 +35,8 @@ func isPoolDeposit(ctx context.Context) bool {
 // noteFor validates a public-value note and returns its commitment
 // cm = H(TAG_CM, AssetID(denom), value, pc).
 func (k Keeper) noteFor(ctx context.Context, coin sdk.Coin, pc, ciphertext []byte) ([]byte, error) {
-	if !coin.IsValid() || !coin.IsPositive() || !coin.Amount.IsUint64() {
-		return nil, errorsmod.Wrapf(types.ErrInvalidNote, "note value %s must be positive and fit a u64", coin)
+	if !coin.IsValid() || !types.FitsNote(coin.Amount) {
+		return nil, errorsmod.Wrapf(types.ErrInvalidNote, "note value %s must be 1..2^63-1", coin)
 	}
 	pcEl, err := privacy.FieldFromBytes(pc)
 	if err != nil {
@@ -113,8 +113,8 @@ func (k Keeper) MintNote(ctx context.Context, fromModule string, coin sdk.Coin, 
 	return pos, cm, nil
 }
 
-// MintNoteSplit is MintNote for a value the chain decided that may exceed a
-// note's u64: coin is paid as types.SplitNoteValues(coin.Amount) notes, all
+// MintNoteSplit is MintNote for a value the chain decided that may exceed
+// types.MaxNoteValue (2^63-1): coin is paid as types.SplitNoteValues(coin.Amount) notes, all
 // to pc with ciphertext, each with its own mint event (its amount at its
 // position). At most types.MaxSplitNotes; beyond that nothing is minted and
 // an error returned. For payouts the msg's sender could not size (an LP
@@ -153,8 +153,8 @@ func (k Keeper) MintOpenNote(ctx context.Context, fromModule string, coin sdk.Co
 	if err := notThePool(fromModule); err != nil {
 		return 0, nil, err
 	}
-	if !coin.IsValid() || !coin.IsPositive() || !coin.Amount.IsUint64() {
-		return 0, nil, errorsmod.Wrapf(types.ErrInvalidNote, "note value %s must be positive and fit a u64", coin)
+	if !coin.IsValid() || !types.FitsNote(coin.Amount) {
+		return 0, nil, errorsmod.Wrapf(types.ErrInvalidNote, "note value %s must be 1..2^63-1", coin)
 	}
 	id, err := k.AssetID(ctx, coin.Denom)
 	if err != nil {

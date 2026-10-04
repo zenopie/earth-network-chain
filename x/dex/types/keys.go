@@ -229,7 +229,7 @@ const (
 	LpUnbondSweepLimit = 50
 
 	// LpUnbondNoteBudget caps the notes one sweep mints: a private leg above
-	// a note's u64 is paid as several notes (up to MaxSplitNotes each), so
+	// a note's maximum (2^63-1) is paid as several notes (up to MaxSplitNotes each), so
 	// the entry count alone does not bound the tree appends. The entry that
 	// crosses the budget still pays; the next one waits for the next block.
 	LpUnbondNoteBudget = 256

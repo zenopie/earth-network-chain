@@ -515,6 +515,13 @@ func TestSendRestriction(t *testing.T) {
 	huge := sdk.NewCoin(types.AnmlDenom, math.NewIntFromUint64(^uint64(0)).AddRaw(1))
 	_, _, err = f.k.MintNote(f.ctx, personhood, huge, pc, shieldedtest.BlindCT("mint"))
 	require.ErrorIs(t, err, types.ErrInvalidNote)
+	// Above 2^63-1 (what every wallet holds) is refused too, though it fits a u64.
+	overInt64 := sdk.NewCoin(types.AnmlDenom, math.NewIntFromUint64(types.MaxNoteValue).AddRaw(1))
+	_, _, err = f.k.MintNote(f.ctx, personhood, overInt64, pc, shieldedtest.BlindCT("mint"))
+	require.ErrorIs(t, err, types.ErrInvalidNote)
+	one := privacy.U64(1)
+	_, _, err = f.k.MintOpenNote(f.ctx, personhood, overInt64, one, one, one)
+	require.ErrorIs(t, err, types.ErrInvalidNote)
 	_, _, err = f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 5), pc, shieldedtest.BlindCT("mint"))
 	require.Error(t, err)
 }

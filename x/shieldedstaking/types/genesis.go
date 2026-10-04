@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/math"
 
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
@@ -80,9 +81,10 @@ func (gs GenesisState) Validate() error {
 		if err := CanonicalValoper(p.Validator); err != nil {
 			return fmt.Errorf("position %d: %w", p.Id, err)
 		}
-		// A position's derth is a stake note's value: a u64 (audit 5 L-ST2).
-		if p.Derth.IsNil() || !p.Derth.IsPositive() || !p.Derth.IsUint64() {
-			return fmt.Errorf("position %d is invalid: derth must be 1..2^64-1", p.Id)
+		// A position's derth is a stake note's value (audit 5 L-ST2): at most
+		// 2^63-1, so unlocking it can always mint the stake note.
+		if p.Derth.IsNil() || !shieldedtypes.FitsNote(p.Derth) {
+			return fmt.Errorf("position %d is invalid: derth must be 1..2^63-1", p.Id)
 		}
 		if _, err := privacy.FieldFromBytes(p.OwnerTag); err != nil {
 			return fmt.Errorf("position %d owner_tag: %w", p.Id, err)

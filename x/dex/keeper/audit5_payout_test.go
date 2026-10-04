@@ -24,7 +24,8 @@ import (
 )
 
 // noteShielded is a shielded pool that records the notes it mints and, like
-// the real one, refuses a note value above a u64.
+// the real one, refuses a note value above shieldedtypes.MaxNoteValue
+// (2^63-1).
 type noteShielded struct {
 	notes []sdk.Coin
 	bank  *mintingBank
@@ -36,8 +37,8 @@ func (*noteShielded) AssetID(context.Context, string) ([]byte, error) {
 }
 func (*noteShielded) CheckMint(context.Context, []byte, []byte) error { return nil }
 func (s *noteShielded) MintNote(_ context.Context, _ string, c sdk.Coin, _, _ []byte) (uint64, []byte, error) {
-	if !c.Amount.IsUint64() || !c.IsPositive() {
-		return 0, nil, shieldedtypes.ErrInvalidNote.Wrapf("note value %s must be positive and fit a u64", c)
+	if !shieldedtypes.FitsNote(c.Amount) {
+		return 0, nil, shieldedtypes.ErrInvalidNote.Wrapf("note value %s must be 1..2^63-1", c)
 	}
 	s.notes = append(s.notes, c)
 	s.bank.debit(sdk.NewCoins(c))
@@ -90,9 +91,12 @@ func bigInt(s string) math.Int {
 	return v
 }
 
-// Audit 5 D1: a private LP withdrawal whose token leg ends above 2^64-1 at
-// maturity (an attacker swapped the token in that block: 1.5e19 -> 1.95e19)
-// is paid as two notes, not dropped.
+// Audit 5 D1: a private LP withdrawal whose token leg ends above a note's
+// maximum at maturity (an attacker swapped the token in that block: 1.5e19
+// -> 1.95e19) is paid as several notes, not dropped. Every note is at most
+// 2^63-1, the most a wallet holds: 1.95e19 is three notes, two full ones.
+// (Before the 2^63-1 cap it was two, the first 2^64-1: invisible to every
+// wallet.)
 func TestAudit5PrivateLegAboveU64IsSplit(t *testing.T) {
 	k, ctx, bank, sh := initNoteFixture(t)
 	const id = 1
@@ -121,9 +125,14 @@ func TestAudit5PrivateLegAboveU64IsSplit(t *testing.T) {
 			token = append(token, n.Amount)
 		}
 	}
-	require.Len(t, token, 2, "the token leg as two notes")
+	require.Len(t, token, 3, "the token leg as three notes")
+	require.Equal(t, uint64(1)<<63-1, shieldedtypes.MaxNoteValue)
 	require.Equal(t, math.NewIntFromUint64(shieldedtypes.MaxNoteValue), token[0])
-	require.Equal(t, bigInt("19500000000000000000"), token[0].Add(token[1]))
+	require.Equal(t, math.NewIntFromUint64(shieldedtypes.MaxNoteValue), token[1])
+	require.Equal(t, bigInt("19500000000000000000"), token[0].Add(token[1]).Add(token[2]))
+	for _, v := range token {
+		require.True(t, v.IsInt64(), "every note fits an int64")
+	}
 }
 
 // A payout that cannot be made (a leg past MaxSplitNotes notes) is never
@@ -208,6 +217,13 @@ func TestAudit5SplitNoteValues(t *testing.T) {
 	require.Error(t, err)
 	_, err = shieldedtypes.SplitNoteValues(math.ZeroInt())
 	require.Error(t, err)
+	// 2^64-1, a note's old maximum, is 2 x (2^63-1) + 1: three notes.
+	v, err = shieldedtypes.SplitNoteValues(math.NewIntFromUint64(^uint64(0)))
+	require.NoError(t, err)
+	require.Equal(t, []uint64{shieldedtypes.MaxNoteValue, shieldedtypes.MaxNoteValue, 1}, v)
+	require.True(t, shieldedtypes.FitsNote(max))
+	require.False(t, shieldedtypes.FitsNote(max.AddRaw(1)))
+	require.False(t, shieldedtypes.FitsNote(math.ZeroInt()))
 }
 
 // A withdrawal whose note leg is already above a quarter of what a payout can

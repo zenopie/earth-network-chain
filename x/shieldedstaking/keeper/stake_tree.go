@@ -135,8 +135,8 @@ func (k Keeper) appendStake(ctx context.Context, cm []byte, attrs ...sdk.Attribu
 // mintStake appends a stake note of amount of denom to the stake pc spc: a
 // note the chain mints, its amount and denom public.
 func (k Keeper) mintStake(ctx context.Context, denom string, amount math.Int, spc, ciphertext []byte) (uint64, error) {
-	if !amount.IsPositive() || !amount.IsUint64() {
-		return 0, errorsmod.Wrapf(types.ErrAmount, "a stake note holds 1..2^64-1, not %s", amount)
+	if !shieldedtypes.FitsNote(amount) {
+		return 0, errorsmod.Wrapf(types.ErrAmount, "a stake note holds 1..2^63-1, not %s", amount)
 	}
 	pc, err := privacy.FieldFromBytes(spc)
 	if err != nil {

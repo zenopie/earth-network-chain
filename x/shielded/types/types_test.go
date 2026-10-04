@@ -63,7 +63,7 @@ func TestMsgSendValidateBasic(t *testing.T) {
 		"cv x >= p": func(m *types.MsgSend) {
 			m.Bundle.Actions[0].Cv = append(nonCanonical, m.Bundle.Actions[0].Cv[32:]...)
 		},
-		"huge ciphertext":   func(m *types.MsgSend) { m.Bundle.Actions[0].Ciphertext = make([]byte, types.MaxCiphertextBytes+1) },
+		"huge ciphertext": func(m *types.MsgSend) { m.Bundle.Actions[0].Ciphertext = make([]byte, types.MaxCiphertextBytes+1) },
 		"ciphertext a byte short": func(m *types.MsgSend) {
 			m.Bundle.Actions[0].Ciphertext = m.Bundle.Actions[0].Ciphertext[:types.NoteCiphertextBytes-1]
 		},
@@ -71,9 +71,9 @@ func TestMsgSendValidateBasic(t *testing.T) {
 			m.Bundle.Actions[1].Ciphertext = append(append([]byte(nil), m.Bundle.Actions[1].Ciphertext...), 0)
 		},
 		"empty (dummy) ciphertext": func(m *types.MsgSend) { m.Bundle.Actions[1].Ciphertext = nil },
-		"zero balance":      func(m *types.MsgSend) { m.Bundle.Balances[0].Amount = 0 },
-		"duplicate balance": func(m *types.MsgSend) { m.Bundle.Balances = append(m.Bundle.Balances, m.Bundle.Balances[0]) },
-		"bad denom":         func(m *types.MsgSend) { m.Bundle.Balances[0].Denom = "!" },
+		"zero balance":             func(m *types.MsgSend) { m.Bundle.Balances[0].Amount = 0 },
+		"duplicate balance":        func(m *types.MsgSend) { m.Bundle.Balances = append(m.Bundle.Balances, m.Bundle.Balances[0]) },
+		"bad denom":                func(m *types.MsgSend) { m.Bundle.Balances[0].Denom = "!" },
 		"too many balances": func(m *types.MsgSend) {
 			for k := range 5 {
 				m.Bundle.Balances = append(m.Bundle.Balances, types.ValueBalance{Denom: fmt.Sprintf("ux%d", k), Amount: 1})
@@ -179,11 +179,15 @@ func TestMsgShieldValidateBasic(t *testing.T) {
 	ct := shieldedtest.BlindCT("shield")
 	ok := types.MsgShield{Amount: sdk.NewInt64Coin("uerth", 1), Pc: pc, Ciphertext: ct}
 	require.NoError(t, ok.ValidateBasic())
+	maxNote := types.MsgShield{Amount: sdk.NewCoin("uerth", math.NewIntFromUint64(types.MaxNoteValue)), Pc: pc, Ciphertext: ct}
+	require.NoError(t, maxNote.ValidateBasic())
 	for name, m := range map[string]types.MsgShield{
 		"zero":     {Amount: sdk.NewInt64Coin("uerth", 0), Pc: pc, Ciphertext: ct},
 		"over u64": {Amount: sdk.NewCoin("uerth", math.NewIntFromUint64(^uint64(0)).AddRaw(1)), Pc: pc, Ciphertext: ct},
-		"bad pc":   {Amount: ok.Amount, Pc: bytes.Repeat([]byte{0xff}, 32), Ciphertext: ct},
-		"short pc": {Amount: ok.Amount, Pc: pc[:31], Ciphertext: ct},
+		// What every wallet holds is 2^63-1 (PRIVACY_FORMATS section 3).
+		"over 2^63-1": {Amount: sdk.NewCoin("uerth", math.NewIntFromUint64(types.MaxNoteValue).AddRaw(1)), Pc: pc, Ciphertext: ct},
+		"bad pc":      {Amount: ok.Amount, Pc: bytes.Repeat([]byte{0xff}, 32), Ciphertext: ct},
+		"short pc":    {Amount: ok.Amount, Pc: pc[:31], Ciphertext: ct},
 		// The note discovery rule: every minted note carries its blind
 		// ciphertext, exactly 177 bytes.
 		"no ciphertext":    {Amount: ok.Amount, Pc: pc},

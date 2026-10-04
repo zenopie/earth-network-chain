@@ -769,20 +769,42 @@ handle and send the referral half to itself. Now:
   an earlier tx in the block) lands the registration unreferred, drawing the
   unreferred rate, rather than failing after its fee.
 
-**LP payouts above u64 (D1).** A note value is a u64. A chain-priced payout
-(a matured LP withdrawal's legs) is minted as `ceil(v / (2^64-1))` notes to
-the same pc and ciphertext (`MintNoteSplit`, at most 64), each with its own
-`shielded_mint` event and position: the wallet decrypts the one ciphertext
-and checks each position's cm with that position's amount. A payout that
-still fails is never dropped: the entry keeps its escrowed shares, its
-`payout_attempts` (LpUnbonding field 10) goes up and its completion_time
-moves to now + 1h << min(attempts-1, 8) (`lp_unbond_payout_failed` carries
-`attempts` and `retry_at`). A withdrawal whose note leg is already above 16
-notes' worth is refused when it starts. Every other private mint is either
-atomic with its msg (swaps, deposits, refunds, unbond claims, the user's own
+**LP payouts above a note's maximum (D1).** The chain mints no note above
+`MaxNoteValue = 2^63-1`: every wallet (Android Long, iOS Int64, web) holds
+note and stake note values only up to 2^63-1 and ignores a note above it
+(PRIVACY_FORMATS section 3, Amounts), so such a note would be invisible to
+its owner. A chain-priced payout (a matured LP withdrawal's legs) is minted
+as `ceil(v / (2^63-1))` notes to the same pc and ciphertext
+(`MintNoteSplit`, at most 128: about 2^70, the capacity the earlier 64 x
+(2^64-1) split had), each with its own `shielded_mint` event and position:
+the wallet decrypts the one ciphertext and checks each position's cm with
+that position's amount. A payout that still fails is never dropped: the
+entry keeps its escrowed shares, its `payout_attempts` (LpUnbonding field
+10) goes up and its completion_time moves to now + 1h << min(attempts-1, 8)
+(`lp_unbond_payout_failed` carries `attempts` and `retry_at`). A withdrawal
+whose note leg is already above a quarter of that, 32 x (2^63-1), is
+refused when it starts (dex 1101). Every other private mint is either atomic
+with its msg (swaps, deposits, refunds, unbond claims, the user's own
 shield: an oversized value fails the tx and nothing is lost) or bounded far
-below 2^64 (registration rewards are 1e-4 of an option; ANML claims are one
+below 2^63 (registration rewards are 1e-4 of an option; ANML claims are one
 ANML).
+
+**The 2^63-1 cap, by mint path.** `MintNote` (via `noteFor`),
+`MintOpenNote`, `MsgShield.ValidateBasic` and x/shieldedstaking's stake
+note mint (`mintStake`, and `fitsNote` on a delegation's derth and an
+undelegation's claim) refuse a value above 2^63-1 (`types.FitsNote`); a
+genesis position's derth must be 1..2^63-1, so unlocking it can always
+mint its stake note. Not capped: **bundle outputs.** The action circuit
+range-checks `o_value` as a u64 (section 3), so a bundle may create a note
+of up to 2^64-1. The chain cannot refuse it: the value is private, and the
+public inputs (`cm_out`, a hash; `cv`, blinded by `rcv`) do not reveal it.
+Refusing it needs a 63-bit range check in the circuit (new VK, wallets and
+fixtures), deferred. Only a bundle's author can make such an output, from
+value it spends, and wallets never build one; the note stays spendable by
+the circuit, so a wallet that learns to hold it recovers it. The binding
+argument (section 5) is unaffected: it needs only u64 values. A bundle's
+public `Balance` value (u64) is a transparent amount leaving the pool, not a
+note, and is not capped.
 
 **One live handle per passport (P2).** MsgBindHandle needs the claim bound
 (`max_predecessor < now - handle lease - 86400`) unless the prover holds a

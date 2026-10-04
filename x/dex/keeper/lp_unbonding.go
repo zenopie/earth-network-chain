@@ -164,7 +164,7 @@ func (k Keeper) retryUnbonding(ctx context.Context, key collections.Triple[int64
 // payoutUnbonding prices one matured entry against the pool as it stands now,
 // burns the escrowed shares and sends the assets to the provider, or, for a
 // private withdrawal (no address), mints both legs as notes. A note leg above
-// a note's u64 is paid as several notes (MintNoteSplit). Returns how many
+// a note's maximum (2^63-1) is paid as several notes (MintNoteSplit). Returns how many
 // notes it minted.
 func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) (int, error) {
 	notes := 0

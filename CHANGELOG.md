@@ -32,10 +32,16 @@ like, because nodes running different versions cannot agree.
   - x/personhood: new `Query/LeaseBounds` (effective handle and caretaker
     lease lengths, and the predecessor bounds at this block). Handle binds
     now cost nine note writes of gas.
-  - x/dex: a private LP payout leg above 2^64-1 is minted as up to 64 notes;
-    a failed payout is kept and retried with backoff (LpUnbonding
-    `payout_attempts` = 10), never dropped; withdrawals whose note leg is
-    above 16 notes' worth are refused at start. Swap fee rounds up. TWAP
+  - x/dex: a private LP payout leg above 2^63-1 is minted as up to 128
+    notes of at most 2^63-1; a failed payout is kept and retried with
+    backoff (LpUnbonding `payout_attempts` = 10), never dropped; withdrawals
+    whose note leg is above 32 notes' worth (32 x (2^63-1)) are refused at
+    start.
+  - x/shielded, x/shieldedstaking: **no chain-minted note above 2^63-1**
+    (`MaxNoteValue`, what every wallet holds): MintNote, MintOpenNote,
+    MsgShield, stake notes (delegation derth, undelegation claim, unlock),
+    and a genesis position's derth. Bundle outputs stay u64 (the circuit's
+    range; private, so the chain cannot see them). Swap fee rounds up. TWAP
     accumulators are exported (genesis `price_accumulators` = 11).
   - x/allocation: a struck INTEGRATED option stays out of the handler set
     across export/import, prune clears it, and a dangling entry no longer

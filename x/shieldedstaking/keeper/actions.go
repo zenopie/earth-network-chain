@@ -247,8 +247,10 @@ func (k Keeper) authorized(ctx context.Context, msg shieldedtypes.PrivateMsg) (s
 
 // ---- checks ---------------------------------------------------------------
 
+// fitsNote refuses a value the chain would not mint as one note:
+// 1..shieldedtypes.MaxNoteValue (2^63-1, what every wallet holds).
 func fitsNote(v math.Int) error {
-	if !v.IsPositive() || !v.IsUint64() {
+	if !shieldedtypes.FitsNote(v) {
 		return errorsmod.Wrapf(types.ErrAmount, "%s", v)
 	}
 	return nil

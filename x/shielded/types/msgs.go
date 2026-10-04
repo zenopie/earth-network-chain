@@ -252,8 +252,8 @@ func (m *MsgShield) ValidateBasic() error {
 	if !m.Amount.IsValid() || !m.Amount.IsPositive() {
 		return errorsmod.Wrapf(ErrInvalidNote, "amount %s must be a positive valid coin", m.Amount)
 	}
-	if !m.Amount.Amount.IsUint64() {
-		return errorsmod.Wrap(ErrInvalidNote, "a note holds at most 2^64-1")
+	if !FitsNote(m.Amount.Amount) {
+		return errorsmod.Wrap(ErrInvalidNote, "a note holds at most 2^63-1")
 	}
 	if _, err := privacy.FieldFromBytes(m.Pc); err != nil {
 		return errorsmod.Wrapf(ErrInvalidNote, "pc: %v", err)

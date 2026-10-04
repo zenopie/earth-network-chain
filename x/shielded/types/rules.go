@@ -39,16 +39,30 @@ func CheckBlindCiphertext(what string, ct []byte) error {
 	return nil
 }
 
-// A note's value is a u64 (the action circuit's range). MintNoteSplit pays a
-// value above it as ceil(v / MaxNoteValue) notes to one pc, each a full
-// MaxNoteValue but the last, at most MaxSplitNotes of them. Each note is its
-// own position, so its nullifier H(nk, rho, position) differs from its
-// siblings' even when their commitments are equal; the owner finds each by
-// its ciphertext (the same one) and the amount published at its position.
+// MaxNoteValue is the largest note value the chain mints: 2^63-1. The action
+// circuit's range is u64, but every wallet (Android Long, iOS Int64, web)
+// holds note and stake note values only up to 2^63-1 and ignores a note
+// above it (PRIVACY_FORMATS section 3, Amounts), so a chain-minted note
+// above it would be invisible to its owner. Every chain mint (MintNote,
+// MintOpenNote, a shield, a stake note) refuses a value above it.
+//
+// MintNoteSplit pays a value above it as ceil(v / MaxNoteValue) notes to one
+// pc, each a full MaxNoteValue but the last, at most MaxSplitNotes of them:
+// 128 x (2^63-1), about 2^70, the same capacity the 64 x (2^64-1) split had.
+// Each note is its own position, so its nullifier H(nk, rho, position)
+// differs from its siblings' even when their commitments are equal; the
+// owner finds each by its ciphertext (the same one) and the amount published
+// at its position.
 const (
-	MaxNoteValue  = ^uint64(0)
-	MaxSplitNotes = 64
+	MaxNoteValue  = uint64(1)<<63 - 1
+	MaxSplitNotes = 128
 )
+
+// FitsNote reports whether v is a value the chain mints as one note:
+// 1..MaxNoteValue.
+func FitsNote(v sdkmath.Int) bool {
+	return !v.IsNil() && v.IsPositive() && v.IsUint64() && v.Uint64() <= MaxNoteValue
+}
 
 // SplitNoteValues splits v into note values: ceil(v / MaxNoteValue) of
 // them, every one MaxNoteValue but the last. It refuses a non-positive v or

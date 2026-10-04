@@ -18,11 +18,11 @@ ORCHARD_DESIGN.md section 16.
   referral_position. A handle that stopped resolving within the block
   lands the registration unreferred. x/shielded MintOpenNote. Tests:
   app TestPrivatePersonhood (requireReferral), personhood unit tests.
-- [x] D1 (H2) dex: MintNoteSplit (ceil(v/(2^64-1)) notes, at most 64) for
+- [x] D1 (H2) dex: MintNoteSplit (ceil(v/(2^63-1)) notes, at most 128; was 2^64-1 / 64, see below) for
   LP payout legs; a failed payout is kept with escrowed shares and retried
   at now + 1h << min(attempts-1, 8) (LpUnbonding.payout_attempts), never
   dropped; per-sweep note budget 256; a withdrawal whose note leg exceeds
-  16 notes' worth is refused at start. Other mint paths checked: swaps,
+  32 notes' worth (32 x (2^63-1); was 16 x (2^64-1)) is refused at start. Other mint paths checked: swaps,
   deposits, refunds, BuyAnml, unbond claims, undelegate, shield are atomic
   (a > u64 value fails the tx, nothing lost); registration and referral
   halves are 1e-4 of an option (would need 1.8e23 uerth); ANML claim is 1
@@ -58,3 +58,15 @@ ORCHARD_DESIGN.md section 16.
   67a6ed4af4a6478852dd9a843ea8a26dd6038ed1c81b09a1ce9c7636823f3212
   (build-genesis.sh --check: up to date).
 - [x] go test ./... passes; go vet clean.
+- [x] Note value cap 2^63-1 (wallets hold only up to 2^63-1, PRIVACY_FORMATS
+  section 3 Amounts; a 2^64-1 chunk was invisible to every wallet):
+  shieldedtypes.MaxNoteValue = 2^63-1, FitsNote; MaxSplitNotes 64 -> 128
+  (same ~2^70 capacity); dex start cap = MaxSplitNotes/4 = 32 notes of
+  2^63-1. Applied to noteFor/MintNote, MintOpenNote, MsgShield
+  ValidateBasic, mintStake and fitsNote (x/shieldedstaking), genesis
+  position derth. Bundle outputs: the action circuit allows u64; the value
+  is private so the chain cannot refuse it; circuit unchanged (deferred).
+  Tests: audit5_payout_test.go (1.95e19 leg = 3 notes, 2^64-1 = 3 notes,
+  FitsNote), pool_test.go (MintNote/MintOpenNote 2^63), types_test.go
+  (MsgShield 2^63), audit5_genesis_test.go (derth 2^63). Fixtures
+  unchanged; genesis unchanged (sha256 67a6ed4a...3212).
