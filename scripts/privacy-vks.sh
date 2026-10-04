@@ -4,9 +4,9 @@
 #
 # x/shielded verifies every private tx against four UltraHonk keys: action
 # (every action of every shielded bundle: spends, outputs, fees), membership
-# (personhood's claims, votes, caretaker splits, referrer bindings), stake
-# (x/shieldedstaking's owner-locked stake notes) and vote (a stake note's
-# vote on a proposal, without spending it). With one missing from
+# (personhood's claims, caretaker splits and handles, and the assembly's
+# votes), stake (x/shieldedstaking's owner-locked stake notes) and vote (up
+# to two stake notes' vote on a proposal, without spending them). With one missing from
 # genesis the msgs needing it are refused. This script compiles the circuits
 # from the mobile repo and writes each key everywhere the chain reads it:
 #
@@ -78,7 +78,6 @@ PY
 fi
 
 mkdir -p "$GEN"
-rm -f "$GEN/transfer.vk.b64" # the retired 3-in/3-out transfer circuit
 for c in action membership stake vote; do cp "$WORK/$c.vk.b64" "$GEN/$c.vk.b64"; done
 while read -r c f; do cp "$WORK/vk-$c/vk" "$f"; done < <(raw_targets)
 python3 - "$CHAIN_DIR/config.yml" "$WORK" <<'PY'
