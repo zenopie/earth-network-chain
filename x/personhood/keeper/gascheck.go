@@ -3,6 +3,8 @@ package keeper
 import (
 	"context"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
@@ -16,7 +18,7 @@ import (
 //
 // Not a consensus path. Nothing in the state machine calls this.
 func (k Keeper) CheckRegistration(ctx context.Context, msg *types.MsgRegister) (nullifier []byte, switched bool, err error) {
-	if _, err := msg.Binding(k.addressCodec); err != nil {
+	if _, err := msg.Binding(k.addressCodec, sdk.UnwrapSDKContext(ctx).ChainID()); err != nil {
 		return nil, false, err
 	}
 	p, err := k.checkRegistration(ctx, msg)

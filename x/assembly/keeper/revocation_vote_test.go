@@ -109,8 +109,8 @@ func TestRevocationProposalExcludesItsSubjects(t *testing.T) {
 
 	// Across countries, an unknown-country CSCA, or an unknown-country DSC
 	// among several: no vote at all.
-	e.pki.dsc[string(fixtureDer(t, "A2", "dsc.der"))] = ""
-	revU, _ := revokeAny(t, "A2")
+	e.pki.dsc[string(fixtureDer(t, "D1", "dsc.der"))] = ""
+	revU, _ := revokeAny(t, "D1")
 	for _, msgs := range [][]*codectypes.Any{{revA, revC}, {cscaB}, {revA, revU}} {
 		require.ErrorIs(t, vote(propose(msgs...)), types.ErrTooManySubjects)
 	}

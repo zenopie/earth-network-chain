@@ -128,20 +128,24 @@ func TestCountryField(t *testing.T) {
 }
 
 // Pinned for the wallet: RegistrationBinding (the passport proof's `address`
-// input) over these exact inputs. idc = 1, pc_anml = 2, ciphertext_anml =
-// "anml", pc_erth = 3, ciphertext_erth = "erth", affiliate = 0.
+// input) over these exact inputs. chain_id = "earth-1", idc = 1, pc_anml = 2,
+// ciphertext_anml = "anml", pc_erth = 3, ciphertext_erth = "erth",
+// affiliate = 0.
 func TestRegistrationBindingPinned(t *testing.T) {
-	got := RegistrationBinding(U64(1), U64(2), []byte("anml"), U64(3), []byte("erth"), fr.Element{})
+	got := RegistrationBinding("earth-1", U64(1), U64(2), []byte("anml"), U64(3), []byte("erth"), fr.Element{})
 	t.Logf("RegistrationBinding = 0x%x", FieldBytes(got))
 	if want := registrationBindingVector; fmt.Sprintf("%x", FieldBytes(got)) != want {
 		t.Fatalf("RegistrationBinding = %x, want %s", FieldBytes(got), want)
 	}
-	if other := RegistrationBinding(U64(1), U64(2), []byte("anmL"), U64(3), []byte("erth"), fr.Element{}); other == got {
+	if other := RegistrationBinding("earth-1", U64(1), U64(2), []byte("anmL"), U64(3), []byte("erth"), fr.Element{}); other == got {
 		t.Fatal("binding does not cover ciphertext_anml")
 	}
-	if other := RegistrationBinding(U64(1), U64(2), []byte("anml"), U64(3), []byte("ertH"), fr.Element{}); other == got {
+	if other := RegistrationBinding("earth-1", U64(1), U64(2), []byte("anml"), U64(3), []byte("ertH"), fr.Element{}); other == got {
 		t.Fatal("binding does not cover ciphertext_erth")
+	}
+	if other := RegistrationBinding("earth-2", U64(1), U64(2), []byte("anml"), U64(3), []byte("erth"), fr.Element{}); other == got {
+		t.Fatal("binding does not cover the chain id")
 	}
 }
 
-const registrationBindingVector = "20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c"
+const registrationBindingVector = "148b3513a501b6ff9c02314f355cb83fb544e22b2a9df79552fe49c944424159"

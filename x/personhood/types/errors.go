@@ -39,4 +39,8 @@ var (
 	// ErrCaretakerMovedOut: this caretaker nullifier moved its split away
 	// (MsgMoveCaretaker) and may never cast another; or a move's new owner did.
 	ErrCaretakerMovedOut = errors.Register(ModuleName, 1126, "this identity moved its caretaker split away")
+	// ErrSwitchSignerMismatch: an identity switch whose proof is signed by a
+	// different Document Signer from the live registration's. A re-proof of
+	// the same passport is signed by the same signer.
+	ErrSwitchSignerMismatch = errors.Register(ModuleName, 1127, "identity switch must be proven under the live registration's document signer")
 )

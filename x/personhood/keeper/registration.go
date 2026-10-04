@@ -86,7 +86,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	// identity and notes of their own is that the proof only verifies against
 	// the address input it was made with, and the chain computes that input
 	// from this msg's idc and pcs.
-	binding, err := msg.Binding(k.addressCodec)
+	binding, err := msg.Binding(k.addressCodec, sdkCtx.ChainID())
 	if err != nil {
 		return preparedRegistration{}, err
 	}
@@ -172,6 +172,16 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		if bytes.Equal(live.Idc, msg.Idc) {
 			return preparedRegistration{}, types.ErrRegistrationReplay
 		}
+		// A switch re-proves the passport the live registration was made
+		// with, so its proof is signed by the same Document Signer. A
+		// different one is not the holder: a compromised signer can sign an
+		// SOD for any MRZ, and so prove any passport nullifier whose MRZ
+		// fields it knows. Taken as a switch, that hijacked the holder's
+		// registration outside every rate cap, and moved registrations off a
+		// signer about to be purged (audit 6 B6-1).
+		if !bytes.Equal(live.DscKey, facts.key) {
+			return preparedRegistration{}, types.ErrSwitchSignerMismatch
+		}
 	}
 	// A paid registration's affiliate handle must be live (it resolves). A
 	// switch pays nothing, so its affiliate is not looked at. The binding
@@ -192,8 +202,16 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	// Rate caps, before the proof: a country at its cap should not cost a
 	// verification per refused attempt. Only once the certificate has chained
 	// to a trusted CSCA above, so a claimed signer cannot be pushed to its
-	// limit with junk. A switch moves a person already counted and is exempt.
-	if !switched {
+	// limit with junk. A switch moves a person already counted, so it is not
+	// a new registration for the network or the country; but it is something
+	// the signer did, and it counts against the signer's daily cap: a
+	// compromised signer's switches (of passports it signed) are bounded with
+	// its registrations.
+	if switched {
+		if err := k.checkSwitchRate(ctx, facts.key); err != nil {
+			return preparedRegistration{}, err
+		}
+	} else {
 		if err := k.checkRegistrationRate(ctx, facts.key, facts.country); err != nil {
 			return preparedRegistration{}, err
 		}

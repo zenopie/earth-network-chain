@@ -154,10 +154,10 @@ func canonicalBytes(ac address.Codec, addr string) ([]byte, error) {
 	return bz, nil
 }
 
-// Binding is the value the passport proof's address input must carry:
-// zk/privacy.RegistrationBinding(idc, pc_anml, ciphertext_anml, pc_erth,
-// ciphertext_erth, AffiliateField).
-func (m *MsgRegister) Binding(ac address.Codec) (fr.Element, error) {
+// Binding is the value the passport proof's address input must carry on
+// chain chainID: zk/privacy.RegistrationBinding(chain_id, idc, pc_anml,
+// ciphertext_anml, pc_erth, ciphertext_erth, AffiliateField).
+func (m *MsgRegister) Binding(ac address.Codec, chainID string) (fr.Element, error) {
 	idc, err := Field("idc", m.Idc)
 	if err != nil {
 		return fr.Element{}, err
@@ -174,7 +174,7 @@ func (m *MsgRegister) Binding(ac address.Codec) (fr.Element, error) {
 	if err != nil {
 		return fr.Element{}, err
 	}
-	return privacy.RegistrationBinding(idc, pcAnml, m.CiphertextAnml, pcErth, m.CiphertextErth, aff), nil
+	return privacy.RegistrationBinding(chainID, idc, pcAnml, m.CiphertextAnml, pcErth, m.CiphertextErth, aff), nil
 }
 
 // SighashFields implements PrivateMsg: idc, pc_anml, Bytes(ciphertext_anml),

@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"path/filepath"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestAudit3SkewRaiseDoesNotReopenReplay(t *testing.T) {
 	phStore := storetypes.NewKVStoreKey(types.StoreKey)
 	ctx := testutil.DefaultContextWithKeys(map[string]*storetypes.KVStoreKey{
 		pkitypes.StoreKey: pkiStore, types.StoreKey: phStore,
-	}, nil, nil).WithBlockTime(passportTime)
+	}, nil, nil).WithBlockTime(passportTime).WithChainID(shieldedtest.ChainID)
 	ctx = shieldedtypes.WithTxFields(ctx, shieldedtypes.TxFields{})
 	pki := pkikeeper.NewKeeper(runtime.NewKVStoreService(pkiStore), encCfg.Codec, ac, authtypes.NewModuleAddress(pkitypes.GovModuleName))
 	require.NoError(t, pki.InitGenesis(ctx, pkitypes.GenesisState{

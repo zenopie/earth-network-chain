@@ -6,7 +6,9 @@
 #
 # passports: one lean_poa passport proof per x/personhood/testutil
 #   Registration, bound (address input) to its RegistrationBinding, for its
-#   document number and current_date; each with its own fresh CSCA and DSC.
+#   document number and current_date; each with its own fresh CSCA and DSC,
+#   except A2 (A's identity switch: a re-proof of A1's passport), which is
+#   signed by A1's DSC, as a real re-proof is and as the chain requires.
 #   -> x/personhood/testdata/passports/<name>/
 # app: reruns the app tests in proving mode (EARTH_PROVE_CIRCUITS for the
 #   membership proofs, EARTH_CIRCUITS for the fee bundles' action proofs):
@@ -46,9 +48,11 @@ if [ "$WHAT" = all ] || [ "$WHAT" = passports ]; then
   for name in A1 A2 B C1 C2 D1; do
     echo "==> passport $name"
     out="$WORK/$name"
+    signer=""
+    [ "$name" = A2 ] && signer="signer=$WORK/A1"
     # shellcheck disable=SC2046
     ( cd "$CHAIN_DIR" && go run ./tools/poafixtures lean_poa "$out" \
-        $(go run ./tools/privacyfixtures passport "$name") >/dev/null )
+        $(go run ./tools/privacyfixtures passport "$name") $signer >/dev/null )
     cp "$out/Prover.toml" "$C/lean_poa/Prover.toml"
     ( cd "$C" && nargo execute --package lean_poa >/dev/null \
         && bb prove -b target/lean_poa.json -w target/lean_poa.gz -k "$WORK/vk/vk" \

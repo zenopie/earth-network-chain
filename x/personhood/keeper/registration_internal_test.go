@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"errors"
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -161,7 +162,7 @@ func regKeeper(t *testing.T, pki types.PkiKeeper) (Keeper, sdk.Context) {
 	base := testutil.DefaultContextWithDB(t, storeKey, storetypes.NewTransientStoreKey("transient_test")).Ctx
 	k := NewKeeper(runtime.NewKVStoreService(storeKey), encCfg.Codec, ac, authtypes.NewModuleAddress(types.GovModuleName),
 		nil, stubDex{}, pki, stubAllocation{}, &burnLog{}, stubShielded{})
-	ctx := base.WithBlockTime(passportTime)
+	ctx := base.WithBlockTime(passportTime).WithChainID(shieldedtest.ChainID)
 	require.NoError(t, k.Params.Set(ctx, leanParams(t)))
 	return k, ctx
 }

@@ -107,5 +107,5 @@ func (r Registration) CiphertextErth() []byte {
 
 // Binding is the passport proof's address input.
 func (r Registration) Binding() fr.Element {
-	return privacy.RegistrationBinding(r.IDC(), r.AnmlNote().PC(), r.CiphertextAnml(), r.ErthPC(), r.CiphertextErth(), r.ReferrerField())
+	return privacy.RegistrationBinding(shieldedtest.ChainID, r.IDC(), r.AnmlNote().PC(), r.CiphertextAnml(), r.ErthPC(), r.CiphertextErth(), r.ReferrerField())
 }

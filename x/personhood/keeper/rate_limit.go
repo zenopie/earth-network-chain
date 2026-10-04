@@ -185,6 +185,63 @@ func (k Keeper) recordRegistrationRate(ctx context.Context, dscKey []byte, count
 	return nil
 }
 
+// checkSwitchRate rejects an identity switch that would take its Document
+// Signer past the day's allowance. A switch shares the signer's counter with
+// its registrations (it is not a new person, so the network and country
+// counters do not move): the cap bounds everything one signer can do in a day,
+// which is what a stolen signing key could do between the compromise and the
+// revocation. A genuine switch (a lost wallet) is rare.
+func (k Keeper) checkSwitchRate(ctx context.Context, dscKey []byte) error {
+	if len(dscKey) == 0 {
+		return nil
+	}
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return err
+	}
+	day := dayOf(sdk.UnwrapSDKContext(ctx).BlockTime().Unix())
+	prev, err := k.networkPreviousDay(ctx, day)
+	if err != nil {
+		return err
+	}
+	c, err := k.getRateCounter(ctx, func() (types.RateCounter, error) { return k.DscRate.Get(ctx, dscKey) }, day)
+	if err != nil {
+		return err
+	}
+	if cap := params.DscDailyCap(prev); c.Count >= cap {
+		return types.ErrRegistrationRateLimited.Wrapf(
+			"document signer has reached its %d registrations and switches for today; retry tomorrow", cap)
+	}
+	return nil
+}
+
+// recordSwitchRate counts a verified switch against its signer's daily cap.
+func (k Keeper) recordSwitchRate(ctx context.Context, dscKey []byte) error {
+	if len(dscKey) == 0 {
+		return nil
+	}
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return err
+	}
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	day := dayOf(sdkCtx.BlockTime().Unix())
+	prev, err := k.networkPreviousDay(ctx, day)
+	if err != nil {
+		return err
+	}
+	c, err := k.getRateCounter(ctx, func() (types.RateCounter, error) { return k.DscRate.Get(ctx, dscKey) }, day)
+	if err != nil {
+		return err
+	}
+	c.Count++
+	if err := k.DscRate.Set(ctx, dscKey, c); err != nil {
+		return err
+	}
+	emitRateWarning(sdkCtx, "dsc", hexOf(dscKey), c.Count, params.DscDailyCap(prev))
+	return nil
+}
+
 // rateWarningBps is how far into a subject's daily allowance it has to get
 // before the chain says so: 80%. Early enough that an operator can look into it
 // while registrations are still being accepted, late enough that ordinary busy

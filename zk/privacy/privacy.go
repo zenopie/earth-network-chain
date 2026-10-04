@@ -249,12 +249,17 @@ func ProposeRemovalScope(optionID, day uint64) fr.Element {
 // swap them for garbage, leaving the notes unrecoverable from the chain by
 // the registrant's wallet (a restore from seed finds notes by decrypting).
 //
-//	address = H(TAG_REG, idc, pc_anml, Bytes(ciphertext_anml), pc_erth, Bytes(ciphertext_erth), affiliate)
+// The chain id is bound too (audit 6 B6-4): the fee bundle's sighash binds
+// it, but the passport proof did not, so within the current_date skew anyone
+// could copy a registration seen on one network (a testnet) onto another with
+// a fresh fee bundle, registering the holder there without their consent.
+//
+//	address = H(TAG_REG, Bytes(chain_id), idc, pc_anml, Bytes(ciphertext_anml), pc_erth, Bytes(ciphertext_erth), affiliate)
 //
 // The circuit treats address as opaque; only the chain and the wallet compute
 // it.
-func RegistrationBinding(idc, pcAnml fr.Element, ctAnml []byte, pcErth fr.Element, ctErth []byte, affiliate fr.Element) fr.Element {
-	return H(TagReg, idc, pcAnml, Bytes(ctAnml), pcErth, Bytes(ctErth), affiliate)
+func RegistrationBinding(chainID string, idc, pcAnml fr.Element, ctAnml []byte, pcErth fr.Element, ctErth []byte, affiliate fr.Element) fr.Element {
+	return H(TagReg, Bytes([]byte(chainID)), idc, pcAnml, Bytes(ctAnml), pcErth, Bytes(ctErth), affiliate)
 }
 
 // AffiliateField is the registration binding's affiliate field for a

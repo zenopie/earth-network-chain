@@ -42,7 +42,8 @@ func authorized[T any](ctx context.Context, msg shieldedtypes.PrivateMsg) (sdk.C
 // the chain to the affiliate handle's address (referralNoteFor). A live
 // registration under this passport makes it a switch:
 // the old leaf is zeroed, the new one appended with a fresh activated_at, and
-// nothing is paid or rate-counted, since the person is already counted.
+// nothing is paid, and only the signer's daily count moves (the person is
+// already counted).
 func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
 	ctx, p, err := authorized[preparedRegistration](goCtx, msg)
 	if err != nil {
@@ -109,7 +110,11 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 
 	paid := registrationPayout{registrant: math.ZeroInt(), referral: math.ZeroInt()}
 	referred := false
-	if !switched {
+	if switched {
+		if err := k.recordSwitchRate(ctx, p.dsc.key); err != nil {
+			return nil, err
+		}
+	} else {
 		if err := k.recordRegistrationRate(ctx, p.dsc.key, p.dsc.country); err != nil {
 			return nil, err
 		}

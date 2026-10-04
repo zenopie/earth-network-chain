@@ -9,12 +9,15 @@
 // witness here — with the chain's own Poseidon2 and certificate parser — makes a
 // mismatch fail loudly at fixture time instead of silently at registration.
 //
-//	go run ./tools/poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>]
+//	go run ./tools/poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>] [signer=<dir>]
 //
 // address is the circuit's `address` input (default FixtureAddress as a field;
 // x/personhood binds zk/privacy.RegistrationBinding there), doc the passport
 // number (a different doc is a different passport nullifier), date the
-// current_date the proof asserts.
+// current_date the proof asserts. signer (EC variants) reuses the Document
+// Signer and its certificate chain of an earlier run's outdir (its dsc_d,
+// csca.der and dsc.der) instead of minting fresh ones: a re-proof of the same
+// passport, as an identity switch makes, is signed by the same signer.
 //
 // Then, from the circuits workspace:
 //
@@ -63,11 +66,13 @@ var (
 	docNumber = "L898902C3"
 	// addressOverride replaces FixtureAddress as the address input (decimal).
 	addressOverride string
+	// signerDir is an earlier run's outdir whose signer to reuse.
+	signerDir string
 )
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>]")
+		fmt.Fprintln(os.Stderr, "usage: poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>] [signer=<dir>]")
 		os.Exit(2)
 	}
 	name, outDir := os.Args[1], os.Args[2]
@@ -80,6 +85,8 @@ func main() {
 			docNumber = v
 		case ok && k == "date" && len(v) == 6 && isDigits(v):
 			currentDate = v
+		case ok && k == "signer":
+			signerDir = v
 		default:
 			fmt.Fprintf(os.Stderr, "bad option %q\n", kv)
 			os.Exit(2)
@@ -97,6 +104,7 @@ func main() {
 }
 
 func run(v variant, outDir string) error {
+	var signerD *big.Int
 	// --- passport data -------------------------------------------------------
 
 	dg1 := buildDG1()
@@ -127,10 +135,25 @@ func run(v variant, outDir string) error {
 
 	if v.ec != nil {
 		c := v.ec.curve
-		d, pubPt, err := c.generateKey()
-		if err != nil {
-			return err
+		var d *big.Int
+		var pubPt point
+		if signerDir != "" {
+			hexD, err := os.ReadFile(filepath.Join(signerDir, "dsc_d"))
+			if err != nil {
+				return err
+			}
+			var ok bool
+			if d, ok = new(big.Int).SetString(strings.TrimSpace(string(hexD)), 16); !ok {
+				return fmt.Errorf("bad dsc_d in %s", signerDir)
+			}
+			pubPt = c.scalarBaseMult(d)
+		} else {
+			var err error
+			if d, pubPt, err = c.generateKey(); err != nil {
+				return err
+			}
 		}
+		signerD = d
 		r, sv, err := c.sign(d, msgHash[:])
 		if err != nil {
 			return err
@@ -180,7 +203,15 @@ func run(v variant, outDir string) error {
 	// Brainpool cannot be certificate-encoded by crypto/x509 (see ecdsaKeyFor),
 	// so those variants ship witness + proof only.
 	var cscaDER, dscDER []byte
-	if certPub != nil {
+	if certPub != nil && signerDir != "" {
+		var err error
+		if cscaDER, err = os.ReadFile(filepath.Join(signerDir, "csca.der")); err != nil {
+			return err
+		}
+		if dscDER, err = os.ReadFile(filepath.Join(signerDir, "dsc.der")); err != nil {
+			return err
+		}
+	} else if certPub != nil {
 		var err error
 		cscaDER, dscDER, err = makeChain(certKey, certPub)
 		if err != nil {
@@ -196,6 +227,13 @@ func run(v variant, outDir string) error {
 			return err
 		}
 		if err := os.WriteFile(filepath.Join(outDir, "dsc.der"), dscDER, 0o644); err != nil {
+			return err
+		}
+	}
+	// The signer's private scalar, so a later run can reuse it (signer=).
+	// Test material only: the certificate chain is a throwaway test CSCA.
+	if signerD != nil {
+		if err := os.WriteFile(filepath.Join(outDir, "dsc_d"), []byte(signerD.Text(16)), 0o600); err != nil {
 			return err
 		}
 	}
