@@ -124,7 +124,6 @@ func (s *stubPersonhood) MembershipActionGas(context.Context, uint64) (uint64, e
 func (s *stubPersonhood) SignalOf(context.Context, shieldedtypes.PrivateMsg) (fr.Element, error) {
 	return fr.Element{}, nil
 }
-func (s *stubPersonhood) IdentityRootWindow(context.Context) (int64, error) { return 3600, nil }
 
 // privateServer drives the chamber's msgs the way the private ante does: the
 // action's check and verify, then the handler under an authorization. A

@@ -24,9 +24,6 @@ type PersonhoodKeeper interface {
 	// SignalOf is a private msg's sighash on this chain, which its membership
 	// proof binds as its signal.
 	SignalOf(ctx context.Context, msg shieldedtypes.PrivateMsg) (fr.Element, error)
-	// IdentityRootWindow is how long a superseded identity root stays an
-	// anchor, which every activation bound subtracts.
-	IdentityRootWindow(ctx context.Context) (int64, error)
 }
 
 // PkiKeeper places a revocation in a country (see keeper/subjects.go).

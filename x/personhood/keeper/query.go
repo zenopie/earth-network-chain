@@ -85,6 +85,3 @@ func (q queryServer) RegistrationCountries(ctx context.Context, _ *types.QueryRe
 	}
 	return &types.QueryRegistrationCountriesResponse{Countries: out}, nil
 }
-
-// Referrer reports whether an address may be named as a registration's
-// affiliate now, and until when its binding runs.

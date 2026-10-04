@@ -20,22 +20,19 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// revocablePki is a PkiKeeper whose revocation set the test drives.
-type revocablePki struct{ revoked map[string]bool }
+// capPki is a PkiKeeper that accepts any certificate, with no key.
+type capPki struct{}
 
-func (p *revocablePki) VerifyDscIssuer(context.Context, []byte) (*certs.PublicKey, string, error) {
+func (p *capPki) VerifyDscIssuer(context.Context, []byte) (*certs.PublicKey, string, error) {
 	return nil, "", nil
 }
-func (p *revocablePki) IsCommitmentRevoked(_ context.Context, c []byte) (bool, error) {
-	return p.revoked[string(c)], nil
-}
 
-func capKeeper(t *testing.T) (Keeper, *revocablePki, sdk.Context) {
+func capKeeper(t *testing.T) (Keeper, *capPki, sdk.Context) {
 	t.Helper()
 	encCfg := moduletestutil.MakeTestEncodingConfig()
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 	base := testutil.DefaultContextWithDB(t, storeKey, storetypes.NewTransientStoreKey("transient_test")).Ctx
-	pki := &revocablePki{revoked: map[string]bool{}}
+	pki := &capPki{}
 	k := NewKeeper(
 		runtime.NewKVStoreService(storeKey),
 		encCfg.Codec,

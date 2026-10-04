@@ -44,9 +44,6 @@ type StakingKeeper interface {
 	Undelegate(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress, sharesAmount math.LegacyDec) (time.Time, math.Int, error)
 	ValidateUnbondAmount(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress, amt math.Int) (math.LegacyDec, error)
 	IterateDelegations(ctx context.Context, delegator sdk.AccAddress, fn func(index int64, delegation stakingtypes.DelegationI) (stop bool)) error
-	// GetDelegatorBonded is a validator operator's transparent self-bond (no
-	// other account can delegate): its Groundworks weight.
-	GetDelegatorBonded(ctx context.Context, delegator sdk.AccAddress) (math.Int, error)
 	// GetBondedValidatorsByPower is the active set: the validators whose
 	// operators' self-bond rewards compound at each epoch end.
 	GetBondedValidatorsByPower(ctx context.Context) ([]stakingtypes.Validator, error)
@@ -59,8 +56,8 @@ type StakingKeeper interface {
 	UnbondingTime(ctx context.Context) (time.Duration, error)
 	MaxEntries(ctx context.Context) (uint32, error)
 	// The genesis check of the delegation rule (only this module and each
-	// operator's self-bond delegate; nobody redelegates): x/staking loads an
-	// exported genesis's delegations without running the hooks.
+	// operator's self-bond delegate; only this module redelegates): x/staking
+	// loads an exported genesis's delegations without running the hooks.
 	GetAllDelegations(ctx context.Context) ([]stakingtypes.Delegation, error)
 	IterateRedelegations(ctx context.Context, fn func(index int64, red stakingtypes.Redelegation) (stop bool)) error
 	IterateUnbondingDelegations(ctx context.Context, fn func(index int64, ubd stakingtypes.UnbondingDelegation) (stop bool)) error

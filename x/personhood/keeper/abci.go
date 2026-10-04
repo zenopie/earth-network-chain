@@ -70,14 +70,14 @@ func (k Keeper) runSweep(ctx context.Context, sweep func(context.Context, int) (
 
 // sweepReserveDivisor sets each later sweep's guaranteed share of the block's
 // retirement budget: budget/sweepReserveDivisor (at least 1) apiece for the
-// expiry, caretaker, referrer and used-binding sweeps.
+// expiry, caretaker, used-binding and handle sweeps.
 const sweepReserveDivisor = 8
 
 // runSweeps shares one block's retirement budget among the five sweeps.
 //
 // The revoked-signer purge comes first and gets the largest share (see
 // purgeRevokedDscs for why it outranks expiry), but not all of it: the expiry,
-// caretaker and referrer sweeps each have a reserved share, so a revoked
+// caretaker, used-binding and handle sweeps each have a reserved share, so a revoked
 // signer with many registrations (a purge lasting many blocks) cannot starve
 // them. A lapsed registration that keeps its leaf, a lapsed caretaker split
 // that keeps its weight, or a released handle still reserved is

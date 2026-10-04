@@ -41,7 +41,7 @@ func countKeys(t *testing.T, ks collections.KeySet[collections.Pair[int64, []byt
 }
 
 // A revoked signer with far more registrations than one block can retire does
-// not starve the other sweeps: expiry and referrer each get their reserved
+// not starve the other sweeps: expiry and handles each get their reserved
 // share of the budget every block, and the total stays in budget. Caretaker
 // leases are swept first on their own budget (CaretakerSweepLimit).
 func TestLargePurgeDoesNotStarveOtherSweeps(t *testing.T) {
@@ -78,14 +78,14 @@ func TestLargePurgeDoesNotStarveOtherSweeps(t *testing.T) {
 	purged = 3*budget - purged
 	expired = 2*reserve - expired
 	caretaker := 2*reserve - countKeys(t, k.CaretakerExpiry, ctx)
-	referrer := 2*reserve - countHandles(t, k, ctx)
+	handles := 2*reserve - countHandles(t, k, ctx)
 
 	require.GreaterOrEqual(t, expired, reserve, "expiry starved")
 	require.Equal(t, 2*reserve, caretaker, "lapsed caretaker leases have a budget of their own (audit 4 C8)")
-	require.GreaterOrEqual(t, referrer, reserve, "handle sweep starved")
+	require.GreaterOrEqual(t, handles, reserve, "handle sweep starved")
 	require.Positive(t, purged)
 	require.Equal(t, budget-3*reserve, purged, "the purge keeps the rest")
-	require.LessOrEqual(t, purged+expired+referrer, budget)
+	require.LessOrEqual(t, purged+expired+handles, budget)
 	require.Equal(t, beforeRegs-purged-expired, countRegistrations(t, k, ctx))
 }
 

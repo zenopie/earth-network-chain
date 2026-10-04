@@ -26,15 +26,6 @@ type recordingAllocation struct {
 	drawnAtPpm int64
 	payout     math.Int
 	toModule   math.Int
-	toAccount  map[string]math.Int
-}
-
-func (r *recordingAllocation) PayOut(_ context.Context, to sdk.AccAddress, amt math.Int) error {
-	if r.toAccount == nil {
-		r.toAccount = map[string]math.Int{}
-	}
-	r.toAccount[string(to)] = amt
-	return nil
 }
 
 func (r *recordingAllocation) DrawFromOption(_ context.Context, _ allocationtypes.StreamId, _ uint64, ppm int64) (math.Int, error) {

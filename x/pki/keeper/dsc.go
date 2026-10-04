@@ -195,16 +195,6 @@ func (k Keeper) RegisterRevocationListener(l types.DscRevocationListener) {
 	*k.revocationListeners = append(*k.revocationListeners, l)
 }
 
-// IsCommitmentRevoked reports whether the Document Signer behind a Poseidon2
-// commitment has been revoked. It is how x/personhood asks about a registration
-// it has already recorded, which knows its signer only by that commitment.
-func (k Keeper) IsCommitmentRevoked(ctx context.Context, commitment []byte) (bool, error) {
-	if len(commitment) == 0 {
-		return false, nil
-	}
-	return k.RevokedDscCommitments.Has(ctx, commitment)
-}
-
 // AddCscaDER parses, records, and indexes a trusted CSCA certificate.
 func (k Keeper) AddCscaDER(ctx context.Context, der []byte) error {
 	c, err := certs.ParseCert(der)

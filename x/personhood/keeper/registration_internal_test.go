@@ -53,7 +53,6 @@ func (stubAllocation) DrawFromOption(context.Context, allocationtypes.StreamId, 
 	return math.ZeroInt(), nil
 }
 func (stubAllocation) PayOutToModule(context.Context, string, math.Int) error { return nil }
-func (stubAllocation) PayOut(context.Context, sdk.AccAddress, math.Int) error { return nil }
 
 // stubShielded records the notes minted.
 type stubShielded struct{ minted *[]sdk.Coin }
@@ -81,12 +80,7 @@ func (stubShielded) PrivateGasPrices(context.Context) (uint64, uint64, error) {
 type stubPki struct {
 	pubkey  *certs.PublicKey
 	err     error
-	revoked bool
 	country string
-}
-
-func (s stubPki) IsCommitmentRevoked(context.Context, []byte) (bool, error) {
-	return s.revoked, nil
 }
 
 func (s stubPki) VerifyDscIssuer(_ context.Context, _ []byte) (*certs.PublicKey, string, error) {
