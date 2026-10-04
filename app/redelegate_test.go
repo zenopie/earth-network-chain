@@ -1047,3 +1047,66 @@ func (e *stakeEnv) undelegateUnproven(val sdk.ValAddress, in *snote, amount uint
 		Pc: privacy.FieldBytes(e.w.pc(out)), Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("payout/%d", e.w.seq))}
 	return m, sp
 }
+
+// Past MaxEntryHeightsPerPair entries for a pair, a bonded move joins the
+// latest entry, which keeps its height and completion (the move records
+// them), instead of adding an entry or being refused. (The pair's entries
+// are filled in directly: 4,096 blocks of moves would take minutes.)
+func TestRedelegateEntryCap(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(100_000 * ssErth)
+	vA, _ := e.createValidator(1000 * ssErth)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	k := e.app.ShieldedStakingKeeper
+	mod := k.ModuleAddress()
+	e.auditDelegate(vA, uint64(50_000*ssErth), "a")
+	e.days(1)
+	e.next(time.Hour)
+	_, err := e.fakeRedelegate(vA, vB, uint64(5_000*ssErth), "first")
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+
+	// Fill the pair to the cap: entries at later heights, each owned by a
+	// move of its own.
+	ctx := e.ctx()
+	red, err := e.app.StakingKeeper.GetRedelegation(ctx, mod, vA, vB)
+	require.NoError(t, err)
+	require.Len(t, red.Entries, 1)
+	last := red.Entries[0]
+	for i := 1; i < sstypes.MaxEntryHeightsPerPair; i++ {
+		en := last
+		en.CreationHeight = last.CreationHeight + int64(i)
+		en.InitialBalance = math.NewInt(1_000)
+		en.SharesDst = math.LegacyNewDec(1_000)
+		red.Entries = append(red.Entries, en)
+		key := privacy.FieldBytes(ssDet("cap-move", uint64(i)))
+		require.NoError(t, k.Moves.Set(ctx, key, sstypes.Move{Key: key, SrcValidator: e.valoper(vA), DstValidator: e.valoper(vB),
+			Height: en.CreationHeight, MoveTime: uint64(e.now.Unix()), Credited: math.NewInt(1_000), Shares: en.SharesDst,
+			EntryHeight: en.CreationHeight, Completion: en.CompletionTime.UnixNano(), Retained: math.NewInt(1_000)}))
+		require.NoError(t, k.MovesByEntry.Set(ctx, collections.Join3(e.valoper(vA)+"/"+e.valoper(vB), en.CreationHeight, key)))
+		require.NoError(t, k.MovesByCompletion.Set(ctx, collections.Join(en.CompletionTime.UnixNano(), key)))
+	}
+	require.NoError(t, e.app.StakingKeeper.SetRedelegation(ctx, red))
+	tip := red.Entries[len(red.Entries)-1]
+	e.invariants()
+
+	// The next move joins the latest entry: no new entry, the tip's height
+	// and completion kept, its balance and shares grown by the move's.
+	r, err := e.fakeRedelegate(vA, vB, uint64(500*ssErth), "over")
+	require.NoError(t, err)
+	red, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
+	require.NoError(t, err)
+	require.Len(t, red.Entries, sstypes.MaxEntryHeightsPerPair)
+	got := red.Entries[len(red.Entries)-1]
+	require.Equal(t, tip.CreationHeight, got.CreationHeight)
+	require.True(t, tip.CompletionTime.Equal(got.CompletionTime))
+	mv, ok := e.move(fakeMoveKey("over"))
+	require.True(t, ok)
+	require.Equal(t, tip.CreationHeight, mv.EntryHeight)
+	require.Equal(t, tip.CompletionTime.UnixNano(), mv.Completion)
+	require.Equal(t, r.CompletionTime, mv.Completion)
+	require.Equal(t, tip.SharesDst.Add(mv.Shares), got.SharesDst)
+	e.next(5 * time.Second)
+	e.invariants()
+}

@@ -199,9 +199,17 @@ func (k Keeper) moveBonded(ctx sdk.Context, src, dst sdk.ValAddress, bonded math
 
 // recordEntry adds the move to the module's (src, dst) redelegation: into the
 // entry of the same creation height if there is one; past
-// MaxEntryHeightsPerPair entries, into the latest, which takes this height
-// and completion (its moves re-keyed); else as a new entry, queued for
-// completion. Returns the entry's height and completion (ns).
+// MaxEntryHeightsPerPair entries, into the latest, which keeps its height
+// and completion; else as a new entry, queued for completion. Returns the
+// entry's height and completion (ns), which the move records.
+//
+// Joining the latest entry keeps the books sound: every move in an entry
+// was made at or after its creation height, so a slash of it charges no
+// move made before the infraction, and the entry matures no later than any
+// of its moves' labels clear, so no slash reaches a move whose label has
+// cleared. What it gives up, only past the cap: an infraction between the
+// entry's height and the joining move's is charged to the source's stake
+// instead of the move.
 func (k Keeper) recordEntry(ctx sdk.Context, src, dst sdk.ValAddress, height int64, completion time.Time,
 	balance math.Int, sharesSrc, sharesDst math.LegacyDec,
 ) (int64, int64, error) {
@@ -216,30 +224,12 @@ func (k Keeper) recordEntry(ctx sdk.Context, src, dst sdk.ValAddress, height int
 		return 0, 0, err
 	}
 	n := len(red.Entries)
-	if n > 0 && red.Entries[n-1].CreationHeight == height && red.Entries[n-1].CompletionTime.Equal(completion) {
+	if n > 0 && (n >= types.MaxEntryHeightsPerPair ||
+		red.Entries[n-1].CreationHeight == height && red.Entries[n-1].CompletionTime.Equal(completion)) {
 		e := &red.Entries[n-1]
 		e.InitialBalance = e.InitialBalance.Add(balance)
 		e.SharesDst = e.SharesDst.Add(sharesDst)
-		return height, completion.UnixNano(), k.staking.SetRedelegation(ctx, red)
-	}
-	if n >= types.MaxEntryHeightsPerPair {
-		e := &red.Entries[n-1]
-		old := e.CreationHeight
-		e.CreationHeight, e.CompletionTime = height, completion
-		e.InitialBalance = e.InitialBalance.Add(balance)
-		e.SharesDst = e.SharesDst.Add(sharesDst)
-		if err := k.staking.SetRedelegation(ctx, red); err != nil {
-			return 0, 0, err
-		}
-		// The old queue slot finds the entry immature and keeps it; this
-		// one completes it.
-		if err := k.staking.InsertRedelegationQueue(ctx, red, completion); err != nil {
-			return 0, 0, err
-		}
-		if err := k.rekeyEntry(ctx, entryID(k.valString(src), k.valString(dst)), old, height, completion.UnixNano()); err != nil {
-			return 0, 0, err
-		}
-		return height, completion.UnixNano(), nil
+		return e.CreationHeight, e.CompletionTime.UnixNano(), k.staking.SetRedelegation(ctx, red)
 	}
 	if red, err = k.staking.SetRedelegationEntry(ctx, k.modAddr, src, dst, height, completion, balance, sharesSrc, sharesDst); err != nil {
 		return 0, 0, err
@@ -250,36 +240,6 @@ func (k Keeper) recordEntry(ctx sdk.Context, src, dst sdk.ValAddress, height int
 func (k Keeper) valString(v sdk.ValAddress) string {
 	s, _ := k.staking.ValidatorAddressCodec().BytesToString(v)
 	return s
-}
-
-// rekeyEntry moves the moves of entry (id, from) to (id, to) with the new
-// completion.
-func (k Keeper) rekeyEntry(ctx context.Context, id string, from, to, completion int64) error {
-	var keys [][]byte
-	rng := collections.NewSuperPrefixedTripleRange[string, int64, []byte](id, from)
-	if err := k.MovesByEntry.Walk(ctx, rng, func(key collections.Triple[string, int64, []byte]) (bool, error) {
-		keys = append(keys, key.K3())
-		return false, nil
-	}); err != nil {
-		return err
-	}
-	for _, key := range keys {
-		mv, err := k.Moves.Get(ctx, key)
-		if err != nil {
-			return err
-		}
-		if err := k.MovesByEntry.Remove(ctx, collections.Join3(id, from, key)); err != nil {
-			return err
-		}
-		if err := k.MovesByCompletion.Remove(ctx, collections.Join(mv.Completion, key)); err != nil {
-			return err
-		}
-		mv.EntryHeight, mv.Completion = to, completion
-		if err := k.putMove(ctx, mv); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // putMove stores a move and its indexes.

@@ -206,11 +206,13 @@ const MoveTimeSlackSeconds = 600
 
 // MaxEntryHeightsPerPair bounds the module's x/staking redelegation entries
 // per (src, dst): one per block with a bonded move (moves in one block share
-// it). Past it a move joins the latest entry, which then takes the move's
-// height and completion: earlier moves in that entry stay exposed to
-// infractions up to the later height (they pay, never the source's other
-// stakers). Reaching it takes this many blocks with moves of at least
-// min_delegation each, locked in place for the unbonding time.
+// it). Past it a move joins the latest entry, which keeps its height and
+// completion (keeper recordEntry: no slash ever reaches a move whose label
+// has cleared, and none charges a move made before the infraction; an
+// infraction between the entry's height and the move's falls on the
+// source's stake instead). Reaching it takes this many blocks with bonded
+// moves of at least min_delegation each, the exposure of each locked in
+// place for the unbonding time.
 const MaxEntryHeightsPerPair = 4096
 
 // UnbondPayoutRetryDelay is how long after its attempts-th failure a payout
