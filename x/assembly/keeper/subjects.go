@@ -299,6 +299,7 @@ func (h GovHooks) AfterProposalDeposit(ctx context.Context, proposalID uint64, _
 func (GovHooks) AfterProposalSubmission(context.Context, uint64) error           { return nil }
 func (GovHooks) AfterProposalVote(context.Context, uint64, sdk.AccAddress) error { return nil }
 func (GovHooks) AfterProposalFailedMinDeposit(context.Context, uint64) error     { return nil }
+
 // AfterProposalVotingPeriodEnded forgets a proposal's subjects once x/gov
 // has ended its voting (passed, rejected, failed). x/gov calls it for every
 // proposal it tallies, including an expedited one it demotes to a regular

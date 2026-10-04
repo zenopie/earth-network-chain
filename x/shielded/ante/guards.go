@@ -57,4 +57,3 @@ func (ExpiredTimeoutDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate b
 	}
 	return next(ctx, tx, simulate)
 }
-
