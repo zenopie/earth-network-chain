@@ -13,10 +13,10 @@ module books, validator stake, pool reserves, allocation weights and every
 amount the chain itself computes are public.
 
 Genesis: `networks/genesis.json` sha256
-`84921c0b360c3b3da84dd9c136481536fecae8dc503eada6ede475927cb77acc`, carrying
+`acb96128d8b5fedc338a48bd9973095242395e2dda538285e67a7efd527ebe1c`, carrying
 the action, stake, vote and membership verifying keys
 (`networks/genesis/shielded-verifying-keys/*.vk.b64`) and the passport keys
-(`networks/genesis/verifying-keys/`). `make genesis-check` and
+(`networks/genesis/verifying-keys/`, 33 register circuits). `make genesis-check` and
 `make privacy-vks-check` pin them.
 
 Contents
@@ -379,7 +379,7 @@ counts (`bb gates`, nargo 1.0.0-beta.22):
 | stake | 16,242 | 2^14 | anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash |
 | vote | 22,011 | 2^15 | note_root, nf_root, debt_root, asset, weight, proposal_id, vnf_0, vnf_1, sighash |
 | membership | 5,659 | 2^13 | root, scope, nullifier, signal, excluded_dsc, excluded_country, max_activation, max_predecessor |
-| passport (lean_poa and variants) | | | positions are params; `address` carries the registration binding, `current_date` is pinned to block time |
+| passport (33 `lean_poa_*` variants) | 138,556 – 659,250 | 2^18 – 2^20 | current_date, address, nullifier, dsc_key: positions are params; `address` carries the registration binding, `current_date` is pinned to block time |
 
 The vote circuit fits the bundled SRS (2^15 + 1 points); the prover's SRS
 hint must be at least the circuit's dyadic size. Action has 94 gates of
@@ -684,6 +684,32 @@ so a registration cannot be replayed onto another network, and whoever relays
 it cannot swap the notes, ciphertexts or referrer. The chain verifies the DSC
 against the CSCA trust store, binds it to the proof's dsc_key, pins
 current_date to block time and dedups on the passport nullifier.
+
+**Register circuits.** `params.verifying_keys` maps a variant id (the msg's
+`signature_algorithm`) to its key; genesis carries 33, one per DSC key
+type, signature padding and hash profile (the mobile repo's
+`circuits/variants.json` and `PASSPORT_COVERAGE.md`): RSA-2048/3072/4096
+with PKCS#1 v1.5 or PSS and any exponent in [3, 2^17), ECDSA on P-224, P-256,
+P-384, P-521 and brainpoolP224r1/256r1/384r1/512r1, each with the data-group,
+eContent and signature hashes real passports carry (SHA-1 to SHA-512, mixed
+where they mix). Every variant has the same four public inputs, so the
+registration path is one. The variant a prover names is not trusted for
+anything: a proof under a hash or padding the passport does not use needs a
+preimage or a forged signature, and the key type is bound by the
+commitment. SHA-1 is accepted (issuer-formed inputs: a forgery needs a
+second preimage); governance can drop those variants once the last SHA-1
+passports expire (about 2027–2028).
+
+**DSC commitment** (`certs.DscCommitmentOf`, `poa_core::dsc_commitment*`):
+ECDSA Poseidon2(tag, x‖y) with tags P-256 1, P-384 2, P-521 3,
+brainpoolP256r1 4, brainpoolP384r1 5, brainpoolP512r1 6, P-224 8,
+brainpoolP224r1 9; RSA Poseidon2(10, e, modulus big-endian), the exponent
+being a circuit witness (tag 7, RSA without it, is retired). A curve stated
+as explicit ECParameters is that curve only when p, a, b, G and n all match
+and the cofactor is 1. x/pki verifies the DSC's CSCA signature natively:
+RSA PKCS#1 v1.5 (SHA-1 to SHA-512, SHA-224 included), RSA-PSS (MGF1 over
+the message hash and trailer 1 only, else refused), ECDSA on any of those
+curves or an explicit one.
 `ciphertext_anml`/`ciphertext_erth` are required 177-byte v2 ciphertexts.
 `MsgRegister` fields: fee 1, proof 2, public_signals 3, signature_algorithm 4,
 dsc_der 5, idc 6, pc_anml 7, ciphertext_anml 8, pc_erth 9, ciphertext_erth 10,

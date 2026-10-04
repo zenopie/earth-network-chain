@@ -28,6 +28,17 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Passport registration covers every signature scheme unexpired passports
+  use: 33 register circuits (RSA-2048/3072/4096 PKCS#1 v1.5 or PSS with any
+  exponent in [3, 2^17); ECDSA on P-224/256/384/521 and brainpoolP224r1/
+  256r1/384r1/512r1; SHA-1 to SHA-512 in the hash profiles real passports
+  carry), one verifying key each in genesis (`signature_algorithm` is the
+  variant id). DSC commitments: new tags P-224 8 and brainpoolP224r1 9; RSA
+  commits its exponent under tag 10 (tag 7 retired). x/pki: explicit curve
+  parameters name a curve only when all match; RSA-PSS with a mask other
+  than MGF1 over the message hash, or a trailer other than 1, is refused;
+  sha224WithRSAEncryption accepted. New genesis (no state migration).
+
 - Stake vote padding (**new vote circuit and verifying key; genesis.json
   sha256 84921c0b360c3b3da84dd9c136481536fecae8dc503eada6ede475927cb77acc**).
   An unused vote slot publishes a padding nullifier

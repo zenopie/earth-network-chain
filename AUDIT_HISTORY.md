@@ -25,6 +25,7 @@ redesign; the replacement is named.
 | Staking wave, change 2 | `1824225d…7ee8` | vote (4 slots) |
 | Staking wave, change 4 / audit 7 | `ffb269c5…6b59` | stake v2, vote v2 |
 | Pre-audit: vote padding | `84921c0b…7acc` | vote (padding nullifier) |
+| Passport coverage | `acb96128…be1c` | 33 register circuits replace the seven |
 
 ## Wave: Orchard phase 1 (2026-10-02)
 
@@ -268,3 +269,43 @@ max_entries shared, griefable) is gone with change 4.
   --genesis-time <RFC3339> --pubkey <json>` removes them, swaps in
   `earth1n6amvk…`, signs the gentx and rebuilds genesis. `TestLaunchCeremony`
   reports PENDING CEREMONY until it has run.
+
+## Wave: passport signature coverage (2026-10-04)
+
+Registration covered seven SHA-256-only circuits (RSA PKCS#1 v1.5 with
+e = 65537, five curves). Research (mobile `circuits/PASSPORT_COVERAGE.md`:
+ICAO 9303-12, the ICAO PKD's unexpired DSCs via Self's map data, Self,
+Rarimo and zkPassport production circuits) found PSS, e = 3 and random
+exponents, P-224/P-521/brainpoolP224r1, SHA-1/224/384/512 and mixed hash
+profiles in real, valid passports. Now 33 variants, about 99.8% of PKD DSCs.
+
+| Change | Commits |
+| --- | --- |
+| x/pki: P-224 and brainpoolP224r1 (tags 8, 9); RSA commitment Poseidon2(10, e, n), tag 7 retired; explicit ECParameters matched on every parameter (was prime and order); RSA-PSS mask/trailer refused unless MGF1 over the message hash and 1; sha224WithRSA | 00db9b1 |
+| privacy-vks.sh writes and checks the 33 passport keys; regen-poa-fixtures.sh proves each variant from the shared synthetic passport; poafixtures and personhood-fixtures on lean_poa_p256_sha256 | c41f125 |
+| Genesis: 33 passport verifying keys | 9f09c6c |
+| Tests: every variant's proof verifies and its dsc_key equals the chain's commitment over its DSC certificate; genesis seeds exactly the variant set | e2f3e18 |
+| x/personhood passport and app proof fixtures on lean_poa_p256_sha256 | c75b20d |
+
+Findings in the old circuits, fixed with the change (mobile repo):
+- The 200-byte eContent buffer refused any SHA-256 SOD with more than four
+  data groups (many EU passports).
+- Android fetched a 2^18 SRS, so the P-384, BP384 and BP512 circuits
+  (2^19) could not be proved there.
+- The brainpoolP512r1 circuit hashed with SHA-256; the BP512 passports seen
+  sign with SHA-384/512.
+- noir-bignum predated its external audit's fixes (noir-bignum#270). The old
+  RSA modulus binding was still sound (each limb range-checked by
+  `to_be_bytes`).
+- The SHA-1/384/512 libraries read a BoundedVec's storage past its length,
+  and `from_parts` does not clear it: junk there changed the digest (a wrong
+  answer, not a forgery). The wrappers now zero the tail.
+
+Accepted: SHA-1 (issuer-formed inputs: a forgery needs a second preimage;
+removable by governance once the last such passports expire, about
+2027–2028). Excluded: RSA-1024 (ICAO specimen only), brainpoolP320r1 and
+secp192r1 (no unexpired DSC; P192 too weak), twisted Brainpool curves, DSA,
+PSS with SHA-1 or a mismatched MGF1, hash profiles not seen in real SODs,
+SODs over the size maxima. The prover may name any variant: a hash or
+padding the passport does not use needs a preimage or a forged signature,
+and the key type is bound by the commitment.
