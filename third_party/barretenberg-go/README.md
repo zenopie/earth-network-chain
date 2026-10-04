@@ -12,7 +12,10 @@ The upstream release ships the native lib built against Aztec **v5.0.0-rc.1**.
 Barretenberg's Fiat-Shamir transcript changed between `rc.1` and the **v5.0.0**
 final release, so an rc.1 verifier rejects v5.0.0 proofs (and vice-versa).
 zkPassport uses **bb v5.0.0**, so `checksums.json` here pins `aztec_tag: v5.0.0`
-and the native lib must be built against it. The Go source is unchanged.
+and the native lib must be built against it. The Go source has one change:
+`bindings.go` locks the OS thread around each C call that may set the
+library's thread_local last error, so the error read that follows runs on the
+same thread (audit 6 A-I3; the message is log text only, never consensus).
 
 Flavor: default **poseidon2** (`UltraZKFlavor`) — the natural choice for a
 non-EVM chain and zkPassport's internal recursive format. No wrapper edits.

@@ -31,7 +31,7 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.checkUnbondingEntries(ctx, gs.Params); err != nil {
 		return err
 	}
-	if err := k.checkGenesisDelegations(ctx); err != nil {
+	if err := k.checkGenesisDelegations(ctx, gs); err != nil {
 		return err
 	}
 	if err := k.checkModuleWithdrawAddr(ctx); err != nil {
@@ -522,10 +522,18 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 // unbonding delegation is this module's or an operator's on its own
 // validator, and there is no redelegation at all (a self-bond moved to
 // another validator stops being one; the module never redelegates).
-func (k Keeper) checkGenesisDelegations(ctx context.Context) error {
+//
+// A delegation of this module's needs its validator's book (audit 6 C-I2):
+// without one, delegating there is refused as settling, and the sweep, which
+// walks books, never settles it.
+func (k Keeper) checkGenesisDelegations(ctx context.Context, gs types.GenesisState) error {
 	dels, err := k.staking.GetAllDelegations(ctx)
 	if err != nil {
 		return err
+	}
+	books := make(map[string]bool, len(gs.Validators))
+	for _, v := range gs.Validators {
+		books[v.Validator] = true
 	}
 	for _, d := range dels {
 		del, val, err := k.delegationAddrs(d.DelegatorAddress, d.ValidatorAddress)
@@ -534,6 +542,9 @@ func (k Keeper) checkGenesisDelegations(ctx context.Context) error {
 		}
 		if !k.AllowedDelegator(del, val) {
 			return errorsmod.Wrapf(types.ErrTransparentStaking, "genesis delegation %s -> %s", d.DelegatorAddress, d.ValidatorAddress)
+		}
+		if del.Equals(k.modAddr) && !books[d.ValidatorAddress] {
+			return errorsmod.Wrapf(types.ErrValidator, "genesis: the module's delegation to %s has no book", d.ValidatorAddress)
 		}
 	}
 	var bad error

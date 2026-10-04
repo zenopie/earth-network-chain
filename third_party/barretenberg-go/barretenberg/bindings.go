@@ -27,6 +27,11 @@ func newVKeyHandle(data []byte) (*vkeyHandle, error) {
 		return nil, ErrInvalidVKey
 	}
 
+	// The C library keeps its last error in a thread_local, read by a second
+	// CGo call: both must run on the same OS thread (earth: audit 6 A-I3).
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	// Pin the data slice to prevent GC from moving it during the C call
 	var pinner runtime.Pinner
 	pinner.Pin(&data[0])
@@ -117,6 +122,11 @@ func (h *vkeyHandle) verifyProof(proof, publicInputs []byte, numInputs int) erro
 	if numInputs > 0 && len(publicInputs) != expectedLen {
 		return ErrInvalidPublicInputs
 	}
+
+	// Same OS thread for the verify and its error read (thread_local; earth:
+	// audit 6 A-I3).
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	// Pin memory to prevent GC from moving it during the C call
 	var pinner runtime.Pinner

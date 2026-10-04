@@ -117,12 +117,12 @@ var (
 		// every delegation change. Its own send restriction takes the
 		// blocked list's place (x/shieldedstaking/keeper/send_restriction.go).
 		{Account: shieldedstakingmoduletypes.ModuleName},
-		{Account: dexmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
+		{Account: dexmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		// x/allocation mints an option's accrued ERTH when it is claimed and burns
 		// the fee for adding one. x/personhood mints ANML and the registration
 		// reward, and burns the ANML it buys back.
 		{Account: allocationmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
-		{Account: personhoodmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
+		{Account: personhoodmoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		// x/earth owns issuance: it mints the emission on its way to the fee
 		// collector, and burns gas fees. Without these permissions MintCoins panics.
 		// It needs no Staking permission — it never touches the staking pools.

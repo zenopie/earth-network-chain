@@ -61,6 +61,15 @@ func TestAudit3GenesisDelegationRule(t *testing.T) {
 	}, 0)
 	require.ErrorContains(t, err, "genesis delegation")
 
+	// Audit 6 C-I2: the module's delegation needs its validator's book.
+	mod := authtypes.NewModuleAddress(sstypes.ModuleName)
+	err = withStaking(func(st map[string]any, op sdk.AccAddress) {
+		st["delegations"] = []any{map[string]any{
+			"delegator_address": mod.String(), "validator_address": sdk.ValAddress(op).String(), "shares": "1.000000000000000000",
+		}}
+	}, 0)
+	require.ErrorContains(t, err, "has no book")
+
 	err = withStaking(func(st map[string]any, op sdk.AccAddress) {
 		st["unbonding_delegations"] = []any{map[string]any{
 			"delegator_address": foreign.String(), "validator_address": sdk.ValAddress(op).String(),
