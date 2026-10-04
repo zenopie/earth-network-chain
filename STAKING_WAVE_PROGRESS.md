@@ -44,6 +44,43 @@ ORCHARD_DESIGN.md section 18.
   note refused beside a fresh one, the fifth in a second vote, tally, shape
   rules, genesis), existing vote tests on the 4-slot witness.
 
+## Change 3: private redelegation (freeze exception, user decision)
+- [x] MsgRedelegate (src_validator 2, dst_validator 3, amount 4, stake 5;
+  sighash StakeFields, Bytes(src), Bytes(dst), amount); response value,
+  derth, position, completion_time. Stake circuit unchanged (spend
+  derth/src with v_out = amount and change, mint derth/dst to spc_mint):
+  no VK, fixture-format or genesis change (sha256 1824225d...7ee8).
+- [x] Value out of src's queue first (book entry), the rest by x/staking's
+  BeginRedelegate (module -> module) in the same block; derth/dst at dst's
+  live rate for what arrived; rewards at both withdrawn into the queues
+  first; dust (<= 0.001 ERTH) beyond the queue left to src's book.
+- [x] Atomic in the private ante (ExecutesInAnte): x/staking's refusals
+  (transitive, max_entries per pair) spend and pay nothing; checked again
+  before any proof. Error 1120 ErrRedelegation. Query/Redelegation.
+- [x] Slash of src during maturity: dst's book absorbs it pro rata; dst's
+  undelegations in flight are set aside for the slash (ShelteredUnbondings,
+  restored by the new BeginBlocker after x/slashing and x/evidence) so
+  x/staking's unbonding-first order cannot hit them; rewards booked first;
+  dst re-weighed at the block's end.
+- [x] Votes: a derth/src note votes as src once (before or after the move);
+  its derth/dst note cannot vote on proposals snapshotted before the move.
+  Groundworks: positions untouched; a position moves by unlock,
+  redelegate, lock. Self-bond redelegation still refused.
+- [x] Genesis accepts the module's redelegations in flight, refuses any
+  other; invariant 9.
+- [x] Tests (app/redelegate_test.go): happy path with real proofs (bonded
+  and queued, earning at dst at once, transitive refusal in CheckTx);
+  max_entries; transitive refusal and expiry; slash during maturity
+  (mutation-checked: without the set-aside or the reward booking it
+  fails); votes before and after the move; Groundworks weight moving A ->
+  B; genesis round trip; invariant 9. 53 new proofs;
+  scripts/staking-fixtures.sh runs TestRedelegate.
+- [ ] Known limit, documented (section 19.3): the module is one delegator,
+  so x/staking's transitive rule and max_entries are shared; dust
+  redelegations can grief a validator's private stakers out of
+  redelegation (not undelegation) for 21 days. Fix ("lanes": several
+  delegator accounts) deferred.
+
 ## Wallet and backend follow-ups (not in this repo)
 - Undelegate: send pc + ciphertext; drop the claim flow and claim-note
   scanning; watch shieldedstaking_unbond_payout / shielded_mint.
@@ -51,3 +88,7 @@ ORCHARD_DESIGN.md section 18.
   7 -> 10; iOS likewise), weight = RoundVoteWeight(sum), one msg per
   validator; drop the spaced background vote run.
 - Indexer: stake_vote event's vote_nullifiers; unbond payout events.
+- Redelegate: build MsgRedelegate (ORCHARD_DESIGN 19.7), check
+  Query/Redelegation first, find the derth/dst note by its stake note event
+  (spc) or trial decryption. Indexer: shieldedstaking_redelegate events;
+  failed redelegations leave no trace (refused in the ante, nothing spent).

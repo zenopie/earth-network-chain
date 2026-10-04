@@ -399,6 +399,7 @@ Bytes(ct_0), Bytes(ct_1), spc_mint, otag`.
 | StakeVote {weight} | (superseded 2026-10-03, §15: vote proof, circuits/vote; nothing spent; §18: up to four notes, one weight) | records vote |
 | LockPosition {amount} | spends, v_out = amount, change; otag | position stores otag |
 | Update/Unlock/PositionVote | spends nothing; otag must equal the position's | unlock mints derth to spc_mint |
+| Redelegate {src, dst, amount} (2026-10-03, §19) | spends derth/src, v_out = amount, change | moves the value src -> dst, mints derth/dst at dst's live rate to spc_mint |
 
 Owner proof replaces the one-time position key and nonce (the sighash binds
 the fee bundle, so a proof is never reusable). Rates, epochs, slashing,
@@ -1152,3 +1153,228 @@ with 32,768 points). Proof length unchanged (14,656 bytes).
 **Genesis.** New vote verifying key; genesis.json sha256
 1824225dce524e47bf84bc5ff4fe0f8e76127b1c128480c925f6e420a6067ee8. Action,
 stake and membership keys unchanged.
+
+## 19. Private redelegation (2026-10-03)
+
+The one exception to the feature freeze (user decision): a private staker
+moves derth from validator A to validator B with no unbonding gap and keeps
+earning. Same principle: people are private; power and public money are
+public. Consensus-affecting; fresh genesis, no migration. No circuit
+changed: verifying keys and genesis (sha256
+1824225dce524e47bf84bc5ff4fe0f8e76127b1c128480c925f6e420a6067ee8) are
+unchanged.
+
+### 19.1 The msg
+
+    MsgRedelegate {bundle (fee), src_validator (2), dst_validator (3), amount (4), stake (5)}
+    sighash fields: StakeFields(stake), Bytes(src_validator), Bytes(dst_validator), amount
+    MsgRedelegateResponse {value (1), derth (2), position (3), completion_time (4)}
+    type URL /earth.shieldedstaking.v1.MsgRedelegate
+
+- The stake proof is circuits/stake as for MsgUndelegate: asset =
+  AssetID(derth/<src>), v_in = 0, v_out = amount; it spends one or two
+  derth/<src> notes, change back to the owner as derth/<src> notes (hidden
+  amounts). `spc_mint` is the owner's fresh stake pc for the derth/<dst>
+  note and `spc_ciphertext` its blind stake ciphertext (177 bytes,
+  required), exactly as for MsgDelegate. The circuit already binds
+  spc_mint to the spender's owner_pk, so the derth/<dst> note can only be
+  the spender's: stake stays owner-locked across the move.
+- ValidateBasic: both validators canonical and different (1120 otherwise),
+  amount > 0, the bundle pays only the fee (its uerth balance), the proof
+  spends at least one note, spc_ciphertext present.
+- The chain refuses (code; nothing spent or paid, see 19.3): a destination
+  it will not delegate to (1102: unknown, jailed, tombstoned, slashed to
+  nothing, or a book settling: no derth but backing); more derth than
+  exists (1103); a value or a derth/<dst> mint below min_delegation (1 ERTH;
+  1103) or a mint above 2^63-1 (1103); and x/staking's limits (1120,
+  below). Gas: 700,000 + proof_verification_gas + 7 x note_gas.
+- Response: `value` (uerth moved), `derth` (derth/<dst> minted),
+  `position` (its stake-tree position), `completion_time` (unix ns the
+  x/staking entry completes; 0 when none was made).
+
+### 19.2 What the chain does
+
+1. The module's unwithdrawn rewards at A and at B are withdrawn into their
+   delegation queues (W -> P: neither backing changes), so no x/staking call
+   below pays anything outside the books.
+2. u = floor(amount x B_A / S_A), A's live rate (as an undelegation).
+3. Out of A's queue first: min(u, P_A) is ERTH waiting to be delegated to A
+   at the epoch end. It moves to B's queue as a book entry: never bonded at
+   A, it needs no x/staking entry and carries no slash risk from A. A value
+   exceeding the queue by at most 0.001 ERTH moves out of the queue alone,
+   the excess left to A's book.
+4. The rest leaves the module's bonded stake at A with x/staking's
+   BeginRedelegate (delegator = the module, A -> B), in the same block: no
+   unbonding. It never exceeds D_A - U_A (pending undelegations stay
+   covered).
+5. derth/<dst> = floor(arrived x S_B / B_B), arrived being the measured rise
+   of B's backing (u less at most x/staking's truncation), B_B and S_B as
+   before the move: B's live rate. S_A -= amount, S_B += minted; the supply
+   checkpoints for open snapshots are written first.
+6. The proof's nullifiers are spent, its change appended; the derth/<dst>
+   note is minted to spc_mint (stake note event with spc and ciphertext).
+
+Rounding favours the books on both sides (floors). A's rate and B's rate do
+not move, beyond x/staking's one-uerth truncations. The stake earns at B
+from that block on (a queued part from B's epoch end, as any delegation).
+
+Event `shieldedstaking_redelegate {src_validator, dst_validator, derth
+(amount), value (u), minted, queued, bonded, completion_time (unix ns, ""
+when no entry)}`, then the stake nullifier, stake note (change) and stake
+note (mint) events.
+
+### 19.3 x/staking's rules, shared
+
+The module is one delegator to x/staking, so x/staking's redelegation rules
+apply to it as a whole, shared by every private staker:
+
+- **No transitive redelegation.** While any private redelegation INTO A is
+  maturing (unbonding_time, 21 days), x/staking refuses a redelegation out
+  of the module's bonded stake at A. One person's redelegation into A holds
+  every private staker of A for up to 21 days (undelegating is not
+  affected; a value that fits in A's queue still moves). Refused with 1120
+  "transitive".
+- **max_entries per pair.** At most max_entries (32) maturing entries per
+  (A, B); the next is refused with 1120 "max_entries" naming when the
+  earliest completes. Each bonded move is one entry (x/staking does not
+  merge redelegation entries).
+
+The redelegation runs in the private ante, atomically with the spend
+(ExecutesInAnte, as the dex's swaps): a refusal in a block (the limits are
+shared, so they can change between CheckTx and the block) fails the tx in
+the ante, spending nothing and paying no fee. CheckPrivateAction refuses
+the same earlier, before any proof is verified.
+
+`Query/Redelegation {src_validator, dst_validator}`
+(`/earth/shieldedstaking/v1/redelegation/{src}/{dst}`): `src_locked_until`
+(unix ns when the last maturing redelegation into src completes, 0 if
+none), `entries` and `max_entries` for the pair, `pair_frees_at` (earliest
+completion, 0 if none), `queue` (src's queue plus unwithdrawn rewards:
+value that moves without x/staking). A wallet checks it before proving: if
+src is locked and the value exceeds `queue`, or the pair is full, the move
+is refused.
+
+Accepted, documented: griefing. Redelegating dust into A (min_delegation)
+every 21 days locks A's private stakers out of redelegation (not out of
+undelegation); filling a pair's 32 entries blocks that pair. The fix is to
+spread the module's stake over several delegator accounts ("lanes", each
+validator's stake split between accounts so that one with no incoming entry
+can always move); it touches every place the module reads its delegation
+(backing, the epoch end, unbonding records, the tally, slashing, genesis)
+and is left for after the relaunch.
+
+Validator self-bonds still cannot redelegate (round 6, D6-1): MsgBeginRedelegate
+is refused by the ante filter and by the staking hook for every account but
+this module, and genesis refuses any redelegation that is not the module's.
+
+### 19.4 Slashing: B's book absorbs it, pro rata
+
+x/staking slashes a redelegation entry for an infraction of A committed
+before it (creation height at or after the infraction height) while it
+matures: slash_fraction (5% for a double sign) of the entry's shares at B.
+Rule: **B's book absorbs it, pro rata.** The shares are unbonded from the
+module's delegation at B and burnt, so every derth/B note loses the same
+fraction through B's rate; the end of the block lowers B's epoch rate
+(positions re-weigh). The redelegated notes are derth/B like any other:
+nothing links them to the redelegation (that is the privacy), so the loss
+cannot follow them; their owner bears their pro-rata share, as everyone at
+B does.
+
+x/staking's own order would be unfair for a pooled delegator: it takes the
+entry's slash first from the delegator's unbonding entries at B begun after
+the infraction, up to the whole slash amount, and then still takes the full
+slash_fraction x shares from the delegation unless those entries covered
+all of it. For one person those are their own undelegations; for the
+module they are other people's undelegations from B, people who never
+staked at A. So as a slash begins (x/staking's BeforeValidatorModified, in
+x/slashing's or x/evidence's BeginBlocker), for every destination of the
+module's redelegations from the slashed validator, the module:
+
+- withdraws its rewards at the destination into the queue (the slash's
+  unbond would pay them outside the books);
+- sets its unbonding delegation at the destination aside
+  (`ShelteredUnbondings`) and puts it back as it was at the start of the
+  next slash, in its own BeginBlocker (now ordered right after x/slashing
+  and x/evidence, before any tx) and at the start of its EndBlocker;
+- marks the destination for the end-of-block re-weigh.
+
+B's undelegations already under way are therefore untouched (they left B;
+the payouts are as without the slash). The value moved out of A's queue
+carries no entry and no slash. Invariant 9 checks nothing stays set aside.
+
+Rejected alternative: A's book absorbs it (hide the entry instead, so the
+slash burns from A's tokens). Then the redelegator bears nothing, A's
+remaining holders pay for the leavers (a run on A after any infraction), and
+x/staking caps the burn at A's remaining tokens, so after an exodus the
+slash simply vanishes. B-absorbs keeps x/staking's amount exact, keeps the
+redelegator's share with them, and bounds the moral hazard by the evidence
+window (double-sign evidence is normally committed within blocks; at most
+max_age: 48 h and 100,000 blocks).
+
+### 19.5 Votes, Groundworks, books
+
+- **Votes.** A derth/A note in a proposal's snapshot votes as A, once
+  (its vote nullifier), whether before or after it moves: its spend
+  nullifier entered the tree after the snapshot's nf_root. Its derth/B note
+  was minted after the snapshot (not under its note root) and cannot vote
+  on that proposal. No unit of stake votes twice. The tally, as for an
+  undelegation (audit F6): A's private votes are fractions of A's snapshot
+  supply applied to the module's CURRENT shares at A, so a vote of stake
+  that moved away counts against what is left at A (the leaver keeps a
+  diluted voice, taken from A's remaining stake), and the moved stake at B
+  follows B's own (inherited) vote. Total power never exceeds bonded stake.
+  Proposals snapshotted after the move see derth/B normally.
+- **Groundworks.** Weight lives in positions, per validator; a note
+  redelegation changes no position, no total and no epoch rate. A
+  position's weight moves by unlocking it (a derth/A note), redelegating
+  the note and locking it at B with its split: A's voter loses the weight,
+  B's carries it at B's epoch rate. (Positions are public objects; a direct
+  position move was left out to keep the msg to notes.)
+- **Books.** Both books keep `derth_supply x rate = backing` (invariant 4);
+  the module's balance stays the queues plus matured payouts (invariant 1);
+  undelegation records and payouts are untouched (invariants 3, 8).
+  Invariant 9 (new): every x/staking redelegation is the module's, between
+  two different validators, with 1..max_entries entries, and no unbonding
+  delegation is left set aside.
+- **Genesis.** x/staking exports the module's redelegations in flight;
+  InitGenesis accepts them (and refuses any other: "genesis redelegation
+  ... only private staking redelegates"). This module exports nothing new.
+
+### 19.6 Privacy
+
+The amount and its value are public, as at undelegate: the books and
+x/staking's delegations are public (power and public money), and the
+minted derth/<dst> amount follows from them. Who moves stays hidden: the
+spent notes show only nullifiers, the change is a hiding commitment, the
+derth/<dst> note goes to a hiding stake pc with an amount-blind ciphertext;
+the event names validators and amounts, never an owner. As at undelegate,
+one tx links the spent notes to the new note; the new note's later spends
+are unlinkable without nk.
+
+Why no new circuit. A dedicated circuit that minted the derth/<dst> note
+itself would have to prove the rate conversion against B_A, S_A, B_B, S_B,
+which change every block (rewards accrue): the proof would be stale before
+it landed, or the chain would have to re-check a slippage bound, which is
+the chain computing the amount anyway. Hiding the amount is impossible
+while the books and x/staking's delegations are public. The existing stake
+circuit already proves the one statement needed (these derth/<src> notes are
+mine, amount leaves, the change and the mint pc are mine): nothing to gain.
+
+### 19.7 Wallet format (building a redelegation)
+
+1. `Query/Validator` for src (rate) and dst; `Query/Redelegation{src, dst}`:
+   if `src_locked_until > now` or `entries == max_entries`, and the value
+   (amount x rate_src) exceeds `queue` by more than 0.001 ERTH, the chain
+   will refuse: offer undelegating, another destination, or waiting.
+2. Choose up to two derth/<src> notes (merge first if more), amount <= their
+   sum, value >= 1 ERTH and minting >= 1 derth/<dst> at dst's rate.
+3. Stake proof: asset AssetID(derth/<src>), inputs those notes, output 0 the
+   change (derth/<src>, wallet stake ciphertext), v_out = amount, mint_rho/
+   mint_rcm a fresh opening for the derth/<dst> note (spc_mint =
+   StakePC(owner_pk, mint_rho, mint_rcm)), spc_ciphertext =
+   EncryptBlindStakeNote(mint_rho, mint_rcm, memo) to your own key.
+4. Fee bundle (uerth only, the whole balance is the fee); sighash fields as
+   in 19.1. Prove, send.
+5. Find the derth/<dst> note: the `shieldedstaking_stake_note` event whose
+   denom is derth/<dst> with your spc (or by trial decryption of its blind
+   ciphertext; the amount is on the event and in the response's `derth`).

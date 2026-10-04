@@ -15,6 +15,39 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Private redelegation (user decision, the one exception to the feature
+  freeze; ORCHARD_DESIGN.md section 19, STAKING_WAVE_PROGRESS.md). No circuit,
+  verifying key or genesis change (genesis.json sha256
+  1824225dce524e47bf84bc5ff4fe0f8e76127b1c128480c925f6e420a6067ee8).
+  - x/shieldedstaking: **new MsgRedelegate** {bundle, src_validator (2),
+    dst_validator (3), amount (4), stake (5)}; sighash: StakeFields(stake),
+    Bytes(src_validator), Bytes(dst_validator), amount. A stake proof spends
+    derth/<src> (v_out = amount, change back); the chain moves the live
+    value to dst (out of src's delegation queue first, the rest with
+    x/staking's BeginRedelegate in the same block: no unbonding) and mints
+    derth/<dst> at dst's live rate to spc_mint (spc_ciphertext required).
+    Runs in the private ante, atomically with the spend: a refusal spends
+    and pays nothing. Response {value, derth, position, completion_time}.
+    Event `shieldedstaking_redelegate` (src_validator, dst_validator, derth,
+    value, minted, queued, bonded, completion_time). Error 1120
+    ErrRedelegation (same validator, x/staking's transitive refusal or
+    max_entries per pair: the module is one delegator, so these limits are
+    shared by every private staker). Gas 700,000 + proof + 7 note writes.
+  - x/shieldedstaking: new `Query/Redelegation` {src_validator,
+    dst_validator} -> src_locked_until, entries, max_entries,
+    pair_frees_at, queue (`/earth/shieldedstaking/v1/redelegation/{src}/{dst}`).
+  - x/shieldedstaking: **a slash of a redelegation's source reaches the
+    destination's book pro rata** (slash_fraction x the entry's shares from
+    the module's delegation at dst). The module's unbonding delegation at
+    each destination is set aside for the slash and put back after it, so
+    x/staking cannot take the slash from dst's undelegations under way (it
+    would, first, and still slash the delegation in full). The module now
+    has a **BeginBlocker** (ordered right after x/slashing and x/evidence)
+    that puts them back before any tx.
+  - x/shieldedstaking: genesis accepts the module's x/staking redelegations
+    in flight and still refuses any other; invariant 9 checks them and that
+    nothing stays set aside. Validator self-bonds still cannot redelegate.
+
 - Staking without background transactions (user decision; see
   STAKING_WAVE_PROGRESS.md, ORCHARD_DESIGN.md section 18). **New vote
   verifying key; genesis.json sha256
