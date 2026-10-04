@@ -59,7 +59,7 @@ func readOrSkip(t *testing.T, path string) []byte {
 
 // Audit 4 (core PoC, ported): mutate every 32-byte element of a valid action proof to canonical
 // junk (0, 1, 2, r-1, random < r) and check bb returns instead of aborting.
-func TestAudit4ProofElementJunkNoCrash(t *testing.T) {
+func TestProofElementJunkNoCrash(t *testing.T) {
 	b, sighash, vk := loadBundle(t, 1)
 	good := b.Actions[0].Proof
 	in := b.PublicInputs(0, sighash)
@@ -100,7 +100,7 @@ func TestAudit4ProofElementJunkNoCrash(t *testing.T) {
 // rest, so a proof with up to 31 bytes appended verified: one tx, two
 // encodings, two hashes. Every length but ProofSize is now refused before bb
 // sees it.
-func TestAuditProofLengthIsExact(t *testing.T) {
+func TestProofLengthIsExact(t *testing.T) {
 	b, sighash, vk := loadBundle(t, 1)
 	good := b.Actions[0].Proof
 	in := b.PublicInputs(0, sighash)
@@ -126,7 +126,7 @@ func TestAuditProofLengthIsExact(t *testing.T) {
 // verified. In CheckTx the chain now verifies one at a time and stops at the
 // first failure; in a block it still verifies them all in parallel (same
 // result, the first failure in order).
-func TestAuditSequentialVerificationStopsAtFirstFailure(t *testing.T) {
+func TestSequentialVerificationStopsAtFirstFailure(t *testing.T) {
 	b, _, vk := loadBundle(t, 10)
 	var wrong fr.Element
 	wrong.SetUint64(42) // every proof fails, only after full verification

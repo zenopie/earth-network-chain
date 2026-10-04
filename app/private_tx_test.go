@@ -55,7 +55,7 @@ func (e *shieldedEnv) privateTxFields(tx shieldedtypes.TxFields, msg shieldedtyp
 // the ante had spent the notes. All three are now bound by the sighash; a
 // tx rewritten in any of them fails its binding signature, and the tx as
 // proven executes with its memo.
-func TestShieldedAuditPrivateTxFieldsBound(t *testing.T) {
+func TestShieldedPrivateTxFieldsBound(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
 	e.shieldAll(s)
@@ -103,7 +103,7 @@ func TestShieldedAuditPrivateTxFieldsBound(t *testing.T) {
 // M1: bb ignored bytes after a proof's 458 field elements, so a proof with a
 // byte appended verified: the same tx under another hash. Every proof is now
 // exactly 14,656 bytes, refused statelessly otherwise.
-func TestShieldedAuditProofBytesNotMalleable(t *testing.T) {
+func TestShieldedProofBytesNotMalleable(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
 	e.shieldAll(s)
@@ -160,9 +160,9 @@ func (e *shieldedEnv) forgedPrivateTx(n int, proof []byte) []byte {
 
 // M2: such a tx reached proof verification in CheckTx with nothing at stake
 // and made the node verify every proof. It is still refused at the proofs
-// (x/shielded/keeper TestCheckPrivateMsgAuditOneJunkProof shows CheckTx now
+// (x/shielded/keeper TestCheckPrivateMsgOneJunkProof shows CheckTx now
 // stops at the first), and pays nothing.
-func TestShieldedAuditCheckTxForgedBundle(t *testing.T) {
+func TestShieldedCheckTxForgedBundle(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
 	e.shieldAll(s)
@@ -179,7 +179,7 @@ func TestShieldedAuditCheckTxForgedBundle(t *testing.T) {
 // proof is verified and counts toward max_gas although the ante fails, so
 // once the block's gas is gone the rest are refused without verifying
 // anything.
-func TestShieldedAuditBlockGasBoundsFailedVerification(t *testing.T) {
+func TestShieldedBlockGasBoundsFailedVerification(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
 	e.shieldAll(s)
@@ -216,7 +216,7 @@ func TestShieldedAuditBlockGasBoundsFailedVerification(t *testing.T) {
 }
 
 // L3: the pool's module account can neither mint nor burn.
-func TestShieldedAuditPoolAccountHasNoMintBurn(t *testing.T) {
+func TestShieldedPoolAccountHasNoMintBurn(t *testing.T) {
 	e := initShieldedEnv(t)
 	acc := e.app.AuthKeeper.GetModuleAccount(e.ctx(), shieldedtypes.ModuleName)
 	require.NotNil(t, acc)
@@ -233,7 +233,7 @@ func TestShieldedAuditPoolAccountHasNoMintBurn(t *testing.T) {
 // handler now declares what it releases, and the pool refuses any other
 // remainder before spending anything (behind each msg's ValidateBasic, which
 // refuses the same shapes first).
-func TestDexAuditReleaseMapMatchesHandler(t *testing.T) {
+func TestDexReleaseMapMatchesHandler(t *testing.T) {
 	e := initDexEnv(t)
 	e.shield(uint64(10_000 * ssErth))
 	e.shield(uint64(100 * ssErth))
@@ -262,7 +262,7 @@ func TestDexAuditReleaseMapMatchesHandler(t *testing.T) {
 // (unblocked) module account as its receiver, putting unbooked uerth there:
 // invariant 1 broken for good and every later export refused at import.
 // checkUnshield now refuses any module account receiver.
-func TestAudit3UnshieldIntoStakingModuleRefused(t *testing.T) {
+func TestUnshieldIntoStakingModuleRefused(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
 	e.shieldAll(s)
@@ -293,7 +293,7 @@ func TestAudit3UnshieldIntoStakingModuleRefused(t *testing.T) {
 // AUDIT3-B: private staking's send restriction accepted any transfer from
 // the shielded pool. It now accepts pool -> module only inside x/shielded's
 // ReleaseToModule (marked context), the path its own private msgs pay by.
-func TestAudit3PoolToStakingModuleNeedsRelease(t *testing.T) {
+func TestPoolToStakingModuleNeedsRelease(t *testing.T) {
 	e := initStakeEnv(t)
 	ctx := e.ctx()
 	pool := authtypes.NewModuleAddress(shieldedtypes.ModuleName)
@@ -319,7 +319,7 @@ func TestAudit3PoolToStakingModuleNeedsRelease(t *testing.T) {
 // SDK's rule admitted timeout == height), and PrepareProposal leaves out a
 // tx whose timeout is below the proposal's height before counting it toward
 // the private action cap.
-func TestAudit4ExpiredTimeoutHeight(t *testing.T) {
+func TestExpiredTimeoutHeight(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
 	requireOK(t, e.shieldAll(s).TxResults[0])
@@ -351,7 +351,7 @@ func TestAudit4ExpiredTimeoutHeight(t *testing.T) {
 // checked, in CheckTx and in a block. Within it, the tx goes on to its
 // checks (here its binding signature, which binds the limit it was proven
 // for).
-func TestAudit6PrivateGasLimitBounded(t *testing.T) {
+func TestPrivateGasLimitBounded(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
 	e.shieldAll(s)

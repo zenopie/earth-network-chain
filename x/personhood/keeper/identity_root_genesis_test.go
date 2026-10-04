@@ -20,7 +20,7 @@ import (
 // in the future, used to be accepted and stay a valid membership anchor for
 // years. InitGenesis now refuses it; a record that is the rebuilt tree's
 // root at its size, dated no later than genesis, is accepted.
-func TestAudit4ForgedFutureIdentityRootRefused(t *testing.T) {
+func TestForgedFutureIdentityRootRefused(t *testing.T) {
 	reg := genesisReg(0, 1_700_000_000)
 	leaf, err := keeper.IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt, reg.PredecessorAt)
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func realRootOf(t *testing.T, leaves ...fr.Element) []byte {
 // A root recorded before a leaf was zeroed is not the rebuilt tree's root at
 // its size any more: export drops it (an anchor only), so the export still
 // imports under the C3 check.
-func TestAudit4IdentityRootsRoundTripAfterZeroing(t *testing.T) {
+func TestIdentityRootsRoundTripAfterZeroing(t *testing.T) {
 	f := initFixture(t)
 	sdkCtx := sdk.UnwrapSDKContext(f.ctx).WithBlockTime(time.Unix(10_600, 0).UTC())
 	params := types.DefaultParams()

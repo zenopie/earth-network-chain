@@ -103,7 +103,7 @@ func bigInt(s string) math.Int {
 // 2^63-1, the most a wallet holds: 1.95e19 is three notes, two full ones.
 // (Before the 2^63-1 cap it was two, the first 2^64-1: invisible to every
 // wallet.)
-func TestAudit5PrivateLegAboveU64IsSplit(t *testing.T) {
+func TestPrivateLegAboveU64IsSplit(t *testing.T) {
 	k, ctx, bank, sh := initNoteFixture(t)
 	const id = 1
 	pool := types.Pool{PoolId: id, ReserveErth: sdk.NewCoin("uerth", bigInt("1000000000000")),
@@ -144,7 +144,7 @@ func TestAudit5PrivateLegAboveU64IsSplit(t *testing.T) {
 // A payout that cannot be made (a leg past MaxSplitNotes notes) is never
 // dropped: the entry stays with its shares escrowed, re-filed at a later
 // retry time, and pays once the pool lets it.
-func TestAudit5FailedPayoutIsRetriedNotDropped(t *testing.T) {
+func TestFailedPayoutIsRetriedNotDropped(t *testing.T) {
 	k, ctx, bank, sh := initNoteFixture(t)
 	const id = 1
 	huge := math.NewIntFromUint64(shieldedtypes.MaxNoteValue).MulRaw(shieldedtypes.MaxSplitNotes + 1)
@@ -209,7 +209,7 @@ func TestAudit5FailedPayoutIsRetriedNotDropped(t *testing.T) {
 	require.Len(t, sh.notes, 2, "both legs paid")
 }
 
-func TestAudit5SplitNoteValues(t *testing.T) {
+func TestSplitNoteValues(t *testing.T) {
 	max := math.NewIntFromUint64(shieldedtypes.MaxNoteValue)
 	v, err := shieldedtypes.SplitNoteValues(max)
 	require.NoError(t, err)
@@ -235,7 +235,7 @@ func TestAudit5SplitNoteValues(t *testing.T) {
 // A withdrawal whose note leg is already above a quarter of what a payout can
 // mint as notes is refused when it starts (withdraw in smaller parts), so it
 // does not sit failing at maturity.
-func TestAudit5WithdrawalNoteLegCappedAtStart(t *testing.T) {
+func TestWithdrawalNoteLegCappedAtStart(t *testing.T) {
 	k, ctx, bank, _ := initNoteFixture(t)
 	const id = 1
 	quarter := math.NewIntFromUint64(shieldedtypes.MaxNoteValue).MulRaw(shieldedtypes.MaxSplitNotes / 4)
@@ -256,7 +256,7 @@ func TestAudit5WithdrawalNoteLegCappedAtStart(t *testing.T) {
 }
 
 // Audit 5 L-DX3: the TWAP accumulator survives an export and import.
-func TestAudit5TwapAccumulatorExported(t *testing.T) {
+func TestTwapAccumulatorExported(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	seedFundedPool(t, k, ctx, bank, 1, 1_000_000, 1_000_000, 0)
 	require.NoError(t, k.PriceCumulative.Set(ctx, 1, math.LegacyNewDec(12345)))
@@ -278,7 +278,7 @@ func TestAudit5TwapAccumulatorExported(t *testing.T) {
 // Audit 6 D-L-D1: the sweep's note budget is checked against what each payout
 // would mint, before it mints: a payout that would pass it waits for the next
 // block, at the head of the queue and not as a failure.
-func TestAudit6LpUnbondNoteBudget(t *testing.T) {
+func TestLpUnbondNoteBudget(t *testing.T) {
 	k, ctx, bank, sh := initNoteFixture(t)
 	const id = 1
 	pool := types.Pool{PoolId: id, ReserveErth: sdk.NewCoin("uerth", bigInt("1000000000000")),

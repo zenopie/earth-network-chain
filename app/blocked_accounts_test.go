@@ -16,7 +16,7 @@ import (
 // D7-L1: a send to the gov module account is refused (it is on the blocked
 // list), so its balance stays exactly the deposits x/gov's InitGenesis
 // requires; deposits still reach it and a proposal still pays them back.
-func TestAudit7GovAccountBlocked(t *testing.T) {
+func TestGovAccountBlocked(t *testing.T) {
 	e := initStakeEnv(t)
 	gov := authtypes.NewModuleAddress(govtypes.ModuleName)
 	require.True(t, e.app.BankKeeper.BlockedAddr(gov))

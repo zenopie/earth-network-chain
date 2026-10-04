@@ -27,7 +27,7 @@ import (
 // re-open the A -> B -> A replay of a landed registration. The used binding
 // is held for the largest skew governance may set, counted from the proof's
 // own current_date.
-func TestAudit3SkewRaiseDoesNotReopenReplay(t *testing.T) {
+func TestSkewRaiseDoesNotReopenReplay(t *testing.T) {
 	encCfg := moduletestutil.MakeTestEncodingConfig()
 	ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
 	pkiStore := storetypes.NewKVStoreKey(pkitypes.StoreKey)
@@ -79,7 +79,7 @@ func TestAudit3SkewRaiseDoesNotReopenReplay(t *testing.T) {
 // Audit 3 L2: an export taken mid-purge carries the purge (and the daily rate
 // counters), so the import finishes retiring the revoked signer's
 // registrations and keeps today's caps.
-func TestAudit3GenesisKeepsPendingPurgeAndRates(t *testing.T) {
+func TestGenesisKeepsPendingPurgeAndRates(t *testing.T) {
 	k, _, ctx := capKeeper(t)
 	dsc := privacy.FieldBytes(privacy.U64(777))
 	for i := 0; i < 50; i++ {
@@ -121,7 +121,7 @@ func TestAudit3GenesisKeepsPendingPurgeAndRates(t *testing.T) {
 }
 
 // Audit 3 I1: an impossible current_date is refused, not normalised.
-func TestAudit3ImpossibleDateRefused(t *testing.T) {
+func TestImpossibleDateRefused(t *testing.T) {
 	for _, d := range []uint64{250231, 250230, 250431, 230229} {
 		_, err := yymmddToUnix(privacy.FieldBytes(privacy.U64(d)))
 		require.Error(t, err, "%d", d)

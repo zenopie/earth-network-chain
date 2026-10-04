@@ -37,7 +37,7 @@ func TestParamsValidateBoundsValidityAndIndexes(t *testing.T) {
 // Audit 4 C5: window <= max trade <= accrual is checked on the values in
 // force, so a window raised past the default one-hour trade cap (trade left
 // at zero) is refused, as is a window past the accrual cap.
-func TestAudit4BuybackWindowValidatedAgainstEffectiveTradeCap(t *testing.T) {
+func TestBuybackWindowValidatedAgainstEffectiveTradeCap(t *testing.T) {
 	p := types.DefaultParams()
 	require.NoError(t, p.Validate())
 

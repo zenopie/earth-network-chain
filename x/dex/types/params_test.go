@@ -3,7 +3,7 @@ package types
 import "testing"
 
 // Audit 6 D-L-D2: volume_depth_cap_per_day is bounded.
-func TestAudit6VolumeDepthCapBounded(t *testing.T) {
+func TestVolumeDepthCapBounded(t *testing.T) {
 	p := DefaultParams()
 	p.VolumeDepthCapPerDay = MaxVolumeDepthCapPerDay
 	if err := p.Validate(); err != nil {

@@ -555,7 +555,7 @@ func (g *gwWeightEnv) checkConsistent(op sdk.AccAddress) {
 // The audit's PoC: create, vote and undelegate the whole self-bond in one
 // block, while the validator is still Unbonded. The vote finds no weight
 // (D7-L2); once Bonded it weighs the bond, and the weight goes with the stake.
-func TestAudit6GroundworksSameBlockCreateVoteUndelegate(t *testing.T) {
+func TestGroundworksSameBlockCreateVoteUndelegate(t *testing.T) {
 	g := initGwWeightEnv(t)
 	base := g.allocated()
 	val, _ := g.createValidator(500 * ssErth)
@@ -586,7 +586,7 @@ func TestAudit6GroundworksSameBlockCreateVoteUndelegate(t *testing.T) {
 // A Bonded validator's operator votes, the validator is jailed (Unbonding),
 // the operator withdraws part of the bond, then all of it after the
 // validator is Unbonded. The weight tracks the bond at every step.
-func TestAudit6GroundworksJailedThenFullUnbond(t *testing.T) {
+func TestGroundworksJailedThenFullUnbond(t *testing.T) {
 	g := initGwWeightEnv(t)
 	base := g.allocated()
 	val, _ := g.createValidator(500 * ssErth)
@@ -630,7 +630,7 @@ func TestAudit6GroundworksJailedThenFullUnbond(t *testing.T) {
 
 // A Bonded validator's operator withdraws its whole self-bond: Bonded is the
 // case that always worked, kept as a guard.
-func TestAudit6GroundworksBondedFullUnbond(t *testing.T) {
+func TestGroundworksBondedFullUnbond(t *testing.T) {
 	g := initGwWeightEnv(t)
 	base := g.allocated()
 	val, _ := g.createValidator(500 * ssErth)
@@ -649,7 +649,7 @@ func TestAudit6GroundworksBondedFullUnbond(t *testing.T) {
 // A redelegation of a self-bond is refused (the private staking module is the
 // sole delegator besides an operator to its own validator), so the weight
 // cannot move through one.
-func TestAudit6GroundworksRedelegationRefused(t *testing.T) {
+func TestGroundworksRedelegationRefused(t *testing.T) {
 	g := initGwWeightEnv(t)
 	val, _ := g.createValidator(500 * ssErth)
 	op := sdk.AccAddress(val)
@@ -673,7 +673,7 @@ func (g *gwWeightEnv) requireVoteKept(op sdk.AccAddress) {
 // Audit 7 D7-L2: a jailed validator's operator loses its Groundworks weight
 // in the block its validator leaves the active set, and gets it back, with
 // no new vote, in the block it is Bonded again (unjailed).
-func TestAudit7GroundworksBondedOnly(t *testing.T) {
+func TestGroundworksBondedOnly(t *testing.T) {
 	g := initGwWeightEnv(t)
 	base := g.allocated()
 	val, key := g.createValidator(500 * ssErth)

@@ -24,7 +24,7 @@ import (
 // change earlier in H (before the snapshot) does not count; one after it in
 // H, or later, is checkpointed so the snapshot keeps its start-of-block
 // supply; a snapshot in a later block sees the changed supply.
-func TestAudit4SnapshotSupplyIsStartOfBlock(t *testing.T) {
+func TestSnapshotSupplyIsStartOfBlock(t *testing.T) {
 	key := storetypes.NewKVStoreKey(types.StoreKey)
 	ctx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("tt")).Ctx
 	enc := moduletestutil.MakeTestEncodingConfig()

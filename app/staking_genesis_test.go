@@ -28,7 +28,7 @@ import (
 // running the hooks that enforce the delegation rule. x/shieldedstaking's
 // InitGenesis now checks it: only the module and each operator's self-bond
 // delegate (or unbond), and nobody redelegates.
-func TestAudit3GenesisDelegationRule(t *testing.T) {
+func TestGenesisDelegationRule(t *testing.T) {
 	foreign := sdk.AccAddress(secp256k1.GenPrivKeyFromSecret([]byte("audit3/foreign")).PubKey().Address())
 	withStaking := func(edit func(st map[string]any, op sdk.AccAddress), notBonded int64) (err error) {
 		defer func() {
@@ -133,7 +133,7 @@ func stakeGenesisWith(t *testing.T, roots [][]byte, snapRoot []byte, snapHeight 
 // A4-G1 / L-B: every stake_roots record and every snapshot's note root is
 // checked against the rebuilt stake tree; I2: an open snapshot must be
 // below the initial height.
-func TestAudit4GenesisForgedStakeAnchorRefused(t *testing.T) {
+func TestGenesisForgedStakeAnchorRefused(t *testing.T) {
 	leaf, _ := privacy.FieldFromBytes(privacy.FieldBytes(ssDet("a4/cm", 0)))
 	m := merkle.NewMem()
 	_, err := m.Append(leaf)
@@ -162,7 +162,7 @@ func TestAudit4GenesisForgedStakeAnchorRefused(t *testing.T) {
 // A4-G2: genesis may not point x/shieldedstaking's own module account's
 // withdraw address anywhere else: InitGenesis refuses it, and so does
 // `genesis validate` (ValidateOperatorWithdrawAddrs) for any module account.
-func TestAudit4GenesisModuleWithdrawAddrRefused(t *testing.T) {
+func TestGenesisModuleWithdrawAddrRefused(t *testing.T) {
 	thief := sdk.AccAddress(secp256k1.GenPrivKeyFromSecret([]byte("a4/thief")).PubKey().Address())
 	mod := authtypes.NewModuleAddress(sstypes.ModuleName)
 	var state map[string]json.RawMessage

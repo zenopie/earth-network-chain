@@ -39,7 +39,7 @@ func (allTripped) IsAllowed(context.Context, string) (bool, error) { return fals
 
 // Audit 5 L-AS2: a tripped breaker never stops the chamber's votes (every gov
 // proposal needs them), and still stops everything else.
-func TestAudit5ChamberVotesPassTheBreaker(t *testing.T) {
+func TestChamberVotesPassTheBreaker(t *testing.T) {
 	b := chamberExemptBreaker{allTripped{}}
 	for _, m := range []sdk.Msg{&assemblytypes.MsgVoteProposal{}, &assemblytypes.MsgVoteRemoval{}} {
 		ok, err := b.IsAllowed(context.Background(), sdk.MsgTypeURL(m))

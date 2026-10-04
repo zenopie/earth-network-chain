@@ -16,7 +16,7 @@ import (
 // dated far in the future, stayed a valid anchor for years). InitGenesis now
 // checks every record against the rebuilt tree at its tree_size and refuses
 // one dated after genesis.
-func TestAudit3GenesisForgedRootRefused(t *testing.T) {
+func TestGenesisForgedRootRefused(t *testing.T) {
 	f := initFixtureEmpty(t, newFakeBank())
 	var forged fr.Element
 	forged.SetUint64(0xf0f0) // stands for the root of a tree only the attacker knows
@@ -27,7 +27,7 @@ func TestAudit3GenesisForgedRootRefused(t *testing.T) {
 	require.ErrorContains(t, f.k.InitGenesis(f.ctx, *gs), "is not the root of the first 0 commitments")
 }
 
-func TestAudit3GenesisRootRecordsVerified(t *testing.T) {
+func TestGenesisRootRecordsVerified(t *testing.T) {
 	f := initFixture(t)
 	s := shieldedtest.Default()
 	f.runScenario(s, shieldedtest.DoubleSpend)

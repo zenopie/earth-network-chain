@@ -14,7 +14,7 @@ import (
 // Audit 5 L-ST2: a hand-built genesis with a nil amount is refused by
 // Validate (InitGenesis validates first, so it cannot panic InitChain), and a
 // position's derth must fit a stake note (1..2^63-1).
-func TestAudit5GenesisValidation(t *testing.T) {
+func TestGenesisValidation(t *testing.T) {
 	val, err := bech32.ConvertAndEncode(sdk.GetConfig().GetBech32ValidatorAddrPrefix(), make([]byte, 20))
 	require.NoError(t, err)
 

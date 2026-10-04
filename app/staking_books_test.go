@@ -101,7 +101,7 @@ func (e *stakeEnv) auditDelegate(val sdk.ValAddress, amt uint64, label string) *
 // F0: an all-uppercase bech32 alias of a validator's operator address was a
 // second book over the same SDK delegation; 1uerth of alias derth undelegated
 // everyone's stake. Every entry point must now refuse a non-canonical string.
-func TestAuditValoperCaseAliasDrainsDelegation(t *testing.T) {
+func TestValoperCaseAliasDrainsDelegation(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
@@ -148,7 +148,7 @@ func TestAuditValoperCaseAliasDrainsDelegation(t *testing.T) {
 }
 
 // F0 at genesis: a book keyed by a non-canonical validator string is refused.
-func TestAuditGenesisRefusesNonCanonicalValoper(t *testing.T) {
+func TestGenesisRefusesNonCanonicalValoper(t *testing.T) {
 	var err error
 	defer func() {
 		r := recover()
@@ -174,7 +174,7 @@ func TestAuditGenesisRefusesNonCanonicalValoper(t *testing.T) {
 // starved for ever (the epoch end walked from the first key each time). The
 // sweep now goes on from a cursor in the following blocks: every book is
 // processed within ceil(books / EpochValidatorLimit) blocks of the epoch end.
-func TestAuditEpochValidatorStarvation(t *testing.T) {
+func TestEpochValidatorStarvation(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
 
@@ -213,7 +213,7 @@ func TestAuditEpochValidatorStarvation(t *testing.T) {
 // F1: books can no longer be created for dust: a delegation below
 // min_delegation (1 ERTH), or one that would mint less than min_delegation
 // derth, is refused.
-func TestAuditMinDelegation(t *testing.T) {
+func TestMinDelegation(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
 	v, _ := e.createValidator(1)
@@ -232,7 +232,7 @@ func TestAuditMinDelegation(t *testing.T) {
 // book (a reward computation each) inside the deposit tx: enough books made
 // every such deposit run out of gas. It is O(1) now: the same gas with 1
 // book or 60.
-func TestAuditSnapshotGasIndependentOfBooks(t *testing.T) {
+func TestSnapshotGasIndependentOfBooks(t *testing.T) {
 	gasWith := func(books int) uint64 {
 		e := initStakeEnv(t)
 		e.auditFundPool(10_000 * ssErth)
@@ -273,7 +273,7 @@ func must[T any](v T, err error) T {
 // so the exported genesis failed x/shieldedstaking's InitGenesis invariants.
 // Now the rewards are booked into the queues first and the records follow
 // the reset: the export re-imports, and the unbonding still pays.
-func TestAuditZeroHeightExportBreaksInvariants(t *testing.T) {
+func TestZeroHeightExportBreaksInvariants(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
@@ -332,7 +332,7 @@ func TestAuditZeroHeightExportBreaksInvariants(t *testing.T) {
 // to such a book is refused until the epoch end settles it: the last records
 // take the whole delegation, and what is left queued goes to the community
 // pool; the book empties and is removed.
-func TestAuditOrphanBackingNotCaptured(t *testing.T) {
+func TestOrphanBackingNotCaptured(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
@@ -382,7 +382,7 @@ func TestAuditOrphanBackingNotCaptured(t *testing.T) {
 // frozen for as long as any private derth stayed delegated to its validator
 // (x/staking keeps the validator until no delegation is left). Now the
 // escrow is paid out once the unbonding time has passed.
-func TestAuditEscrowReleasedOnRetirement(t *testing.T) {
+func TestEscrowReleasedOnRetirement(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
 	vB, vBKey := e.createValidator(1000 * ssErth)
@@ -422,7 +422,7 @@ func TestAuditEscrowReleasedOnRetirement(t *testing.T) {
 
 // F9: UpdatePosition accepted a split on a position with no weight
 // (LockPosition refused it).
-func TestAuditUpdatePositionNeedsWeight(t *testing.T) {
+func TestUpdatePositionNeedsWeight(t *testing.T) {
 	e := initStakeEnv(t)
 	k := e.app.ShieldedStakingKeeper
 	gov := authtypes.NewModuleAddress("gov")
@@ -449,7 +449,7 @@ func TestAuditUpdatePositionNeedsWeight(t *testing.T) {
 // F5, legacy books: a delegation with no derth and no record against it (as
 // the old epoch end could leave) is undelegated into an orphan record, whose
 // payout goes to the community pool when it matures; the book is removed.
-func TestAuditOrphanDelegationToCommunityPool(t *testing.T) {
+func TestOrphanDelegationToCommunityPool(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
@@ -494,7 +494,7 @@ func TestAuditOrphanDelegationToCommunityPool(t *testing.T) {
 // derth's holder. A delegation must now mint at least min_delegation derth,
 // so its rounding loss is at most a millionth of it; one too small for that
 // is refused, not rounded away.
-func TestAuditDonationInflationHarmless(t *testing.T) {
+func TestDonationInflationHarmless(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
@@ -537,7 +537,7 @@ func TestAuditDonationInflationHarmless(t *testing.T) {
 // nobody has claimed yet, and the epoch end walked all of them twice per
 // validator (orphan sweep, orphan check). Orphans are indexed now: the epoch
 // end's cost does not grow with a validator's unclaimed records.
-func TestAudit3EpochEndCostIndependentOfUnclaimedRecords(t *testing.T) {
+func TestEpochEndCostIndependentOfUnclaimedRecords(t *testing.T) {
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
@@ -573,7 +573,7 @@ func TestAudit3EpochEndCostIndependentOfUnclaimedRecords(t *testing.T) {
 
 // Audit 6 C-L2: a position holds at most 2^63-1 derth, as its unlock note and
 // genesis require; v_out is a public u64, so the bound is the chain's.
-func TestAudit6LockPositionNoteBound(t *testing.T) {
+func TestLockPositionNoteBound(t *testing.T) {
 	g := initGwEnv(t)
 	m := &sstypes.MsgLockPosition{Validator: g.valoper(g.v), Amount: ^uint64(0) - 1, Splits: g.split(100),
 		Stake: sstypes.StakeProof{OwnerTag: ownerTag(0)}}
@@ -582,7 +582,7 @@ func TestAudit6LockPositionNoteBound(t *testing.T) {
 }
 
 // Audit 6 C-L1: a slash of a validator with no private stake writes no book.
-func TestAudit6SlashWithoutBookWritesNone(t *testing.T) {
+func TestSlashWithoutBookWritesNone(t *testing.T) {
 	e := initStakeEnv(t)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)

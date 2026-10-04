@@ -19,7 +19,7 @@ func pow2(n uint) math.Int { return math.NewIntFromBigInt(new(big.Int).Lsh(big.N
 // Audit 4 PoC 1, first half: a pool seeded with a huge-supply IBC voucher
 // (ICS20 amounts go to 2^256) is refused at creation by the pool cap, as is
 // a swap input past it.
-func TestAudit4HugeVoucherPoolRefused(t *testing.T) {
+func TestHugeVoucherPoolRefused(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	ms := keeper.NewMsgServerImpl(k)
 	creator := sdk.AccAddress("attacker____________")
@@ -48,7 +48,7 @@ func TestAudit4HugeVoucherPoolRefused(t *testing.T) {
 // before the cap existed) no longer panics the EndBlocker's withdrawal
 // payout: the arithmetic is big.Int, and an entry that cannot settle is
 // dropped instead of halting the chain.
-func TestAudit4UnbondingPayoutOverflowNoHalt(t *testing.T) {
+func TestUnbondingPayoutOverflowNoHalt(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	ms := keeper.NewMsgServerImpl(k)
 	creator := sdk.AccAddress("attacker____________")
@@ -98,7 +98,7 @@ func TestAudit4UnbondingPayoutOverflowNoHalt(t *testing.T) {
 
 // Audit 4 PoC 2 (C2): each pulled deposit leg is rounded UP, so a depositor
 // cannot be minted shares worth nearly twice the token leg they paid.
-func TestAudit4DepositLegsRoundedUp(t *testing.T) {
+func TestDepositLegsRoundedUp(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	ms := keeper.NewMsgServerImpl(k)
 	seedFundedPool(t, k, ctx, bank, 1, 1_000_000_000_000, 1, 0)
@@ -120,7 +120,7 @@ func TestAudit4DepositLegsRoundedUp(t *testing.T) {
 
 // Audit 4 PoC 3 (C4): a pool drained to 0/0 exports a genesis its own
 // Validate accepts, and the export imports.
-func TestAudit4DrainedPoolExportValidates(t *testing.T) {
+func TestDrainedPoolExportValidates(t *testing.T) {
 	k, ctx, _ := initRewardFixture(t)
 	ms := keeper.NewMsgServerImpl(k)
 	creator := sdk.AccAddress("attacker____________")

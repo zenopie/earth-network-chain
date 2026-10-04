@@ -56,7 +56,7 @@ func forgedSend(t *testing.T, f *fixture, n int, anchor, proof []byte) *types.Ms
 // time and stops at the first failure: one verification per junk tx. In a
 // block (paid for by the gas charged before verification) it still verifies
 // them all, in parallel, deterministically reporting the first failure.
-func TestCheckPrivateMsgAuditOneJunkProof(t *testing.T) {
+func TestCheckPrivateMsgOneJunkProof(t *testing.T) {
 	f := initFixture(t)
 	s := shieldedtest.Default()
 	f.runScenario(s, shieldedtest.Send2)
@@ -93,7 +93,7 @@ func TestCheckPrivateMsgAuditOneJunkProof(t *testing.T) {
 
 // Audit (shielded L2): the pool's own account cannot be the other side of a
 // module mint or a release.
-func TestAuditPoolCannotPayItself(t *testing.T) {
+func TestPoolCannotPayItself(t *testing.T) {
 	f := initFixture(t)
 	pc := privacy.FieldBytes(shieldedtest.Det("pc", 1))
 	_, _, err := f.k.MintNote(f.ctx, types.ModuleName, sdk.NewInt64Coin(types.FeeDenom, 1), pc, shieldedtest.BlindCT("x"))

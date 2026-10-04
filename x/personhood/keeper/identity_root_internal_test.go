@@ -14,7 +14,7 @@ import (
 // again) moves to its new time, and its old by-time entry goes with it: the
 // prune keeps it for its full window, and export finds every by-time entry's
 // record.
-func TestAudit6RecurringIdentityRoot(t *testing.T) {
+func TestRecurringIdentityRoot(t *testing.T) {
 	k, ctx := regKeeper(t, nil)
 	r0 := make([]byte, 32)
 	r0[31] = 1

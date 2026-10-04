@@ -13,7 +13,7 @@ import (
 // Audit 4 C8: AdvanceIndexTo settles a stream up to a past time (a lapsed
 // lease's expiry), so clearing the lapsed voter after it gives the lapsed
 // weight none of the emission between its expiry and the sweep.
-func TestAudit4AdvanceIndexToSettlesUpToExpiry(t *testing.T) {
+func TestAdvanceIndexToSettlesUpToExpiry(t *testing.T) {
 	e := newTestEnv(t)
 	k := e.k
 	ctx := e.ctx.WithBlockTime(time.Unix(1_000_000, 0))

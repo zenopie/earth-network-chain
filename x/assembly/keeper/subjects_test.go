@@ -35,7 +35,7 @@ func (c *countingPki) CscaKeyCountry(ctx context.Context, der []byte) (string, e
 // entered voting: a trust-store change mid-vote does not move them, and no
 // vote (nor junk vote in CheckTx) re-classifies it. They go once x/gov ends
 // its voting for good.
-func TestAudit3GovDemotedExpeditedKeepsFixedSubjects(t *testing.T) {
+func TestGovDemotedExpeditedKeepsFixedSubjects(t *testing.T) {
 	e := newTestEnv(t)
 	cp := &countingPki{stubPki: e.pki}
 	e.k.pki = cp
@@ -101,7 +101,7 @@ func TestAudit3GovDemotedExpeditedKeepsFixedSubjects(t *testing.T) {
 
 // A voting proposal whose subjects were never fixed is refused, not
 // classified per vote.
-func TestAudit3UnfixedSubjectsRefused(t *testing.T) {
+func TestUnfixedSubjectsRefused(t *testing.T) {
 	e := newTestEnv(t)
 	e.openProposal(t, 1, e.ctx.BlockTime().Add(time.Hour))
 	require.NoError(t, e.k.Subjects.Remove(e.ctx, 1))
@@ -112,7 +112,7 @@ func TestAudit3UnfixedSubjectsRefused(t *testing.T) {
 
 // Subjects left behind by a swallowed hook error are swept once x/gov has
 // ended the proposal.
-func TestAudit3EndedProposalSubjectsSwept(t *testing.T) {
+func TestEndedProposalSubjectsSwept(t *testing.T) {
 	e := newTestEnv(t)
 	p := e.openProposal(t, 1, e.ctx.BlockTime().Add(time.Hour))
 	p.Status = v1.StatusRejected
@@ -125,7 +125,7 @@ func TestAudit3EndedProposalSubjectsSwept(t *testing.T) {
 
 // Audit 6 D-L-AS1: the Subjects walk resumes where it stopped, so subjects
 // of an ended proposal sorted after `limit` live ones are reached.
-func TestAudit6SubjectsSweepResumes(t *testing.T) {
+func TestSubjectsSweepResumes(t *testing.T) {
 	e := newTestEnv(t)
 	for _, id := range []uint64{1, 2} {
 		e.openProposal(t, id, e.ctx.BlockTime().Add(time.Hour))
@@ -151,7 +151,7 @@ func TestAudit6SubjectsSweepResumes(t *testing.T) {
 // Audit 4 C6: a proposal's subjects, fixed as it entered voting, are
 // exported and imported as they are, not recomputed against the relaunch's
 // trust store.
-func TestAudit4SubjectsCarriedThroughGenesis(t *testing.T) {
+func TestSubjectsCarriedThroughGenesis(t *testing.T) {
 	e := newTestEnv(t)
 	e.openProposal(t, 1, e.ctx.BlockTime().Add(time.Hour))
 	fixed := types.ProposalSubjects{ExcludedCountry: "NZ"}

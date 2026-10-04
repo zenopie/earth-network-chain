@@ -17,7 +17,7 @@ import (
 // margin (it would land after its expiry and fail unpaid); a block still
 // takes it until it lapses; AnchorsValidAt (PrepareProposal) follows the
 // block's time.
-func TestAudit5ExpiringAnchorRefusedInCheckTx(t *testing.T) {
+func TestExpiringAnchorRefusedInCheckTx(t *testing.T) {
 	f := initFixture(t)
 	s := shieldedtest.Default()
 	f.shieldScenario(s)

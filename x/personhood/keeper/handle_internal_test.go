@@ -209,7 +209,7 @@ func TestHandlePredecessorAndMove(t *testing.T) {
 // back to A (predecessor_at = now), and A renewed alice unbounded: two live
 // handles. A holder whose handle is not live now renews under the claim
 // bound, and a handle that is not live cannot be moved.
-func TestAudit5RenewalPeriodNeedsTheClaimBound(t *testing.T) {
+func TestRenewalPeriodNeedsTheClaimBound(t *testing.T) {
 	k, ctx := handleKeeper(t)
 	nfA := privacy.FieldBytes(privacy.U64(1))
 	nfB := privacy.FieldBytes(privacy.U64(2))
@@ -252,7 +252,7 @@ func TestAudit5RenewalPeriodNeedsTheClaimBound(t *testing.T) {
 
 // The caretaker twin: a split past its expiry that the sweep has not reached
 // is not held, so refreshing it is a new split under the bound.
-func TestAudit5LapsedUnsweptSplitNeedsTheBound(t *testing.T) {
+func TestLapsedUnsweptSplitNeedsTheBound(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
 	now := ctx.BlockTime().Unix()
 	nf := privacy.FieldBytes(privacy.U64(77))
@@ -270,7 +270,7 @@ func TestAudit5LapsedUnsweptSplitNeedsTheBound(t *testing.T) {
 // Audit 5 P3: the lease lengths the bounds use are queryable. After
 // governance cuts both leases, LeaseBounds keeps reporting the longer ones the
 // chain still enforces, and its bounds are what the statements check.
-func TestAudit5LeaseBoundsQuery(t *testing.T) {
+func TestLeaseBoundsQuery(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
 	old, err := k.Params.Get(ctx)
 	require.NoError(t, err)

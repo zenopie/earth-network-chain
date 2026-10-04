@@ -26,7 +26,7 @@ func TestVoteWeightSigFigs(t *testing.T) {
 // (OptionsBytes re-renders LegacyDec.String()), so "0.5", "0.50" and
 // "00.500000000000000000" would all bind the same sighash under different
 // msg bytes. Only the canonical spelling is accepted.
-func TestAudit3VoteWeightRespellingRefused(t *testing.T) {
+func TestVoteWeightRespellingRefused(t *testing.T) {
 	spell := func(a, b string) []*v1.WeightedVoteOption {
 		return []*v1.WeightedVoteOption{{Option: v1.OptionYes, Weight: a}, {Option: v1.OptionNo, Weight: b}}
 	}

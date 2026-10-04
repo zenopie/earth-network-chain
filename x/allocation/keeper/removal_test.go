@@ -182,7 +182,7 @@ func TestRemovedOptionIsPrunable(t *testing.T) {
 // Audit 5 A1: a struck INTEGRATED option survives an export -> import -> 30
 // day prune without halting BeginBlock, and does not come back into the
 // handler set.
-func TestAudit5StruckIntegratedSurvivesExportImportPrune(t *testing.T) {
+func TestStruckIntegratedSurvivesExportImportPrune(t *testing.T) {
 	e := newTestEnv(t)
 	require.NoError(t, e.k.InitGenesis(e.ctx, *types.DefaultGenesis()))
 	const id = uint64(2)
@@ -210,7 +210,7 @@ func TestAudit5StruckIntegratedSurvivesExportImportPrune(t *testing.T) {
 
 // A handler-set entry with no option (state an older binary could write) is
 // dropped, not a halt; pruneOption clears both.
-func TestAudit5DanglingIntegratedEntryDropped(t *testing.T) {
+func TestDanglingIntegratedEntryDropped(t *testing.T) {
 	e := newTestEnv(t)
 	require.NoError(t, e.k.InitGenesis(e.ctx, *types.DefaultGenesis()))
 	kk := optionKey(types.STREAM_ID_GROUNDWORKS, 2)

@@ -16,7 +16,7 @@ import (
 // context it was handed, so the gas already charged on its meter is reported
 // (and consumed from the block) like any failed ante's; out-of-gas still
 // panics for SetUpContextDecorator to convert.
-func TestAudit4RecoverDecoratorKeepsGas(t *testing.T) {
+func TestRecoverDecoratorKeepsGas(t *testing.T) {
 	key := storetypes.NewKVStoreKey("t")
 	ctx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("tt")).Ctx.
 		WithGasMeter(storetypes.NewGasMeter(1_000_000))

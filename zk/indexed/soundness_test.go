@@ -13,7 +13,7 @@ import (
 // Audit 4 (core PoC, ported): for random insert sequences: every inserted value has NO valid
 // non-membership witness from any leaf (exhaustive over leaves), and every
 // absent value has exactly one.
-func TestAudit4IndexedSoundness(t *testing.T) {
+func TestIndexedSoundness(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
 	for round := 0; round < 30; round++ {
 		tr := indexed.NewMem()

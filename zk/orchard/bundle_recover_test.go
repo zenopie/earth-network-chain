@@ -11,7 +11,7 @@ import (
 // (where baseapp's recovery does not reach) yields that action's
 // ActionError instead of crashing the process; the same for the sequential
 // path.
-func TestAudit4VerifierPanicIsActionError(t *testing.T) {
+func TestVerifierPanicIsActionError(t *testing.T) {
 	b := &Bundle{Actions: make([]Action, 3)}
 	var sighash fr.Element
 	boom := func([]byte, [][]byte) (bool, error) { panic("verifier blew up") }

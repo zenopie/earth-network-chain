@@ -271,7 +271,7 @@ func feeStub() shieldedtypes.Bundle {
 // switched-to identity lease beside its predecessor's lease cast under the
 // old R. The old R keeps bounding activation until every lease cast under
 // it has lapsed; the root window never enters the bound.
-func TestAudit3LoweredLeaseLengthHeld(t *testing.T) {
+func TestLoweredLeaseLengthHeld(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
 	ms := NewMsgServerImpl(k)
 	params, err := k.Params.Get(ctx)

@@ -22,7 +22,7 @@ import (
 // locked vesting account (1 uerth) before MsgCreateValidator. Only the
 // escrow's spendable coins move, so the escrow still compounds every epoch
 // and is released on retirement; the locked uerth stays.
-func TestAudit3EscrowPoisonedByLockedAccount(t *testing.T) {
+func TestEscrowPoisonedByLockedAccount(t *testing.T) {
 	e := initStakeEnv(t)
 	key := secp256k1.GenPrivKeyFromSecret([]byte("audit3/victim-op"))
 	op := sdk.AccAddress(key.PubKey().Address())
@@ -120,7 +120,7 @@ func (e *stakeEnv) audit3Escrow(prefix byte, i int, failing bool) sdk.ValAddress
 
 // AUDIT3-A: escrow releases that keep failing cannot starve the per-block
 // (retirement) or per-epoch (pending release) budgets: failed entries rotate.
-func TestAudit3FailingEscrowReleasesDoNotStarveQueues(t *testing.T) {
+func TestFailingEscrowReleasesDoNotStarveQueues(t *testing.T) {
 	e := initStakeEnv(t)
 	n := sstypes.EscrowRetireLimit + 10
 	now := e.ctx().BlockTime().UnixNano()

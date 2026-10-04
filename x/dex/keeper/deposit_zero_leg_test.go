@@ -15,7 +15,7 @@ import (
 // less than one unit of a leg used to be minted against zero of that leg,
 // diluting the pool's providers. Since audit 4 (C2) each leg is rounded up,
 // so the leg is never zero: the depositor pays at least one unit of it.
-func TestAudit3DepositPullingZeroLegRefused(t *testing.T) {
+func TestDepositPullingZeroLegRefused(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	ms := keeper.NewMsgServerImpl(k)
 	seedFundedPool(t, k, ctx, bank, 1, 1_000_000_000_000, 1, 0)

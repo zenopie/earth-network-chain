@@ -15,7 +15,7 @@ import (
 // Audit 5 L-AS1: an expedited proposal the chamber ratifies and x/gov then
 // demotes votes again in a new ballot scope, so a voter's nullifier does not
 // repeat across the two rounds.
-func TestAudit5GovDemotedRoundHasItsOwnScope(t *testing.T) {
+func TestGovDemotedRoundHasItsOwnScope(t *testing.T) {
 	e := newTestEnv(t)
 	e.gov.SetHooks(govtypes.NewMultiGovHooks(e.k.GovHooks()))
 	end := e.ctx.BlockTime().Add(24 * time.Hour)
@@ -53,7 +53,7 @@ func TestAudit5GovDemotedRoundHasItsOwnScope(t *testing.T) {
 }
 
 // The hook drops a next round x/gov ended instead of demoting.
-func TestAudit5EndedProposalDropsItsRound(t *testing.T) {
+func TestEndedProposalDropsItsRound(t *testing.T) {
 	e := newTestEnv(t)
 	p := e.openProposal(t, 1, e.ctx.BlockTime().Add(time.Hour))
 	require.NoError(t, e.k.ProposalRound.Set(e.ctx, 1, types.ProposalRound{Round: 1, OpenedAt: 5}))
@@ -66,7 +66,7 @@ func TestAudit5EndedProposalDropsItsRound(t *testing.T) {
 }
 
 // Audit 5 L-AS3: ProposalTally applies the proposal's own bar.
-func TestAudit5ProposalTallyUsesTheExpeditedBar(t *testing.T) {
+func TestProposalTallyUsesTheExpeditedBar(t *testing.T) {
 	e := newTestEnv(t)
 	e.openExpedited(t, 1, e.ctx.BlockTime().Add(time.Hour))
 	e.voteAll(t, 1, types.VOTE_OPTION_YES, "a", "b")
@@ -84,7 +84,7 @@ func TestAudit5ProposalTallyUsesTheExpeditedBar(t *testing.T) {
 
 // Audit 5 L-AS4: a ballot of a proposal that left voting without this module
 // closing it is closed by the sweep, which resumes past where it stopped.
-func TestAudit5StaleBallotSwept(t *testing.T) {
+func TestStaleBallotSwept(t *testing.T) {
 	e := newTestEnv(t)
 	for _, id := range []uint64{1, 2} {
 		e.openProposal(t, id, e.ctx.BlockTime().Add(time.Hour))

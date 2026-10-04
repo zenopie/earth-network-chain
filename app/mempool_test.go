@@ -17,7 +17,7 @@ import (
 // ante wrote: the private tx failed there and ran everywhere else (a fork).
 // app.New now forces the no-op mempool as its last baseapp option, so the
 // same configuration computes the same block result.
-func TestAudit3AppMempoolForcedNoOp(t *testing.T) {
+func TestAppMempoolForcedNoOp(t *testing.T) {
 	gt := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	noop := initShieldedEnvWith(t, shieldedEnvOpts{genesisTime: gt, keySeed: "audit3"})
 	sn := initShieldedEnvWith(t, shieldedEnvOpts{genesisTime: gt, keySeed: "audit3",
@@ -42,7 +42,7 @@ func TestAudit3AppMempoolForcedNoOp(t *testing.T) {
 // a proposer could fill a block with private txs certain to fail (ErrBlockCap)
 // and drop them from every mempool. PrepareProposal now leaves out a private
 // tx past the cap (it stays in the mempool for a later block).
-func TestAudit3PrepareProposalRespectsPrivateActionCap(t *testing.T) {
+func TestPrepareProposalRespectsPrivateActionCap(t *testing.T) {
 	e := initShieldedEnv(t)
 	s := shieldedtest.Default()
 	requireOK(t, e.shieldAll(s).TxResults[0])

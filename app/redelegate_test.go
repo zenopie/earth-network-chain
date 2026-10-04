@@ -1301,7 +1301,7 @@ func runA7Scenario(t *testing.T, move bool) a7Outcome {
 // slash; A's holders lost 4.00% instead of 3.33%). A move now leaves the
 // queue and the bonded stake pro rata: the mover pays its share through its
 // label, and the remaining holders lose no more than without the move.
-func TestAuditA7QueueEscapesSlash(t *testing.T) {
+func TestQueueEscapesSlash(t *testing.T) {
 	stay := runA7Scenario(t, false)
 	moved := runA7Scenario(t, true)
 	t.Logf("no move: holders lose %s, attacker worth %s", stay.holdersLoss, stay.attacker)
@@ -1323,7 +1323,7 @@ func TestAuditA7QueueEscapesSlash(t *testing.T) {
 // stake: a validator the module holds no bonded stake at yet (its first
 // delegations wait in its queue) moves the value out of the queue alone, with
 // no entry and no move, since a slash of it takes nothing from the book.
-func TestAuditA7QueueOnlyWithoutBondedStake(t *testing.T) {
+func TestQueueOnlyWithoutBondedStake(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
@@ -1351,7 +1351,7 @@ func TestAuditA7QueueOnlyWithoutBondedStake(t *testing.T) {
 // still clears at its row's value, or whole when its move was never
 // slashed. Two entries of one pair at height 0 are accepted, and every
 // invariant holds after the prep and after the import.
-func TestAuditA7ZeroHeightExportWithMoves(t *testing.T) {
+func TestZeroHeightExportWithMoves(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
@@ -1432,7 +1432,7 @@ func TestAuditA7ZeroHeightExportWithMoves(t *testing.T) {
 // by lowering a slash fraction (0.0001: every entry under 10,000 uerth). The
 // slash is now replayed with x/slashing's fractions: the large entry it
 // reached owes it, the dust entry after it, which it skipped, owes nothing.
-func TestAuditA7SlashSkipsDustEntry(t *testing.T) {
+func TestSlashSkipsDustEntry(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)

@@ -600,7 +600,7 @@ func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 // failed, a proposal entering voting takes no roots (no note votes; a stale
 // nf root would let a note spent into a position since vote twice), and the
 // next successful recording clears the condition.
-func TestAudit6SnapshotSkipsStaleRoots(t *testing.T) {
+func TestSnapshotSkipsStaleRoots(t *testing.T) {
 	e := initStakeEnv(t)
 	k := e.app.ShieldedStakingKeeper
 

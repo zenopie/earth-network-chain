@@ -392,10 +392,10 @@ func TestBuybackDiscardsTheCounterWithTheTrade(t *testing.T) {
 	}
 }
 
-// TestAudit3BuybackCapsTradePerWindow (audit 3 L7): one trade spends at most
+// TestBuybackCapsTradePerWindow (audit 3 L7): one trade spends at most
 // buyback_max_trade_seconds of emission; the rest of the (accrual-capped)
 // backlog stays accrued and is bought over the following windows.
-func TestAudit3BuybackCapsTradePerWindow(t *testing.T) {
+func TestBuybackCapsTradePerWindow(t *testing.T) {
 	dex := newOracleDex("1.0", "1.0")
 	k, _, _, ctx := newBuybackKeeper(t, dex)
 	ctx = fastForward(t, k, dex, ctx)
@@ -444,7 +444,7 @@ func TestAudit3BuybackCapsTradePerWindow(t *testing.T) {
 	}
 }
 
-func TestAudit3BuybackMaxTradeValidated(t *testing.T) {
+func TestBuybackMaxTradeValidated(t *testing.T) {
 	p := types.DefaultParams()
 	p.BuybackMaxTradeSeconds = 60 // below the 600s window
 	if p.Validate() == nil {

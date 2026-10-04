@@ -13,7 +13,7 @@ import (
 // Audit 6 B6-5: a registration the expiry sweep cannot retire stays at the
 // head of its index. It is passed over for SweepRetrySeconds, so the sweep
 // reaches the registrations behind it, and tried again after.
-func TestAudit6StuckSweepHeadIsPassedOver(t *testing.T) {
+func TestStuckSweepHeadIsPassedOver(t *testing.T) {
 	k, ctx := regKeeper(t, nil)
 	params, err := k.Params.Get(ctx)
 	require.NoError(t, err)

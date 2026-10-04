@@ -8,7 +8,7 @@ import (
 
 // Audit 5 L-AS2: the private gas prices are capped, so governance cannot
 // price the chamber's votes out of every block.
-func TestAudit5GasParamsCapped(t *testing.T) {
+func TestGasParamsCapped(t *testing.T) {
 	p := DefaultParams()
 	require.NoError(t, p.Validate())
 	for _, set := range []func(*Params){
