@@ -44,6 +44,9 @@ import (
 // tree's, if the block moved them (a root is an anchor from the end of the
 // block that made it; a snapshot takes both from the end of the same block).
 func (k Keeper) EndBlocker(ctx context.Context) error {
+	// Never needed (the BeginBlocker did it), but nothing below may see the
+	// module's unbondings set aside.
+	k.restoreSheltered(ctx)
 	// The note root and the nullifier root in ONE guarded call (audit 4,
 	// L-A): a snapshot pairs the latest of each as of the same block's end
 	// (a note in the root is unspent iff its nullifier is not under the nf

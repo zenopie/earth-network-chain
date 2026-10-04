@@ -49,7 +49,8 @@ import (
 //     the sweep.
 //  9. Redelegations: every x/staking redelegation is this module's,
 //     between two different validators, with 1..max_entries entries
-//     (checkRedelegationRecord, as at genesis).
+//     (checkRedelegationRecord, as at genesis); no unbonding delegation is
+//     left set aside (ShelteredUnbondings is empty outside BeginBlock).
 func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertERTH(ctx); err != nil {
 		return err
@@ -443,6 +444,16 @@ func (k Keeper) assertPayouts(ctx context.Context) error {
 }
 
 func (k Keeper) assertRedelegations(ctx context.Context) error {
+	sheltered := 0
+	if err := k.ShelteredUnbondings.Walk(ctx, nil, func([]byte, stakingtypes.UnbondingDelegation) (bool, error) {
+		sheltered++
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	if sheltered > 0 {
+		return types.ErrInvariant.Wrapf("%d unbonding delegations still set aside after a slash", sheltered)
+	}
 	var bad error
 	if err := k.staking.IterateRedelegations(ctx, func(_ int64, r stakingtypes.Redelegation) bool {
 		if err := k.checkRedelegationRecord(ctx, r); err != nil {

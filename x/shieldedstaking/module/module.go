@@ -22,8 +22,9 @@ var (
 	_ module.AppModuleBasic = (*AppModule)(nil)
 	_ module.HasGenesis     = (*AppModule)(nil)
 
-	_ appmodule.AppModule     = (*AppModule)(nil)
-	_ appmodule.HasEndBlocker = (*AppModule)(nil)
+	_ appmodule.AppModule       = (*AppModule)(nil)
+	_ appmodule.HasEndBlocker   = (*AppModule)(nil)
+	_ appmodule.HasBeginBlocker = (*AppModule)(nil)
 )
 
 // AppModule is private staking.
@@ -107,6 +108,12 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, _ codec.JSONCodec) json.RawMe
 
 // ConsensusVersion is the module's state-machine version.
 func (AppModule) ConsensusVersion() uint64 { return 1 }
+
+// BeginBlock puts back what a slash of a redelegation's source set aside
+// this block (keeper.BeginBlocker); it runs after x/slashing and x/evidence.
+func (am AppModule) BeginBlock(ctx context.Context) error {
+	return am.keeper.BeginBlocker(ctx)
+}
 
 // EndBlock matures unbonding records, ends epochs and forgets finished
 // proposals. It never returns an error (see keeper.EndBlocker).

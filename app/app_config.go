@@ -207,6 +207,11 @@ var (
 						distrtypes.ModuleName,
 						slashingtypes.ModuleName,
 						evidencetypes.ModuleName,
+						// private staking right after the only callers of
+						// x/staking's Slash: it puts back the unbondings a slash
+						// of a private redelegation's source set aside, before
+						// any tx runs.
+						shieldedstakingmoduletypes.ModuleName,
 						stakingtypes.ModuleName,
 						authz.ModuleName,
 						epochstypes.ModuleName,

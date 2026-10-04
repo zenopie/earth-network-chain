@@ -51,15 +51,16 @@ import (
 //
 // Slashing. x/staking slashes a redelegation entry for an infraction of A
 // committed before it (the entry's creation height is at or after the
-// infraction height), within the unbonding period: it takes slash_fraction
-// x the entry's initial balance from the module's unbonding entries at B
-// begun after the infraction first, then from the module's delegation at B.
-// B's book absorbs it: B's holders through B's rate, and B's undelegations
-// begun after A's infraction through their payout. The redelegated notes
-// are derth/B like any other (nothing links them to the redelegation), so
-// the loss cannot follow them and is shared like any loss of B's. The
-// value that moved out of A's queue was never bonded at A and carries no
-// entry. See ORCHARD_DESIGN.md section 19.
+// infraction height) while it matures: slash_fraction x the entry's shares
+// at B, unbonded from the module's delegation at B and burnt. B's book
+// absorbs it, pro rata: every derth/B note loses the same fraction through
+// B's rate. The redelegated notes are derth/B like any other (nothing links
+// them to the redelegation), so the loss cannot follow them; their owner
+// bears their pro-rata share. B's undelegations already under way are
+// spared: x/staking would take the slash from them first
+// (prepareRedelegationSlash sets them aside for the slash). The value that
+// moved out of A's queue was never bonded at A and carries no entry. See
+// ORCHARD_DESIGN.md section 19.
 //
 // The module is ONE delegator to x/staking, so its limits are shared by
 // every private staker: one redelegation into A blocks every redelegation
@@ -424,38 +425,115 @@ func (h ActionHandler) ExecutePrivateAction(ctx sdk.Context, msg shieldedtypes.P
 }
 
 // prepareRedelegationSlash runs as a slash of src begins (x/staking's
-// BeforeValidatorModified, before it slashes src's redelegation entries):
-// for every validator the module redelegated to from src, the module's
-// rewards there are withdrawn into its queue, so the slash's unbond of the
-// module's delegation pays none outside the books; and the validator is
-// re-weighed at the end of the block (its rate may fall: B's book absorbs a
-// slash of the entry). An operator's MsgEditValidator also gets here: the
-// withdrawal is then harmless book-keeping and the re-weigh changes nothing
-// (it only ever lowers an epoch rate to the live rate). Never fails.
+// BeforeValidatorModified, called before it slashes src's redelegation
+// entries; MsgEditValidator gets here too, in a tx, and is ignored). For
+// every validator dst the module redelegated to from src:
+//
+//   - the module's rewards at dst are withdrawn into dst's queue, so the
+//     slash's unbond of the module's delegation there pays none outside the
+//     books;
+//   - the module's x/staking unbonding delegation at dst is set aside
+//     (ShelteredUnbondings) until the slash is over. x/staking takes a
+//     redelegation entry's slash from the delegator's unbonding entries at
+//     the destination begun after the infraction FIRST, and then still the
+//     full slash_fraction x shares from its delegation there unless those
+//     entries covered all of it. For one person that is their own
+//     undelegation; for this module those entries are dst's undelegations
+//     (other people, who left dst and never staked at src), and the slash
+//     would take from them up to the whole amount besides. Set aside, the
+//     slash takes exactly slash_fraction x the entry's shares from the
+//     module's delegation at dst: dst's book absorbs it, pro rata;
+//   - dst is re-weighed at the end of the block (its rate may have fallen).
+//
+// restoreSheltered puts the unbonding delegations back: at the start of the
+// next slash (before anything else, so a slash of dst itself sees its own
+// undelegations), in this module's BeginBlocker (after x/slashing's and
+// x/evidence's, the only callers of Slash: so no tx ever sees them set
+// aside) and, defensively, at the start of EndBlock. Never fails a slash.
 func (k Keeper) prepareRedelegationSlash(ctx context.Context, src sdk.ValAddress) {
+	k.restoreSheltered(ctx)
+	// Slashes run in block hooks (x/slashing's and x/evidence's
+	// BeginBlockers), never in a tx: a tx getting here is MsgEditValidator,
+	// which slashes nothing.
+	if len(sdk.UnwrapSDKContext(ctx).TxBytes()) != 0 {
+		return
+	}
 	reds, err := k.staking.GetRedelegationsFromSrcValidator(ctx, src)
 	if err != nil {
 		k.failure(ctx, "redelegation_slash", src.String(), err)
 		return
 	}
+	mod := k.modString(ctx)
 	seen := map[string]bool{}
 	for _, r := range reds {
-		if r.DelegatorAddress != k.modString(ctx) || seen[r.ValidatorDstAddress] {
+		if r.DelegatorAddress != mod || seen[r.ValidatorDstAddress] {
 			continue
 		}
 		seen[r.ValidatorDstAddress] = true
-		dst, err := k.valAddr(r.ValidatorDstAddress)
+		dstoper := r.ValidatorDstAddress
+		dst, err := k.valAddr(dstoper)
 		if err != nil {
-			k.failure(ctx, "redelegation_slash", r.ValidatorDstAddress, err)
+			k.failure(ctx, "redelegation_slash", dstoper, err)
 			continue
 		}
-		if err := k.guarded(ctx, func(cc context.Context) error { return k.collectRewards(cc, r.ValidatorDstAddress, dst) }); err != nil {
-			k.failure(ctx, "redelegation_slash", r.ValidatorDstAddress, err)
+		if err := k.guarded(ctx, func(cc context.Context) error {
+			if err := k.collectRewards(cc, dstoper, dst); err != nil {
+				return err
+			}
+			return k.shelterUnbondings(cc, dst)
+		}); err != nil {
+			k.failure(ctx, "redelegation_slash", dstoper, err)
 		}
-		if err := k.SlashedValidators.Set(ctx, r.ValidatorDstAddress); err != nil {
-			k.failure(ctx, "slash_record", r.ValidatorDstAddress, err)
+		if err := k.SlashedValidators.Set(ctx, dstoper); err != nil {
+			k.failure(ctx, "slash_record", dstoper, err)
 		}
 	}
+}
+
+// shelterUnbondings sets the module's unbonding delegation at dst aside.
+func (k Keeper) shelterUnbondings(ctx context.Context, dst sdk.ValAddress) error {
+	ubd, err := k.staking.GetUnbondingDelegation(ctx, k.modAddr, dst)
+	if errors.Is(err, stakingtypes.ErrNoUnbondingDelegation) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := k.ShelteredUnbondings.Set(ctx, dst, ubd); err != nil {
+		return err
+	}
+	return k.staking.RemoveUnbondingDelegation(ctx, ubd)
+}
+
+// restoreSheltered puts every unbonding delegation set aside back, as it
+// was. A failure is reported and retried at the next call (the entry stays
+// sheltered, never lost).
+func (k Keeper) restoreSheltered(ctx context.Context) {
+	var held [][]byte
+	_ = k.ShelteredUnbondings.Walk(ctx, nil, func(dst []byte, _ stakingtypes.UnbondingDelegation) (bool, error) {
+		held = append(held, dst)
+		return false, nil
+	})
+	for _, dst := range held {
+		if err := k.guarded(ctx, func(cc context.Context) error {
+			ubd, err := k.ShelteredUnbondings.Get(cc, dst)
+			if err != nil {
+				return err
+			}
+			if err := k.staking.SetUnbondingDelegation(cc, ubd); err != nil {
+				return err
+			}
+			return k.ShelteredUnbondings.Remove(cc, dst)
+		}); err != nil {
+			k.failure(ctx, "redelegation_slash_restore", sdk.ValAddress(dst).String(), err)
+		}
+	}
+}
+
+// BeginBlocker puts back the unbonding delegations a slash set aside this
+// block (it runs after x/slashing and x/evidence).
+func (k Keeper) BeginBlocker(ctx context.Context) error {
+	k.restoreSheltered(ctx)
+	return nil
 }
 
 // modString is the module account's bech32 address.

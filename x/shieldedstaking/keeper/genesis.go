@@ -601,7 +601,9 @@ func (k Keeper) checkGenesisDelegations(ctx context.Context, gs types.GenesisSta
 		return bad
 	}
 	if err := k.staking.IterateRedelegations(ctx, func(_ int64, r stakingtypes.Redelegation) bool {
-		bad = k.checkRedelegationRecord(ctx, r)
+		if err := k.checkRedelegationRecord(ctx, r); err != nil {
+			bad = fmt.Errorf("genesis %w", err)
+		}
 		return bad != nil
 	}); err != nil {
 		return err

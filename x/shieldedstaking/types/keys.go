@@ -167,6 +167,11 @@ var (
 	// vote used (votes.go): a vote's every note, not only its first, which
 	// keys the vote.
 	UsedVoteNullifiersKey = collections.NewPrefix(44)
+	// ShelteredUnbondingsKey holds, by destination validator, the module's
+	// x/staking unbonding delegation set aside while a slash of a validator
+	// it redelegated from runs (redelegate.go): only inside BeginBlock,
+	// emptied by this module's BeginBlocker; never exported.
+	ShelteredUnbondingsKey = collections.NewPrefix(45)
 )
 
 // UnbondPayoutRetryDelay is how long after its attempts-th failure a payout

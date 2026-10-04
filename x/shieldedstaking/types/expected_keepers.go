@@ -75,6 +75,11 @@ type StakingKeeper interface {
 	GetRedelegations(ctx context.Context, delegator sdk.AccAddress, maxRetrieve uint16) ([]stakingtypes.Redelegation, error)
 	GetRedelegation(ctx context.Context, delAddr sdk.AccAddress, valSrcAddr, valDstAddr sdk.ValAddress) (stakingtypes.Redelegation, error)
 	GetRedelegationsFromSrcValidator(ctx context.Context, valAddr sdk.ValAddress) ([]stakingtypes.Redelegation, error)
+	// A slash of a redelegation's source takes its share from the
+	// destination: the module's unbonding delegation there is set aside
+	// for the slash and put back after it (redelegate.go).
+	SetUnbondingDelegation(ctx context.Context, ubd stakingtypes.UnbondingDelegation) error
+	RemoveUnbondingDelegation(ctx context.Context, ubd stakingtypes.UnbondingDelegation) error
 }
 
 // DistrKeeper is x/distribution: rewards and the community pool.

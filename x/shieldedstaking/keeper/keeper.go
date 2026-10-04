@@ -14,6 +14,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
 	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
@@ -141,6 +142,11 @@ type Keeper struct {
 	PayoutRetries   collections.KeySet[collections.Pair[int64, uint64]]
 	MaturedRecords  collections.KeySet[collections.Pair[string, uint64]]
 	UnbondPayoutSeq collections.Sequence
+
+	// ShelteredUnbondings: the module's unbonding delegations at the
+	// destinations of its redelegations from a validator being slashed, set
+	// aside for the slash (redelegate.go). Empty outside BeginBlock.
+	ShelteredUnbondings collections.Map[[]byte, stakingtypes.UnbondingDelegation]
 }
 
 type govRef struct{ k *govkeeper.Keeper }
@@ -250,6 +256,8 @@ func NewKeeper(
 		MaturedRecords: collections.NewKeySet(sb, types.MaturedRecordsKey, "matured_records",
 			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key)),
 		UnbondPayoutSeq: collections.NewSequence(sb, types.UnbondPayoutSeqKey, "unbond_payout_seq"),
+		ShelteredUnbondings: collections.NewMap(sb, types.ShelteredUnbondingsKey, "sheltered_unbondings", collections.BytesKey,
+			codec.CollValue[stakingtypes.UnbondingDelegation](cdc)),
 	}
 	schema, err := sb.Build()
 	if err != nil {
