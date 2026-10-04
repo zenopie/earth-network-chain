@@ -58,7 +58,8 @@ hand-stripping and a manual "recompute bank supply", which is how `config.yml`
 and the genesis file came to disagree about the pre-mine for two days without
 anyone noticing.
 
-It carries the 539 CSCAs, the seven register verifying keys, the ANML/ERTH pool,
+It carries the 536 CSCAs, the seven register verifying keys, the four privacy
+circuit keys (action, membership, stake, vote), the ANML/ERTH pool,
 the liquidity auction, the retirement schedules and the governance parameters —
 and no validator set, because a gentx is bound to a consensus key and shipping
 that key in a public image would let anyone sign as the validator.
@@ -129,10 +130,8 @@ the whole gap out in a single block. Left alone, a genesis committed a day
 earlier minted 125,485 ERTH at height 2, and the lump grew for as long as the
 file sat unchanged.
 
-Regenerate it after any change to `config.yml`:
-
-    ignite chain init --home /tmp/gen --skip-proto
-    # then strip gen_txs, the dev accounts, and recompute bank supply
+Regenerate it with `make genesis` after any change to its sources in
+`networks/genesis/`; `make genesis-check` fails if it has drifted.
 
 An earlier version ran `ignite chain init` inside the container instead. It
 cannot work: init removes and recreates the home directory, and `/data` is a

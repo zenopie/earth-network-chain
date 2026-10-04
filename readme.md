@@ -206,22 +206,9 @@ carries the real trust store, verifying keys and pools rather than an
 approximation. `GOV_VOTING_PERIOD=30s` shortens governance if you want to drive a
 proposal through by hand.
 
-Ignite still works and is what `config.yml` describes:
-
-```
-ignite chain serve
-```
-
-`serve` command installs dependencies, builds, initializes, and starts your blockchain in development.
-
-> **Toolchain note:** Ignite runs Go with `GOTOOLCHAIN=local+path` while some of its
-> proto/codegen tools (e.g. `buf`) require a newer Go than the one on `PATH`. If you
-> hit `toolchain upgrade needed ... GOTOOLCHAIN=local+path`, put a Go ≥ 1.25.10 binary
-> earlier on `PATH` before running `ignite`. A shim was set up for this repo at
-> `~/.local/go-shim` (symlinks to a cached toolchain), so run Ignite/Go as:
-> ```
-> PATH="$HOME/.local/go-shim:$PATH" ignite chain serve
-> ```
+`config.yml` also describes a single-node dev chain in Ignite's format
+(`ignite chain serve`); nothing else needs Ignite, and protobuf generation is
+`make proto-gen` (buf).
 
 ## The `x/dex` AMM module
 
