@@ -12,7 +12,7 @@ import (
 // the curve and have the right order (n*G == O). Catches constant transcription
 // errors (Brainpool constants are entered by hand).
 func TestCurveConstants(t *testing.T) {
-	for _, c := range []*Curve{nistP256(), nistP384(), nistP521(), brainpoolP256r1(), brainpoolP384r1(), brainpoolP512r1()} {
+	for _, c := range []*Curve{nistP224(), nistP256(), nistP384(), nistP521(), brainpoolP224r1(), brainpoolP256r1(), brainpoolP384r1(), brainpoolP512r1()} {
 		if !c.isOnCurve(c.Gx, c.Gy) {
 			t.Errorf("%s: generator not on curve", c.Name)
 		}
@@ -24,7 +24,7 @@ func TestCurveConstants(t *testing.T) {
 	for _, p := range []struct {
 		c   *Curve
 		std elliptic.Curve
-	}{{nistP256(), elliptic.P256()}, {nistP384(), elliptic.P384()}, {nistP521(), elliptic.P521()}} {
+	}{{nistP224(), elliptic.P224()}, {nistP256(), elliptic.P256()}, {nistP384(), elliptic.P384()}, {nistP521(), elliptic.P521()}} {
 		if p.c.P.Cmp(p.std.Params().P) != 0 || p.c.N.Cmp(p.std.Params().N) != 0 {
 			t.Errorf("%s disagrees with crypto/elliptic", p.c.Name)
 		}

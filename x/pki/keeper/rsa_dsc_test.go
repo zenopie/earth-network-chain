@@ -28,10 +28,9 @@ func makeRSADSC(t *testing.T, ca *x509.Certificate, caKey *rsa.PrivateKey) ([]by
 	return der, &key.PublicKey
 }
 
-// TestSubmitRSADSC checks that an RSA DSC is accepted and its registry leaf is
-// Poseidon2 over the modulus big-endian bytes — exactly what lean_poa_rsa2048's
-// in-circuit leaf (RuntimeBigNum.to_be_bytes) produces — so an RSA passport's
-// on-chain inclusion proof is valid for the RSA circuit.
+// TestVerifyRSADSC checks that an RSA DSC is accepted and its commitment is
+// Poseidon2 over (TagRSAExponent, e, modulus big-endian bytes), exactly what
+// the RSA register circuits' poa_core::dsc_commitment_rsa produces.
 func TestVerifyRSADSC(t *testing.T) {
 	k, ctx := newKeeperForTest(t)
 	ctx = ctx.WithBlockTime(time.Now())
@@ -50,13 +49,23 @@ func TestVerifyRSADSC(t *testing.T) {
 		t.Fatalf("VerifyDsc (RSA): %v", err)
 	}
 	// For RSA the canonical key is the modulus big-endian, which is what the
-	// register circuits hash for lean_poa_rsa2048/4096.
+	// register circuits hash after the exponent.
 	if !bytes.Equal(pub.CanonicalBytes(), rsaPub.N.Bytes()) {
 		t.Fatal("VerifyDsc returned a key other than the RSA modulus")
 	}
 	// Every modulus size shares one tag: RSA keys already differ in length, and
 	// the sponge separates lengths on its own.
-	if tag, err := pub.CurveTagOf(); err != nil || tag != certs.TagRSA {
-		t.Fatalf("CurveTagOf = %v, %v; want %v", tag, err, certs.TagRSA)
+	if tag, err := pub.CurveTagOf(); err != nil || tag != certs.TagRSAExponent {
+		t.Fatalf("CurveTagOf = %v, %v; want %v", tag, err, certs.TagRSAExponent)
+	}
+	got, err := certs.DscCommitmentOf(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := certs.DscCommitmentRSA(uint64(rsaPub.E), rsaPub.N.Bytes()); !got.Equal(&want) {
+		t.Fatal("RSA commitment does not absorb the exponent")
+	}
+	if other := certs.DscCommitmentRSA(3, rsaPub.N.Bytes()); got.Equal(&other) {
+		t.Fatal("RSA commitment is the same for another exponent")
 	}
 }

@@ -35,23 +35,31 @@ func mustHex(s string) *big.Int {
 
 // named curves keyed by their EC named-curve OID string.
 var namedCurves = map[string]*Curve{
+	"1.3.132.0.33":          nistP224(), // secp224r1
 	"1.2.840.10045.3.1.7":   nistP256(), // prime256v1 / secp256r1
 	"1.3.132.0.34":          nistP384(), // secp384r1
 	"1.3.132.0.35":          nistP521(), // secp521r1
+	"1.3.36.3.3.2.8.1.1.5":  brainpoolP224r1(),
 	"1.3.36.3.3.2.8.1.1.7":  brainpoolP256r1(),
 	"1.3.36.3.3.2.8.1.1.11": brainpoolP384r1(),
 	"1.3.36.3.3.2.8.1.1.13": brainpoolP512r1(),
 }
 
-// byPrime lets us recognise a NIST/Brainpool curve given only the field prime
-// from explicit ECParameters.
-var byPrime = func() map[string]*Curve {
-	m := map[string]*Curve{}
+// knownCurve returns the supported curve whose every domain parameter equals
+// the given explicit ECParameters, or nil.
+//
+// All of them, not just the field prime: a certificate could state a named
+// curve's prime with another a, b or base point, and naming that "P-256" would
+// give its key P-256's commitment tag for a curve it is not on.
+func knownCurve(p, a, b, gx, gy, n *big.Int) *Curve {
 	for _, c := range namedCurves {
-		m[c.P.String()] = c
+		if c.P.Cmp(p) == 0 && c.A.Cmp(a) == 0 && c.B.Cmp(b) == 0 &&
+			c.Gx.Cmp(gx) == 0 && c.Gy.Cmp(gy) == 0 && c.N.Cmp(n) == 0 {
+			return c
+		}
 	}
-	return m
-}()
+	return nil
+}
 
 // NIST curves are derived from crypto/elliptic (Go supports them as named curves,
 // so their parameters are guaranteed correct); a = p - 3 for all of them. Only
@@ -62,9 +70,19 @@ func fromStd(name string, c elliptic.Curve) *Curve {
 	a.Mod(a, p.P)
 	return &Curve{Name: name, P: p.P, A: a, B: p.B, Gx: p.Gx, Gy: p.Gy, N: p.N, byteLen: (p.BitSize + 7) / 8}
 }
+func nistP224() *Curve { return fromStd("P-224", elliptic.P224()) }
 func nistP256() *Curve { return fromStd("P-256", elliptic.P256()) }
 func nistP384() *Curve { return fromStd("P-384", elliptic.P384()) }
 func nistP521() *Curve { return fromStd("P-521", elliptic.P521()) }
+func brainpoolP224r1() *Curve {
+	return &Curve{"brainpoolP224r1",
+		mustHex("d7c134aa264366862a18302575d1d787b09f075797da89f57ec8c0ff"),
+		mustHex("68a5e62ca9ce6c1c299803a6c1530b514e182ad8b0042a59cad29f43"),
+		mustHex("2580f63ccfe44138870713b1a92369e33e2135d266dbb372386c400b"),
+		mustHex("0d9029ad2c7e5cf4340823b2a87dc68c9e4ce3174c1e6efdee12c07d"),
+		mustHex("58aa56f772c0726f24c6b89e4ecdac24354b9e99caa3f6d3761402cd"),
+		mustHex("d7c134aa264366862a18302575d0fb98d116bc4b6ddebca3a5a7939f"), 28}
+}
 func brainpoolP256r1() *Curve {
 	return &Curve{"brainpoolP256r1",
 		mustHex("a9fb57dba1eea9bc3e660a909d838d726e3bf623d52620282013481d1f6e5377"),

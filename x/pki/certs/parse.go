@@ -387,9 +387,17 @@ func parseExplicitECParams(params cryptobyte.String) (*Curve, error) {
 	if !ec.ReadASN1Integer(n) {
 		return nil, errors.New("x509: bad order")
 	}
-	// Normalise to a known curve when the prime matches (keeps a canonical name).
-	if known := byPrime[p.String()]; known != nil && known.N.Cmp(n) == 0 {
-		return known, nil
+	// Cofactor, optional. Every supported curve has cofactor 1.
+	cofactor := big.NewInt(1)
+	if ec.PeekASN1Tag(cbasn1.INTEGER) && !ec.ReadASN1Integer(cofactor) {
+		return nil, errors.New("x509: bad cofactor")
+	}
+	// Normalise to a known curve only when every parameter matches (keeps a
+	// canonical name, which is what selects the commitment tag).
+	if cofactor.Cmp(big.NewInt(1)) == 0 {
+		if known := knownCurve(p, a, bb, gx, gy, n); known != nil {
+			return known, nil
+		}
 	}
 	return &Curve{Name: "explicit", P: p, A: a, B: bb, Gx: gx, Gy: gy, N: n, byteLen: byteLen}, nil
 }
@@ -478,7 +486,11 @@ func (pk *PublicKey) CanonicalBytes() []byte {
 	return out
 }
 
-// pssHash reads the hash algorithm from RSASSA-PSS-params (default SHA-1).
+// pssHash reads RSASSA-PSS-params (RFC 4055): the hash (default SHA-1), and
+// refuses a mask generation function other than MGF1 over that same hash, or a
+// trailer field other than 1. crypto/rsa.VerifyPSS assumes both, so a
+// certificate stating anything else would otherwise be verified under
+// parameters it does not have.
 func pssHash(params []byte) (crypto.Hash, error) {
 	if len(params) == 0 {
 		return crypto.SHA1, nil
@@ -488,14 +500,63 @@ func pssHash(params []byte) (crypto.Hash, error) {
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
 		return 0, errors.New("x509: bad RSASSA-PSS-params")
 	}
-	var ha cryptobyte.String
+	h := crypto.SHA1
+	mgf := crypto.SHA1
+	var field cryptobyte.String
 	var present bool
-	if !seq.ReadOptionalASN1(&ha, &present, cbasn1.Tag(0).Constructed().ContextSpecific()) || !present {
-		return crypto.SHA1, nil // hashAlgorithm DEFAULT sha1
-	}
-	var alg cryptobyte.String
-	if !ha.ReadASN1(&alg, cbasn1.SEQUENCE) {
+	if !seq.ReadOptionalASN1(&field, &present, cbasn1.Tag(0).Constructed().ContextSpecific()) {
 		return 0, errors.New("x509: bad PSS hashAlgorithm")
+	}
+	if present {
+		var err error
+		if h, err = pssAlgHash(&field); err != nil {
+			return 0, err
+		}
+	}
+	if !seq.ReadOptionalASN1(&field, &present, cbasn1.Tag(1).Constructed().ContextSpecific()) {
+		return 0, errors.New("x509: bad PSS maskGenAlgorithm")
+	}
+	if present {
+		var alg cryptobyte.String
+		var oid asn1.ObjectIdentifier
+		if !field.ReadASN1(&alg, cbasn1.SEQUENCE) || !alg.ReadASN1ObjectIdentifier(&oid) {
+			return 0, errors.New("x509: bad PSS maskGenAlgorithm")
+		}
+		if oid.String() != "1.2.840.113549.1.1.8" {
+			return 0, fmt.Errorf("x509: unsupported PSS mask generation %s", oid)
+		}
+		var err error
+		if mgf, err = pssAlgHash(&alg); err != nil {
+			return 0, err
+		}
+	}
+	if mgf != h {
+		return 0, errors.New("x509: PSS MGF1 hash differs from the message hash")
+	}
+	var salt int64 = 20
+	if !seq.ReadOptionalASN1(&field, &present, cbasn1.Tag(2).Constructed().ContextSpecific()) {
+		return 0, errors.New("x509: bad PSS saltLength")
+	}
+	if present && (!field.ReadASN1Int64WithTag(&salt, cbasn1.INTEGER) || salt < 0) {
+		return 0, errors.New("x509: bad PSS saltLength")
+	}
+	if !seq.ReadOptionalASN1(&field, &present, cbasn1.Tag(3).Constructed().ContextSpecific()) {
+		return 0, errors.New("x509: bad PSS trailerField")
+	}
+	if present {
+		var trailer int64
+		if !field.ReadASN1Int64WithTag(&trailer, cbasn1.INTEGER) || trailer != 1 {
+			return 0, errors.New("x509: unsupported PSS trailerField")
+		}
+	}
+	return h, nil
+}
+
+// pssAlgHash reads an AlgorithmIdentifier naming a hash.
+func pssAlgHash(s *cryptobyte.String) (crypto.Hash, error) {
+	var alg cryptobyte.String
+	if !s.ReadASN1(&alg, cbasn1.SEQUENCE) {
+		return 0, errors.New("x509: bad PSS hash AlgorithmIdentifier")
 	}
 	var oid asn1.ObjectIdentifier
 	if !alg.ReadASN1ObjectIdentifier(&oid) {
@@ -504,6 +565,8 @@ func pssHash(params []byte) (crypto.Hash, error) {
 	switch oid.String() {
 	case "1.3.14.3.2.26":
 		return crypto.SHA1, nil
+	case "2.16.840.1.101.3.4.2.4":
+		return crypto.SHA224, nil
 	case "2.16.840.1.101.3.4.2.1":
 		return crypto.SHA256, nil
 	case "2.16.840.1.101.3.4.2.2":
@@ -518,6 +581,8 @@ func cryptoHashFor(oid asn1.ObjectIdentifier) (crypto.Hash, bool) {
 	switch oid.String() {
 	case "1.2.840.113549.1.1.5":
 		return crypto.SHA1, true
+	case "1.2.840.113549.1.1.14":
+		return crypto.SHA224, true
 	case "1.2.840.113549.1.1.11":
 		return crypto.SHA256, true
 	case "1.2.840.113549.1.1.12":
