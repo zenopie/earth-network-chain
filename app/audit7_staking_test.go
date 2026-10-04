@@ -4,12 +4,14 @@ import (
 	"testing"
 	"time"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // exactRedelegate drives a redelegation (ante faked, as fakeRedelegate)
@@ -139,5 +141,70 @@ func TestAuditA7QueueOnlyWithoutBondedStake(t *testing.T) {
 	require.False(t, ok)
 	_, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), e.app.ShieldedStakingKeeper.ModuleAddress(), vA, vB)
 	require.Error(t, err, "no x/staking entry")
+	e.invariants()
+}
+
+// Audit 7, A7-L2: which entries a slash reached was inferred from the count
+// of x/staking's unbonds (the last that many), but x/staking makes none for
+// an entry whose slash truncates to nothing, which governance makes common
+// by lowering a slash fraction (0.0001: every entry under 10,000 uerth). The
+// slash is now replayed with x/slashing's fractions: the large entry it
+// reached owes it, the dust entry after it, which it skipped, owes nothing.
+func TestAuditA7SlashSkipsDustEntry(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(20_000 * ssErth)
+	vA, _ := e.createValidator(1000 * ssErth)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.auditDelegate(vA, uint64(4_000*ssErth), "a")
+	e.auditDelegate(vB, uint64(1_000*ssErth), "b")
+	e.days(1)
+	e.next(time.Hour)
+	k := e.app.ShieldedStakingKeeper
+	ctx := e.ctx()
+	sp, err := e.app.SlashingKeeper.GetParams(ctx)
+	require.NoError(t, err)
+	sp.SlashFractionDoubleSign = math.LegacyNewDecWithPrec(1, 4)
+	require.NoError(t, e.app.SlashingKeeper.SetParams(ctx, sp))
+
+	e.next(5 * time.Second)
+	infraction := e.height
+	e.next(5 * time.Second)
+	e.next(5 * time.Second)
+	_, err = e.fakeRedelegate(vA, vB, uint64(1_000*ssErth), "large")
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	// A dust entry after it (a move whose bonded part is 5,000 uerth),
+	// filled in directly.
+	ctx = e.ctx()
+	red, err := e.app.StakingKeeper.GetRedelegation(ctx, k.ModuleAddress(), vA, vB)
+	require.NoError(t, err)
+	require.Len(t, red.Entries, 1)
+	dust := red.Entries[0]
+	dust.CreationHeight = ctx.BlockHeight()
+	dust.InitialBalance = math.NewInt(5_000)
+	dust.SharesDst = math.LegacyNewDec(5_000)
+	dust.UnbondingId += 1_000
+	red.Entries = append(red.Entries, dust)
+	require.NoError(t, e.app.StakingKeeper.SetRedelegation(ctx, red))
+	dustKey := privacy.FieldBytes(ssDet("dust-move", 0))
+	mv := sstypes.Move{Key: dustKey, SrcValidator: e.valoper(vA), DstValidator: e.valoper(vB), Height: dust.CreationHeight,
+		MoveTime: uint64(e.now.Unix()), Credited: math.NewInt(5_000), Shares: dust.SharesDst, EntryHeight: dust.CreationHeight,
+		Completion: dust.CompletionTime.UnixNano(), Retained: math.NewInt(5_000)}
+	require.NoError(t, k.Moves.Set(ctx, dustKey, mv))
+	require.NoError(t, k.MovesByEntry.Set(ctx, collections.Join3(e.valoper(vA)+"/"+e.valoper(vB), mv.EntryHeight, dustKey)))
+	require.NoError(t, k.MovesByCompletion.Set(ctx, collections.Join(mv.Completion, dustKey)))
+	e.next(5 * time.Second)
+	e.invariants()
+
+	res := e.doubleSign(vA, infraction)
+	require.Empty(t, eventsOf(res.Events, sstypes.EventTypeEpochFailure), "the slash is attributed")
+	sd := eventsOf(res.Events, sstypes.EventTypeSlashDebt)
+	require.Len(t, sd, 1)
+	require.Equal(t, "1", sd[0]["entries"], "x/staking unbonded once: the large entry")
+	_, err = k.DebtRetained.Get(e.ctx(), fakeMoveKey("large"))
+	require.NoError(t, err, "the large move owes the slash")
+	_, err = k.DebtRetained.Get(e.ctx(), dustKey)
+	require.Error(t, err, "the dust move, which the slash skipped, owes nothing")
 	e.invariants()
 }

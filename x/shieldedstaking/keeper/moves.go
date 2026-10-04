@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"sort"
 	"strconv"
 	"time"
 
@@ -46,14 +45,19 @@ import (
 //
 // Which moves a slash reached: x/staking calls BeforeValidatorModified(src)
 // as a slash begins (openSlashWatch: the module's shares at each dst), then
-// unbonds the module's delegation at dst once per slashed entry of the
-// module's (src, dst) redelegation (BeforeDelegationSharesModified:
-// countSlashUnbond). The slashed entries are the last that many unmatured
-// entries, in creation-height order (x/staking slashes an entry iff it was
-// created at or after the infraction and has not matured), and the burnt
-// shares are the fall of the module's shares at dst (finishSlashWatch, at
-// the next slash or this module's BeginBlocker, right after x/slashing's and
-// x/evidence's: no tx runs in between).
+// unbonds the module's delegation at dst once per entry of the module's
+// (src, dst) redelegation it slashes (BeforeDelegationSharesModified:
+// countSlashUnbond). No hook names the slash's fraction or infraction height,
+// so finishSlashWatch (at the next slash, or this module's BeginBlocker,
+// right after x/slashing's and x/evidence's: no tx runs in between) replays
+// x/staking's own rule (SlashRedelegation) on the pair's entries for each
+// fraction x/staking is ever called with (x/slashing's downtime and
+// x/evidence's double sign, read from x/slashing's params in the same block)
+// and each infraction height an entry boundary allows: the one replay that
+// makes exactly the counted unbonds and burns exactly the fall of the
+// module's shares is the slash (slashedEntries). An entry x/staking skips
+// (its slash truncates to nothing, or the delegation is gone) is skipped in
+// the replay too, whatever slash fraction governance sets (audit 7, A7-L2).
 
 // labelWindow is how long after its move_time a label lasts: the longest
 // x/staking unbonding_time seen (the entry's maturity, from any block time up
@@ -517,7 +521,9 @@ func (k Keeper) finishSlashWatch(ctx context.Context) {
 // unbonded `calls` entries' slash shares from the module's delegation at dst
 // (its shares fell from before) and burnt them. That value's derth comes off
 // dst's supply, so dst's rate is what it was before the burn, and the moves
-// of the slashed entries owe it pro rata to their shares (their debt rows).
+// of the slashed entries owe it pro rata to the shares the slash took from
+// each (their debt rows). Burnt shares no move owns (an entry at height 0 or
+// below, whose moves a zero-height export dropped) stay with dst's book.
 func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before math.LegacyDec, calls uint64) error {
 	srcAddr, err := k.valAddr(src)
 	if err != nil {
@@ -537,41 +543,36 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 	if !burnt.IsPositive() {
 		return nil
 	}
-	// The slashed entries: the last `calls` unmatured ones (x/staking takes
-	// an entry iff created at or after the infraction and not matured).
 	red, err := k.staking.GetRedelegation(ctx, k.modAddr, srcAddr, dst)
 	if err != nil {
 		return err
 	}
-	blockTime := sdk.UnwrapSDKContext(ctx).BlockTime()
-	var open []stakingtypes.RedelegationEntry
-	for _, e := range red.Entries {
-		if !e.IsMature(blockTime) {
-			open = append(open, e)
-		}
+	fractions, err := k.slashFractions(ctx)
+	if err != nil {
+		return err
 	}
-	sort.SliceStable(open, func(i, j int) bool { return open[i].CreationHeight < open[j].CreationHeight })
-	if uint64(len(open)) > calls {
-		open = open[uint64(len(open))-calls:]
+	hit, ok := slashedEntries(red.Entries, sdk.UnwrapSDKContext(ctx).BlockTime(), fractions, before, burnt, calls)
+	if !ok {
+		return errorsmod.Wrapf(types.ErrRedelegation, "no replay of x/staking's slash of the %s -> %s entries makes %d unbonds of %s shares: the book absorbs them",
+			src, dstoper, calls, burnt)
 	}
 	id := entryID(src, dstoper)
-	var moves []types.Move
-	weight := math.LegacyZeroDec()
-	for _, e := range open {
-		rng := collections.NewSuperPrefixedTripleRange[string, int64, []byte](id, e.CreationHeight)
-		if err := k.MovesByEntry.Walk(ctx, rng, func(key collections.Triple[string, int64, []byte]) (bool, error) {
-			mv, err := k.Moves.Get(ctx, key.K3())
-			if err != nil {
-				return true, err
-			}
-			moves = append(moves, mv)
-			weight = weight.Add(mv.Shares)
-			return false, nil
-		}); err != nil {
+	type owed struct {
+		mv     types.Move
+		weight math.LegacyDec
+	}
+	var moves []owed
+	for _, h := range hit {
+		ms, _, err := k.entryMoves(ctx, id, h.entry, int(^uint(0)>>1))
+		if err != nil {
 			return err
 		}
+		for _, mv := range ms {
+			// The move's part of what the slash took from its entry.
+			moves = append(moves, owed{mv, mv.Shares.Mul(h.shares).Quo(h.entry.SharesDst)})
+		}
 	}
-	if !weight.IsPositive() {
+	if len(moves) == 0 {
 		return errorsmod.Wrapf(types.ErrRedelegation, "no move owns the slashed %s -> %s entries: the book absorbs %s shares", src, dstoper, burnt)
 	}
 	// The burnt shares' value now, and the derth it backed at dst's rate
@@ -591,8 +592,9 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 	}
 	total := value.Mul(s).Quo(b.Add(value))
 	booked := math.ZeroInt()
-	for _, mv := range moves {
-		d := math.LegacyNewDecFromInt(total).Mul(mv.Shares).Quo(weight).TruncateInt()
+	for _, o := range moves {
+		mv := o.mv
+		d := math.LegacyNewDecFromInt(total).Mul(o.weight).Quo(burnt).TruncateInt()
 		if d.GT(mv.Retained) {
 			d = mv.Retained
 		}
@@ -638,4 +640,115 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 		sdk.NewAttribute(types.AttributeKeyEntries, strconv.FormatUint(calls, 10)),
 	))
 	return nil
+}
+
+// slashFractions is every fraction x/staking's Slash is called with: x/slashing's
+// downtime fraction and x/evidence's double-sign one (x/evidence has no
+// router, so nothing else slashes).
+func (k Keeper) slashFractions(ctx context.Context) ([]math.LegacyDec, error) {
+	ds, err := k.slashing.SlashFractionDoubleSign(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dt, err := k.slashing.SlashFractionDowntime(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if dt.Equal(ds) {
+		return []math.LegacyDec{ds}, nil
+	}
+	return []math.LegacyDec{ds, dt}, nil
+}
+
+// entryHit is an entry a slash reached and the shares it took from the
+// module's delegation at the destination.
+type entryHit struct {
+	entry  stakingtypes.RedelegationEntry
+	shares math.LegacyDec
+}
+
+// slashedEntries replays x/staking's SlashRedelegation on a pair's entries
+// (in its order) for each candidate fraction and each infraction height an
+// entry boundary allows, the module's delegation holding `before` shares
+// (its unbonding delegation at the destination is set aside, so nothing
+// reduces a slash amount): an entry is slashed iff created at or after the
+// infraction height, not mature, its slash amount trunc(f x initial balance)
+// and its shares f x shares_dst both non-zero, and the delegation still
+// there; it takes min(f x shares_dst, the delegation's shares). The replay
+// that makes exactly `calls` unbonds of exactly `burnt` shares in all is the
+// slash. Entries are in creation-height order (checkRedelegationRecord), so
+// the entries an infraction height reaches are a suffix.
+func slashedEntries(entries []stakingtypes.RedelegationEntry, now time.Time, fractions []math.LegacyDec,
+	before, burnt math.LegacyDec, calls uint64,
+) ([]entryHit, bool) {
+	type eligible struct {
+		at  int
+		hit entryHit
+	}
+	// replay is x/staking's loop over entries[from:], the delegation's
+	// shares capping each unbond (and gone once they reach 0).
+	replay := func(el []eligible) ([]entryHit, math.LegacyDec) {
+		running := before
+		var hit []entryHit
+		total := math.LegacyZeroDec()
+		for _, x := range el {
+			if !running.IsPositive() {
+				break
+			}
+			sh := x.hit.shares
+			if sh.GT(running) {
+				sh = running
+			}
+			running = running.Sub(sh)
+			total = total.Add(sh)
+			hit = append(hit, entryHit{x.hit.entry, sh})
+		}
+		return hit, total
+	}
+	gone := burnt.Equal(before) // the module's delegation at dst is gone
+	for _, f := range fractions {
+		if !f.IsPositive() {
+			continue
+		}
+		var el []eligible
+		for i, e := range entries {
+			if e.IsMature(now) && !e.OnHold() || f.MulInt(e.InitialBalance).TruncateInt().IsZero() {
+				continue
+			}
+			if sh := f.Mul(e.SharesDst); !sh.IsZero() {
+				el = append(el, eligible{i, entryHit{e, sh}})
+			}
+		}
+		// From the latest boundary back: an infraction height above
+		// entries[from-1]'s height and at most entries[from]'s reaches
+		// entries[from:]. With the delegation still there, nothing capped
+		// an unbond: the suffix's uncapped sum is what was burnt.
+		first, sum := len(el), math.LegacyZeroDec()
+		for from := len(entries) - 1; from >= 0; from-- {
+			for first > 0 && el[first-1].at >= from {
+				first--
+				sum = sum.Add(el[first].hit.shares)
+			}
+			if from > 0 && entries[from-1].CreationHeight == entries[from].CreationHeight {
+				continue
+			}
+			switch {
+			case !gone && sum.GTE(before):
+				// Past here the delegation would have run out.
+			case !gone:
+				if uint64(len(el)-first) == calls && sum.Equal(burnt) {
+					hit := make([]entryHit, 0, calls)
+					for _, x := range el[first:] {
+						hit = append(hit, x.hit)
+					}
+					return hit, true
+				}
+			case sum.GTE(before):
+				if hit, total := replay(el[first:]); uint64(len(hit)) == calls && total.Equal(burnt) {
+					return hit, true
+				}
+			}
+		}
+	}
+	return nil, false
 }

@@ -105,7 +105,11 @@ type DistrKeeper interface {
 	SetDelegatorWithdrawAddr(ctx context.Context, delAddr, withdrawAddr sdk.AccAddress) error
 }
 
-// SlashingKeeper reports tombstoning.
+// SlashingKeeper reports tombstoning, and the two slash fractions x/staking
+// is ever called with (x/slashing's downtime, x/evidence's double sign):
+// which entries a slash reached is replayed with them (keeper moves.go).
 type SlashingKeeper interface {
 	IsTombstoned(ctx context.Context, consAddr sdk.ConsAddress) bool
+	SlashFractionDoubleSign(ctx context.Context) (math.LegacyDec, error)
+	SlashFractionDowntime(ctx context.Context) (math.LegacyDec, error)
 }
