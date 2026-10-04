@@ -517,8 +517,8 @@ canonical encoding of what they decode to (one msg, one tx hash).
    msg and its action (keyed by SHA-256 of the msg's proto bytes:
    `AuthorizedAction/Result/Positions`).
 7. Run the action here if its handler must be atomic with the spend
-   (`PrivateActionExecutor.ExecutesInAnte`: dex swaps and deposits,
-   MsgRedelegate). A refusal there fails the tx in the ante: nothing spent,
+   (`PrivateActionExecutor.ExecutesInAnte`: dex swaps, deposits and LP
+   withdrawals, MsgRedelegate). A refusal there fails the tx in the ante: nothing spent,
    no fee.
 
 The ante's writes and events persist when the msg then fails: a failed
