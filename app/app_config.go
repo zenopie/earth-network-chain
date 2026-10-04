@@ -108,8 +108,8 @@ var (
 		// coins only enter by a shield or module mint and leave by a spend).
 		{Account: shieldedmoduletypes.ModuleName},
 		// Private staking: the only delegator besides validators' self-bonds.
-		// No Minter or Burner: derth and unbond claims are stake notes in its
-		// own tree, never bank coins, and the ERTH it pays out moves into the
+		// No Minter or Burner: derth is stake notes in its own tree and book
+		// entries, never bank coins, and the ERTH it pays out moves into the
 		// pool by MintNote (a transfer). No
 		// Staking permission (the SDK checks it only on the bonded pools) and,
 		// like the pool, NOT blocked: x/distribution pays its rewards with

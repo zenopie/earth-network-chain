@@ -92,7 +92,7 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("position %d: %w", p.Id, err)
 		}
 		// A position's derth is a stake note's value (audit 5 L-ST2): at most
-		// 2^63-1, so unlocking it can always mint the stake note.
+		// 2^63-1, so unlocking it can always credit it to a stake note.
 		if p.Derth.IsNil() || !shieldedtypes.FitsNote(p.Derth) {
 			return fmt.Errorf("position %d is invalid: derth must be 1..2^63-1", p.Id)
 		}

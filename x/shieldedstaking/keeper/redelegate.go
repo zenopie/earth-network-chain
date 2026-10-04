@@ -251,8 +251,9 @@ func (k Keeper) collectRewards(ctx context.Context, valoper string, val sdk.ValA
 }
 
 // executeRedelegate moves the value (see the top of this file), spends the
-// proof's notes and mints derth/<dst>. Runs in the private ante after the
-// fee bundle was spent; any error fails the whole tx, spend included.
+// proof's notes and credits derth/<dst> to the proof's merged dst note. Runs
+// in the private ante after the fee bundle was spent; any error fails the
+// whole tx, spend included.
 func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*types.MsgRedelegateResponse, error) {
 	if _, err := k.checkRedelegate(ctx, m); err != nil {
 		return nil, err
