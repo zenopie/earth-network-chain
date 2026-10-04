@@ -106,7 +106,7 @@ func (stubDex) QuoteHubToToken(context.Context, string, math.Int) (math.Int, err
 
 var errNoStubPool = errors.New("stub dex: no pool")
 
-// passportDir holds real lean_poa proofs bound to x/personhood/testutil's
+// passportDir holds real lean_poa_p256_sha256 proofs bound to x/personhood/testutil's
 // registrations (scripts/personhood-fixtures.sh).
 var passportDir = filepath.Join("..", "testdata", "passports")
 
@@ -128,7 +128,7 @@ func passportMsg(t *testing.T, name string) *types.MsgRegister {
 	}
 	m := &types.MsgRegister{
 		Proof: readFileAt(t, filepath.Join(passportDir, name, "proof")), PublicSignals: signals,
-		SignatureAlgorithm: "lean_poa", DscDer: readFileAt(t, filepath.Join(passportDir, name, "dsc.der")),
+		SignatureAlgorithm: "lean_poa_p256_sha256", DscDer: readFileAt(t, filepath.Join(passportDir, name, "dsc.der")),
 		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), PcErth: privacy.FieldBytes(r.ErthPC()),
 		CiphertextAnml: r.CiphertextAnml(), CiphertextErth: r.CiphertextErth(),
 	}
@@ -140,7 +140,7 @@ func passportMsg(t *testing.T, name string) *types.MsgRegister {
 
 func leanParams(t *testing.T) types.Params {
 	p := types.DefaultParams()
-	p.VerifyingKeys = map[string][]byte{"lean_poa": readFileAt(t, filepath.Join(passportDir, "lean_poa.vk"))}
+	p.VerifyingKeys = map[string][]byte{"lean_poa_p256_sha256": readFileAt(t, filepath.Join(passportDir, "lean_poa_p256_sha256.vk"))}
 	p.NullifierIndex, p.DscKeyIndex, p.CurrentDateIndex, p.AddressIndex = 2, 3, 0, 1
 	return p
 }

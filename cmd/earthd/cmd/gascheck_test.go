@@ -25,7 +25,7 @@ func TestGasCheckDecodesMsgRegisterWithBundle(t *testing.T) {
 			Balances:   []shieldedtypes.ValueBalance{{Denom: "uerth", Amount: 50_000}},
 			BindingSig: make([]byte, 96),
 		},
-		Proof: []byte{1, 2}, PublicSignals: []string{"1", "2"}, SignatureAlgorithm: "lean_poa", DscDer: []byte{3},
+		Proof: []byte{1, 2}, PublicSignals: []string{"1", "2"}, SignatureAlgorithm: "lean_poa_p256_sha256", DscDer: []byte{3},
 		Idc: b32(6), PcAnml: b32(7), PcErth: b32(8), CiphertextAnml: []byte("a"), CiphertextErth: []byte("e"),
 	}
 	raw, err := cdc.MarshalJSON(&msg)

@@ -25,7 +25,7 @@ import (
 // same proof is verified twice, changing nothing but the address in the public
 // input vector.
 func TestProofDoesNotVerifyForAnotherAddress(t *testing.T) {
-	dir := filepath.Join("testdata", "lean_poa")
+	dir := filepath.Join("testdata", "lean_poa_p256_sha256")
 	read := func(name string) []byte {
 		t.Helper()
 		b, err := os.ReadFile(filepath.Join(dir, name))

@@ -11,10 +11,10 @@ import (
 
 func loadLean(t *testing.T) (vk, proof []byte, inputs [][]byte) {
 	t.Helper()
-	dir := "testdata/lean_poa"
+	dir := "testdata/lean_poa_p256_sha256"
 	vk, err := os.ReadFile(filepath.Join(dir, "vk"))
 	if err != nil {
-		t.Skip("lean_poa fixture missing")
+		t.Skip("lean_poa_p256_sha256 fixture missing")
 	}
 	proof, _ = os.ReadFile(filepath.Join(dir, "proof"))
 	pub, _ := os.ReadFile(filepath.Join(dir, "public_inputs"))

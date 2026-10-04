@@ -117,7 +117,7 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 	actionVK := actions.VerifyingKey(t)
 	membershipVK, err := prover.VK("membership")
 	require.NoError(t, err)
-	leanVK, err := os.ReadFile(filepath.Join(passports, "lean_poa.vk"))
+	leanVK, err := os.ReadFile(filepath.Join(passports, "lean_poa_p256_sha256.vk"))
 	require.NoError(t, err)
 
 	se := initShieldedEnvWith(t, shieldedEnvOpts{
@@ -134,7 +134,7 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 
 			var ph personhoodtypes.GenesisState
 			require.NoError(t, cdc.UnmarshalJSON(st[personhoodtypes.ModuleName], &ph))
-			ph.Params.VerifyingKeys = map[string][]byte{"lean_poa": leanVK}
+			ph.Params.VerifyingKeys = map[string][]byte{"lean_poa_p256_sha256": leanVK}
 			ph.Params.RegistrationValiditySeconds = 4 * 86400
 			ph.Params.CaretakerVoteSeconds = uint64(phR)
 			ph.Params.HandleLeaseSeconds = uint64(phH)
@@ -352,7 +352,7 @@ func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {
 	p := loadPassport(e.t, name)
 	f := e.feeFor("register/" + name)
 	msg := &personhoodtypes.MsgRegister{
-		Fee: e.bundle(f), Proof: p.proof, PublicSignals: p.signals, SignatureAlgorithm: "lean_poa", DscDer: p.dscDER,
+		Fee: e.bundle(f), Proof: p.proof, PublicSignals: p.signals, SignatureAlgorithm: "lean_poa_p256_sha256", DscDer: p.dscDER,
 		Idc: privacy.FieldBytes(r.IDC()), PcAnml: privacy.FieldBytes(r.AnmlNote().PC()), CiphertextAnml: r.CiphertextAnml(),
 		PcErth: privacy.FieldBytes(r.ErthPC()), CiphertextErth: r.CiphertextErth(),
 	}
@@ -961,7 +961,7 @@ func TestPrivatePersonhoodBypassRefused(t *testing.T) {
 		&personhoodtypes.MsgClaimAnml{Fee: tr, Membership: mem, Pc: make([]byte, 32), Ciphertext: shieldedtest.BlindCT("c")},
 		&personhoodtypes.MsgSetCaretaker{Fee: tr, Membership: mem},
 		&personhoodtypes.MsgBindHandle{Fee: tr, Membership: mem},
-		&personhoodtypes.MsgRegister{Fee: tr, Proof: make([]byte, shieldedtypes.ProofBytes), PublicSignals: []string{"1"}, SignatureAlgorithm: "lean_poa",
+		&personhoodtypes.MsgRegister{Fee: tr, Proof: make([]byte, shieldedtypes.ProofBytes), PublicSignals: []string{"1"}, SignatureAlgorithm: "lean_poa_p256_sha256",
 			Idc: make([]byte, 32), PcAnml: make([]byte, 32), PcErth: make([]byte, 32),
 			CiphertextAnml: shieldedtest.BlindCT("a"), CiphertextErth: shieldedtest.BlindCT("e")},
 		&assemblytypes.MsgVoteProposal{Fee: tr, Membership: mem, ProposalId: 1, Option: assemblytypes.VOTE_OPTION_YES},

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -17,6 +18,11 @@ import (
 // would leave ANML claims and the entire democratic pillar inert from block 1
 // until a governance proposal landed — a week, given the voting period. Both are
 // easy to drop while editing config.yml, and nothing else would notice.
+// minRegisterVariants is the number of passport register circuits
+// (PASSPORT_COVERAGE.md in the mobile repo): a smaller set means a scheme
+// real passports use was dropped.
+const minRegisterVariants = 33
+
 func TestGenesisSeedsRegistrationTrustAnchors(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "config.yml"))
 	if err != nil {
@@ -44,15 +50,30 @@ func TestGenesisSeedsRegistrationTrustAnchors(t *testing.T) {
 	}
 
 	// Every circuit the mobile client can select must have a key, or passports
-	// with that Document Signer key type silently cannot register.
-	wantAlgorithms := []string{
-		"lean_poa",
-		"lean_poa_p384",
-		"lean_poa_rsa2048",
-		"lean_poa_rsa4096",
-		"lean_poa_brainpool256",
-		"lean_poa_brainpool384",
-		"lean_poa_brainpool512",
+	// with that signature scheme silently cannot register. The circuits are
+	// listed by networks/genesis/verifying-keys (one file per variant, written
+	// by scripts/privacy-vks.sh from the mobile repo's circuits/variants.json);
+	// the dev chain must carry exactly that set, with the same keys.
+	files, err := filepath.Glob(filepath.Join("..", "networks", "genesis", "verifying-keys", "*.vk.b64"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) < minRegisterVariants {
+		t.Fatalf("networks/genesis/verifying-keys holds %d register circuits, want at least %d", len(files), minRegisterVariants)
+	}
+	var wantAlgorithms []string
+	genesisKeys := map[string]string{}
+	for _, f := range files {
+		algo := strings.TrimSuffix(filepath.Base(f), ".vk.b64")
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantAlgorithms = append(wantAlgorithms, algo)
+		genesisKeys[algo] = strings.TrimSpace(string(b))
+	}
+	if n := len(cfg.Genesis.AppState.Personhood.Params.VerifyingKeys); n != len(files) {
+		t.Errorf("config.yml seeds %d register keys, networks/genesis has %d", n, len(files))
 	}
 	keys := cfg.Genesis.AppState.Personhood.Params.VerifyingKeys
 	for _, algo := range wantAlgorithms {
@@ -68,6 +89,9 @@ func TestGenesisSeedsRegistrationTrustAnchors(t *testing.T) {
 		}
 		if len(decoded) == 0 {
 			t.Errorf("verifying key for %q is empty", algo)
+		}
+		if vk != genesisKeys[algo] {
+			t.Errorf("config.yml's key for %q differs from networks/genesis/verifying-keys", algo)
 		}
 	}
 

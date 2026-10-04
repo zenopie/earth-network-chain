@@ -21,13 +21,13 @@ import (
 func TestParamsMarshalIsDeterministic(t *testing.T) {
 	p := Params{
 		VerifyingKeys: map[string][]byte{
-			"lean_poa":              []byte("vk-p256"),
-			"lean_poa_p384":         []byte("vk-p384"),
-			"lean_poa_rsa2048":      []byte("vk-rsa2048"),
-			"lean_poa_rsa4096":      []byte("vk-rsa4096"),
-			"lean_poa_brainpool256": []byte("vk-bp256"),
-			"lean_poa_brainpool384": []byte("vk-bp384"),
-			"lean_poa_brainpool512": []byte("vk-bp512"),
+			"lean_poa_p256_sha256":                  []byte("vk-p256"),
+			"lean_poa_p384_sha384":                  []byte("vk-p384"),
+			"lean_poa_rsa2048_sha256":               []byte("vk-rsa2048"),
+			"lean_poa_rsa2048_pss_sha256":           []byte("vk-rsa2048-pss"),
+			"lean_poa_rsa4096_sha512_sha512_sha256": []byte("vk-rsa4096-i"),
+			"lean_poa_bp256_sha256":                 []byte("vk-bp256"),
+			"lean_poa_bp512_sha512":                 []byte("vk-bp512"),
 		},
 		RegistrationValiditySeconds: 31536000,
 	}

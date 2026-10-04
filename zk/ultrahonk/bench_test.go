@@ -15,13 +15,13 @@ import (
 func BenchmarkVerify(b *testing.B) {
 	for _, dir := range []string{
 		"testdata",
-		"testdata/lean_poa",
-		"testdata/lean_poa_p384",
-		"testdata/lean_poa_rsa2048",
-		"testdata/lean_poa_rsa4096",
-		"testdata/lean_poa_brainpool256",
-		"testdata/lean_poa_brainpool384",
-		"testdata/lean_poa_brainpool512",
+		"testdata/lean_poa_p256_sha256",
+		"testdata/lean_poa_rsa2048_sha256",
+		"testdata/lean_poa_rsa4096_pss_sha256",
+		"testdata/lean_poa_bp256_sha256",
+		"testdata/lean_poa_p384_sha384",
+		"testdata/lean_poa_bp512_sha512",
+		"testdata/lean_poa_p521_sha512",
 	} {
 		b.Run(filepath.Base(dir), func(b *testing.B) {
 			vk := readOrSkipB(b, filepath.Join(dir, "vk"))
