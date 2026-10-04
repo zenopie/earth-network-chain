@@ -146,6 +146,11 @@ func (k Keeper) checkReleaseMap(ctx context.Context, msg types.PrivateMsg) error
 		if !declared[r.Denom] {
 			return types.ErrReleaseMap.Wrapf("the msg releases %s, which its action does not take", r.Denom)
 		}
+		// Refused here, before anything is spent, as ReleaseToModule will
+		// (audit 6 A-L2).
+		if err := k.bankKeeper.IsSendEnabledCoins(ctx, sdk.NewCoin(r.Denom, math.NewIntFromUint64(r.Amount))); err != nil {
+			return err
+		}
 		released[r.Denom] = true
 	}
 	for d := range declared {

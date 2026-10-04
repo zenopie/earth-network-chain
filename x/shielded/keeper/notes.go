@@ -86,8 +86,15 @@ func (k Keeper) CheckMint(ctx context.Context, pc, ciphertext []byte) error {
 // It is emitted with the note (and on the mint event), and is how the owner
 // finds the note: trial decryption, then cm recomputed from the minted
 // amount.
+//
+// A denom whose sends governance disabled is not minted into the pool from a
+// module either (audit 6 A-L2): Shield and unshield already refuse it, and a
+// module mint is the same edge.
 func (k Keeper) MintNote(ctx context.Context, fromModule string, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error) {
 	if err := notThePool(fromModule); err != nil {
+		return 0, nil, err
+	}
+	if err := k.bankKeeper.IsSendEnabledCoins(ctx, coin); err != nil {
 		return 0, nil, err
 	}
 	cm, err := k.noteFor(ctx, coin, pc, ciphertext)
@@ -153,6 +160,9 @@ func (k Keeper) MintOpenNote(ctx context.Context, fromModule string, coin sdk.Co
 	if err := notThePool(fromModule); err != nil {
 		return 0, nil, err
 	}
+	if err := k.bankKeeper.IsSendEnabledCoins(ctx, coin); err != nil {
+		return 0, nil, err
+	}
 	if !coin.IsValid() || !types.FitsNote(coin.Amount) {
 		return 0, nil, errorsmod.Wrapf(types.ErrInvalidNote, "note value %s must be 1..2^63-1", coin)
 	}
@@ -191,7 +201,9 @@ func (k Keeper) MintOpenNote(ctx context.Context, fromModule string, coin sdk.Co
 //
 // A denom the bank has send-disabled does not enter the pool (audit 5 L-SH2):
 // inside it, the note would move privately, and a module release (a dex note
-// swap) would carry it out again, both around the switch.
+// swap) would carry it out again, both around the switch. Module releases
+// and module mints refuse it too (ReleaseToModule, MintNote); notes shielded
+// before the switch still move privately inside the pool.
 func (k Keeper) Shield(ctx context.Context, sender sdk.AccAddress, coin sdk.Coin, pc, ciphertext []byte) (uint64, []byte, error) {
 	if err := k.bankKeeper.IsSendEnabledCoins(ctx, coin); err != nil {
 		return 0, nil, err
@@ -315,6 +327,12 @@ func (k Keeper) unshield(ctx context.Context, msg types.PrivateMsg, receiver sdk
 // has already spent the inputs.
 func (k Keeper) ReleaseToModule(ctx context.Context, msg types.PrivateMsg, denom, targetModule string) (sdk.Coin, error) {
 	if err := notThePool(targetModule); err != nil {
+		return sdk.Coin{}, err
+	}
+	// Bank's module-to-module send does not consult SendEnabled; a release
+	// out of the pool is the same edge as an unshield (audit 6 A-L2).
+	// checkReleaseMap refused it in the ante already, before any spend.
+	if err := k.bankKeeper.IsSendEnabledCoins(ctx, sdk.NewCoin(denom, math.ZeroInt())); err != nil {
 		return sdk.Coin{}, err
 	}
 	coin, err := release(ctx, msg, denom)

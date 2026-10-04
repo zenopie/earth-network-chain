@@ -420,6 +420,11 @@ func TestHandlerRequiresAnteAuthorization(t *testing.T) {
 	actx, err = keeper.AuthorizeMsg(f.ctx, m, nil, 0)
 	require.NoError(t, err)
 	require.True(t, keeper.AuthorizedNullifiers(actx, m.Bundle.Nullifiers()...))
+	// Not while its denom's sends are disabled (audit 6 A-L2).
+	f.bank.disabled = map[string]bool{types.FeeDenom: true}
+	_, err = f.k.ReleaseToModule(actx, m, types.FeeDenom, personhood)
+	require.ErrorIs(t, err, types.ErrSendRestricted)
+	f.bank.disabled = nil
 	coin, err := f.k.ReleaseToModule(actx, m, types.FeeDenom, personhood)
 	require.NoError(t, err)
 	require.Equal(t, "500000uerth", coin.String(), "the balance less the fee")
@@ -494,8 +499,15 @@ func TestSendRestriction(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrSendRestricted)
 	f.bank.disabled = nil
 
-	// MintNote from a module holding the coins.
+	// MintNote from a module holding the coins; not while the denom's sends
+	// are disabled (audit 6 A-L2).
 	f.bank.mint(mod(personhood), sdk.NewInt64Coin(types.AnmlDenom, 1_000_000))
+	f.bank.disabled = map[string]bool{types.AnmlDenom: true}
+	_, _, err = f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 1_000_000), pc, shieldedtest.BlindCT("mint"))
+	require.ErrorIs(t, err, types.ErrSendRestricted)
+	_, err = f.k.MintNoteSplit(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 1_000_000), pc, shieldedtest.BlindCT("mint"))
+	require.ErrorIs(t, err, types.ErrSendRestricted)
+	f.bank.disabled = nil
 	pos, cm, err := f.k.MintNote(f.ctx, personhood, sdk.NewInt64Coin(types.AnmlDenom, 1_000_000), pc, shieldedtest.BlindCT("mint"))
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), pos)
