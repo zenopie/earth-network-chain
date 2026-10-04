@@ -34,7 +34,7 @@ like, because nodes running different versions cannot agree.
     ciphertexts are 201 bytes. Restake only merges.
   - x/shieldedstaking: **MsgRedelegate no longer calls BeginRedelegate**:
     Unbond at src, Delegate at dst and the entry recorded by the module (one
-    per block per pair, at most 4,096 per pair, then joining the latest): no
+    per block per pair, at most 1,024 per pair, then merging the oldest): no
     transitive refusal, no max_entries. **MsgRedelegate.move_time** (7, within
     600 s before the block). The credit is labelled with the move inside its
     note; until the move's entry matures the exposure cannot leave the note.
@@ -60,6 +60,32 @@ like, because nodes running different versions cannot agree.
     bonds or starts unbonding, their vote kept at weight zero meanwhile.
   - app: **the gov module account is on the blocked-address list** (audit 7
     D7-L1).
+  - x/shieldedstaking, audit 7 (staking) fixes (ORCHARD_DESIGN.md 20.11). No
+    circuit, verifying key or genesis change.
+    - **A redelegation leaves the source's book pro rata** (A7-1): floor(value
+      x P / (D - U + P)) out of the source's queue, the rest bonded with an
+      x/staking entry, a move and its label. Out of the queue first only when
+      the source is Unbonded or holds no bonded module stake. (It came out of
+      the queue first: a mover who saw a slash coming escaped its share.)
+    - **At 1,024 entries of positive height per pair** (was 4,096), a bonded
+      move merges the two oldest entries (later height, earlier completion,
+      their moves re-filed) and adds its own; joining the latest entry is
+      only a last resort. MsgRedelegate's gas grows with the pair's entries
+      (2,500 each, more at the cap).
+    - **Which entries a slash reached is replayed** from x/staking's rule with
+      x/slashing's two slash fractions (A7-L2): correct whatever fraction
+      governance sets.
+    - **Zero-height export with open moves re-imports** (A7-2): the moves are
+      dropped (their entries are at height 0), the debt rows kept; genesis
+      and invariant 9 skip shares and duplicate checks at height <= 0.
+    - **Every stake proof must name the current clear_before** (within 3,600 s
+      below Query/DebtTree's) **and the current debt_root**, whether or not it
+      clears a label (audit B L-1): a proof that clears looks like any other.
+      clear_before 0 is refused.
+    - Genesis: a move's completion must match its entry's, every unmatured
+      move needs its entry, and debt-row and move keys must be spent stake
+      nullifiers. The epoch-end invariant pass decodes each redelegation once
+      and counts moves and entries against its bound.
 
 - Private redelegation (user decision, the one exception to the feature
   freeze; ORCHARD_DESIGN.md section 19, STAKING_WAVE_PROGRESS.md). No circuit,

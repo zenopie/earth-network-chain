@@ -1208,7 +1208,9 @@ unchanged.
    at the epoch end. It moves to B's queue as a book entry: never bonded at
    A, it needs no x/staking entry and carries no slash risk from A. A value
    exceeding the queue by at most 0.001 ERTH moves out of the queue alone,
-   the excess left to A's book.
+   the excess left to A's book. **Superseded (audit 7, A7-1, §20.11):** the
+   value leaves the queue and the bonded stake pro rata; queue first only
+   when no slash can reach A's stake.
 4. The rest leaves the module's bonded stake at A with x/staking's
    BeginRedelegate (delegator = the module, A -> B), in the same block: no
    unbonding. It never exceeds D_A - U_A (pending undelegations stay
@@ -1498,9 +1500,12 @@ Two lanes, one owner (nk), all inputs under `anchor`:
 
 A ciphertext is present exactly for a non-zero commitment and is the
 wallet stake ciphertext, **201 bytes** (was 153: the label fields are in it,
-zero when unlabelled, so the length says nothing). `debt_root` is zero
-exactly when `clear_before` is 0 (the proof clears nothing); otherwise it
-must be the current debt root and `clear_before` <= block time - window.
+zero when unlabelled, so the length says nothing). **Every** stake proof
+names the label window's current `clear_before` (block time - window,
+within 3,600 s below the including block's) and the current `debt_root`,
+whether it clears a label or not (audit 7, B L-1, §20.11): a proof that
+clears looks like every other. (`debt_root` is zero exactly when
+`clear_before` is 0, which only a block time below the window allows.)
 
 | Msg | lane A | v_in / v_out | lane B | shape |
 | --- | --- | --- | --- | --- |
@@ -1555,20 +1560,18 @@ notes; nothing would be gained.
 ### 20.5 Redelegation internals
 
 Steps 1, 2, 4 of §19.2 are unchanged (rewards into both queues, the value
-at src's live rate, out of src's queue first). Step 3, the bonded part:
+at src's live rate); step 3, out of src's queue first, is replaced by a
+pro-rata split (§20.11, A7-1). Step 3, the bonded part:
 `moveBonded` = x/staking's BeginRedelegation without its refusals: Unbond
 at src, Delegate at dst (token source = src's status), and the entry
 recorded by the module:
 
 - one entry per (src, dst, block height): moves in one block share it
   (balance and shares added);
-- past `MaxEntryHeightsPerPair` (4,096) entries a move joins the latest
-  entry, which keeps its height and completion (every move in an entry is
-  at or after its height, and the entry matures before any of its moves'
-  labels clear; only an infraction between that height and the move's falls
-  on src's stake instead). Reaching the cap takes 4,096 blocks of bonded
-  moves of at least 1 ERTH each, each move's exposure locked in place for the
-  unbonding time;
+- at `MaxEntryHeightsPerPair` (1,024, was 4,096) entries of positive
+  height, a move first merges the two oldest entries and then adds its own
+  (§20.11; it used to join the latest entry, which a pair kept at the cap
+  froze at an old height, so a move made after an infraction escaped it);
 - src unbonded: no entry (nothing can be slashed); src unbonding: the
   validator's unbonding time and height.
 
@@ -1616,9 +1619,10 @@ destination of its src redelegations), then counts x/staking's Unbond of
 the module's delegation at each dst (BeforeDelegationSharesModified: one per
 slashed entry). It settles the watch at the next slash or at its
 BeginBlocker (right after x/slashing and x/evidence, before any tx): per dst,
-the slashed entries are the last `calls` unmatured entries by height
-(x/staking slashes an entry iff created at or after the infraction and not
-mature), the burnt shares are the fall of the module's shares at dst, and
+the slashed entries are found by replaying x/staking's SlashRedelegation
+(§20.11, A7-L2; they were "the last `calls` unmatured entries", wrong when
+x/staking skips an entry whose slash truncates to nothing), the burnt
+shares are the fall of the module's shares at dst, and
 
     value = TokensFromShares(burnt) at dst
     debt  = floor(value x S / (B + value))          (B, S after the burn)
@@ -1626,7 +1630,8 @@ mature), the burnt shares are the fall of the module's shares at dst, and
 comes off dst's derth_supply (ValidatorState.slash_debt += debt): dst's
 rate (B + value) / S before is B / (S - debt) after, every honest holder's
 value unchanged. Each move in the slashed entries owes debt pro rata to its
-shares: retained -= its part, and its debt row is written. Events
+shares (its part of what the slash took from its entry): retained -= its
+part, and its debt row is written. Events
 `shieldedstaking_slash_debt {src_validator, dst_validator, value, debt,
 entries}`, `shieldedstaking_move_slashed {move_key, src_validator,
 dst_validator, debt, retained}`, `shieldedstaking_debt_row {move_key,
@@ -1670,11 +1675,12 @@ root, window_seconds, clear_before (`/earth/shieldedstaking/v1/debt_tree`);
 `Query/Move {key}` -> the move while open, slashed, retained
 (`/earth/shieldedstaking/v1/moves/{key}`). Query/Redelegation is removed.
 
-Invariant 9 (redelegations) now checks 1..4,096 entries and the moves'
-shares per unmatured entry; invariant 10 (new): every open move belongs to
-an entry at its height, its retained is its row's (or its credit with no
-row), the debt tree's leaves, index and rows agree, no slash is left
-watched.
+Invariant 9 (redelegations) now checks 1..1,024 entries of positive
+height, creation-height order, and the moves' shares per unmatured entry;
+invariant 10 (new): every open move belongs to an entry at its height with
+its completion, its retained is its row's (or its credit with no row), the
+debt tree's leaves, index and rows agree, no slash is left watched. Each
+record is decoded once a pass (§20.11, A7-L1).
 
 `redelegate` event: `minted` becomes `credited`; adds `move_key`,
 `move_time`. The stake tree records its empty root at the first block (a
@@ -1688,8 +1694,11 @@ note exists).
   the tx lands (the per-block rewards over the backing, times the blocks
   you allow: ~10 ppm covers minutes on a chain with real stake), or amount
   exactly while S = 0. Redelegate: value = amount x rate_src, dst_derth =
-  floor(value x S_dst / B_dst) less the margin of both rates. A refused
-  quote costs nothing (refused in the ante).
+  floor(arrives x S_dst / B_dst) less the margin of both rates, arrives =
+  value - 1,001 uerth (a bonded part of up to 0.001 ERTH stays with src's
+  book and x/staking truncates a uerth), or value exactly when src is
+  Unbonded and its queue covers value (§20.11). A refused quote costs
+  nothing (refused in the ante).
 - **Delegate**: lane A spends your derth/<v> note (merge) or pads (a fresh
   rho, position 0, its nullifier H(TAG_SNF, nk, rho, 0)); output = old +
   derth (a labelled input keeps its label and exposure); v_in = derth.
@@ -1702,9 +1711,17 @@ note exists).
   block's time. Your new dst note is labelled (move_key = the lane-B
   nullifier you published, move_time, exposed = dst_derth).
 - **Unlock**: lane A merges the position's derth into your note there.
+- **clear_before and debt_root, on every proof** (§20.11): Query/DebtTree's
+  clear_before and root, read at proving time (the chain accepts
+  clear_before within 3,600 s below its own and the root only while
+  current: a slash reaching a redelegation changes it; re-prove then).
+- **Owner tag salt**: a fresh random field element on every proof that does
+  not act on a position (delegate, undelegate, redelegate, restake); a lock
+  takes a fresh one that stays the position's, and the position's update,
+  vote and unlock reuse it. A reused salt links the txs (B L-2).
 - **Clearing**: after move_time + window (Query/DebtTree: window_seconds,
-  clear_before), any lane-A proof may clear: clear_before from the query,
-  debt_root = its root, the witness from the rows (rebuild with zk/debt
+  clear_before), any lane-A proof may clear, with the same clear_before and
+  debt_root as every proof, the witness from the rows (rebuild with zk/debt
   from Query/DebtTree's rows or the `shieldedstaking_debt_row` events; a
   move without a row: its low leaf). The note then holds amount - exposed +
   retained.
@@ -1732,8 +1749,124 @@ note exists).
   new vote.
 - D7-L1: the gov module account is on the blocked list.
 
-### 20.10 Measurements, genesis
+### 20.10 Measurements, genesis (superseded by 20.11)
 
 stake 16,242 gates (2^14), vote 21,716 (2^15, within the bundled SRS);
 action and membership unchanged. New stake and vote verifying keys;
 genesis.json sha256 ffb269c5047e823b3f3aa27034767ff894c9fe76626703ccf42d0b1b321b6b59.
+
+### 20.11 Audit 7 (staking) fixes (2026-10-04)
+
+Fresh genesis, no migration. No circuit change: the stake and vote
+circuits, their verifying keys and the bundled circuit JSON are unchanged.
+
+**A7-1: a redelegation leaves the source's book pro rata.** Every derth/A
+is a claim on B_A = (D_A - U_A) + P_A (W_A = 0 after step 1). A slash of A
+burns only the bonded part; the queue is out of its reach. Taking the value
+out of the queue first let a staker who saw a slash of A coming (missed
+blocks, double-sign evidence in the pool, the operator itself) leave with
+the unslashable slice, and A's remaining holders paid the mover's share
+(PoC: 33.3 ERTH of a 5% slash avoided; the holders lost 4.00% instead of
+3.33%). Now `queued = floor(u x P_A / (D_A - U_A + P_A))` and `bonded = u -
+queued` (never more than D_A - U_A), the bonded part with its x/staking
+entry and a Move, the credit labelled: the slash reaches the mover through
+its label. Queue first only where no slash can reach A's stake: A is
+Unbonded (x/staking refuses to slash it; x/evidence ignores evidence
+against it; x/staking's own BeginRedelegation from it makes no entry
+either), or D_A - U_A <= 0 (no bonded stake: slashed to nothing, or never
+delegated). A bonded part of at most 0.001 ERTH (bondedDust) stays with A's
+book (the mover's loss). Regression: TestAuditA7QueueEscapesSlash (the
+PoC: the mover is worth no more than had it stayed, A's holders lose no
+more than without the move), TestAuditA7QueueOnlyWithoutBondedStake.
+
+**Entries at the cap merge instead of joining (found while fixing A7-1).**
+Joining the latest entry past the cap froze that entry's height while the
+pair stayed full (up to the unbonding time): a move made after an
+infraction joined an entry older than it, and escaped the slash, the
+A7-1 escape through another door. At `MaxEntryHeightsPerPair` (now 1,024
+entries of positive height) a move first merges the two oldest adjacent
+entries whose moves (at most 128) can be re-filed, trying at most 8 pairs:
+the merged entry takes the later height (it charges the older entry's moves
+for infractions between the two heights: never less than x/staking would)
+and the earlier completion (it matures before any member's label can
+clear: solvency), the merged-away entry's unbonding id is deleted, and its
+moves' entry height and completion follow. Then the move adds its own
+entry at its own height: a move is never in an entry older than itself.
+Joining the latest entry remains only as a last resort when no pair
+qualifies. TestRedelegateEntryCap, TestRedelegateEntryCapFallback.
+
+**A7-L1: cost.** MsgRedelegate's gas is 700,000 + 2,500 per entry of the
+pair's x/staking record (read twice and rewritten whole), + 2,500 per
+entry + 128 x 20,000 while the pair is at the cap (the merge): a wallet
+simulates it. The epoch-end invariant pass decodes each record once
+(invariant 10's "every open move is in an entry" is checked from the
+records' side: invariant 9 counts the moves its entries hold, which must
+be every unmatured move), and counts every move (twice) and every entry
+against InvariantBookLimit.
+
+**A7-L2: which entries a slash reached.** No hook names the slash's
+fraction or infraction height. At settlement the module replays x/staking's
+SlashRedelegation on the pair's entries, in order, for each fraction
+x/staking is ever called with (x/slashing's slash_fraction_downtime and
+slash_fraction_double_sign, read in the same block) and each infraction
+height an entry boundary allows: an entry is slashed iff at or above the
+height, unmatured, `trunc(f x initial_balance)` and `f x shares_dst` both
+non-zero, and the delegation still there; it takes min(f x shares_dst, the
+delegation's shares). The one replay that makes exactly the counted unbonds
+and burns exactly the fall of the module's shares is the slash; each move
+of a slashed entry owes the debt pro rata to its part of what the slash
+took from its entry. No replay matching: an event, and dst's book absorbs
+it. Correct for any governance-set fraction (TestAuditA7SlashSkipsDustEntry:
+at 0.0001, a 5,000 uerth entry after the slashed one is skipped by
+x/staking and now owes nothing). Entries are known by (height, completion):
+a move in the block where the source began unbonding and one after share
+a height.
+
+**A7-2: zero-height export with open moves.** x/staking's prep moves every
+entry to height 0, which a slash on the new chain reaches only for a double
+sign at its first block (x/evidence slashes from the infraction height less
+one; that one would fall on dst's book). ResetHeightsForZeroHeight drops
+the open moves and keeps the debt rows: a label clears against the debt
+tree alone, at its row's retained value, or whole when its move was never
+slashed. Genesis and invariant 9 check no shares and no duplicates for
+entries at height <= 0 (a move there, from a source unbonding since the
+export, must still match such an entry's completion); positive-height
+entries are capped at 1,024, height-0 ones are not counted.
+TestAuditA7ZeroHeightExportWithMoves (two entries of one pair at height 0,
+a slashed move and a clean one: invariants after the prep and the import,
+no moves, the same debt tree).
+
+**B L-1 / A7-L3: every stake proof names clear_before and debt_root.** The
+circuit checks neither unless it clears a label (`clear` is a witness), so
+the chain now refuses any stake proof (Delegate, Restake, Undelegate,
+LockPosition, UpdatePosition, UnlockPosition, PositionVote, Redelegate)
+whose clear_before is not within [ClearBefore(now) - 3,600, ClearBefore(now)]
+or whose debt_root is not the current root (checkStakeClear, in
+CheckPrivateAction). ClearBefore(now) = block time - window is non-zero on
+any real chain, so clear_before = 0 is refused. Every proof looks the same
+whether or not it clears. TestStakeNotesNameClearBefore.
+
+**B L-2: owner tag salt.** Documented (StakeProof.owner_tag, §20.8): fresh
+on every proof that does not act on a position; a position's own salt for
+its msgs.
+
+**Infos.** The StakeProof.ValidateBasic comment says 201 bytes.
+MsgRedelegate's value is bounded to one note (fitsNote) before the
+response's uint64. Genesis checks every move's completion against its
+entry's (and every unmatured move has its entry), and that every debt
+row's and move's key is a spent stake nullifier.
+
+**Wallet-facing summary.**
+- Every stake proof: clear_before = Query/DebtTree.clear_before and
+  debt_root = Query/DebtTree.root, read at proving time (accepted while
+  clear_before >= the chain's - 3,600 s and the root is current).
+- Owner tag salt fresh per non-position proof.
+- MsgRedelegate quote: arrives = value - 1,001 uerth unless src is Unbonded
+  and its queue covers the value (then value); the old "value when src's
+  queue covers it" shortcut overstates arrival now (refused, at no cost).
+- MsgRedelegate gas varies with the pair's entry count: simulate.
+- Events unchanged in form; `shieldedstaking_redelegate.queued` and
+  `.bonded` now both non-zero for a bonded source with a queue, and
+  `completion_time` is set whenever the bonded part is.
+
+Measurements: circuits unchanged (stake 16,242 gates, vote 21,716).

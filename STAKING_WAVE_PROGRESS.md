@@ -119,13 +119,52 @@ ORCHARD_DESIGN.md section 18.
   redelegation, the source too after a slashed redelegation; pruned options
   dropped from position splits (export) and re-filed voters; D7-L2
   bonded-only Groundworks weight; D7-L1 gov blocked.
-- [ ] Known limits: past 4,096 maturing entries for one pair, an infraction
-  between the latest entry's height and a joining move's falls on the
-  source's stake; exposed derth waits up to the unbonding time before it can
-  be undelegated, locked or redelegated on (x/staking's own per-delegator
-  transitive rule, now per note).
+- [ ] Known limits: exposed derth waits up to the unbonding time before it
+  can be undelegated, locked or redelegated on (x/staking's own
+  per-delegator transitive rule, now per note).
+
+## Audit 7 (staking) fixes (ORCHARD_DESIGN 20.11)
+- [x] A7-1 (Medium): the value leaves the source's book pro rata (queue
+  share u x P / (D - U + P), the rest bonded with entry, move and label);
+  queue first only for an Unbonded source or one with no bonded stake.
+  TestAuditA7QueueEscapesSlash (the PoC: mover worth no more than had it
+  stayed; remaining holders lose no more), TestAuditA7QueueOnlyWithoutBondedStake.
+- [x] Found with A7-1: at the cap a move joined the latest entry, frozen at
+  an old height while the pair stayed full, so a move after an infraction
+  escaped it. Now the two oldest entries merge (later height, earlier
+  completion, moves re-filed, at most 128, 8 pairs tried) and the move gets
+  its own entry; cap 1,024 positive-height entries. TestRedelegateEntryCap,
+  TestRedelegateEntryCapFallback.
+- [x] A7-2 (Medium): ResetHeightsForZeroHeight drops open moves, keeps debt
+  rows; height <= 0 entries skip the shares/duplicate checks; entries known
+  by (height, completion). TestAuditA7ZeroHeightExportWithMoves.
+- [x] A7-L1: records decoded once per invariant pass (invariant 9 counts the
+  moves its entries hold; every unmatured move must be one); moves and
+  entries count against InvariantBookLimit; MsgRedelegate gas 700k + 2,500
+  per entry (+ merge surcharge at the cap).
+- [x] A7-L2: slash attribution replays x/staking's SlashRedelegation with
+  x/slashing's two fractions over entry-boundary heights; must match the
+  unbond count and the burnt shares exactly. TestAuditA7SlashSkipsDustEntry.
+- [x] B L-1 / A7-L3: every stake proof carries the current clear_before
+  (within 3,600 s) and debt_root; the circuit needed no change (`clear` is a
+  witness; neither value is constrained without it). TestStakeNotesNameClearBefore.
+- [x] B L-2: owner-tag salt rule documented (StakeProof.owner_tag, 20.8).
+- [x] Infos: 201-byte comment; MsgRedelegate value bounded to one note;
+  genesis Move.Completion vs entry, orphan moves, debt-row/move keys in the
+  stake nullifier set.
+- [x] Stake proof fixtures re-recorded (every proof now names clear_before
+  and debt_root). No circuit/VK/genesis change.
+- [ ] Known limit: a double sign at the first block after a zero-height
+  export would slash the height-0 entries, whose moves were dropped; that
+  slash falls on the destination's book.
 
 ## Wallet and backend follow-ups (not in this repo)
+- Audit 7 (20.11): every stake proof sets clear_before =
+  Query/DebtTree.clear_before and debt_root = Query/DebtTree.root (re-read
+  at proving time); fresh owner-tag salt per non-position proof; redelegate
+  quote arrives = value - 1,001 uerth unless src is Unbonded and its queue
+  covers value; simulate MsgRedelegate's gas (varies with the pair's
+  entries).
 - Stake v2 (ORCHARD_DESIGN 20.8): one note per validator (merge on every
   delegate, unlock, redelegate credit); padding nullifier and zero-note
   outputs; quote derth with a margin; StakeProof fields (commitment,
