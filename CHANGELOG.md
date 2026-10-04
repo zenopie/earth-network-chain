@@ -15,6 +15,35 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Staking without background transactions (user decision; see
+  STAKING_WAVE_PROGRESS.md, ORCHARD_DESIGN.md section 18). **New vote
+  verifying key; genesis.json sha256
+  1824225dce524e47bf84bc5ff4fe0f8e76127b1c128480c925f6e420a6067ee8.**
+  - x/shieldedstaking: **an undelegation pays out by itself.**
+    MsgUndelegate carries `pc` (6) and `ciphertext` (7) (sighash: ..., amount,
+    pc, Bytes(ciphertext)); no stake note is minted (`spc_ciphertext` must be
+    empty). At maturity the chain mints `value x payout / requested` ERTH to
+    pc as pool notes (2^63-1 each), at most 50 payouts and 256 notes a
+    block, a failed payout kept and retried (1h << attempts-1, capped at
+    256h), never dropped. Slashing reaches payouts exactly as it reached
+    claims. Events `shieldedstaking_unbond_payout` (payout_id, validator,
+    epoch, value, amount, notes, positions) and
+    `shieldedstaking_unbond_payout_failed`; `shieldedstaking_undelegate`
+    adds epoch and payout_id, drops denom; `shieldedstaking_matured` carries
+    validator and epoch instead of denom. MsgUndelegateResponse: payout_id
+    (4); denom (1) and position (3) reserved. New Query/UnbondPayout.
+    Genesis: unbond_payouts (17), next_unbond_payout_id (18).
+  - x/shieldedstaking: **MsgClaimUnbonding is retired**, with the
+    `unbond/<valoper>/<epoch>` claim notes and denom.
+  - x/shieldedstaking: **one stake vote per person.** MsgStakeVote votes up
+    to four notes of one owner at one validator with one weight (their sum,
+    three significant digits): `vote_nullifiers` (10), exactly four, used
+    ones first, zeros after; `vote_nullifier` (9) reserved. The vote circuit
+    (2^15) has 10 public inputs. Every used vote nullifier is refused on a
+    second vote. StakeVote gains `vote_nullifiers` (7); the
+    `shieldedstaking_stake_vote` event's `vote_nullifier` becomes
+    `vote_nullifiers` (comma-separated hex). Positions vote as before.
+
 - Audit round 6 (see FIX_ROUND6_PROGRESS.md, ORCHARD_DESIGN.md section 17).
   No circuit, verifying key or genesis change (genesis.json sha256
   77af758697b293eb95d1f9f08a8f49b35bef648fd931ae1448cc3d0f2ddd652d):

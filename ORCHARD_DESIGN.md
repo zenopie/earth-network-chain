@@ -394,9 +394,9 @@ Bytes(ct_0), Bytes(ct_1), spc_mint, otag`.
 | --- | --- | --- |
 | Delegate {bundle: ERTH + fee} | spends/creates nothing | mints derth at the live rate to spc_mint |
 | Restake (merge/split) | spends 1-2, creates 1-2 | — |
-| Undelegate {amount} | spends, v_out = amount, change | mints owner-locked unbond claim (value at rate) to spc_mint |
-| ClaimUnbonding {amount, pc, fee or fee_from_output} | spends claims, v_out = amount | mints ERTH (transferable) to pc in the pool; no bundle with fee_from_output |
-| StakeVote {weight} | (superseded 2026-10-03, §15: vote proof, circuits/vote; nothing spent) | records vote |
+| Undelegate {amount} | spends, v_out = amount, change | mints owner-locked unbond claim (value at rate) to spc_mint (superseded 2026-10-03, §18: queues a payout to a pool pc, minted at maturity by the chain) |
+| ClaimUnbonding {amount, pc, fee or fee_from_output} | spends claims, v_out = amount | mints ERTH (transferable) to pc in the pool; no bundle with fee_from_output (retired 2026-10-03, §18) |
+| StakeVote {weight} | (superseded 2026-10-03, §15: vote proof, circuits/vote; nothing spent; §18: up to four notes, one weight) | records vote |
 | LockPosition {amount} | spends, v_out = amount, change; otag | position stores otag |
 | Update/Unlock/PositionVote | spends nothing; otag must equal the position's | unlock mints derth to spc_mint |
 
@@ -555,10 +555,11 @@ mint/shield event): MsgShield (incl. the gas grant), MsgRegister
 (ciphertext_anml/erth), MsgClaimAnml, MsgBuyAnml, MsgNoteSwap,
 MsgAddLiquidityShielded (share, refund: one ciphertext for both refund
 notes), MsgRemoveLiquidityShielded (erth and token legs), MsgRemoveLiquidity
-(ANML leg), MsgClaimUnbonding. Pool notes use v2
+(ANML leg), MsgClaimUnbonding (retired, §18; MsgUndelegate's payout
+ciphertext instead). Pool notes use v2
 (`EncryptBlindNote`: salt "earth.note.v2", pt 0x02||rho||rcm||memo64);
-stake notes the chain mints (Delegate's derth, Undelegate's claim,
-UnlockPosition's derth; StakeVote's re-mint until §15) use the new blind stake
+stake notes the chain mints (Delegate's derth, Undelegate's claim until
+§18, UnlockPosition's derth; StakeVote's re-mint until §15) use the new blind stake
 ciphertext `StakeProof.spc_ciphertext`:
 
     ct  = epk || ChaCha20-Poly1305(HKDF-SHA256(X25519(esk, ek_pub),
@@ -958,3 +959,196 @@ is private, so the sweep is the only bound.
   operators (C-I3); dust undelegations (C-I5); TWAP precision (I-D3) and the
   export-to-relaunch gap credited at the pre-export price (I-D4); a single
   YES carries an uncontested removal ballot (I-AS2, by design).
+
+## 18. Staking without background transactions (2026-10-03)
+
+User decision during the freeze: no background transactions and no automatic
+fee spending by the wallet. Two staking flows needed one: claiming a matured
+undelegation, and voting stake notes one by one in a spaced run. Both are
+now one user-started tx. Same principle: people are private; power and
+public money are public. Consensus-affecting; fresh genesis, no migration.
+
+### 18.1 Undelegations pay out by themselves
+
+**Before.** MsgUndelegate minted an owner-locked `unbond/<valoper>/<epoch>`
+claim note into the stake tree; after maturity the wallet sent
+MsgClaimUnbonding (a stake proof spending the claim, its fee from the claimed
+ERTH) to get a spendable pool note.
+
+**Now.** MsgUndelegate names the payout destination, as an LP withdrawal
+does, and the chain pays it:
+
+    MsgUndelegate {bundle (fee), validator, amount, stake, pc (6), ciphertext (7)}
+    sighash fields: StakeFields(stake), Bytes(validator), amount, pc, Bytes(ciphertext)
+    MsgUndelegateResponse {value (2), payout_id (4)}; denom (1), position (3) reserved
+
+- The stake proof is unchanged (circuits/stake, same verifying key): it
+  spends derth, v_out = amount, change back to the owner. `spc_mint` is
+  proven (the circuit always binds it to the owner) but unused; the wallet
+  passes a fresh pc of its own, as for MsgRestake. `spc_ciphertext` must be
+  empty. `pc` is a pool pc (any owner; normally the wallet's own) and
+  `ciphertext` the v2 amount-blind note ciphertext (177 bytes), both bound by
+  the sighash and checked like any mint (`CheckMint`).
+- The chain books the derth's live value u into the epoch's UnbondRecord
+  (requested, target, outstanding += u; pending_undelegation; derth supply
+  -= amount) exactly as before, and queues an `UnbondPayout {id, validator,
+  epoch, value = u, pc, ciphertext, payout_attempts, retry_at}`.
+- Unbonding is unchanged: the epoch end undelegates each record's target
+  from x/staking; maturity reads the SDK entry's balance into record.payout.
+- **Payout.** In the EndBlocker after the record matures (x/staking pays the
+  entry after this module's EndBlocker, so never in the maturity block), the
+  chain mints `u x payout / requested` uerth to pc with ciphertext
+  (MintNoteSplit: notes of at most 2^63-1, each its own `shielded_mint`
+  event and position), settles the record (outstanding -= u, paid += pay)
+  and, on the record's last payout, sends the floor division's dust to the
+  community pool and removes the record. Event
+  `shieldedstaking_unbond_payout {payout_id, validator, epoch, value,
+  amount, notes, positions}` after the mint events.
+- **Bounded, never dropped.** At most 50 payouts tried and 256 notes minted
+  a block (a payout whose notes would pass the budget waits, unless it is the
+  block's first). Due retries go first, then untried payouts of matured
+  records, oldest record first. A payout that fails (pool full, uerth sends
+  disabled by governance, ...) is kept: `payout_attempts`+1, `retry_at` =
+  now + 1h << min(attempts-1, 8) (capped at 256h), moved to the retry queue
+  (it cannot hold up the payouts behind it), event
+  `shieldedstaking_unbond_payout_failed {payout_id, validator, epoch,
+  attempts, retry_at, error}`.
+- **Start refusal.** An undelegation worth more than 2^63-1 is refused at
+  start (as before: one note's worth). A slash only lowers the payout.
+- **Slashing, unchanged economics.** A claim paid `amount x payout /
+  requested`; a payout pays `value x payout / requested`. A slash while the
+  record is PENDING cuts its target (BeforeValidatorSlashed), a slash of the
+  SDK entry cuts the entry's balance, so record.payout and every payout fall
+  pro rata, as every claim did. Dust to the community pool, as before.
+- **Removed.** MsgClaimUnbonding and its response, the `unbond/` stake denom
+  (and its asset exclusion), claim notes in the stake tree,
+  `ExecutesInAnte` for staking, `gasClaim`. x/shielded's generic
+  FeeFromOutputMsg path stays (no msg implements it now). ErrNotMatured
+  (1104) now reads "unbonding record is not open".
+- **State.** `UnbondPayouts` (id), `PayoutsByRecord` (validator, epoch, id:
+  untried), `PayoutRetries` (retry_at, id), `MaturedRecords` (records with
+  untried payouts), `UnbondPayoutSeq`. Genesis: `unbond_payouts` (17),
+  `next_unbond_payout_id` (18); Validate requires each record's payouts to
+  sum to its outstanding, values 1..2^63-1, a pc, a blind ciphertext, and
+  retry_at set exactly when attempts > 0. Invariant 8 checks the same plus
+  one queue per payout. `Query/UnbondPayout {id}` returns the payout and its
+  record (`/earth/shieldedstaking/v1/unbond_payouts/{id}`); not found once
+  paid.
+- **Gas.** Unchanged for MsgUndelegate (its "mint" write slot now prices the
+  queued payout); the payout itself is free to the owner.
+
+**Privacy: equal or better.** The undelegated amount and its value were
+public at undelegate before and are now; the payout amount follows from
+public numbers (value, record payout/requested) either way, as the claim's
+v_out did. The pc is hiding (PC(owner_pk, rho, rcm)); the payout notes'
+later spends are unlinkable without nk. The msg's pc and ciphertext link the
+undelegate tx to its payout notes, which the claim's amount already did.
+Gone: the claim tx itself (its own timing, fee and, with a fee bundle, its
+anchor), and the claim note in the stake tree.
+
+**Wallet.** At undelegate, choose a fresh pool note opening (rho, rcm) of
+your own, pc = PC(owner_pk, rho, rcm), ciphertext = EncryptBlindNote(rho,
+rcm, memo) to your own viewing key; remember payout_id. Find the payout by
+trial-decrypting `shielded_mint` ciphertexts as for any chain-minted note
+(the amount is on the event; several notes share one ciphertext when it was
+split), or by `shieldedstaking_unbond_payout.payout_id`. Nothing to send.
+
+### 18.2 One stake vote per person
+
+**Before (§15, §17).** One MsgStakeVote per note, each with its own proof,
+public weight (3 significant digits) and vote nullifier; a wallet with many
+notes ran a spaced background run of votes.
+
+**Now.** One msg votes up to four notes of one owner at one validator with
+ONE weight, the notes' sum rounded down to three significant digits.
+
+Circuit `vote` (mobile `circuits/vote`, MAX_NOTES = 4, 27,543 gates: 2^15,
+within the bundled 2^15 + 1 point SRS; 5 slots would need 2^16):
+
+    private  nk, per slot i: amount_i, rho_i, rcm_i, pos_i, path_i[32],
+             low_value_i, low_next_value_i, low_next_index_i, low_index_i, low_path_i[32]
+    public   note_root, nf_root, asset, weight (u64), proposal_id (u64), vnf[0..3], sighash
+
+    slot used (amount_i != 0): the note under note_root, its spend
+      nullifier absent under nf_root, vnf_i = H(TAG_VNF, nk, rho_i, pos_i, proposal_id)
+    slot unused (amount_i = 0): vnf_i = 0
+    0 < weight <= sum amount_i                                   (u128)
+    bind(sighash)
+
+One nk for every slot: one owner. Same tags and hashes as §15 (Go parity
+vectors unchanged). 37 nargo tests: the §15 ones per slot, plus three and
+four notes, a rounded weight, unused slots anywhere, the same note twice
+(same vnf), a slot of another owner, an inflated slot, a wrong slot vnf, an
+unused slot carrying a vnf, weight above the sum, no notes, two maximal
+notes (sum 2^64 - 2).
+
+    MsgStakeVote {bundle (fee), proposal_id, validator, options, weight, proof (8),
+                  vote_nullifiers (10): exactly 4}         vote_nullifier (9) reserved
+    public inputs: snapshot.root, snapshot.nf_root, AssetID(derth/<validator>),
+                   weight, proposal_id, vote_nullifiers[0..3], sighash
+    sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
+                    weight, vote_nullifiers[0..3]
+
+- ValidateBasic: exactly 4 slots, canonical field elements, used ones first
+  (at least one), distinct, zeros after; weight > 0 with at most three
+  significant digits (RoundVoteWeight); options as before.
+- The chain refuses a vote nullifier already used on the proposal
+  (`UsedVoteNullifiers`, every note's; ErrVoteNullifierUsed 1119, the whole
+  msg) and weight above the validator's snapshot supply. It records ONE
+  StakeVote under 0x00 || vote_nullifiers[0] with `vote_nullifiers` (7) and
+  derth = weight. Tally and validator inheritance are unchanged: the vote is
+  one weight at one validator, deducted from it once.
+- Event `shieldedstaking_stake_vote`: `vote_nullifiers` (comma-separated
+  hex, in slot order) replaces `vote_nullifier`.
+- Gas: gasVote + proof_verification_gas + (1 + used slots) x note_gas.
+- Genesis: a note vote has 1..4 vote_nullifiers, the first its key's, none
+  shared with another vote on the proposal; a position vote has none.
+  InitGenesis rebuilds `UsedVoteNullifiers`; the snapshot sweep clears them
+  with the votes.
+
+**Why per validator.** The tally deducts private votes from each validator's
+inherited vote, so it needs each validator's voted derth: a vote is one
+weight at one validator. A wallet staked with several validators sends one
+vote per validator (each its own weight). Putting several validators in one
+msg would publish the same per-validator weights and link them in one tx.
+
+**More than four notes.** Trade-off: the wallet merges first (MsgRestake,
+two notes into one, a fee each, user-started; also any undelegation with
+change consolidates) so one vote covers everything, or it votes the rest in a
+second MsgStakeVote, which publishes a second weight for the same validator
+and proposal, linkable by timing. The chain allows both (it cannot tell two
+votes of one owner apart). Wallets should keep at most four notes per
+validator (merge on the user's next staking action) and fall back to a
+second vote. Five slots would double the circuit (2^16) past the bundled
+SRS.
+
+**Positions not unified.** A position is a public object (validator, derth,
+owner tag), voted by MsgPositionVote with a stake proof of its owner tag,
+replaceable, already one tx for every open proposal. Folding positions into
+the note vote would tie the hidden notes' vote to a public position (its id
+and exact derth) in one tx, worse than voting them apart, and needs a second
+proof system in the circuit. Unchanged.
+
+**Privacy: better.** One weight per owner and validator instead of one per
+note, so a wallet's note count and individual note amounts no longer show;
+the weight is the rounded sum. Votes stay unlinkable to the notes' spends
+and to the same notes' votes on other proposals (nk needed). The number of
+notes voted (1..4, the count of non-zero vote nullifiers) is visible: an
+unused slot must carry vnf 0, so it cannot be padded. That is at most 2 bits,
+against every note's exact (rounded) amount before.
+
+**Wallet format (building a vote).** As §15, per note, for up to four of the
+owner's derth/<validator> notes under the snapshot (position < tree_size,
+nullifier absent under nf_root, vnf not yet used on this proposal): fill
+slots 0..k-1 with them and slots k..3 with amount 0, vnf 0 (other witness
+fields 0); weight = RoundVoteWeight(sum of amounts); vote_nullifiers =
+[vnf_0..vnf_{k-1}, 0...]. Prover.toml arrays: `amount`, `rho`, `rcm`, `pos`,
+`path` (4 x 32), `low_value`, `low_next_value`, `low_next_index`,
+`low_index`, `low_path` (4 x 32), `vnf` (4). Android PrivacyProver: VOTE has
+10 public inputs (was 7); the 2^15 circuit fits SRS_SIZE = 2^15 (the hint
+must be at least the circuit's dyadic size; bb proves a 27.5k-gate circuit
+with 32,768 points). Proof length unchanged (14,656 bytes).
+
+**Genesis.** New vote verifying key; genesis.json sha256
+1824225dce524e47bf84bc5ff4fe0f8e76127b1c128480c925f6e420a6067ee8. Action,
+stake and membership keys unchanged.
