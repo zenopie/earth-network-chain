@@ -12,8 +12,9 @@ import (
 )
 
 // MaxActions bounds a bundle. It is part of the soundness argument, not only
-// a resource limit: every per-base sum of action values stays below
-// MaxActions * 2^64 << n/2, so a sum that vanishes mod n vanishes over the
+// a resource limit: the circuits bound every note value to 2^63-1, so per
+// base |sum of action values - public balance| <= MaxActions * 2 * (2^63-1)
+// + (2^64-1) < 2^70 << n, and a sum that vanishes mod n vanishes over the
 // integers (ORCHARD_DESIGN.md section 5). x/shielded's max_actions_per_bundle
 // may only be lower.
 const MaxActions = 32

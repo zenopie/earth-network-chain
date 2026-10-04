@@ -58,6 +58,12 @@ const (
 	MaxProofVerificationGas uint64 = 10_000_000
 	MaxNoteGas              uint64 = 1_000_000
 	MaxBundleGas            uint64 = 1_000_000
+
+	// MaxMaxPrivateActionsPerBlock caps max_private_actions_per_block (audit 6
+	// A-I5): 8x the default. Block gas bounds the work at the gas prices in
+	// force, but the gas prices are governance's too; this keeps a block's
+	// proof verification bounded whatever they are set to.
+	MaxMaxPrivateActionsPerBlock uint32 = 256
 )
 
 // NewParams creates a new Params instance.
@@ -112,6 +118,9 @@ func (p Params) Validate() error {
 	if p.MaxPrivateActionsPerBlock < MaxBundlesPerMsg*p.MaxActionsPerBundle {
 		// Below this, a msg of the maximum size could never be included.
 		return fmt.Errorf("max_private_actions_per_block must be at least %d x max_actions_per_bundle", MaxBundlesPerMsg)
+	}
+	if p.MaxPrivateActionsPerBlock > MaxMaxPrivateActionsPerBlock {
+		return fmt.Errorf("max_private_actions_per_block must be at most %d", MaxMaxPrivateActionsPerBlock)
 	}
 	for name, vk := range p.VerifyingKeys {
 		if !knownCircuits[name] {

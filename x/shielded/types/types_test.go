@@ -57,6 +57,7 @@ func TestMsgSendValidateBasic(t *testing.T) {
 		"non-canonical anchor": func(m *types.MsgSend) { m.Bundle.Actions[1].Anchor = nonCanonical },
 		"non-canonical nf":     func(m *types.MsgSend) { m.Bundle.Actions[1].Nullifier = nonCanonical },
 		"duplicate nf":         func(m *types.MsgSend) { m.Bundle.Actions[1].Nullifier = m.Bundle.Actions[0].Nullifier },
+		"two anchors":          func(m *types.MsgSend) { m.Bundle.Actions[1].Anchor = privacy.FieldBytes(privacy.U64(7)) },
 		"non-canonical cm":     func(m *types.MsgSend) { m.Bundle.Actions[0].Commitment = nonCanonical },
 		"cv off the curve":     func(m *types.MsgSend) { m.Bundle.Actions[0].Cv = offCurve },
 		"cv short":             func(m *types.MsgSend) { m.Bundle.Actions[0].Cv = m.Bundle.Actions[0].Cv[:63] },
@@ -209,8 +210,11 @@ func TestParamsValidate(t *testing.T) {
 		"zero window":     func(p *types.Params) { p.RootWindowSeconds = 0 },
 		"zero bundle gas": func(p *types.Params) { p.BundleGas = 0 },
 		"no actions":      func(p *types.Params) { p.MaxPrivateActionsPerBlock = 0 },
-		"bundle of one":   func(p *types.Params) { p.MaxActionsPerBundle = 1 },
-		"bundle of 33":    func(p *types.Params) { p.MaxActionsPerBundle = 33; p.MaxPrivateActionsPerBlock = 66 },
+		"actions per block above the cap": func(p *types.Params) {
+			p.MaxPrivateActionsPerBlock = types.MaxMaxPrivateActionsPerBlock + 1
+		},
+		"bundle of one": func(p *types.Params) { p.MaxActionsPerBundle = 1 },
+		"bundle of 33":  func(p *types.Params) { p.MaxActionsPerBundle = 33; p.MaxPrivateActionsPerBlock = 66 },
 		"block below two max bundles": func(p *types.Params) {
 			p.MaxPrivateActionsPerBlock = 2*p.MaxActionsPerBundle - 1
 		},

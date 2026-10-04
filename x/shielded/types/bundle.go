@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"fmt"
 
 	errorsmod "cosmossdk.io/errors"
@@ -55,6 +56,13 @@ func (b *Bundle) ValidateBasic() error {
 		if len(a.Ciphertext) != NoteCiphertextBytes {
 			return errorsmod.Wrapf(ErrInvalidBundle, "action %d: ciphertext must be exactly %d bytes (v1 note), got %d",
 				i, NoteCiphertextBytes, len(a.Ciphertext))
+		}
+		// One anchor per bundle (audit 6 A-L3): a wallet that gave its
+		// dummies a different anchor from its real spends would show which
+		// actions are real. Both wallets already use one; the chain makes it
+		// the only layout.
+		if i > 0 && !bytes.Equal(a.Anchor, b.Actions[0].Anchor) {
+			return errorsmod.Wrapf(ErrInvalidBundle, "action %d: every action in a bundle proves against the same anchor", i)
 		}
 		if seen[string(a.Nullifier)] {
 			return errorsmod.Wrap(ErrInvalidBundle, "duplicate nullifier")
