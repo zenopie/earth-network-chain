@@ -19,7 +19,7 @@ option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
 // sighash, zk/orchard.Sighash(type URL, chain id, tx fields, K, bundle
 // digests, fields), binding every other field: the stake proof's public
 // values (StakeProof fields, see StakeFields), then the msg's own fields.
-// See x/shielded/ante and ORCHARD_DESIGN.md section 13.
+// See x/shielded/ante and ORCHARD_DESIGN.md sections 5 and 8.
 //
 // Delegated stake (derth/<valoper>) exists only as stake notes, never in the
 // shielded pool or an account, and never changes owner: every stake note a
@@ -27,7 +27,7 @@ option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
 // for. One stake note per (owner, validator): the chain never mints a stake
 // note; value it credits (a delegation's derth, an unlocked position's, a
 // redelegation's arrival) is merged by the proof into the owner's existing
-// note (ORCHARD_DESIGN.md section 20). An undelegation is paid out by the
+// note (ORCHARD_DESIGN.md 8.1). An undelegation is paid out by the
 // chain itself at maturity, as ERTH notes in the shielded pool (no claim
 // msg).
 service Msg {
@@ -43,7 +43,6 @@ service Msg {
   // Undelegate unbonds derth; the chain pays its ERTH value out as notes
   // at maturity.
   rpc Undelegate(MsgUndelegate) returns (MsgUndelegateResponse);
-  // ClaimUnbonding (retired): undelegations pay out by themselves.
   // StakeVote votes up to two stake notes of one owner at one validator on
   // an x/gov proposal, with one weight.
   rpc StakeVote(MsgStakeVote) returns (MsgStakeVoteResponse);
@@ -83,7 +82,7 @@ message MsgUpdateParamsResponse {}
 //   lane A (asset):     in_0 + in_1 + v_in == out + v_out   (unexposed value)
 //   lane B (cr_asset):  cr_in + cr_v_in    == cr_out      (the credit lane)
 //
-// Slash labels (ORCHARD_DESIGN.md section 20): a redelegation's credit is
+// Slash labels (ORCHARD_DESIGN.md 8.7): a redelegation's credit is
 // labelled (move key = the credit nullifier, move_time, exposed = cr_v_in);
 // the exposure never leaves its note until the label clears (lane A, once
 // move_time < clear_before, at what the debt tree under debt_root says).
@@ -264,7 +263,7 @@ message MsgUndelegateResponse {
 // notes can vote on every other open proposal and be spent as usual. bundle
 // pays the fee against the shielded pool's current roots.
 //
-// With one note per validator (ORCHARD_DESIGN.md section 20) a vote uses one
+// With one note per validator (ORCHARD_DESIGN.md 8.1) a vote uses one
 // slot: the note the owner held at the snapshot, even if it has since been
 // merged into a newer note (its nullifier entered the tree after nf_root).
 // An owner with more than two notes at a validator merges them first

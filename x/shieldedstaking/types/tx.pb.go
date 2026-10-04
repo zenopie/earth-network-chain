@@ -130,7 +130,7 @@ var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 //	lane A (asset):     in_0 + in_1 + v_in == out + v_out   (unexposed value)
 //	lane B (cr_asset):  cr_in + cr_v_in    == cr_out      (the credit lane)
 //
-// Slash labels (ORCHARD_DESIGN.md section 20): a redelegation's credit is
+// Slash labels (ORCHARD_DESIGN.md 8.7): a redelegation's credit is
 // labelled (move key = the credit nullifier, move_time, exposed = cr_v_in);
 // the exposure never leaves its note until the label clears (lane A, once
 // move_time < clear_before, at what the debt tree under debt_root says).
@@ -732,7 +732,7 @@ func (m *MsgUndelegateResponse) GetPayoutId() uint64 {
 // notes can vote on every other open proposal and be spent as usual. bundle
 // pays the fee against the shielded pool's current roots.
 //
-// With one note per validator (ORCHARD_DESIGN.md section 20) a vote uses one
+// With one note per validator (ORCHARD_DESIGN.md 8.1) a vote uses one
 // slot: the note the owner held at the snapshot, even if it has since been
 // merged into a newer note (its nullifier entered the tree after nf_root).
 // An owner with more than two notes at a validator merges them first
@@ -1702,7 +1702,6 @@ type MsgClient interface {
 	// Undelegate unbonds derth; the chain pays its ERTH value out as notes
 	// at maturity.
 	Undelegate(ctx context.Context, in *MsgUndelegate, opts ...grpc.CallOption) (*MsgUndelegateResponse, error)
-	// ClaimUnbonding (retired): undelegations pay out by themselves.
 	// StakeVote votes up to two stake notes of one owner at one validator on
 	// an x/gov proposal, with one weight.
 	StakeVote(ctx context.Context, in *MsgStakeVote, opts ...grpc.CallOption) (*MsgStakeVoteResponse, error)
@@ -1831,7 +1830,6 @@ type MsgServer interface {
 	// Undelegate unbonds derth; the chain pays its ERTH value out as notes
 	// at maturity.
 	Undelegate(context.Context, *MsgUndelegate) (*MsgUndelegateResponse, error)
-	// ClaimUnbonding (retired): undelegations pay out by themselves.
 	// StakeVote votes up to two stake notes of one owner at one validator on
 	// an x/gov proposal, with one weight.
 	StakeVote(context.Context, *MsgStakeVote) (*MsgStakeVoteResponse, error)

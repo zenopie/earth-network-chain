@@ -155,7 +155,7 @@ type ValidatorState struct {
 	SupplyHeight       int64                 `protobuf:"varint,7,opt,name=supply_height,json=supplyHeight,proto3" json:"supply_height,omitempty"`
 	SupplyAtBlockStart cosmossdk_io_math.Int `protobuf:"bytes,8,opt,name=supply_at_block_start,json=supplyAtBlockStart,proto3,customtype=cosmossdk.io/math.Int" json:"supply_at_block_start"`
 	// slash_debt is the derth taken off derth_supply by slashes of private
-	// redelegations INTO this validator (ORCHARD_DESIGN.md section 20): what
+	// redelegations INTO this validator (ORCHARD_DESIGN.md 8.7): what
 	// x/staking burned from the module's delegation here, valued at the rate,
 	// so the rate did not move. The exposed notes pay it as they clear their
 	// labels (their exposure counts at its retained value). Only grows.

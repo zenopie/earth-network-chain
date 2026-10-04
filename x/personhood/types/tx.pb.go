@@ -136,7 +136,7 @@ var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 // and requires the proof's `address` input to equal
 // zk/privacy.RegistrationBinding =
 //
-//	H(TAG_REG, idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
+//	H(TAG_REG, Bytes(chain_id), idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
 //	  Bytes(ciphertext_erth), affiliate)
 //
 // with affiliate = 0 when the registration names no referrer, and

@@ -73,7 +73,7 @@ message ValidatorState {
     (amino.dont_omitempty) = true
   ];
   // slash_debt is the derth taken off derth_supply by slashes of private
-  // redelegations INTO this validator (ORCHARD_DESIGN.md section 20): what
+  // redelegations INTO this validator (ORCHARD_DESIGN.md 8.7): what
   // x/staking burned from the module's delegation here, valued at the rate,
   // so the rate did not move. The exposed notes pay it as they clear their
   // labels (their exposure counts at its retained value). Only grows.
