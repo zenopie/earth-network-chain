@@ -59,21 +59,15 @@ type PrivateActionHandler interface {
 // own state: either every effect lands (notes spent, action done, fee paid)
 // or the ante fails and nothing does.
 //
-// Two kinds of action need this:
+// An action needs this when its outcome depends on state the msg cannot pin
+// (a swap's output against min_out, a deposit's shares against min_shares, a
+// redelegation's credit against the live rate). Run in the handler, a
+// front-run that moved the state would fail it after the ante had spent the
+// input notes, and the released value would be stuck in the pool with no
+// note for it.
 //
-//   - one whose outcome depends on market state the msg cannot pin (a swap's
-//     output against min_out, a deposit's shares against min_shares). Run in
-//     the handler, a front-run that moved the price would fail it after the
-//     ante had spent the input notes, and the released value would be stuck
-//     in the pool with no note for it;
-//   - one paying its fee from its output (FeeFromOutputMsg). The fee does not
-//     exist until the action has run, and must not depend on a handler that
-//     could fail after the notes are spent.
-//
-// ExecutePrivateAction must pay msg's fee from output, if any, in full with
-// keeper.PayFeeFromModule (the ante checks it was), and returns what the msg's
-// handler reports (keeper.AuthorizedResult). The handler must then do nothing
-// but return it.
+// ExecutePrivateAction returns what the msg's handler reports
+// (keeper.AuthorizedResult). The handler must then do nothing but return it.
 //
 // The price of atomicity: a tx whose action fails in DeliverTx (after
 // passing CheckTx, because the state moved in between) fails in the ante and

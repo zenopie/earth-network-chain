@@ -131,16 +131,16 @@ func checkNoteOut(pc, ct []byte) error {
 	return nil
 }
 
-// checkMoves checks msg's release map: a positive fee (unless outputFee pays
-// it), and exactly denom released beyond it (a positive amount), or nothing
-// when denom is "". Under the fee rule (shieldedtypes.FeeAfter) a msg moving
-// no uerth pays its whole uerth balance as the fee.
-func checkMoves(msg shieldedtypes.PrivateMsg, denom string, outputFee uint64) error {
+// checkMoves checks msg's release map: a positive fee, and exactly denom
+// released beyond it (a positive amount), or nothing when denom is "". Under
+// the fee rule (shieldedtypes.FeeAfter) a msg moving no uerth pays its whole
+// uerth balance as the fee.
+func checkMoves(msg shieldedtypes.PrivateMsg, denom string) error {
 	if err := shieldedtypes.ValidateBundles(msg); err != nil {
 		return err
 	}
-	if (msg.PrivateFee() == 0) == (outputFee == 0) {
-		return errorsmod.Wrap(ErrInvalidMsg, "the fee is paid by the bundle or from the output, exactly one")
+	if msg.PrivateFee() == 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "the bundle must pay a positive fee")
 	}
 	rem, err := shieldedtypes.Remainders(msg)
 	if err != nil {
@@ -454,7 +454,7 @@ func (m *MsgDelegate) ValidateBasic() error {
 	if err := positive("derth", m.Derth); err != nil {
 		return err
 	}
-	if err := checkMoves(m, BondDenom, 0); err != nil {
+	if err := checkMoves(m, BondDenom); err != nil {
 		return err
 	}
 	if released(m, BondDenom) != m.Amount {
@@ -481,7 +481,7 @@ func (m *MsgRestake) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
-	if err := checkMoves(m, "", 0); err != nil {
+	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
 	return m.Stake.shape(true, false)
@@ -518,7 +518,7 @@ func (m *MsgUndelegate) ValidateBasic() error {
 	if err := positive("amount", m.Amount); err != nil {
 		return err
 	}
-	if err := checkMoves(m, "", 0); err != nil {
+	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
 	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
@@ -572,7 +572,7 @@ func (m *MsgRedelegate) ValidateBasic() error {
 	if err := positive("move_time", m.MoveTime); err != nil {
 		return err
 	}
-	if err := checkMoves(m, "", 0); err != nil {
+	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
 	return m.Stake.shape(true, true)
@@ -641,7 +641,7 @@ func (m *MsgStakeVote) ValidateBasic() error {
 	if err := CheckVoteWeight(m.Weight); err != nil {
 		return err
 	}
-	if err := checkMoves(m, "", 0); err != nil {
+	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
 	if err := shieldedtypes.CheckProofLength(m.Proof); err != nil {
@@ -717,7 +717,7 @@ func (m *MsgLockPosition) ValidateBasic() error {
 	if err := positive("amount", m.Amount); err != nil {
 		return err
 	}
-	if err := checkMoves(m, "", 0); err != nil {
+	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
 	if len(m.Splits) > allocationtypes.MaxVoterOptions {
@@ -739,7 +739,7 @@ func (m *MsgUpdatePosition) SighashFields(address.Codec) ([]fr.Element, error) {
 }
 
 func (m *MsgUpdatePosition) ValidateBasic() error {
-	if err := checkMoves(m, "", 0); err != nil {
+	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
 	if len(m.Splits) > allocationtypes.MaxVoterOptions {
@@ -770,7 +770,7 @@ func (m *MsgUnlockPosition) SighashFields(address.Codec) ([]fr.Element, error) {
 // ValidateBasic: the proof merges the position's derth into the owner's
 // note (or pads).
 func (m *MsgUnlockPosition) ValidateBasic() error {
-	if err := checkMoves(m, "", 0); err != nil {
+	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
 	return m.Stake.shape(true, false)
@@ -791,7 +791,7 @@ func (m *MsgPositionVote) SighashFields(address.Codec) ([]fr.Element, error) {
 }
 
 func (m *MsgPositionVote) ValidateBasic() error {
-	if err := checkMoves(m, "", 0); err != nil {
+	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
 	if err := ValidateOptions(m.Options); err != nil {

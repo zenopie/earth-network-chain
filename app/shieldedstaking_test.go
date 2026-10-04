@@ -487,7 +487,7 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 // for driving many handler calls without a proof each. Test-only: it spends
 // pool coins without spending any note.
 func (e *stakeEnv) fakeAuthorized(m shieldedtypes.PrivateMsg) sdk.Context {
-	ctx, err := shieldedkeeper.AuthorizeMsg(e.ctx(), m, nil, 0)
+	ctx, err := shieldedkeeper.AuthorizeMsg(e.ctx(), m, nil)
 	require.NoError(e.t, err)
 	return shieldedkeeper.WithAuthorizedAction(ctx, struct{}{})
 }

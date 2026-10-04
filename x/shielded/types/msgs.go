@@ -41,24 +41,6 @@ type PrivateMsg interface {
 	SighashFields(ac address.Codec) ([]fr.Element, error)
 }
 
-// FeeFromOutputMsg is a PrivateMsg that pays (part of) its fee out of the
-// uerth its action produces instead of from a bundle balance. OutputFee is
-// that fee, bound by the sighash. No msg implements it today: its only user,
-// x/shieldedstaking's MsgClaimUnbonding, is retired (undelegations pay out
-// by themselves); the path stays generic and tested.
-//
-// The private ante charges it exactly like a bundle fee (the same floor, the
-// same min gas price) and requires it paid in full before it writes
-// anything: by the action, which the ante then runs itself
-// (PrivateActionExecutor) and which pays it with keeper.PayFeeFromModule.
-//
-// An unshield of uerth (MsgSend) needs no such thing: its bundle's uerth
-// balance pays the fee and the receiver gets the rest, with no fee note.
-type FeeFromOutputMsg interface {
-	PrivateMsg
-	OutputFee() uint64
-}
-
 // UnshieldMsg is a PrivateMsg whose remainders (Remainders) all go to one
 // transparent account, paid by the ante right after the fee. MsgSend.
 type UnshieldMsg interface {
@@ -92,18 +74,12 @@ func Sighash(msg PrivateMsg, chainID string, tx TxFields, ac address.Codec) (fr.
 }
 
 // ValidateBundles checks a private msg's bundles together: 1..MaxBundlesPerMsg
-// of them (0 for a msg paying its whole fee from its output, whose action
-// carries its own proof and nullifiers; none today), each one's
-// ValidateBasic, nullifiers distinct across all of them, and the release map
-// (Remainders) well formed.
+// of them, each one's ValidateBasic, nullifiers distinct across all of them,
+// and the release map (Remainders) well formed.
 func ValidateBundles(msg PrivateMsg) error {
 	bs := msg.PrivateBundles()
-	min := 1
-	if FeeFromOutputOf(msg) > 0 {
-		min = 0
-	}
-	if len(bs) < min || len(bs) > MaxBundlesPerMsg {
-		return errorsmod.Wrapf(ErrInvalidBundle, "a private msg spends %d..%d bundles", min, MaxBundlesPerMsg)
+	if len(bs) < 1 || len(bs) > MaxBundlesPerMsg {
+		return errorsmod.Wrapf(ErrInvalidBundle, "a private msg spends %d..%d bundles", 1, MaxBundlesPerMsg)
 	}
 	seen := map[string]bool{}
 	for i, b := range bs {
@@ -171,20 +147,11 @@ func Remainders(msg PrivateMsg) ([]Remainder, error) {
 	return out, nil
 }
 
-// FeeFromOutputOf is msg's fee paid from its output, 0 for a msg that cannot
-// pay that way.
-func FeeFromOutputOf(msg PrivateMsg) uint64 {
-	if m, ok := msg.(FeeFromOutputMsg); ok {
-		return m.OutputFee()
-	}
-	return 0
-}
-
-// TotalFee is the whole fee msg's tx pays: the bundles' fee plus the fee from
-// output. It is what AuthInfo.Fee must declare and what the ante holds to the
-// fee floor and the min gas price.
+// TotalFee is the whole fee msg's tx pays, PrivateFee as an Int. It is what
+// AuthInfo.Fee must declare and what the ante holds to the fee floor and the
+// min gas price.
 func TotalFee(msg PrivateMsg) math.Int {
-	return math.NewIntFromUint64(msg.PrivateFee()).Add(math.NewIntFromUint64(FeeFromOutputOf(msg)))
+	return math.NewIntFromUint64(msg.PrivateFee())
 }
 
 var (

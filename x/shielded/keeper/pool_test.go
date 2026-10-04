@@ -8,7 +8,6 @@ import (
 	"cosmossdk.io/math"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/stretchr/testify/require"
 
@@ -404,20 +403,20 @@ func TestHandlerRequiresAnteAuthorization(t *testing.T) {
 	// Authorized for a different msg: still refused, even one differing only
 	// in its receiver.
 	other := f.scenarioMsg(s, shieldedtest.Send2)
-	actx, err := keeper.AuthorizeMsg(f.ctx, other, nil, 0)
+	actx, err := keeper.AuthorizeMsg(f.ctx, other, nil)
 	require.NoError(t, err)
 	_, err = f.msgs.Send(actx, m)
 	require.ErrorIs(t, err, types.ErrUnauthorized)
 	twin := *m
 	twin.Receiver = f.bech(f.addr("twin"))
-	actx, err = keeper.AuthorizeMsg(f.ctx, &twin, nil, 0)
+	actx, err = keeper.AuthorizeMsg(f.ctx, &twin, nil)
 	require.NoError(t, err)
 	_, err = f.msgs.Send(actx, m)
 	require.ErrorIs(t, err, types.ErrUnauthorized)
 
 	// ReleaseToModule pays an authorized msg's remainder of a denom once,
 	// whole; a denom it does not release is refused.
-	actx, err = keeper.AuthorizeMsg(f.ctx, m, nil, 0)
+	actx, err = keeper.AuthorizeMsg(f.ctx, m, nil)
 	require.NoError(t, err)
 	require.True(t, keeper.AuthorizedNullifiers(actx, m.Bundle.Nullifiers()...))
 	// Not while its denom's sends are disabled (audit 6 A-L2).
@@ -444,25 +443,6 @@ func TestHandlerRequiresAnteAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []uint64{16, 17}, res.Positions)
 	require.NoError(t, f.k.AssertInvariants(actx))
-}
-
-// A fee from output (a Phase 2 claim or swap paying out of what it produces)
-// must be paid in full, exactly, before the ante returns.
-func TestFeeFromOutputMustBePaid(t *testing.T) {
-	f := initFixture(t)
-	s := shieldedtest.Default()
-	m := f.scenarioMsg(s, shieldedtest.Send2)
-	actx, err := keeper.AuthorizeMsg(f.ctx, m, nil, 7_000)
-	require.NoError(t, err)
-	require.ErrorIs(t, f.k.ExecutePrivateAction(actx, m, nil), sdkerrors.ErrInsufficientFee)
-	f.bank.mint(mod(personhood), sdk.NewInt64Coin(types.FeeDenom, 10_000))
-	require.ErrorIs(t, f.k.PayFeeFromModule(actx, personhood, math.NewInt(6_999)), types.ErrUnauthorized)
-	require.NoError(t, f.k.PayFeeFromModule(actx, personhood, math.NewInt(7_000)))
-	require.ErrorIs(t, f.k.PayFeeFromModule(actx, personhood, math.NewInt(1)), types.ErrUnauthorized, "paid once")
-	require.NoError(t, f.k.ExecutePrivateAction(actx, m, nil))
-	require.Equal(t, int64(7_000), f.bank.GetBalance(actx, authtypes.NewModuleAddress(authtypes.FeeCollectorName), types.FeeDenom).Amount.Int64())
-	// Outside the ante: no authorization, no payment.
-	require.ErrorIs(t, f.k.PayFeeFromModule(f.ctx, personhood, math.NewInt(1)), types.ErrUnauthorized)
 }
 
 func TestSendRestriction(t *testing.T) {

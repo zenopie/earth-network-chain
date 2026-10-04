@@ -144,7 +144,7 @@ func (p privateServer) authorize(ctx sdk.Context, msg shieldedtypes.PrivateMsg, 
 	if err := h.VerifyPrivateAction(ctx, msg, prepared); err != nil {
 		return ctx, err
 	}
-	ctx, err = shieldedkeeper.AuthorizeMsg(ctx, msg, nil, 0)
+	ctx, err = shieldedkeeper.AuthorizeMsg(ctx, msg, nil)
 	if err != nil {
 		return ctx, err
 	}

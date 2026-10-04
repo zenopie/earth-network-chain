@@ -6,7 +6,6 @@ import (
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/cosmos/gogoproto/proto"
 
 	"github.com/earth-network/earth/x/shielded/types"
@@ -47,10 +46,6 @@ type authorization struct {
 	// (PrivateActionExecutor), and result is what it returned.
 	executed bool
 	result   any
-	// feeFromOutput is what the msg owes from its output; feePaid what
-	// PayFeeFromModule has paid of it.
-	feeFromOutput uint64
-	feePaid       uint64
 }
 
 // msgKey identifies msg by its bytes.
@@ -63,9 +58,9 @@ func msgKey(msg types.PrivateMsg) ([32]byte, error) {
 }
 
 // AuthorizeMsg records msg as verified and executed by the private ante, its
-// bundles' outputs appended at positions, owing feeFromOutput from its
-// output. Only the ante calls this (and tests standing in for it).
-func AuthorizeMsg(ctx sdk.Context, msg types.PrivateMsg, positions [][]uint64, feeFromOutput uint64) (sdk.Context, error) {
+// bundles' outputs appended at positions. Only the ante calls this (and tests
+// standing in for it).
+func AuthorizeMsg(ctx sdk.Context, msg types.PrivateMsg, positions [][]uint64) (sdk.Context, error) {
 	key, err := msgKey(msg)
 	if err != nil {
 		return ctx, err
@@ -75,7 +70,7 @@ func AuthorizeMsg(ctx sdk.Context, msg types.PrivateMsg, positions [][]uint64, f
 		return ctx, err
 	}
 	a := &authorization{key: key, nullifiers: map[string]bool{}, positions: positions,
-		remaining: map[string]uint64{}, feeFromOutput: feeFromOutput}
+		remaining: map[string]uint64{}}
 	for _, b := range msg.PrivateBundles() {
 		for _, nf := range b.Nullifiers() {
 			a.nullifiers[string(nf)] = true
@@ -204,31 +199,4 @@ func CarryAuthorization(to, from sdk.Context) sdk.Context {
 		return to.WithValue(authorizedKey{}, a)
 	}
 	return to
-}
-
-// PayFeeFromModule pays the msg's fee from output, out of fromModule's uerth,
-// to fee_collector. Only a PrivateActionExecutor running in the ante calls
-// it, once, for exactly the msg's fee_from_output; the ante refuses the tx
-// unless the whole fee was paid this way.
-func (k Keeper) PayFeeFromModule(ctx context.Context, fromModule string, fee math.Int) error {
-	if err := notThePool(fromModule); err != nil {
-		return err
-	}
-	a, ok := authorizationOf(ctx)
-	if !ok {
-		return types.ErrUnauthorized
-	}
-	if !fee.IsPositive() || !fee.IsUint64() || fee.Uint64() != a.feeFromOutput-a.feePaid {
-		return types.ErrUnauthorized.Wrapf("fee from output must be exactly the %d%s still owed", a.feeFromOutput-a.feePaid, types.FeeDenom)
-	}
-	coins := sdk.NewCoins(sdk.NewCoin(types.FeeDenom, fee))
-	if err := k.bankKeeper.SendCoinsFromModuleToModule(ctx, fromModule, authtypes.FeeCollectorName, coins); err != nil {
-		return err
-	}
-	a.feePaid += fee.Uint64()
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeFee,
-		sdk.NewAttribute(types.AttributeKeyAmount, coins.String()),
-		sdk.NewAttribute(types.AttributeKeyModule, fromModule),
-	))
-	return nil
 }

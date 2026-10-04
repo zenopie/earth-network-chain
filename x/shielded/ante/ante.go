@@ -31,10 +31,7 @@
 //
 // A msg may spend more than one bundle (a stake vote and the bundle paying
 // its fee); each is checked, proven and executed as a single one is, under
-// the msg's one sighash. A msg may instead pay its fee out of the uerth its
-// action produces (types.FeeFromOutputMsg); that fee is held to the same
-// floor, and the ante refuses the tx unless it was paid in full before the
-// ante returns.
+// the msg's one sighash.
 //
 // A msg of another module may carry an action beyond its bundles (see
 // types.PrivateActionHandler); its checks and proofs run in the same pass,
@@ -327,8 +324,7 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	if !ok {
 		return ctx, errorsmod.Wrap(sdkerrors.ErrTxDecode, "tx is not a FeeTx")
 	}
-	// The whole fee: the bundles', plus what the msg pays from its output.
-	// Held to the same floor and price whichever pays it.
+	// The whole fee, held to the consensus floor and the min gas price.
 	amt := types.TotalFee(msg)
 	minFee, err := d.K.MinFee(pool)
 	if err != nil {

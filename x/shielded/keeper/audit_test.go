@@ -92,13 +92,12 @@ func TestCheckPrivateMsgAuditOneJunkProof(t *testing.T) {
 }
 
 // Audit (shielded L2): the pool's own account cannot be the other side of a
-// module mint, a release or a fee payment.
+// module mint or a release.
 func TestAuditPoolCannotPayItself(t *testing.T) {
 	f := initFixture(t)
 	pc := privacy.FieldBytes(shieldedtest.Det("pc", 1))
 	_, _, err := f.k.MintNote(f.ctx, types.ModuleName, sdk.NewInt64Coin(types.FeeDenom, 1), pc, shieldedtest.BlindCT("x"))
 	require.ErrorIs(t, err, types.ErrUnauthorized)
-	require.ErrorIs(t, f.k.PayFeeFromModule(f.ctx, types.ModuleName, sdk.NewInt64Coin(types.FeeDenom, 1).Amount), types.ErrUnauthorized)
 	_, err = f.k.ReleaseToModule(f.ctx, &types.MsgSend{}, types.FeeDenom, types.ModuleName)
 	require.ErrorIs(t, err, types.ErrUnauthorized)
 }

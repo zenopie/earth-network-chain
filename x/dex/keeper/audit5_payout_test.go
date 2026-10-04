@@ -63,7 +63,6 @@ func (*noteShielded) RegisterAsset(context.Context, string) ([]byte, error) { re
 func (*noteShielded) ReleaseToModule(context.Context, shieldedtypes.PrivateMsg, string, string) (sdk.Coin, error) {
 	return sdk.Coin{}, nil
 }
-func (*noteShielded) PayFeeFromModule(context.Context, string, math.Int) error { return nil }
 func (*noteShielded) PrivateGasPrices(context.Context) (uint64, uint64, error) {
 	return 1, 1, nil
 }

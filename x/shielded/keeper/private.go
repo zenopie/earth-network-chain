@@ -9,7 +9,6 @@ import (
 	"cosmossdk.io/math"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 
 	"github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/zk/orchard"
@@ -216,7 +215,7 @@ func (k Keeper) ExecutePrivateMsg(ctx sdk.Context, msg types.PrivateMsg) (sdk.Co
 			return ctx, err
 		}
 	}
-	ctx, err := AuthorizeMsg(ctx, msg, positions, types.FeeFromOutputOf(msg))
+	ctx, err := AuthorizeMsg(ctx, msg, positions)
 	if err != nil {
 		return ctx, err
 	}
@@ -235,9 +234,8 @@ func (k Keeper) ExecutePrivateMsg(ctx sdk.Context, msg types.PrivateMsg) (sdk.Co
 }
 
 // ExecutePrivateAction runs msg's action in the ante, if its handler asks to
-// (types.PrivateActionExecutor), and then requires the msg's fee from output,
-// if any, paid in full. ctx must carry the authorization ExecutePrivateMsg
-// made and the action's prepared value.
+// (types.PrivateActionExecutor). ctx must carry the authorization
+// ExecutePrivateMsg made and the action's prepared value.
 func (k Keeper) ExecutePrivateAction(ctx sdk.Context, msg types.PrivateMsg, prepared any) error {
 	if h, ok := k.PrivateAction(msg); ok {
 		if ex, ok := h.(types.PrivateActionExecutor); ok && ex.ExecutesInAnte(msg) {
@@ -248,12 +246,8 @@ func (k Keeper) ExecutePrivateAction(ctx sdk.Context, msg types.PrivateMsg, prep
 			withExecutedAction(ctx, result)
 		}
 	}
-	a, ok := authorizationOf(ctx)
-	if !ok {
+	if _, ok := authorizationOf(ctx); !ok {
 		return types.ErrUnauthorized
-	}
-	if a.feePaid != a.feeFromOutput {
-		return errorsmod.Wrapf(sdkerrors.ErrInsufficientFee, "fee from output: %d%s owed, %d paid", a.feeFromOutput, types.FeeDenom, a.feePaid)
 	}
 	return nil
 }

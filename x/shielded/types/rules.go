@@ -92,10 +92,9 @@ func SplitNoteValues(v sdkmath.Int) ([]uint64, error) {
 // One fee rule: every private msg pays its fee out of its bundles' uerth
 // balance. The fee is that balance less the uerth the msg itself moves
 // (FeeAfter): a delegation's amount, a swap's amount in when it swaps uerth,
-// an LP deposit's ERTH leg, and nothing for every other msg. Two exceptions
-// name their fee explicitly: MsgSend (whose uerth beyond the fee is
-// unshielded to its receiver) and a FeeFromOutputMsg, paying from its output
-// instead (none today: MsgClaimUnbonding is retired).
+// an LP deposit's ERTH leg, and nothing for every other msg. One exception
+// names its fee explicitly: MsgSend, whose uerth beyond the fee is unshielded
+// to its receiver.
 
 // UerthBalance is the sum of msg's bundles' uerth balances (saturating; an
 // overflow is refused by Remainders).
