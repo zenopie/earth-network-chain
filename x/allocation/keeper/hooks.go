@@ -180,6 +180,7 @@ func (h Hooks) BeforeValidatorModified(context.Context, sdk.ValAddress) error { 
 func (h Hooks) AfterValidatorRemoved(context.Context, sdk.ConsAddress, sdk.ValAddress) error {
 	return nil
 }
+
 // AfterValidatorBonded and AfterValidatorBeginUnbonding: the operator's
 // self-bond starts or stops weighing (bondedWeight counts Bonded validators
 // only). x/staking calls them from its EndBlocker; the operator is recorded
