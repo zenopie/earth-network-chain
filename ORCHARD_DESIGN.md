@@ -1156,6 +1156,12 @@ stake and membership keys unchanged.
 
 ## 19. Private redelegation (2026-10-03)
 
+(Superseded in part by section 20, 2026-10-04: the bonded part moves with
+x/staking's primitives and a module-recorded entry, with no transitive lock
+and no max_entries; a slash of the source is owed by the move's notes (the
+slash debt), not absorbed by the destination's book; the credit is merged
+into the owner's note, labelled, never minted.)
+
 The one exception to the feature freeze (user decision): a private staker
 moves derth from validator A to validator B with no unbonding gap and keeps
 earning. Same principle: people are private; power and public money are
@@ -1378,3 +1384,356 @@ mine, amount leaves, the change and the mint pc are mine): nothing to gain.
 5. Find the derth/<dst> note: the `shieldedstaking_stake_note` event whose
    denom is derth/<dst> with your spc (or by trial decryption of its blind
    ciphertext; the amount is on the event and in the response's `derth`).
+
+## 20. One stake note per validator; note-enforced slash debt (2026-10-04)
+
+User decisions: one stake note per validator (staking more with a
+validator merges into the existing note in the same tx), and redelegation
+slashes paid by the notes the redelegation credited ("note-enforced slash
+debt"), folded into the same circuit change. Same principle: people are
+private; power and public money are public. Consensus-affecting; fresh
+genesis, no migration. Supersedes §19.2 step 3, §19.3 and §19.4 (x/staking's
+transitive and max_entries limits, and "B's book absorbs it").
+
+### 20.1 The design, and why
+
+**The chain mints no stake note.** Every stake note is an output of the
+stake proof. Value the chain credits (a delegation's derth, an unlocked
+position's, a redelegation's arrival) is a public `v_in` the proof merges
+into the owner's existing note: one note per (owner, validator), with no
+merge msgs, no split votes and no 2-input limits in practice.
+
+The credited derth follows the live rate, which moves every block
+(rewards accrue in W_v), so the chain computes it. Three ways to merge a
+chain-computed credit into a hidden note were weighed:
+
+- **Homomorphic credit** (the chain adds the minted derth to the hidden
+  amount). Stake commitments are Poseidon2 hashes, not additive. A Pedersen
+  amount inside every stake commitment would need EC arithmetic in the stake
+  and vote circuits, a new note format for every wallet, and a public bound
+  on the hidden old amount (so the chain-added sum stays within 2^63-1).
+  Rejected: much more circuit and wallet surface for no privacy gain (the
+  credit is public either way).
+- **The epoch-fixed rate** (known at proof time). Minting at a stale rate
+  lets a delegation made just before the epoch end buy a whole epoch's
+  accrued rewards it did not earn (rate.go). Rejected: unsound.
+- **The wallet names the credit; the chain checks the price** (chosen).
+  MsgDelegate.derth (MsgRedelegate.dst_derth) is the credited derth, a
+  public input of the proof; the chain refuses it unless the value buys it
+  at the live rate: derth <= floor(amount x S / B) (= amount while S = 0),
+  derth >= min_delegation. What the value buys beyond it stays in the book
+  (every holder's rate, the delegator's included), as the floor's dust
+  always did. The merged note's amount is known when proving. The wallet
+  quotes with a small margin for the rate's drift until its block (20.8);
+  a quote the rate outran is refused in the ante, before anything is spent,
+  at no cost.
+
+**What it reveals.** The credit amount and its value are public, as
+before. A top-up spends the owner's existing note: its nullifier shows that
+some derth/<v> note was consumed, never which (nf = H(nk, rho, position)
+cannot be related to a commitment or position without nk; the anchor is a
+whole-tree root). New: **padding**. An input of amount 0 may publish its
+own would-be nullifier (still derived from nk, so nobody can publish
+another owner's), and the chain requires every note-moving msg to spend in
+its first slot: a first delegation looks exactly like a top-up. An output
+of amount 0 may publish a zero note's commitment, and the chain requires
+every note-moving msg to create one: a full exit looks like a partial one.
+And since the chain mints no stake note, **no stake note's amount is ever
+public** (before, a delegation's minted note carried its amount on the
+event).
+
+**Redelegation slashes, enforced by the notes.** The module stops calling
+x/staking's BeginRedelegate: it unbonds at src, delegates at dst and
+records the redelegation entry itself (20.5), so a pooled delegator is not
+locked by one person's inbound move (no transitive rule) nor by the pair's
+max_entries. The entry still lets x/staking slash the moved stake when src
+is punished for an infraction before the move. The module covers that burn
+so dst's honest holders lose nothing, and the move's notes owe it: the
+credit carries a slash label inside its note commitment, and the slash
+debt tree says what each slashed move's exposure is still worth (20.6).
+
+### 20.2 Circuit `stake` v2 (mobile circuits/stake)
+
+    spc    = H(TAG_SPC, owner_pk, rho, rcm)
+    cm     = H(TAG_STAKE, asset, amount, spc, label)            (was H4, no label)
+    label  = 0, or H(TAG_SLABEL, move_key, move_time, exposed)   TAG_SLABEL "earth.slabel"
+
+Two lanes, one owner (nk), all inputs under `anchor`:
+
+- **Lane A** (`asset`): up to two inputs, one output; `v_in` credited,
+  `v_out` leaving. At most one labelled input, which either **keeps** its
+  label (the output carries the same label and exposure; only unexposed
+  value moves: in_0 + in_1 - exposed + v_in == out - exposed + v_out) or
+  **clears** it once its window has closed (move_time < clear_before): the
+  exposure is worth `retained` from the debt tree under `debt_root` (20.6),
+  and the output is unlabelled (in_0 + in_1 - exposed + retained + v_in ==
+  out + v_out).
+- **Lane B, the credit lane** (`cr_asset`): one unlabelled input (or
+  padding), one output = cr_in + cr_v_in. With cr_move_time != 0 (a
+  redelegation) the output is labelled (move_key = cr_nf, the lane's own
+  nullifier; move_time; exposed = cr_v_in).
+- Padding: amount-0 inputs publish 0 or their would-be nullifier; amount-0
+  outputs publish 0 or the zero note's commitment. Every note amount
+  <= 2^63-1.
+
+    Public: anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
+            cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash   (16)
+
+16,242 gates (2^14, was 9,672 for 2 in / 2 out), 52 nargo tests.
+`spc_mint` and the second lane-A output are gone. privacy_core:
+`stake_cm(asset, amount, spc, label)`, `stake_label`, `debt_leaf`,
+`debt_retained`; Go parity vectors in zk/debt `TestNoirParity`
+(DebtLeaf(1,2,3,4) = 0x0b28cc85...e82a, StakeLabel(0x4d4b,1000,200) =
+0x2dfbc154...a881, StakeCM(1,2,3,4) = 0x0ffc538b...4232, debt EmptyRoot =
+0x0cea3d3e...6903).
+
+### 20.3 Msgs, sighash, shapes
+
+    StakeProof {proof 1, anchor 2, nullifiers 3 (exactly 2), owner_tag 7,
+                commitment 9, ciphertext 10, credit_nullifier 11, credit_commitment 12,
+                credit_ciphertext 13, clear_before 14, debt_root 15}
+                reserved 4, 5 (commitments, ciphertexts), 6 (spc_mint), 8 (spc_ciphertext)
+    StakeFields = anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm, Bytes(credit_ct),
+                  owner_tag, clear_before, debt_root
+
+A ciphertext is present exactly for a non-zero commitment and is the
+wallet stake ciphertext, **201 bytes** (was 153: the label fields are in it,
+zero when unlabelled, so the length says nothing). `debt_root` is zero
+exactly when `clear_before` is 0 (the proof clears nothing); otherwise it
+must be the current debt root and `clear_before` <= block time - window.
+
+| Msg | lane A | v_in / v_out | lane B | shape |
+| --- | --- | --- | --- | --- |
+| Delegate {.., amount 5, **derth 6**} | derth/<v> | v_in = derth | - | spend + create |
+| Restake | derth/<v> | - | - | spend + create |
+| Undelegate | derth/<v> | v_out = amount | - | spend + create (change or zero note) |
+| LockPosition | derth/<v> | v_out = amount | - | spend + create |
+| UnlockPosition | derth/<position's v> | v_in = position's derth | - | spend + create |
+| Update/PositionVote | 0 | - | - | nothing |
+| Redelegate {.., **dst_derth 6, move_time 7**} | derth/<src> | v_out = amount | derth/<dst>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes |
+
+"spend" = nf_0 non-zero (the owner's note, or padding); nf_1 optional (a
+second note merged); "create" = cm non-zero. Sighashes: Delegate adds
+`derth` after `amount`; Redelegate adds `dst_derth, move_time` after
+`amount`; the rest as before (with the new StakeFields).
+MsgDelegateResponse.position, MsgUnlockPositionResponse.position and
+MsgRedelegateResponse.position name the merged note. Gas: two writes per
+nullifier slot and one per output slot (lane B adds one and one), plus one
+for an undelegation's payout.
+
+**MsgRestake** stays: an owner holding more than one note at a validator
+(two devices, a labelled note beside an unlabelled credit, 20.6) merges
+them without moving value. Splitting is gone.
+
+### 20.4 Votes and the snapshot
+
+Circuit `vote` v2: **2 slots** (MAX_NOTES 2; one note per validator needs
+one, the second covers a note made beside a labelled one), each optionally
+labelled; a labelled note votes amount - exposed + retained (the debt tree
+under `debt_root`, the CURRENT one: a slash after the snapshot counts).
+
+    Public: note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[2], sighash   (9)
+    MsgStakeVote: vote_nullifiers (10) exactly 2, debt_root (11)
+    sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight,
+                    vote_nullifiers[0..1], debt_root
+
+21,716 gates (2^15, was 27,543), 45 nargo tests.
+
+**The snapshot rule needs no change.** A note under the snapshot root whose
+nullifier is absent under the snapshot's nf root votes; its spend after the
+snapshot (a merge, a top-up, a redelegation) does not stop it, because its
+nullifier entered the tree after nf_root. So a top-up after the snapshot
+keeps the pre-existing value's vote: the old note votes it (the wallet keeps
+spent notes' openings until no open proposal predates the spend), and the
+merged note, created after the snapshot, is not under the note root and
+cannot vote on that proposal. No unit votes twice: the old note's vote
+nullifier is spent once per proposal, and the new value never existed at
+the snapshot. Letting the merged note carry the old value's vote instead
+would need a proof of lineage in the vote circuit and would link the two
+notes; nothing would be gained.
+
+### 20.5 Redelegation internals
+
+Steps 1, 2, 4 of §19.2 are unchanged (rewards into both queues, the value
+at src's live rate, out of src's queue first). Step 3, the bonded part:
+`moveBonded` = x/staking's BeginRedelegation without its refusals: Unbond
+at src, Delegate at dst (token source = src's status), and the entry
+recorded by the module:
+
+- one entry per (src, dst, block height): moves in one block share it
+  (balance and shares added);
+- past `MaxEntryHeightsPerPair` (4,096) entries a move joins the latest
+  entry, which keeps its height and completion (every move in an entry is
+  at or after its height, and the entry matures before any of its moves'
+  labels clear; only an infraction between that height and the move's falls
+  on src's stake instead). Reaching the cap takes 4,096 blocks of bonded
+  moves of at least 1 ERTH each, each move's exposure locked in place for the
+  unbonding time;
+- src unbonded: no entry (nothing can be slashed); src unbonding: the
+  validator's unbonding time and height.
+
+A move with an entry is recorded (`Move`: key, src, dst, height,
+move_time, credited, shares, entry_height, completion, retained) until the
+entry matures. Step 5: dst credits `dst_derth` (creditDst: <= what arrived
+buys at dst's rate, >= min_delegation), supply += dst_derth; the proof's
+lanes spend the src notes, the dst note (or padding) and create the change
+and the merged, labelled dst note. `move_time` must be within
+[block time - 600 s, block time] (MoveTimeSlackSeconds). Both books are
+re-weighed at the end of the block (audit 7). There is **no lock-out**: no
+transitive rule, no max_entries. Query/Redelegation and error 1120's
+"transitive"/"max_entries" refusals are gone.
+
+### 20.6 The slash debt
+
+**Labels.** The credit lane labels the redelegated derth with its move
+(move key = the credit nullifier: unique, public in the tx; move_time; the
+exposure). A note holds at most one label; the exposure never leaves its
+note while the label is open: lane A spends at most one labelled note and
+keeps the exposure in the output; lane B merges only into an unlabelled
+note (a redelegation into a validator where the owner's note is labelled
+makes a second note there). Undelegating, locking or redelegating exposed
+derth waits for the label to clear; the note's unexposed part moves freely.
+
+**The window.** A label may clear once move_time + window < the proof's
+clear_before <= block time, window = the longest x/staking unbonding_time
+ever seen (MaxUnbonding; a governance cut does not shorten old windows) +
+600 s. By then the move's entry has matured (completion = block time of the
+move + unbonding_time <= move_time + window) and x/staking no longer
+slashes it.
+
+**The debt tree** (zk/debt; `debt_tree.go`): an indexed (sorted) depth-32
+Poseidon2 tree with one row per SLASHED move: leaf = H(TAG_DEBTL, key,
+next_key, next_index, retained), TAG_DEBTL "earth.debtl", sentinel leaf 0.
+A move with a row is worth its row's `retained`; a move absent (low leaf
+below it, successor above or none) is worth its whole exposure. Rows are
+written only when a slash reaches a move, in BeginBlock, so the current
+root is stable through a block's txs; proofs read the current root, never
+an older one (a stale root could skip a row). Rows are never removed.
+
+**Attribution.** x/staking calls BeforeValidatorModified(src) as a slash
+begins (outside txs): the module opens a watch (the module's shares at each
+destination of its src redelegations), then counts x/staking's Unbond of
+the module's delegation at each dst (BeforeDelegationSharesModified: one per
+slashed entry). It settles the watch at the next slash or at its
+BeginBlocker (right after x/slashing and x/evidence, before any tx): per dst,
+the slashed entries are the last `calls` unmatured entries by height
+(x/staking slashes an entry iff created at or after the infraction and not
+mature), the burnt shares are the fall of the module's shares at dst, and
+
+    value = TokensFromShares(burnt) at dst
+    debt  = floor(value x S / (B + value))          (B, S after the burn)
+
+comes off dst's derth_supply (ValidatorState.slash_debt += debt): dst's
+rate (B + value) / S before is B / (S - debt) after, every honest holder's
+value unchanged. Each move in the slashed entries owes debt pro rata to its
+shares: retained -= its part, and its debt row is written. Events
+`shieldedstaking_slash_debt {src_validator, dst_validator, value, debt,
+entries}`, `shieldedstaking_move_slashed {move_key, src_validator,
+dst_validator, debt, retained}`, `shieldedstaking_debt_row {move_key,
+retained, index, root}`.
+
+**Solvency.** derth_supply is the book's claims: unlabelled derth at face
+value, labelled exposures at what they are still worth. The exposed notes
+are all still at dst (the exposure cannot leave), so every unit of debt is
+owed by a note in dst's book; a note pays when it clears (its amount
+becomes amount - exposed + retained) and can only clear after its entry
+matured, so no slash reaches a cleared note. Invariant 4 (supply x rate =
+backing) holds throughout; the "receivable" is the outstanding cut on
+uncleared labels, repaid by the notes as they clear (invisible by design:
+which note clears, and its amount, stay hidden).
+
+**Chained moves (X -> A -> B within the window).** The X-exposure of a
+note at A cannot move on until its window closes (exactly x/staking's own
+per-delegator transitive rule, applied to the redelegated derth itself
+rather than to the whole pooled delegation); the note's unexposed part, and
+every other staker at A, move freely, and A -> B labels its own credit with
+its own move. Letting labels travel instead would leave the debt in A's
+book (where x/staking burns) while the paying note sits in B's book: the
+cross-book settlement would publish either the label at the second move
+(linking the two moves of one owner) or each use's haircut (revealing the
+note's amount). In-place exposure needs neither.
+
+**Votes** count a labelled note at amount - exposed + retained (20.4).
+
+### 20.7 Genesis, queries, invariants
+
+Genesis: `moves` (19), `debt_rows` (20, insertion order, latest retained:
+InitGenesis rebuilds the same tree), `max_unbonding_seconds` (21),
+ValidatorState.slash_debt (9). Validate: canonical distinct nonzero keys,
+retained in 0..credited, a cut move has its row. InitGenesis loads the
+moves before checking x/staking's redelegations: every unmatured module
+entry's shares must equal its moves' shares exactly; at most
+MaxEntryHeightsPerPair entries per pair.
+
+Queries: `Query/DebtTree {start, limit}` -> rows (insertion order), size,
+root, window_seconds, clear_before (`/earth/shieldedstaking/v1/debt_tree`);
+`Query/Move {key}` -> the move while open, slashed, retained
+(`/earth/shieldedstaking/v1/moves/{key}`). Query/Redelegation is removed.
+
+Invariant 9 (redelegations) now checks 1..4,096 entries and the moves'
+shares per unmatured entry; invariant 10 (new): every open move belongs to
+an entry at its height, its retained is its row's (or its credit with no
+row), the debt tree's leaves, index and rows agree, no slash is left
+watched.
+
+`redelegate` event: `minted` becomes `credited`; adds `move_key`,
+`move_time`. The stake tree records its empty root at the first block (a
+first delegation pads its input, so it proves against an anchor before any
+note exists).
+
+### 20.8 Wallet format
+
+- **Quote** (delegate): Query/Validator for B and S (the live rate);
+  derth = floor(amount x S / B) less a margin for the rate's drift until
+  the tx lands (the per-block rewards over the backing, times the blocks
+  you allow: ~10 ppm covers minutes on a chain with real stake), or amount
+  exactly while S = 0. Redelegate: value = amount x rate_src, dst_derth =
+  floor(value x S_dst / B_dst) less the margin of both rates. A refused
+  quote costs nothing (refused in the ante).
+- **Delegate**: lane A spends your derth/<v> note (merge) or pads (a fresh
+  rho, position 0, its nullifier H(TAG_SNF, nk, rho, 0)); output = old +
+  derth (a labelled input keeps its label and exposure); v_in = derth.
+- **Undelegate / Lock**: the change, or a zero note (amount 0, fresh rho/
+  rcm) when nothing is left; a labelled note may only release its
+  unexposed part (or clear first).
+- **Redelegate**: lane A as an undelegation; lane B spends your
+  unlabelled derth/<dst> note (or pads when you have none or yours is
+  labelled), cr_v_in = dst_derth, cr_move_time = move_time = the latest
+  block's time. Your new dst note is labelled (move_key = the lane-B
+  nullifier you published, move_time, exposed = dst_derth).
+- **Unlock**: lane A merges the position's derth into your note there.
+- **Clearing**: after move_time + window (Query/DebtTree: window_seconds,
+  clear_before), any lane-A proof may clear: clear_before from the query,
+  debt_root = its root, the witness from the rows (rebuild with zk/debt
+  from Query/DebtTree's rows or the `shieldedstaking_debt_row` events; a
+  move without a row: its low leaf). The note then holds amount - exposed +
+  retained.
+- **Ciphertext**: 201 bytes, epk || AEAD(0x04 || asset || amount || rho ||
+  rcm || move_key || move_time || exposed) || tag.
+- **Votes**: up to 2 notes; debt_root = the current root; a labelled
+  note's value per the debt tree; keep spent notes' openings while a
+  proposal snapshotted before their spend is open.
+- **Discovery**: every stake note is a proof output with a wallet
+  ciphertext (the blind stake ciphertext and chain-minted notes are gone).
+
+### 20.9 Groundworks and audit 7 (module D) items
+
+- Both books of a private redelegation, and the source as well as every
+  destination of a slashed redelegation, are re-weighed at the end of the
+  block.
+- A position split naming an option pruned since: the validator's voter
+  leaves it out when re-filed, and the export drops it from the splits (a
+  split left with nothing is no split), as x/allocation's export drops it
+  from its voters.
+- D7-L2: Groundworks weight counts a self-bond only at a Bonded validator
+  (x/allocation bondedWeight, PositionWeightSource.Weight); the operator is
+  resynced when its validator bonds or starts unbonding; while its bond
+  remains its vote is kept at weight zero, so the weight returns with no
+  new vote.
+- D7-L1: the gov module account is on the blocked list.
+
+### 20.10 Measurements, genesis
+
+stake 16,242 gates (2^14), vote 21,716 (2^15, within the bundled SRS);
+action and membership unchanged. New stake and vote verifying keys;
+genesis.json sha256 ffb269c5047e823b3f3aa27034767ff894c9fe76626703ccf42d0b1b321b6b59.

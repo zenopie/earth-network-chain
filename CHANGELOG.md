@@ -15,6 +15,52 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- One stake note per validator; redelegation slashes paid by the notes they
+  credited (user decisions; ORCHARD_DESIGN.md section 20,
+  STAKING_WAVE_PROGRESS.md change 4). **New stake and vote circuits and
+  verifying keys; genesis.json sha256
+  ffb269c5047e823b3f3aa27034767ff894c9fe76626703ccf42d0b1b321b6b59.**
+  - x/shieldedstaking: **the chain mints no stake note.** The stake proof
+    (circuits/stake v2, two lanes, 16 public inputs) merges the credited
+    derth into the owner's existing note. **MsgDelegate.derth** (6) and
+    **MsgRedelegate.dst_derth** (6) name the credit; the chain refuses one the
+    value does not buy at the live rate (or below min_delegation), the rest
+    staying in the book. StakeProof: `commitment` (9), `ciphertext` (10),
+    `credit_nullifier/commitment/ciphertext` (11-13), `clear_before` (14),
+    `debt_root` (15); `commitments`, `ciphertexts`, `spc_mint`,
+    `spc_ciphertext` (4, 5, 6, 8) reserved. Note-moving msgs must spend in
+    their first slot (a padding nullifier when the owner has no note) and
+    create a note (a zero note when nothing is left). Wallet stake
+    ciphertexts are 201 bytes. Restake only merges.
+  - x/shieldedstaking: **MsgRedelegate no longer calls BeginRedelegate**:
+    Unbond at src, Delegate at dst and the entry recorded by the module (one
+    per block per pair, at most 4,096 per pair, then joining the latest): no
+    transitive refusal, no max_entries. **MsgRedelegate.move_time** (7, within
+    600 s before the block). The credit is labelled with the move inside its
+    note; until the move's entry matures the exposure cannot leave the note.
+    A slash of src for an infraction before the move: the module takes the
+    derth the burnt value backed off dst's supply (`ValidatorState.slash_debt`,
+    9; dst's rate unchanged) and the moves owe it as rows of the new slash
+    debt tree; a label clears at its row's retained value. New
+    Query/DebtTree and Query/Move; Query/Redelegation removed. Events
+    `shieldedstaking_slash_debt`, `shieldedstaking_move_slashed`,
+    `shieldedstaking_debt_row`; `shieldedstaking_redelegate` has `credited`
+    (was `minted`), `move_key`, `move_time`. Genesis `moves` (19),
+    `debt_rows` (20), `max_unbonding_seconds` (21). Invariant 10.
+  - x/shieldedstaking: **MsgStakeVote votes up to two notes**
+    (`vote_nullifiers` exactly 2) and names `debt_root` (11, the current one;
+    also in the sighash); a labelled note votes its value after slashes.
+    9 public inputs.
+  - x/shieldedstaking: the stake tree records its empty root at the first
+    block. Both books of a redelegation, and the source of a slashed
+    redelegation, are re-weighed in the same block; positions' splits drop
+    options pruned since (on export; the re-filed voter at once).
+  - x/allocation: **Groundworks weight counts a self-bond only at a Bonded
+    validator** (audit 7 D7-L2); operators are resynced when their validator
+    bonds or starts unbonding, their vote kept at weight zero meanwhile.
+  - app: **the gov module account is on the blocked-address list** (audit 7
+    D7-L1).
+
 - Private redelegation (user decision, the one exception to the feature
   freeze; ORCHARD_DESIGN.md section 19, STAKING_WAVE_PROGRESS.md). No circuit,
   verifying key or genesis change (genesis.json sha256

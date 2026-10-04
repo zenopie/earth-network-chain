@@ -81,7 +81,61 @@ ORCHARD_DESIGN.md section 18.
   redelegation (not undelegation) for 21 days. Fix ("lanes": several
   delegator accounts) deferred.
 
+## Change 4: one stake note per validator; note-enforced slash debt (user decisions)
+- [x] circuits/stake v2 (mobile 0ec5e4c, f02ec61): two lanes (lane A 2 in /
+  1 out with v_in and v_out; credit lane 1 in / 1 out), padding inputs and
+  outputs, slash labels (keep or clear at the debt tree), 16 public inputs,
+  16,242 gates (2^14), 52 nargo tests. spc_mint gone.
+- [x] circuits/vote v2: 2 slots, labelled notes at their debt-adjusted
+  value, debt_root public; 21,716 gates (2^15); 45 nargo tests.
+  privacy_core: stake_cm with label, stake_label, debt_leaf,
+  debt_retained; Go parity (zk/debt TestNoirParity). Bundled stake.json,
+  vote.json rebuilt.
+- [x] The chain mints no stake note: MsgDelegate.derth / MsgRedelegate.
+  dst_derth named by the wallet, checked against the live rate
+  (checkCredit); unlock merges the position's derth. Restake merges only.
+- [x] Redelegation without BeginRedelegate (moveBonded, recordEntry): no
+  transitive lock, no max_entries; one entry per block per pair, 4,096 cap
+  (joining the latest entry, which keeps its height and completion).
+- [x] Slash debt: labels (move key = credit nullifier, move_time, exposed),
+  window = longest unbonding seen + 600 s, zk/debt indexed tree (rows for
+  slashed moves only), slash watch (BeforeValidatorModified + Unbond count,
+  settled in the BeginBlocker), dst supply cut so the rate holds,
+  per-move retained, invariant 10, genesis moves/debt_rows/max_unbonding.
+- [x] Votes: snapshot rule unchanged (the pre-merge note votes the
+  pre-existing value; the merged note cannot; no double vote).
+- [x] Tests: TestRedelegateSlashDebt (slash before the move, evidence
+  after; dst rate unchanged; the exposed note merged with a top-up keeps
+  its label, cannot leave, votes its haircut value, clears at the window's
+  end and pays exactly its value), TestRedelegateSlashDuringMaturity,
+  TestRedelegateMergeRules, TestRedelegateNoLockout (griefer inbound, 41
+  entries), TestRedelegateEntryCap, TestRedelegateVoteSnapshot (top-up
+  after the snapshot), TestRedelegateMovesStakeWithoutGap,
+  TestRedelegateGroundworksWeight, TestRedelegateGenesisRoundTrip,
+  TestRedelegateInvariant; the whole staking suite on the new harness;
+  zk/debt and types unit tests. VKs, staking (258) and dex proof fixtures,
+  genesis sha256 ffb269c5047e823b3f3aa27034767ff894c9fe76626703ccf42d0b1b321b6b59.
+- [x] Audit 7 (module D) items: both books re-weighed after a
+  redelegation, the source too after a slashed redelegation; pruned options
+  dropped from position splits (export) and re-filed voters; D7-L2
+  bonded-only Groundworks weight; D7-L1 gov blocked.
+- [ ] Known limits: past 4,096 maturing entries for one pair, an infraction
+  between the latest entry's height and a joining move's falls on the
+  source's stake; exposed derth waits up to the unbonding time before it can
+  be undelegated, locked or redelegated on (x/staking's own per-delegator
+  transitive rule, now per note).
+
 ## Wallet and backend follow-ups (not in this repo)
+- Stake v2 (ORCHARD_DESIGN 20.8): one note per validator (merge on every
+  delegate, unlock, redelegate credit); padding nullifier and zero-note
+  outputs; quote derth with a margin; StakeProof fields (commitment,
+  ciphertext, credit_*, clear_before, debt_root); 201-byte stake
+  ciphertexts with the label; track labels (move_key = the credit
+  nullifier) and clear them after the window (Query/DebtTree, zk/debt
+  witness); Android PrivacyProver STAKE 11 -> 16 public inputs, VOTE 10 -> 9
+  (2 slots + debt_root); iOS likewise.
+- Indexer: `shieldedstaking_debt_row` events (the debt tree's stream),
+  `slash_debt`, `move_slashed`; Query/Redelegation is gone.
 - Undelegate: send pc + ciphertext; drop the claim flow and claim-note
   scanning; watch shieldedstaking_unbond_payout / shielded_mint.
 - Vote: 4-slot witness arrays, 10 public inputs (Android PrivacyProver VOTE
