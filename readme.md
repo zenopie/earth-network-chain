@@ -528,26 +528,62 @@ container image is `ghcr.io/zenopie/earth-network-chain`, pinned by digest.
 
 ## Development
 
-```bash
-# the proof verifier is cgo — build its native library first
-cd third_party/barretenberg-go && ./scripts/build-wrapper.sh --platform darwin_arm64
-cd ../.. && make install
+Go 1.25.10 (`go.mod`). The proof verifier is cgo over Barretenberg; the
+darwin_arm64 library is committed, other platforms build it first.
 
-scripts/testnet-3val.sh up  # local 3-validator chain, binary only
-ignite chain serve          # or a single-node devnet from config.yml
-go test ./...
+```bash
+# other platforms: build the verifier's native library (linux_amd64, linux_arm64, ...)
+(cd third_party/barretenberg-go && ./scripts/build-wrapper.sh --platform linux_amd64)
+
+make install                # earthd into $GOBIN
+go vet ./... && go test ./...   # what CI runs (make test adds govulncheck)
+make genesis-check          # networks/genesis.json is reproducible from its sources
+scripts/testnet-3val.sh up  # local 3-validator chain from networks/genesis.json
 ```
 
-`config.yml` drives the local devnet only. The launch genesis is built from
-`networks/genesis/` — see [its README](networks/genesis/README.md) — and a test fails
-if the two disagree about anything they both state.
+Tests need no prover: every zero-knowledge proof they verify is a committed
+fixture, looked up by its public inputs. Nothing in a normal test run
+writes to `testdata/`.
+
+`config.yml` is the single-node dev chain's genesis; the launch genesis is
+built from `networks/genesis/` (see [its README](networks/genesis/README.md)),
+and `networks/configyml_test.go` fails if the two disagree about anything they
+both state.
 
 | | |
 | --- | --- |
 | `make genesis` | rebuild `networks/genesis.json` from its sources |
 | `make genesis-check` | fail if the artifact has drifted |
+| `make proto-gen` | regenerate the `.pb.go` files with buf (reproducible byte for byte) |
+| `make lint` | golangci-lint |
 | `scripts/rehearse-upgrade.sh` | run a governance upgrade end to end locally |
+| `scripts/rehearse-cosmovisor.sh`, `rehearse-cosmovisor-restart.sh` | the same through cosmovisor, before and after the halt |
 | `docker/entrypoint_test.sh` | exercise the container's three boot paths |
+
+### Circuits, verifying keys and proof fixtures
+
+The circuits live in the mobile repository (`earth-network-mobile/circuits`;
+every script below takes its path, defaulting to the sibling checkout). They
+need nargo 1.0.0-beta.22 and bb v5.0.0 on `PATH` (or in `~/.nargo/bin`,
+`~/.bb`). Proofs are randomized: regenerating one changes its bytes, so only
+regenerate what a change actually invalidated.
+
+| | |
+| --- | --- |
+| `make privacy-vks-check` | fail unless every committed action, membership, stake and vote key equals what the circuits produce |
+| `scripts/privacy-vks.sh` (`make privacy-vks`) | after a circuit change: write those keys to genesis sources, `config.yml` and test copies; then `make genesis` |
+| `scripts/shielded-fixtures.sh` | action proofs for x/shielded's scenario and app tests (`x/shielded/testdata/proofs`) |
+| `scripts/staking-fixtures.sh` | action, stake and vote proofs for the private staking app tests (`x/shieldedstaking/testdata/proofs`) |
+| `scripts/dex-fixtures.sh` | action proofs for the dex note-path app tests (`x/dex/testdata/proofs`) |
+| `scripts/personhood-fixtures.sh` | passport proofs per test registration and the membership and action proofs of the personhood and assembly app tests (`x/personhood/testdata`) |
+| `scripts/orchard-bundles.sh` | 1/2/3/10-action bundles and the over-note-maximum negative fixture for `zk/ultrahonk`, with prove timings |
+| `scripts/privacy-parity.sh` | Go/Noir parity and a proof fixture for the membership circuit (`zk/ultrahonk/testdata/membership`) |
+| `scripts/regen-poa-fixtures.sh` | passport circuit fixtures for every variant (`zk/ultrahonk/testdata/lean_poa*`) |
+
+After a circuit change: `scripts/privacy-vks.sh`, then every fixture script
+whose circuit changed, then `make genesis`. The passport circuits' genesis keys
+(`networks/genesis/verifying-keys/`) are copied in by hand from the same
+`bb write_vk` output.
 
 ## Releasing
 
@@ -573,6 +609,10 @@ Operational guides stay next to the code:
 | [trust-store-runbook](https://docs.erth.network) | revoking or adding passport certificates |
 | [launch-checklist](https://docs.erth.network) | what still stands between here and a launch |
 | [networks/genesis/README.md](networks/genesis/README.md) | how the genesis is built |
+| [ORCHARD_DESIGN.md](ORCHARD_DESIGN.md) | the privacy layer's specification: notes, bundles, circuits, staking, slash debt, wallet formats |
+| [HISTORY.md](HISTORY.md) | how that design got here, and the alternatives rejected |
+| [AUDIT_HISTORY.md](AUDIT_HISTORY.md) | every audit round, its findings, fixes and commits |
+| [CHANGELOG.md](CHANGELOG.md) | release notes for operators |
 
 ## License
 
