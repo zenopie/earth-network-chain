@@ -72,6 +72,69 @@ message ValidatorState {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+  // slash_debt is the derth taken off derth_supply by slashes of private
+  // redelegations INTO this validator (ORCHARD_DESIGN.md section 20): what
+  // x/staking burned from the module's delegation here, valued at the rate,
+  // so the rate did not move. The exposed notes pay it as they clear their
+  // labels (their exposure counts at its retained value). Only grows.
+  string slash_debt = 9 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// Move is a private redelegation while a slash of its source can still reach
+// it (until its x/staking entry matures). Its credited derth/<dst> sits,
+// labelled with the move, in its owner's note at dst; the label clears once
+// the window closes, at what the slash debt tree says it is worth.
+message Move {
+  // key is the move key: the redelegation's credit nullifier (32 bytes),
+  // which the note's label carries.
+  bytes key = 1;
+  string src_validator = 2;
+  string dst_validator = 3;
+  // height is the block it ran in; move_time the time its msg named (unix
+  // seconds, at most move_time_slack before the block): the label's.
+  int64 height = 4;
+  uint64 move_time = 5;
+  // credited is the derth/<dst> it credited: the note's exposure.
+  string credited = 6 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // shares are its shares of the module's x/staking redelegation entry
+  // (src, dst, entry_height): what a slash of src takes, pro rata. 0 (and
+  // no entry) when the value moved out of src's queue alone or src was not
+  // bonded.
+  string shares = 7 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  int64 entry_height = 8;
+  // completion is when the entry matures (unix ns); the record is dropped
+  // then (a slashed move keeps its debt row).
+  int64 completion = 9;
+  // retained is what the exposure is still worth: credited, less the
+  // slashes so far.
+  string retained = 10 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// DebtRow is one row of the slash debt tree: a slashed move's key and what
+// its exposure is still worth.
+message DebtRow {
+  bytes key = 1;
+  uint64 retained = 2;
 }
 
 // SupplyCheckpoint is a book's derth supply just before its first change

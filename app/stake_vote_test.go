@@ -32,6 +32,7 @@ import (
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
+	"github.com/earth-network/earth/zk/debt"
 	"github.com/earth-network/earth/zk/indexed"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/privacy"
@@ -85,13 +86,16 @@ func (e *stakeEnv) vnf(n *snote, proposalID uint64) []byte {
 }
 
 // votePlan is a vote proof's witness: per used slot, the note, its path
-// under the snapshot's note root, and its low leaf under the snapshot's
-// nullifier root.
+// under the snapshot's note root, its low leaf under the snapshot's
+// nullifier root, and (a labelled note) its debt witness under the current
+// debt root.
 type votePlan struct {
-	notes []*snote
-	paths [][merkle.Depth]fr.Element
-	lows  []indexed.Witness
-	snap  sstypes.ProposalSnapshot
+	notes    []*snote
+	paths    [][merkle.Depth]fr.Element
+	lows     []indexed.Witness
+	debts    []debt.Witness
+	debtRoot []byte
+	snap     sstypes.ProposalSnapshot
 }
 
 // votePlanFor lays out the vote witness of ns (1..MaxVoteNotes notes of one
@@ -107,6 +111,10 @@ func (e *stakeEnv) votePlanFor(ns []*snote, proposalID uint64) *votePlan {
 	require.NoError(e.t, err)
 	vp := &votePlan{notes: ns, snap: snap}
 	nft := e.snapshotNfTree(snap)
+	dt := e.debtTree()
+	dr, err := dt.Root()
+	require.NoError(e.t, err)
+	vp.debtRoot = privacy.FieldBytes(dr)
 	for _, n := range ns {
 		size := snap.TreeSize
 		if n.pos >= size {
@@ -136,6 +144,12 @@ func (e *stakeEnv) votePlanFor(ns []*snote, proposalID uint64) *votePlan {
 		}
 		vp.paths = append(vp.paths, path)
 		vp.lows = append(vp.lows, low)
+		var dw debt.Witness
+		if n.labelled() {
+			dw, err = dt.Lookup(n.moveKey)
+			require.NoError(e.t, err)
+		}
+		vp.debts = append(vp.debts, dw)
 	}
 	return vp
 }
@@ -144,39 +158,64 @@ func (e *stakeEnv) votePlanFor(ns []*snote, proposalID uint64) *votePlan {
 // inputs. Unused slots: amount 0, everything else zero.
 func (e *stakeEnv) voteWitness(m *sstypes.MsgStakeVote, vp *votePlan, sighash fr.Element) (string, [][]byte) {
 	pub := m.VotePublicInputs(vp.snap.Root, vp.snap.NfRoot, sighash)
-	q := func(x fr.Element) string { return fmt.Sprintf("\"0x%x\"", privacy.FieldBytes(x)) }
-	path := func(xs [merkle.Depth]fr.Element) string {
-		parts := make([]string, len(xs))
-		for i, x := range xs {
-			parts[i] = q(x)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	}
 	const n = sstypes.MaxVoteNotes
-	var amount, rho, rcm, pos, paths, lowV, lowNV, lowNI, lowI, lowP [n]string
-	for i := range n {
-		var zero [merkle.Depth]fr.Element
-		amount[i], rho[i], rcm[i], pos[i], paths[i] = `"0"`, q(fr.Element{}), q(fr.Element{}), `"0"`, path(zero)
-		lowV[i], lowNV[i], lowNI[i], lowI[i], lowP[i] = q(fr.Element{}), q(fr.Element{}), `"0"`, `"0"`, path(zero)
-		if i < len(vp.notes) {
-			nt, lw := vp.notes[i], vp.lows[i]
-			amount[i], rho[i], rcm[i], pos[i], paths[i] = fmt.Sprintf(`"%d"`, nt.amount), q(nt.rho), q(nt.rcm), fmt.Sprintf(`"%d"`, nt.pos), path(vp.paths[i])
-			lowV[i], lowNV[i] = q(lw.Low.Value), q(lw.Low.NextValue)
-			lowNI[i], lowI[i], lowP[i] = fmt.Sprintf(`"%d"`, lw.Low.NextIndex), fmt.Sprintf(`"%d"`, lw.Index), path(lw.Path)
-		}
-	}
-	arr := func(xs [n]string) string { return "[" + strings.Join(xs[:], ", ") + "]" }
+	var zero [merkle.Depth]fr.Element
 	var b strings.Builder
-	fmt.Fprintf(&b, "nk = %s\namount = %s\nrho = %s\nrcm = %s\npos = %s\npath = %s\n",
-		q(e.w.nk), arr(amount), arr(rho), arr(rcm), arr(pos), arr(paths))
-	fmt.Fprintf(&b, "low_value = %s\nlow_next_value = %s\nlow_next_index = %s\nlow_index = %s\nlow_path = %s\n",
-		arr(lowV), arr(lowNV), arr(lowNI), arr(lowI), arr(lowP))
-	var vnfs [n]string
-	for i := range n {
-		vnfs[i] = fmt.Sprintf(`"0x%x"`, pub[5+i])
+	arr := func(name string, f func(i int) string) {
+		xs := make([]string, n)
+		for i := range xs {
+			xs[i] = f(i)
+		}
+		fmt.Fprintf(&b, "%s = [%s]\n", name, strings.Join(xs, ", "))
 	}
-	fmt.Fprintf(&b, "note_root = \"0x%x\"\nnf_root = \"0x%x\"\nasset = \"0x%x\"\nweight = \"%d\"\nproposal_id = \"%d\"\nvnf = %s\nsighash = \"0x%x\"\n",
-		pub[0], pub[1], pub[2], m.Weight, m.ProposalId, arr(vnfs), pub[5+n])
+	used := func(i int) bool { return i < len(vp.notes) }
+	note := func(i int) *snote {
+		if used(i) {
+			return vp.notes[i]
+		}
+		return &snote{}
+	}
+	fmt.Fprintf(&b, "nk = %s\n", tomlQ(e.w.nk))
+	arr("amount", func(i int) string { return tomlU(note(i).amount) })
+	arr("rho", func(i int) string { return tomlQ(note(i).rho) })
+	arr("rcm", func(i int) string { return tomlQ(note(i).rcm) })
+	arr("pos", func(i int) string { return tomlU(note(i).pos) })
+	arr("path", func(i int) string {
+		if used(i) {
+			return tomlPath(vp.paths[i])
+		}
+		return tomlPath(zero)
+	})
+	arr("move_key", func(i int) string { return tomlQ(note(i).moveKey) })
+	arr("move_time", func(i int) string { return tomlU(note(i).moveTime) })
+	arr("exposed", func(i int) string { return tomlU(note(i).exposed) })
+	low := func(i int) indexed.Witness {
+		if used(i) {
+			return vp.lows[i]
+		}
+		return indexed.Witness{}
+	}
+	arr("low_value", func(i int) string { return tomlQ(low(i).Low.Value) })
+	arr("low_next_value", func(i int) string { return tomlQ(low(i).Low.NextValue) })
+	arr("low_next_index", func(i int) string { return tomlU(low(i).Low.NextIndex) })
+	arr("low_index", func(i int) string { return tomlU(low(i).Index) })
+	arr("low_path", func(i int) string { return tomlPath(low(i).Path) })
+	dw := func(i int) debt.Witness {
+		if used(i) {
+			return vp.debts[i]
+		}
+		return debt.Witness{}
+	}
+	arr("debt_low_key", func(i int) string { return tomlQ(dw(i).Low.Key) })
+	arr("debt_low_next_key", func(i int) string { return tomlQ(dw(i).Low.NextKey) })
+	arr("debt_low_next_index", func(i int) string { return tomlU(dw(i).Low.NextIndex) })
+	arr("debt_low_retained", func(i int) string { return tomlU(dw(i).Low.Retained) })
+	arr("debt_low_index", func(i int) string { return tomlU(dw(i).Index) })
+	arr("debt_low_path", func(i int) string { return tomlPath(dw(i).Path) })
+	fmt.Fprintf(&b, "note_root = \"0x%x\"\nnf_root = \"0x%x\"\ndebt_root = \"0x%x\"\nasset = \"0x%x\"\nweight = \"%d\"\nproposal_id = \"%d\"\n",
+		pub[0], pub[1], pub[2], pub[3], m.Weight, m.ProposalId)
+	arr("vnf", func(i int) string { return fmt.Sprintf(`"0x%x"`, pub[6+i]) })
+	fmt.Fprintf(&b, "sighash = \"0x%x\"\n", pub[6+n])
 	return b.String(), pub
 }
 
@@ -221,14 +260,14 @@ func (e *stakeEnv) stakeVoteNotesMsg(ns []*snote, proposalID uint64, opts []*v1.
 		var sum uint64
 		for _, n := range ns {
 			require.Equal(e.t, ns[0].denom, n.denom)
-			sum += n.amount
+			sum += e.clearedValue(n) // a labelled note votes its value now
 		}
 		weight = sstypes.RoundVoteWeight(sum)
 	}
 	vp := e.votePlanFor(ns, proposalID)
 	fee := e.feeOnly()
 	m := &sstypes.MsgStakeVote{Bundle: fee.b, ProposalId: proposalID, Validator: v, Options: opts,
-		Weight: weight, VoteNullifiers: e.voteNullifiers(ns, proposalID)}
+		Weight: weight, VoteNullifiers: e.voteNullifiers(ns, proposalID), DebtRoot: vp.debtRoot}
 	if !prove {
 		unproven(m)
 		return m, fee, vp
@@ -283,14 +322,23 @@ func requireRefused(t *testing.T, err error) {
 	}
 }
 
-// restakeAll spends all of n into two new notes of the same owner (split).
-func (e *stakeEnv) restakeAll(n *snote) (*snote, *snote) {
+// restake merges ns (one or two notes of one validator) into one note,
+// clearing a labelled one's label when clear.
+func (e *stakeEnv) restake(ns []*snote, clear bool) *snote {
 	e.t.Helper()
-	v, ok := sstypes.ParseDerthDenom(n.denom)
+	v, ok := sstypes.ParseDerthDenom(ns[0].denom)
 	require.True(e.t, ok)
-	a, b := e.freshStake(n.denom, n.amount/2), e.freshStake(n.denom, n.amount-n.amount/2)
+	var amount uint64
+	for _, n := range ns {
+		if clear {
+			amount += e.clearedValue(n)
+		} else {
+			amount += n.amount
+		}
+	}
+	out := e.freshStake(ns[0].denom, amount)
 	p := e.feeOnly()
-	sp := e.stake(&stakePlan{denom: n.denom, ins: []*snote{n}, outs: []*snote{a, b}})
+	sp := e.stake(&stakePlan{denom: ns[0].denom, ins: ns, out: out, clear: clear})
 	m := &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: sp.proof}
 	e.prove(m, p)
 	e.proveStake(m, sp)
@@ -298,8 +346,8 @@ func (e *stakeEnv) restakeAll(n *snote) (*snote, *snote) {
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.settle(p)
 	e.settleStake(sp)
-	require.True(e.t, a.known && b.known)
-	return a, b
+	require.True(e.t, out.known)
+	return out
 }
 
 // One stake note votes on two concurrently open proposals (the decoy
@@ -317,11 +365,13 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 	e.shield(uint64(5_000 * ssErth))
 	e.shield(uint64(200 * ssErth))
 	e.shield(uint64(200 * ssErth))
-	n := e.delegate(vB, uint64(1_000*ssErth))
-	k := e.delegate(vB, uint64(600*ssErth))
-	m := e.delegate(vB, uint64(300*ssErth))
+	// Three notes at one validator (a wallet that did not merge: two
+	// devices, or before the one-note rule).
+	n := e.delegateWith(vB, uint64(1_000*ssErth), true)
+	k := e.delegateWith(vB, uint64(600*ssErth), true)
+	m := e.delegateWith(vB, uint64(300*ssErth), true)
 	// m is spent before voting begins.
-	m1, _ := e.restakeAll(m)
+	m1 := e.restake([]*snote{m}, false)
 	e.next(5 * time.Second)
 
 	prop1 := e.submitProposal()
@@ -331,7 +381,7 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 		s, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), p)
 		require.NoError(t, err)
 		require.NotEmpty(t, s.NfRoot)
-		require.Equal(t, uint64(2), s.NfSize, "the sentinel and m's nullifier")
+		require.Equal(t, uint64(5), s.NfSize, "the sentinel, the three delegations' padding nullifiers and m's")
 		snaps[p] = s
 	}
 	require.Equal(t, snaps[prop1].NfRoot, snaps[prop2].NfRoot)
@@ -371,7 +421,7 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 
 	// k is restaked after the snapshots: k still votes (its nullifier went
 	// in after nf_root), its outputs cannot (not under the note root).
-	k1, _ := e.restakeAll(k)
+	k1 := e.restake([]*snote{k}, false)
 	sk1, _, vpk1 := e.stakeVoteMsg(k1, prop1, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
 	_, err = e.tryProveVote(sk1, vpk1)
 	requireRefused(t, err)
@@ -386,7 +436,9 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 		require.NoError(t, err)
 		return tl
 	}
-	dec := func(x uint64) math.LegacyDec { return math.LegacyNewDecFromInt(math.NewIntFromUint64(x)) }
+	dec := func(x uint64) math.LegacyDec {
+		return math.LegacyNewDecFromInt(math.NewIntFromUint64(sstypes.RoundVoteWeight(x)))
+	}
 	t1 := tally(prop1)
 	require.Equal(t, dec(n.amount), t1.Yes)
 	require.Equal(t, dec(m1.amount), t1.No)
@@ -446,12 +498,14 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 	require.ErrorContains(t, err, "stake nullifier root")
 }
 
-// One vote per person: up to four of an owner's stake notes at a validator
+// One vote per person: up to two of an owner's stake notes at a validator
 // vote in one msg with ONE public weight (their sum rounded down to three
-// significant digits), each note's vote nullifier recorded. A note already
-// in a vote is refused in another (even mixed with fresh notes); notes
-// beyond four vote in a second msg; the tally counts each weight once; the
-// shape rules hold before any proof is read.
+// significant digits), each note's vote nullifier recorded. With one note
+// per validator a vote uses one slot; the second covers a note made beside
+// a labelled one (or a wallet that did not merge). A note already in a vote
+// is refused in another (even beside a fresh note); a third note votes in a
+// second msg; the tally counts each weight once; the shape rules hold before
+// any proof is read.
 func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)
@@ -459,38 +513,38 @@ func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 	e.shield(uint64(5_000 * ssErth))
 	e.shield(uint64(200 * ssErth))
 	var ns []*snote
-	for i, amt := range []int64{123, 456, 789, 1011, 1213} {
-		ns = append(ns, e.delegate(vB, uint64(amt*ssErth+int64(i)*7_777)))
+	for i, amt := range []int64{123, 456, 789} {
+		ns = append(ns, e.delegateWith(vB, uint64(amt*ssErth+int64(i)*7_777), true))
 	}
 	e.next(5 * time.Second)
 	prop := e.submitProposal()
 
-	// The shape, before any proof: exactly four slots, used ones first,
-	// distinct; five notes do not fit.
+	// The shape, before any proof: exactly two slots, used ones first,
+	// distinct; three notes do not fit.
 	m, _, _ := e.stakeVoteNotesMsg(ns[:2], prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
 	z := make([]byte, 32)
 	for name, vnfs := range map[string][][]byte{
-		"three slots":   m.VoteNullifiers[:3],
-		"five slots":    append(append([][]byte{}, m.VoteNullifiers...), z),
-		"gap":           {m.VoteNullifiers[0], z, m.VoteNullifiers[1], z},
-		"none used":     {z, z, z, z},
-		"repeated note": {m.VoteNullifiers[0], m.VoteNullifiers[0], z, z},
+		"one slot":      m.VoteNullifiers[:1],
+		"three slots":   append(append([][]byte{}, m.VoteNullifiers...), z),
+		"gap":           {z, m.VoteNullifiers[1]},
+		"none used":     {z, z},
+		"repeated note": {m.VoteNullifiers[0], m.VoteNullifiers[0]},
 	} {
 		bad := *m
 		bad.VoteNullifiers = vnfs
 		require.Error(t, bad.ValidateBasic(), name)
 	}
 	require.NoError(t, m.ValidateBasic())
+	noRoot := *m
+	noRoot.DebtRoot = nil
+	require.Error(t, noRoot.ValidateBasic(), "a vote names the debt root")
 
-	// Four notes, one msg, one weight.
-	var sum4 uint64
-	for _, n := range ns[:4] {
-		sum4 += n.amount
-	}
-	v4 := e.stakeVoteNotes(ns[:4], prop, v1.OptionYes)
-	require.Equal(t, sstypes.RoundVoteWeight(sum4), v4.Weight)
-	require.Less(t, v4.Weight, sum4, "the exact sum is not published")
-	for _, n := range ns[:4] {
+	// Two notes, one msg, one weight.
+	sum2 := ns[0].amount + ns[1].amount
+	v2 := e.stakeVoteNotes(ns[:2], prop, v1.OptionYes)
+	require.Equal(t, sstypes.RoundVoteWeight(sum2), v2.Weight)
+	require.Less(t, v2.Weight, sum2, "the exact sum is not published")
+	for _, n := range ns[:2] {
 		used, err := e.app.ShieldedStakingKeeper.UsedVoteNullifiers.Has(e.ctx(), collections.Join(prop, e.vnf(n, prop)))
 		require.NoError(t, err)
 		require.True(t, used)
@@ -498,18 +552,24 @@ func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 	require.Equal(t, 1, countVotes(t, e, prop))
 
 	// A note that voted cannot vote again, not even beside a fresh one.
-	again, _, _ := e.stakeVoteNotesMsg([]*snote{ns[4], ns[2]}, prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
+	again, _, _ := e.stakeVoteNotesMsg([]*snote{ns[2], ns[1]}, prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
 	res := e.checkTx(e.privateTx(again))
 	require.Equal(t, sstypes.ErrVoteNullifierUsed.ABCICode(), res.Code, res.Log)
+	// A stale debt root is refused before any proof is read.
+	stale, _, _ := e.stakeVoteMsg(ns[2], prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
+	stale.DebtRoot = privacy.FieldBytes(ssDet("stale-debt-root", 0))
+	res = e.checkTx(e.privateTx(stale))
+	require.Equal(t, sstypes.ErrStakeTree.ABCICode(), res.Code, res.Log)
+	require.Contains(t, res.Log, "debt root")
 
-	// The fifth note votes in a second msg (its own weight).
-	e.stakeVote(ns[4], prop, v1.OptionNo)
+	// The third note votes in a second msg (its own weight).
+	e.stakeVote(ns[2], prop, v1.OptionNo)
 	require.Equal(t, 2, countVotes(t, e, prop))
 
 	tl, err := e.app.ShieldedStakingKeeper.Tallies.Get(e.ctx(), collections.Join(prop, e.valoper(vB)))
 	require.NoError(t, err)
-	require.Equal(t, math.LegacyNewDecFromInt(math.NewIntFromUint64(v4.Weight)), tl.Yes)
-	require.Equal(t, math.LegacyNewDecFromInt(math.NewIntFromUint64(sstypes.RoundVoteWeight(ns[4].amount))), tl.No)
+	require.Equal(t, math.LegacyNewDecFromInt(math.NewIntFromUint64(v2.Weight)), tl.Yes)
+	require.Equal(t, math.LegacyNewDecFromInt(math.NewIntFromUint64(sstypes.RoundVoteWeight(ns[2].amount))), tl.No)
 	e.invariants()
 
 	// Genesis carries each note vote with its vote nullifiers, keyed by the first.

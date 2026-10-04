@@ -25,7 +25,10 @@ import (
 //	U_v  private undelegations booked against v and not yet undelegated
 //	     (ValidatorState.pending_undelegation)
 //	S_v  the derth/v outstanding (ValidatorState.derth_supply: stake notes
-//	     and positions; derth is never a coin)
+//	     and positions, each labelled exposure at what it is still worth
+//	     (moves.go: a slash of a redelegation into v takes the derth the
+//	     burnt value backed off S_v, so the rate does not move); derth is
+//	     never a coin)
 //
 // Every conversion uses the live B_v and S_v, in integers, rounding toward the
 // pool: a delegation of a mints floor(a * S / B) derth; an undelegation of d
@@ -51,10 +54,14 @@ func (k Keeper) ValidatorState(ctx context.Context, valoper string) (types.Valid
 			EpochRate:           math.LegacyOneDec(),
 			DerthSupply:         math.ZeroInt(),
 			SupplyAtBlockStart:  math.ZeroInt(),
+			SlashDebt:           math.ZeroInt(),
 		}, nil
 	}
 	if err == nil && vs.DerthSupply.IsNil() {
 		vs.DerthSupply = math.ZeroInt()
+	}
+	if err == nil && vs.SlashDebt.IsNil() {
+		vs.SlashDebt = math.ZeroInt()
 	}
 	if err == nil && vs.SupplyAtBlockStart.IsNil() {
 		vs.SupplyAtBlockStart = math.ZeroInt()

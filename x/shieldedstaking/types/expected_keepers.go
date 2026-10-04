@@ -65,14 +65,15 @@ type StakingKeeper interface {
 	IterateRedelegations(ctx context.Context, fn func(index int64, red stakingtypes.Redelegation) (stop bool)) error
 	IterateUnbondingDelegations(ctx context.Context, fn func(index int64, ubd stakingtypes.UnbondingDelegation) (stop bool)) error
 	// Private redelegation (MsgRedelegate): the module moves its own stake
-	// between validators under x/staking's rules (no transitive
-	// redelegation, max_entries per pair); a slash of the source reaches
-	// the entries (GetRedelegationsFromSrcValidator).
-	BeginRedelegation(ctx context.Context, delAddr sdk.AccAddress, valSrcAddr, valDstAddr sdk.ValAddress,
-		sharesAmount math.LegacyDec) (completionTime time.Time, errorResult error)
-	HasReceivingRedelegation(ctx context.Context, delAddr sdk.AccAddress, valDstAddr sdk.ValAddress) (bool, error)
-	HasMaxRedelegationEntries(ctx context.Context, delegatorAddr sdk.AccAddress, validatorSrcAddr, validatorDstAddr sdk.ValAddress) (bool, error)
-	GetRedelegations(ctx context.Context, delegator sdk.AccAddress, maxRetrieve uint16) ([]stakingtypes.Redelegation, error)
+	// between validators with x/staking's primitives (no transitive lock, no
+	// max_entries: its stake is pooled, and each move's slash exposure is
+	// carried by its notes) and records the redelegation entry itself, so a
+	// slash of the source still reaches it (GetRedelegationsFromSrcValidator).
+	Unbond(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress, shares math.LegacyDec) (math.Int, error)
+	SetRedelegationEntry(ctx context.Context, delegatorAddr sdk.AccAddress, validatorSrcAddr, validatorDstAddr sdk.ValAddress,
+		creationHeight int64, minTime time.Time, balance math.Int, sharesSrc, sharesDst math.LegacyDec) (stakingtypes.Redelegation, error)
+	SetRedelegation(ctx context.Context, red stakingtypes.Redelegation) error
+	InsertRedelegationQueue(ctx context.Context, red stakingtypes.Redelegation, completionTime time.Time) error
 	GetRedelegation(ctx context.Context, delAddr sdk.AccAddress, valSrcAddr, valDstAddr sdk.ValAddress) (stakingtypes.Redelegation, error)
 	GetRedelegationsFromSrcValidator(ctx context.Context, valAddr sdk.ValAddress) ([]stakingtypes.Redelegation, error)
 	// A slash of a redelegation's source takes its share from the

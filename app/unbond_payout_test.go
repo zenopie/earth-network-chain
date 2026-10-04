@@ -23,7 +23,7 @@ func (e *stakeEnv) fakeUndelegate(val sdk.ValAddress, amount uint64, label strin
 	e.t.Helper()
 	pc := privacy.FieldBytes(ssDet("payout-pc/"+label, 0))
 	m := &sstypes.MsgUndelegate{Validator: e.valoper(val), Amount: amount,
-		Stake: sstypes.StakeProof{SpcMint: pc}, Pc: pc, Ciphertext: shieldedtest.BlindCT("payout/" + label)}
+		Stake: fakeStake("undelegate/"+label, false), Pc: pc, Ciphertext: shieldedtest.BlindCT("payout/" + label)}
 	res, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Undelegate(e.fakeAuthorized(m), m)
 	require.NoError(e.t, err)
 	return res

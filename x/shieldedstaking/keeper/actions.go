@@ -61,12 +61,12 @@ type preparedVote struct {
 	noteRoot, nfRoot []byte
 }
 
-// prepared is what Check derived: the sighash the stake proof binds, its
-// public asset and v_out. Handlers recompute what else they need.
+// prepared is what Check derived: the sighash the stake proof binds and
+// what the chain supplies to it (StakeLanes). Handlers recompute what else
+// they need.
 type prepared struct {
 	sighash fr.Element
-	asset   fr.Element
-	vOut    uint64
+	lanes   types.StakeLanes
 }
 
 // ActionHandler implements x/shielded's PrivateActionHandler for every
@@ -111,11 +111,19 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 		return 0, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
 	// The proof, two writes per nullifier slot (an insert into the indexed
-	// nullifier tree rewrites two paths: the low leaf's and the new leaf's),
-	// one per output, plus one for a note the chain mints (an undelegation's
-	// queued payout, which mints its pool note later, for free; a
-	// redelegation's derth/<dst> note).
-	writes := uint64(2*len(sm.StakeProofOf().Nullifiers)+len(sm.StakeProofOf().Commitments)) + 1
+	// nullifier tree rewrites two paths: the low leaf's and the new leaf's)
+	// and one per output slot, whether used or not: lane A's two nullifiers
+	// and one output, and the credit lane's one and one for a msg crediting
+	// a second asset. An undelegation adds one for its queued payout (which
+	// mints its pool note later, for free).
+	nfSlots, cmSlots := uint64(2), uint64(1)
+	if sm.StakeLanes().CreditDenom != "" {
+		nfSlots, cmSlots = nfSlots+1, cmSlots+1
+	}
+	writes := 2*nfSlots + cmSlots
+	if _, ok := msg.(*types.MsgUndelegate); ok {
+		writes++
+	}
 	var base uint64
 	switch msg.(type) {
 	case *types.MsgDelegate:
@@ -158,9 +166,10 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 		return nil, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
 	var err error
+	lanes := sm.StakeLanes()
 	switch m := msg.(type) {
 	case *types.MsgDelegate:
-		_, err = k.checkDelegate(ctx, m)
+		err = k.checkDelegate(ctx, m)
 	case *types.MsgRestake:
 		_, err = k.valAddr(m.Validator)
 	case *types.MsgUndelegate:
@@ -170,7 +179,10 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	case *types.MsgUpdatePosition:
 		_, err = k.checkUpdate(ctx, m)
 	case *types.MsgUnlockPosition:
-		_, err = k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
+		var p types.Position
+		if p, err = k.checkPositionOwner(ctx, m.PositionId, &m.Stake); err == nil {
+			lanes = types.UnlockLanes(p)
+		}
 	case *types.MsgPositionVote:
 		_, _, err = k.checkPositionVote(ctx, m)
 	case *types.MsgRedelegate:
@@ -183,22 +195,28 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	if err := k.checkStakeNullifiers(ctx, p.SpentNullifiers()); err != nil {
 		return nil, err
 	}
-	// Every proof that spends proves against the window. A proof that
-	// spends nothing proves no membership.
+	// A proof that may clear a slash label names an allowed clear_before
+	// and reads the current debt root (moves.go).
+	if err := k.checkStakeClear(ctx, p); err != nil {
+		return nil, err
+	}
+	// Every proof that publishes a nullifier proves against the window,
+	// padding included (the chain cannot tell it from a real spend). A proof
+	// that spends nothing proves no membership.
 	if len(p.SpentNullifiers()) > 0 {
 		if err := k.checkStakeAnchor(ctx, p.Anchor); err != nil {
 			return nil, err
 		}
 	}
 	cms, _ := p.Outputs()
-	if err := k.checkStakeCapacity(ctx, uint64(len(cms))+1); err != nil {
+	if err := k.checkStakeCapacity(ctx, uint64(len(cms))); err != nil {
 		return nil, err
 	}
 	sighash, err := shieldedtypes.SighashOf(ctx, msg, k.addressCodec)
 	if err != nil {
 		return nil, err
 	}
-	return prepared{sighash: sighash, asset: types.StakeAsset(sm.StakeDenom()), vOut: sm.VOut()}, nil
+	return prepared{sighash: sighash, lanes: lanes}, nil
 }
 
 // VerifyPrivateAction verifies the stake proof (a vote's vote proof, against
@@ -214,7 +232,7 @@ func (h ActionHandler) VerifyPrivateAction(ctx context.Context, msg shieldedtype
 	sm := msg.(types.StakeMsg)
 	p := pr.(prepared)
 	sp := sm.StakeProofOf()
-	if err := h.k.shielded.VerifyCircuit(ctx, shieldedtypes.CircuitStake, sp.Proof, sp.PublicInputs(p.asset, p.vOut, p.sighash)); err != nil {
+	if err := h.k.shielded.VerifyCircuit(ctx, shieldedtypes.CircuitStake, sp.Proof, sp.PublicInputs(p.lanes, p.sighash)); err != nil {
 		return errorsmod.Wrap(types.ErrInvalidStakeProof, err.Error())
 	}
 	return nil
@@ -240,44 +258,58 @@ func fitsNote(v math.Int) error {
 	return nil
 }
 
-// checkDelegate returns the derth the delegation mints.
-func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) (math.Int, error) {
+// checkDelegate refuses a delegation its amount does not pay for: the derth
+// it credits must be at most what amount buys at the live rate.
+func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) error {
 	if err := k.checkDelegatable(ctx, m.Validator); err != nil {
-		return math.Int{}, err
+		return err
 	}
 	params, err := k.Params.Get(ctx)
 	if err != nil {
-		return math.Int{}, err
+		return err
 	}
 	amount := math.NewIntFromUint64(m.Delegated())
 	if amount.LT(params.MinDelegation) {
-		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "a delegation is at least %s%s", params.MinDelegation, types.BondDenom)
+		return errorsmod.Wrapf(types.ErrAmount, "a delegation is at least %s%s", params.MinDelegation, types.BondDenom)
 	}
 	b, s, err := k.Backing(ctx, m.Validator)
 	if err != nil {
-		return math.Int{}, err
+		return err
 	}
 	if !s.IsPositive() && b.IsPositive() {
 		// Backing nobody owns (rewards accrued after the last holder's
 		// notes were minted): the epoch end settles it (processValidator).
 		// A delegation now would buy it at rate 1 (audit F5).
-		return math.Int{}, types.ErrValidator.Wrapf("%s's book is settling (no derth, %s%s backing); delegate after the epoch end", m.Validator, b, types.BondDenom)
+		return types.ErrValidator.Wrapf("%s's book is settling (no derth, %s%s backing); delegate after the epoch end", m.Validator, b, types.BondDenom)
 	}
-	d, err := derthFor(amount, b, s)
+	buys, err := derthFor(amount, b, s)
 	if err != nil {
-		return math.Int{}, err
+		return err
 	}
-	// At least min_delegation derth: a delegation's rounding loss (under one
-	// derth's value) is then at most 1/min_delegation of it, however far a
-	// donation to the validator's rewards pool has pushed the rate (audit
-	// F4); a delegation too small for that is refused, not rounded away.
-	if d.LT(params.MinDelegation) {
-		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "the delegation mints %s derth, less than the minimum %s (rate %s)", d, params.MinDelegation, rateOf(b, s))
+	return checkCredit("delegation", math.NewIntFromUint64(m.Derth), buys, params.MinDelegation, rateOf(b, s))
+}
+
+// checkCredit refuses derth a msg credits to its owner's note (credit) that
+// the value it brings does not buy at the live rate (buys, floored), or below
+// min_delegation: a delegation's rounding loss (under one derth's value) is
+// then at most 1/min_delegation of it, however far a donation to the
+// validator's rewards pool has pushed the rate (audit F4). The wallet names
+// the derth when it proves (the merged note's amount is in the proof); what
+// the value buys beyond it stays in the validator's book. Shared by every
+// msg that brings value in at a rate (a delegation, a redelegation's
+// arrival).
+func checkCredit(what string, credit, buys, min math.Int, rate math.LegacyDec) error {
+	if buys.LT(min) {
+		return errorsmod.Wrapf(types.ErrAmount, "the %s buys %s derth at the live rate %s, less than the minimum %s", what, buys, rate, min)
 	}
-	if err := fitsNote(d); err != nil {
-		return math.Int{}, err
+	if credit.LT(min) {
+		return errorsmod.Wrapf(types.ErrAmount, "the %s credits %s derth, less than the minimum %s", what, credit, min)
 	}
-	return d, nil
+	if credit.GT(buys) {
+		return errorsmod.Wrapf(types.ErrAmount, "the %s buys %s derth at the live rate %s, less than the %s it credits (the rate moved since the proof: re-quote with a margin)",
+			what, buys, rate, credit)
+	}
+	return fitsNote(credit)
 }
 
 // checkUndelegate returns the undelegation's ERTH value.
@@ -332,6 +364,11 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (type
 	}
 	if len(snap.NfRoot) == 0 {
 		return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d's snapshot has no stake nullifier root", m.ProposalId)
+	}
+	// A labelled note votes its value under the CURRENT debt tree (a slash
+	// since the snapshot counts).
+	if err := k.checkDebtRoot(ctx, m.DebtRoot); err != nil {
+		return snap, math.Int{}, err
 	}
 	d := math.NewIntFromUint64(m.Weight)
 	if d.GT(supply) {

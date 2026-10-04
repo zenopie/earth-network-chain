@@ -7,22 +7,23 @@ package app
 // (stake-<hash>.proof), proven with nargo + bb when EARTH_CIRCUITS is set.
 
 import (
-	"encoding/hex"
 	"fmt"
 	"strings"
 
-	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/stretchr/testify/require"
 
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
+	"github.com/earth-network/earth/zk/debt"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// snote is a stake note the wallet owns (or will).
+// snote is a stake note the wallet owns (or will). A note holding a
+// redelegation's exposure carries its slash label (moveKey, moveTime,
+// exposed).
 type snote struct {
 	denom    string
 	amount   uint64
@@ -30,7 +31,12 @@ type snote struct {
 	pos      uint64
 	known    bool
 	spent    bool
+	moveKey  fr.Element
+	moveTime uint64
+	exposed  uint64
 }
+
+func (n *snote) labelled() bool { return !n.moveKey.IsZero() }
 
 type stakeWallet struct {
 	notes   []*snote
@@ -47,8 +53,15 @@ func (e *stakeEnv) spc(n *snote) fr.Element {
 	return privacy.StakePC(privacy.OwnerPK(e.w.nk), n.rho, n.rcm)
 }
 
+func (e *stakeEnv) label(n *snote) fr.Element {
+	if !n.labelled() {
+		return fr.Element{}
+	}
+	return privacy.StakeLabel(n.moveKey, n.moveTime, n.exposed)
+}
+
 func (e *stakeEnv) scm(n *snote) fr.Element {
-	return privacy.StakeCM(privacy.AssetID(n.denom), n.amount, e.spc(n))
+	return privacy.StakeCM(privacy.AssetID(n.denom), n.amount, e.spc(n), e.label(n))
 }
 
 func (e *stakeEnv) snf(n *snote) fr.Element { return privacy.StakeNF(e.w.nk, n.rho, uint32(n.pos)) }
@@ -97,7 +110,8 @@ func (e *stakeEnv) stakeTree(size uint64) *merkle.Tree {
 	return t
 }
 
-// stakeBalance is the wallet's unspent stake of denom.
+// stakeBalance is the wallet's unspent stake of denom (nominal: labelled
+// exposures at their credited amount).
 func (e *stakeEnv) stakeBalance(denom string) uint64 {
 	var s uint64
 	for _, n := range e.sw.notes {
@@ -118,40 +132,52 @@ func (e *stakeEnv) unspentStake(denom string) *snote {
 	return nil
 }
 
-// mintedStake finds the stake note the chain minted to n's stake pc in res
-// (its amount read from the event) and tracks it.
-func (e *stakeEnv) mintedStake(res *abci.ExecTxResult, n *snote) *snote {
-	e.t.Helper()
-	want := hex.EncodeToString(privacy.FieldBytes(e.spc(n)))
-	for _, ev := range eventsOf(res.Events, sstypes.EventTypeStakeNote) {
-		if ev["spc"] != want {
-			continue
+// unlabelledStake is a known unspent unlabelled stake note of denom: the
+// one a redelegation's credit lane may merge into.
+func (e *stakeEnv) unlabelledStake(denom string) *snote {
+	for _, n := range e.sw.notes {
+		if n.known && !n.spent && n.denom == denom && !n.labelled() {
+			return n
 		}
-		require.Equal(e.t, n.denom, ev["denom"])
-		_, err := fmt.Sscan(ev["amount"], &n.amount)
-		require.NoError(e.t, err)
-		e.trackStake(n)
-		e.scanStake()
-		require.True(e.t, n.known, "minted stake note not found in the stake tree")
-		return n
 	}
-	e.t.Fatalf("no stake note minted to the wallet: %s", res.Log)
 	return nil
 }
 
-// stakePlan is a stake proof being built: up to two inputs (all of denom),
-// up to two outputs of the same owner, v_out leaving, a stake pc the chain may
-// mint to (mint, any denom), an owner tag salt, and the size of the stake
-// tree the inputs are proven under (0: the current tree).
+// creditLane is a stake proof's lane B: dst derth credited into in (an
+// unlabelled note; nil: a padding input), labelled with the move.
+type creditLane struct {
+	denom    string
+	in       *snote
+	vIn      uint64
+	moveTime uint64
+	// out is the merged note (amount in + vIn, labelled by the move),
+	// filled by stake.
+	out *snote
+	pad *snote
+}
+
+// stakePlan is a stake proof being built. Lane A: up to two inputs of denom
+// (none: a padding input, unless noSpend), one output (nil: a zero padding
+// note, unless noSpend), v_in credited, v_out leaving; a labelled input's
+// label is kept on the output, or cleared (clear) once its window closed.
+// Lane B: credit (a redelegation). An owner tag salt, and the size of the
+// stake tree the inputs are proven under (0: the current tree).
 type stakePlan struct {
-	denom  string
-	ins    []*snote
-	outs   []*snote
-	vOut   uint64
-	mint   *snote
-	salt   fr.Element
-	atSize uint64
-	proof  sstypes.StakeProof
+	denom   string
+	ins     []*snote
+	noSpend bool
+	out     *snote
+	vIn     uint64
+	vOut    uint64
+	clear   bool
+	credit  *creditLane
+	salt    fr.Element
+	atSize  uint64
+	proof   sstypes.StakeProof
+	// filled by stake: the padding input and zero output, the debt witness.
+	pad     *snote
+	zeroOut *snote
+	debtW   *debt.Witness
 }
 
 func pad2[T any](xs []T, zero T) [2]T {
@@ -160,47 +186,110 @@ func pad2[T any](xs []T, zero T) [2]T {
 	return out
 }
 
+// labelledIn is sp's labelled lane A input, nil if none.
+func (sp *stakePlan) labelledIn() *snote {
+	for _, n := range sp.ins {
+		if n.labelled() {
+			return n
+		}
+	}
+	return nil
+}
+
+// debtTree is the chain's slash debt tree as a wallet rebuilds it from the
+// rows in insertion order.
+func (e *stakeEnv) debtTree() *debt.Tree {
+	rows, err := e.app.ShieldedStakingKeeper.DebtRows(e.ctx(), 0, ^uint64(0))
+	require.NoError(e.t, err)
+	var rs []debt.Row
+	for _, r := range rows {
+		k, err := privacy.FieldFromBytes(r.Key)
+		require.NoError(e.t, err)
+		rs = append(rs, debt.Row{Key: k, Retained: r.Retained})
+	}
+	t, err := debt.Rebuild(rs)
+	require.NoError(e.t, err)
+	root, _, err := e.app.ShieldedStakingKeeper.DebtRoot(e.ctx())
+	require.NoError(e.t, err)
+	got, err := t.Root()
+	require.NoError(e.t, err)
+	require.Equal(e.t, root, privacy.FieldBytes(got), "the wallet's debt tree is the chain's")
+	return t
+}
+
 // stake lays out a stake proof's public values (everything but the proof).
 func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 	e.t.Helper()
 	require.LessOrEqual(e.t, len(sp.ins), 2)
-	require.LessOrEqual(e.t, len(sp.outs), 2)
 	size := uint64(len(e.sw.leaves))
 	if sp.atSize > 0 {
 		size = sp.atSize
 	}
 	sp.atSize = size
-	// A msg that has the chain mint a stake note names it (mint) and carries
-	// its blind stake ciphertext.
-	mints := sp.mint != nil
-	if sp.mint == nil {
-		sp.mint = e.freshStake(sp.denom, 0)
-	}
 	var anchor fr.Element
-	if size > 0 {
+	if !sp.noSpend {
 		r, err := e.stakeTree(size).Root()
 		require.NoError(e.t, err)
 		anchor = r
 	}
-	p := sstypes.StakeProof{Anchor: privacy.FieldBytes(anchor), SpcMint: privacy.FieldBytes(e.spc(sp.mint)),
-		OwnerTag: privacy.FieldBytes(privacy.OwnerTag(privacy.OwnerPK(e.w.nk), sp.salt))}
-	for i := range 2 {
-		var nf, cm fr.Element
-		var ct []byte
-		if i < len(sp.ins) {
-			require.True(e.t, sp.ins[i].known && sp.ins[i].pos < size, "stake input outside the anchor's tree")
-			nf = e.snf(sp.ins[i])
-		}
-		if i < len(sp.outs) && sp.outs[i].amount > 0 {
-			cm = e.scm(sp.outs[i])
-			ct = shieldedtest.StakeCT(fmt.Sprintf("%d", e.w.seq))
-		}
-		p.Nullifiers = append(p.Nullifiers, privacy.FieldBytes(nf))
-		p.Commitments = append(p.Commitments, privacy.FieldBytes(cm))
-		p.Ciphertexts = append(p.Ciphertexts, ct)
+	z := privacy.FieldBytes(fr.Element{})
+	p := sstypes.StakeProof{Anchor: privacy.FieldBytes(anchor), DebtRoot: z, CreditNullifier: z, CreditCommitment: z,
+		Commitment: z, OwnerTag: privacy.FieldBytes(privacy.OwnerTag(privacy.OwnerPK(e.w.nk), sp.salt))}
+	nfs := [2]fr.Element{}
+	for i, n := range sp.ins {
+		require.True(e.t, n.known && n.pos < size, "stake input outside the anchor's tree")
+		nfs[i] = e.snf(n)
 	}
-	if mints {
-		p.SpcCiphertext = shieldedtest.BlindCT(fmt.Sprintf("spc/%d/%d", e.w.seq, len(e.sw.leaves)))
+	if !sp.noSpend && len(sp.ins) == 0 {
+		// A padding input: the owner's own would-be nullifier.
+		sp.pad = e.freshStake(sp.denom, 0)
+		nfs[0] = privacy.StakeNF(e.w.nk, sp.pad.rho, 0)
+	}
+	p.Nullifiers = [][]byte{privacy.FieldBytes(nfs[0]), privacy.FieldBytes(nfs[1])}
+	// Lane A's output: a kept label goes with it.
+	if li := sp.labelledIn(); li != nil && !sp.clear && sp.out != nil {
+		sp.out.moveKey, sp.out.moveTime, sp.out.exposed = li.moveKey, li.moveTime, li.exposed
+	}
+	if sp.clear {
+		require.NotNil(e.t, sp.labelledIn(), "nothing to clear")
+		cb, err := e.app.ShieldedStakingKeeper.ClearBefore(e.ctx())
+		require.NoError(e.t, err)
+		p.ClearBefore = cb
+		t := e.debtTree()
+		root, err := t.Root()
+		require.NoError(e.t, err)
+		p.DebtRoot = privacy.FieldBytes(root)
+		w, err := t.Lookup(sp.labelledIn().moveKey)
+		require.NoError(e.t, err)
+		sp.debtW = &w
+	}
+	if !sp.noSpend {
+		out := sp.out
+		if out == nil {
+			sp.zeroOut = e.freshStake(sp.denom, 0)
+			out = sp.zeroOut
+		}
+		p.Commitment = privacy.FieldBytes(e.scm(out))
+		p.Ciphertext = shieldedtest.StakeCT(fmt.Sprintf("%d/%d", e.w.seq, len(e.sw.leaves)))
+	}
+	if c := sp.credit; c != nil {
+		var nf fr.Element
+		if c.in != nil {
+			require.True(e.t, c.in.known && c.in.pos < size && !c.in.labelled(), "credit input: an unlabelled note in the anchor's tree")
+			nf = e.snf(c.in)
+		} else {
+			c.pad = e.freshStake(c.denom, 0)
+			nf = privacy.StakeNF(e.w.nk, c.pad.rho, 0)
+		}
+		amount := c.vIn
+		if c.in != nil {
+			amount += c.in.amount
+		}
+		c.out = e.freshStake(c.denom, amount)
+		c.out.moveKey, c.out.moveTime, c.out.exposed = nf, c.moveTime, c.vIn
+		p.CreditNullifier = privacy.FieldBytes(nf)
+		p.CreditCommitment = privacy.FieldBytes(e.scm(c.out))
+		p.CreditCiphertext = shieldedtest.StakeCT(fmt.Sprintf("cr/%d/%d", e.w.seq, len(e.sw.leaves)))
 	}
 	sp.proof = p
 	return sp
@@ -217,43 +306,90 @@ func (e *stakeEnv) stakeProver() *shieldedtest.Prover {
 	return pr
 }
 
+// tomlQ, tomlPath and friends write Prover.toml values.
+func tomlQ(x fr.Element) string { return fmt.Sprintf("\"0x%x\"", privacy.FieldBytes(x)) }
+
+func tomlU(v uint64) string { return fmt.Sprintf("\"%d\"", v) }
+
+func tomlPath(sib [merkle.Depth]fr.Element) string {
+	parts := make([]string, merkle.Depth)
+	for j := range parts {
+		parts[j] = tomlQ(sib[j])
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
 // stakeWitness is sp's Prover.toml under sighash, and its public inputs.
-func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, sighash fr.Element) (string, [][]byte) {
+func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, lanes sstypes.StakeLanes, sighash fr.Element) (string, [][]byte) {
 	p := msg.StakeProofOf()
-	pub := p.PublicInputs(sstypes.StakeAsset(msg.StakeDenom()), msg.VOut(), sighash)
-	q := func(x fr.Element) string { return fmt.Sprintf("\"0x%x\"", privacy.FieldBytes(x)) }
-	qs := func(xs [2]fr.Element) string { return "[" + q(xs[0]) + ", " + q(xs[1]) + "]" }
-	u := func(xs [2]uint64) string { return fmt.Sprintf("[\"%d\", \"%d\"]", xs[0], xs[1]) }
+	pub := p.PublicInputs(lanes, sighash)
 	none := &snote{rho: ssDet("stake-dummy", 1), rcm: ssDet("stake-dummy", 2)}
-	ins, outs := pad2(sp.ins, none), pad2(sp.outs, &snote{rho: ssDet("stake-dummy", 3), rcm: ssDet("stake-dummy", 4)})
-	var inAmt, inPos, outAmt [2]uint64
-	var inRho, inRcm, outRho, outRcm [2]fr.Element
-	paths := make([]string, 2)
+	ins := pad2(sp.ins, none)
+	if sp.pad != nil {
+		ins[0] = sp.pad
+	}
 	tree := e.stakeTree(sp.atSize)
-	for i := range 2 {
-		inAmt[i], inRho[i], inRcm[i] = ins[i].amount, ins[i].rho, ins[i].rcm
+	var b strings.Builder
+	arr := func(name string, f func(i int) string) {
+		fmt.Fprintf(&b, "%s = [%s, %s]\n", name, f(0), f(1))
+	}
+	path := func(n *snote) string {
 		var sib [merkle.Depth]fr.Element
-		if i < len(sp.ins) {
-			inPos[i] = ins[i].pos
+		if n.amount > 0 {
 			var err error
-			sib, err = tree.Path(ins[i].pos)
+			sib, err = tree.Path(n.pos)
 			require.NoError(e.t, err)
 		}
-		parts := make([]string, merkle.Depth)
-		for j := range parts {
-			parts[j] = q(sib[j])
-		}
-		paths[i] = "[" + strings.Join(parts, ", ") + "]"
-		outAmt[i], outRho[i], outRcm[i] = outs[i].amount, outs[i].rho, outs[i].rcm
+		return tomlPath(sib)
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "nk = %s\nin_amount = %s\nin_rho = %s\nin_rcm = %s\nin_pos = %s\nin_path = [%s]\n",
-		q(e.w.nk), u(inAmt), qs(inRho), qs(inRcm), u(inPos), strings.Join(paths, ", "))
-	fmt.Fprintf(&b, "out_amount = %s\nout_rho = %s\nout_rcm = %s\nmint_rho = %s\nmint_rcm = %s\ntag_salt = %s\n",
-		u(outAmt), qs(outRho), qs(outRcm), q(sp.mint.rho), q(sp.mint.rcm), q(sp.salt))
-	names := []string{"anchor", "asset", "nf_0", "nf_1", "cm_out_0", "cm_out_1", "v_in", "v_out", "spc_mint", "otag", "sighash"}
+	fmt.Fprintf(&b, "nk = %s\n", tomlQ(e.w.nk))
+	arr("in_amount", func(i int) string { return tomlU(ins[i].amount) })
+	arr("in_rho", func(i int) string { return tomlQ(ins[i].rho) })
+	arr("in_rcm", func(i int) string { return tomlQ(ins[i].rcm) })
+	arr("in_pos", func(i int) string {
+		if ins[i].amount == 0 {
+			return tomlU(0)
+		}
+		return tomlU(ins[i].pos)
+	})
+	arr("in_path", func(i int) string { return path(ins[i]) })
+	arr("in_move_key", func(i int) string { return tomlQ(ins[i].moveKey) })
+	arr("in_move_time", func(i int) string { return tomlU(ins[i].moveTime) })
+	arr("in_exposed", func(i int) string { return tomlU(ins[i].exposed) })
+	out := sp.out
+	if out == nil {
+		out = sp.zeroOut
+	}
+	if out == nil { // nothing spent or created (a position msg)
+		out = &snote{rho: ssDet("stake-dummy", 3), rcm: ssDet("stake-dummy", 4)}
+	}
+	fmt.Fprintf(&b, "out_amount = %s\nout_rho = %s\nout_rcm = %s\nclear = %t\n", tomlU(out.amount), tomlQ(out.rho), tomlQ(out.rcm), sp.clear)
+	var w debt.Witness
+	if sp.debtW != nil {
+		w = *sp.debtW
+	}
+	fmt.Fprintf(&b, "debt_low_key = %s\ndebt_low_next_key = %s\ndebt_low_next_index = %s\ndebt_low_retained = %s\ndebt_low_index = %s\ndebt_low_path = %s\n",
+		tomlQ(w.Low.Key), tomlQ(w.Low.NextKey), tomlU(w.Low.NextIndex), tomlU(w.Low.Retained), tomlU(w.Index), tomlPath(w.Path))
+	crIn, crOut := &snote{rho: ssDet("stake-dummy", 5), rcm: ssDet("stake-dummy", 6)}, &snote{rho: ssDet("stake-dummy", 7), rcm: ssDet("stake-dummy", 8)}
+	if c := sp.credit; c != nil {
+		if c.in != nil {
+			crIn = c.in
+		} else {
+			crIn = c.pad
+		}
+		crOut = c.out
+	}
+	crPos := uint64(0)
+	if crIn.amount > 0 {
+		crPos = crIn.pos
+	}
+	fmt.Fprintf(&b, "cr_in_amount = %s\ncr_in_rho = %s\ncr_in_rcm = %s\ncr_in_pos = %s\ncr_in_path = %s\ncr_out_rho = %s\ncr_out_rcm = %s\ntag_salt = %s\n",
+		tomlU(crIn.amount), tomlQ(crIn.rho), tomlQ(crIn.rcm), tomlU(crPos), path(crIn), tomlQ(crOut.rho), tomlQ(crOut.rcm), tomlQ(sp.salt))
+	names := []string{"anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in", "v_out", "clear_before", "debt_root",
+		"cr_asset", "cr_nf", "cr_cm", "cr_v_in", "cr_move_time", "otag", "sighash"}
+	ints := map[string]bool{"v_in": true, "v_out": true, "clear_before": true, "cr_v_in": true, "cr_move_time": true}
 	for i, n := range names {
-		if n == "v_in" || n == "v_out" {
+		if ints[n] {
 			var v fr.Element
 			_ = v.SetBytes(pub[i])
 			fmt.Fprintf(&b, "%s = \"%s\"\n", n, v.String())
@@ -262,6 +398,17 @@ func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, sighash fr.
 		fmt.Fprintf(&b, "%s = \"0x%x\"\n", n, pub[i])
 	}
 	return b.String(), pub
+}
+
+// stakeLanes is what the chain supplies for msg (an unlock's lane A follows
+// its position).
+func (e *stakeEnv) stakeLanes(msg sstypes.StakeMsg) sstypes.StakeLanes {
+	if m, ok := msg.(*sstypes.MsgUnlockPosition); ok {
+		p, err := e.app.ShieldedStakingKeeper.Positions.Get(e.ctx(), m.PositionId)
+		require.NoError(e.t, err)
+		return sstypes.UnlockLanes(p)
+	}
+	return msg.StakeLanes()
 }
 
 // proveStake proves msg's stake proof from sp, under msg's sighash (every
@@ -278,7 +425,7 @@ func (e *stakeEnv) proveStake(msg sstypes.StakeMsg, sp *stakePlan) {
 func (e *stakeEnv) tryProveStake(msg sstypes.StakeMsg, sp *stakePlan) ([]byte, error) {
 	sighash, err := shieldedtypes.Sighash(msg, ssChainID, ssTx, e.app.AuthKeeper.AddressCodec())
 	require.NoError(e.t, err)
-	toml, pub := e.stakeWitness(msg, sp, sighash)
+	toml, pub := e.stakeWitness(msg, sp, e.stakeLanes(msg), sighash)
 	return e.stakeProver().TryProve(toml, pub)
 }
 
@@ -287,6 +434,12 @@ func (e *stakeEnv) settleStake(sp *stakePlan) {
 	for _, n := range sp.ins {
 		n.spent = true
 	}
-	e.trackStake(sp.outs...)
+	e.trackStake(sp.out)
+	if sp.credit != nil {
+		if sp.credit.in != nil {
+			sp.credit.in.spent = true
+		}
+		e.trackStake(sp.credit.out)
+	}
 	e.scanStake()
 }

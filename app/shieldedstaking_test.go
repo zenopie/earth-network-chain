@@ -41,29 +41,71 @@ import (
 
 // ---- private msgs, built and proven against the chain as it stands --------
 
-// delegateMsg stakes amount out of the ERTH note in (its bundle releases
-// amount and the fee); the derth is minted to a fresh stake note.
-func (e *stakeEnv) delegateMsg(val sdk.ValAddress, in *wnote, amount uint64) (*sstypes.MsgDelegate, *pendingBundle, *snote) {
-	p := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: amount})
-	v := e.valoper(val)
-	dn := e.freshStake(sstypes.DerthDenom(v), 0)
-	sp := e.stake(&stakePlan{denom: sstypes.DerthDenom(v), mint: dn})
-	m := &sstypes.MsgDelegate{Bundle: p.b, Amount: amount, Validator: v, Stake: sp.proof}
-	e.prove(m, p)
-	e.proveStake(m, sp)
-	return m, p, dn
+// quoteDerth is the derth a wallet names for a delegation of amount to val:
+// what amount buys at the current live rate, less a margin for the rate's
+// drift until the block (rewards accrue every block; 1% here, where little
+// is staked and rewards are large: ORCHARD_DESIGN.md 20.4 for wallets).
+// Exactly amount while nothing is outstanding (rate 1, no drift).
+func (e *stakeEnv) quoteDerth(val sdk.ValAddress, amount uint64) uint64 {
+	b, s, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(val))
+	require.NoError(e.t, err)
+	if !s.IsPositive() {
+		return amount
+	}
+	d := math.NewIntFromUint64(amount).Mul(s).Quo(b).Uint64()
+	return d - d/100
 }
 
-// delegate stakes amount out of an ERTH note and returns the derth stake note.
+// delegatePlan credits derth to the wallet's derth/val note: the proof
+// merges into its unspent note there (one note per validator), or pads its
+// input when it has none (or fresh).
+func (e *stakeEnv) delegatePlan(val sdk.ValAddress, derth uint64, fresh bool) *stakePlan {
+	denom := sstypes.DerthDenom(e.valoper(val))
+	sp := &stakePlan{denom: denom, vIn: derth}
+	amount := derth
+	if old := e.unspentStake(denom); old != nil && !fresh {
+		sp.ins = []*snote{old}
+		amount += old.amount
+	}
+	sp.out = e.freshStake(denom, amount)
+	return e.stake(sp)
+}
+
+// delegateMsg stakes amount out of the ERTH note in (its bundle releases
+// amount and the fee), crediting quoteDerth's derth to the wallet's note.
+func (e *stakeEnv) delegateMsg(val sdk.ValAddress, in *wnote, amount uint64) (*sstypes.MsgDelegate, *pendingBundle, *stakePlan) {
+	return e.delegateMsgWith(val, in, amount, e.quoteDerth(val, amount), false)
+}
+
+func (e *stakeEnv) delegateMsgWith(val sdk.ValAddress, in *wnote, amount, derth uint64, fresh bool) (*sstypes.MsgDelegate, *pendingBundle, *stakePlan) {
+	p := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: amount})
+	sp := e.delegatePlan(val, derth, fresh)
+	m := &sstypes.MsgDelegate{Bundle: p.b, Amount: amount, Derth: derth, Validator: e.valoper(val), Stake: sp.proof}
+	e.prove(m, p)
+	e.proveStake(m, sp)
+	return m, p, sp
+}
+
+// delegate stakes amount out of an ERTH note and returns the wallet's
+// derth/val note: the old one merged with the credit.
 func (e *stakeEnv) delegate(val sdk.ValAddress, amount uint64) *snote {
+	e.t.Helper()
+	return e.delegateWith(val, amount, false)
+}
+
+// delegateWith is delegate into a second note when fresh (a wallet that
+// does not merge: two devices, or before the one-note rule).
+func (e *stakeEnv) delegateWith(val sdk.ValAddress, amount uint64, fresh bool) *snote {
 	e.t.Helper()
 	in := e.w.unspent("uerth", amount)
 	require.NotNil(e.t, in)
-	m, p, dn := e.delegateMsg(val, in, amount)
+	m, p, sp := e.delegateMsgWith(val, in, amount, e.quoteDerth(val, amount), fresh)
 	res := e.run(e.privateTx(m))
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.settle(p)
-	return e.mintedStake(res, dn)
+	e.settleStake(sp)
+	require.True(e.t, sp.out.known, "merged stake note not found in the stake tree")
+	return sp.out
 }
 
 // unbonding is a private undelegation the test wallet made: its payout id,
@@ -75,14 +117,42 @@ type unbonding struct {
 	out   *wnote
 }
 
+// changePlan spends the stake note in, amount leaving (v_out), the change
+// back as a new note (a zero padding note when nothing is left). A labelled
+// note keeps its label (only its unexposed part may leave) unless clear.
+func (e *stakeEnv) changePlan(in *snote, amount uint64, salt fr.Element, clear bool) *stakePlan {
+	sp := &stakePlan{denom: in.denom, ins: []*snote{in}, vOut: amount, salt: salt, clear: clear}
+	left := in.amount
+	if clear {
+		left = e.clearedValue(in)
+	}
+	if left > amount {
+		sp.out = e.freshStake(in.denom, left-amount)
+	}
+	return e.stake(sp)
+}
+
+// clearedValue is what the labelled note n holds once its label clears: its
+// unexposed part, plus its exposure at the debt tree's retained value.
+func (e *stakeEnv) clearedValue(n *snote) uint64 {
+	if !n.labelled() {
+		return n.amount
+	}
+	r, ok, err := e.debtTree().Get(n.moveKey)
+	require.NoError(e.t, err)
+	if !ok {
+		r = n.exposed
+	}
+	return n.amount - n.exposed + r
+}
+
 // undelegateMsg undelegates amount of the stake note in, its change back as
 // a new stake note; the payout goes to a fresh pool note of the wallet.
 func (e *stakeEnv) undelegateMsg(val sdk.ValAddress, in *snote, amount uint64) (*sstypes.MsgUndelegate, *pendingBundle, *stakePlan, *wnote) {
 	p := e.feeOnly()
 	v := e.valoper(val)
 	out := e.w.fresh("uerth", 0)
-	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, outs: []*snote{e.freshStake(in.denom, in.amount-amount)},
-		vOut: amount})
+	sp := e.changePlan(in, amount, fr.Element{}, false)
 	m := &sstypes.MsgUndelegate{Bundle: p.b, Validator: v, Amount: amount, Stake: sp.proof,
 		Pc: privacy.FieldBytes(e.w.pc(out)), Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("payout/%d", e.w.seq))}
 	e.prove(m, p)
@@ -383,8 +453,8 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 	// Jailed and tombstoned: a delegation is refused before anything is spent.
 	in := e.w.unspent("uerth", uint64(100*ssErth))
 	p := e.build(spend{denom: "uerth", inputs: []*wnote{in}, valueOut: uint64(100 * ssErth)})
-	m := &sstypes.MsgDelegate{Bundle: p.b, Validator: e.valoper(vB), Amount: uint64(100 * ssErth),
-		Stake: e.stake(&stakePlan{denom: sstypes.DerthDenom(e.valoper(vB)), mint: e.freshStake(sstypes.DerthDenom(e.valoper(vB)), 0)}).proof}
+	m := &sstypes.MsgDelegate{Bundle: p.b, Validator: e.valoper(vB), Amount: uint64(100 * ssErth), Derth: uint64(90 * ssErth),
+		Stake: e.delegatePlan(vB, uint64(90*ssErth), false).proof}
 	unproven(m) // refused before any proof is read
 	ct := e.checkTx(e.privateTx(m))
 	require.Equal(t, sstypes.ErrValidator.ABCICode(), ct.Code, ct.Log)
@@ -461,7 +531,7 @@ func TestPrivateStakingEpochBatchingAndHaltSafety(t *testing.T) {
 	for d := 0; d < 30; d++ {
 		m := &sstypes.MsgUndelegate{
 			Validator: e.valoper(vB), Amount: uint64(ssErth),
-			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("fakepc", uint64(d)))},
+			Stake: fakeStake(fmt.Sprint("daily", d), false),
 			Pc:    privacy.FieldBytes(ssDet("fakepc", uint64(d))), Ciphertext: shieldedtest.BlindCT("payout"),
 		}
 		_, err := srv.Undelegate(e.fakeAuthorized(m), m)
@@ -573,25 +643,20 @@ func TestTransparentStakingBlocked(t *testing.T) {
 	pc := privacy.FieldBytes(ssDet("bypass-pc", 0))
 	opts := v1.NewNonSplitVoteOption(v1.OptionYes)
 	z := make([]byte, 32)
-	st := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{privacy.FieldBytes(ssDet("bypass-snf", 0)), z},
-		Commitments: [][]byte{z, z}, Ciphertexts: [][]byte{nil, nil}, SpcMint: pc, OwnerTag: pc}
-	none := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{z, z}, Commitments: [][]byte{z, z}, Ciphertexts: [][]byte{nil, nil}, SpcMint: pc, OwnerTag: pc}
-	restake := st
-	restake.Commitments = [][]byte{pc, z}
-	restake.Ciphertexts = [][]byte{shieldedtest.StakeCT("restake"), nil}
-	// The msgs that mint a stake note carry its blind ciphertext.
-	noneMint := none
-	noneMint.SpcCiphertext = shieldedtest.BlindCT("m")
+	st := fakeStake("bypass", false)
+	st.Proof = make([]byte, shieldedtypes.ProofBytes)
+	none := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{z, z}, Commitment: z,
+		CreditNullifier: z, CreditCommitment: z, DebtRoot: z, OwnerTag: pc}
 	for _, m := range []sdk.Msg{
-		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Amount: 1, Validator: valoper, Stake: noneMint},
-		&sstypes.MsgRestake{Bundle: tr("r", "", 0, ssFee), Validator: valoper, Stake: restake},
+		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Amount: 1, Derth: 1, Validator: valoper, Stake: st},
+		&sstypes.MsgRestake{Bundle: tr("r", "", 0, ssFee), Validator: valoper, Stake: st},
 		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st,
 			Pc: pc, Ciphertext: shieldedtest.BlindCT("u")},
 		&sstypes.MsgStakeVote{Bundle: tr("v", "", 0, ssFee), ProposalId: 1, Validator: valoper, Options: opts,
-			Weight: 1, Proof: make([]byte, shieldedtypes.ProofBytes), VoteNullifiers: [][]byte{pc, z, z, z}},
+			Weight: 1, Proof: make([]byte, shieldedtypes.ProofBytes), VoteNullifiers: [][]byte{pc, z}, DebtRoot: z},
 		&sstypes.MsgLockPosition{Bundle: tr("l", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st},
 		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Stake: none},
-		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Stake: noneMint},
+		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Stake: st},
 		&sstypes.MsgPositionVote{Bundle: tr("pv", "", 0, ssFee), Options: opts, Stake: none},
 	} {
 		h := e.app.MsgServiceRouter().Handler(m)
@@ -624,8 +689,7 @@ func (e *stakeEnv) lock(in *snote, amount uint64, salt fr.Element, splits []allo
 	v, ok := sstypes.ParseDerthDenom(in.denom)
 	require.True(e.t, ok)
 	p := e.feeOnly()
-	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, outs: []*snote{e.freshStake(in.denom, in.amount-amount)},
-		vOut: amount, salt: salt})
+	sp := e.changePlan(in, amount, salt, false)
 	m := &sstypes.MsgLockPosition{Bundle: p.b, Validator: v, Amount: amount, Splits: splits, Stake: sp.proof}
 	e.prove(m, p)
 	e.proveStake(m, sp)
@@ -641,9 +705,25 @@ func (e *stakeEnv) lock(in *snote, amount uint64, salt fr.Element, splits []allo
 }
 
 // ownerProof is a stake proof spending and creating nothing: it shows the
-// prover owns (wallet, salt), and names a stake pc of the same owner (mint).
-func (e *stakeEnv) ownerProof(salt fr.Element, mint *snote) *stakePlan {
-	return e.stake(&stakePlan{salt: salt, mint: mint})
+// prover owns (wallet, salt).
+func (e *stakeEnv) ownerProof(salt fr.Element) *stakePlan {
+	return e.stake(&stakePlan{salt: salt, noSpend: true})
+}
+
+// unlockPlan is an unlock's stake proof for position id owned by (wallet,
+// salt): its derth credited to the wallet's derth/<validator> note (merged,
+// or a padding input when it has none).
+func (e *stakeEnv) unlockPlan(id uint64, salt fr.Element) *stakePlan {
+	pos := e.position(id)
+	denom := sstypes.DerthDenom(pos.Validator)
+	sp := &stakePlan{denom: denom, vIn: pos.Derth.Uint64(), salt: salt}
+	amount := pos.Derth.Uint64()
+	if old := e.unspentStake(denom); old != nil {
+		sp.ins = []*snote{old}
+		amount += old.amount
+	}
+	sp.out = e.freshStake(denom, amount)
+	return e.stake(sp)
 }
 
 func (e *stakeEnv) submitProposal() uint64 {
@@ -663,7 +743,7 @@ func (e *stakeEnv) submitProposal() uint64 {
 // positionVoteMsg votes position id as the owner of salt (proven).
 func (e *stakeEnv) positionVoteMsg(id uint64, salt fr.Element, proposalID uint64, opt v1.VoteOption) (*sstypes.MsgPositionVote, *pendingBundle, *stakePlan) {
 	p := e.feeOnly()
-	sp := e.ownerProof(salt, nil)
+	sp := e.ownerProof(salt)
 	m := &sstypes.MsgPositionVote{Bundle: p.b, PositionId: id, ProposalId: proposalID,
 		Options: v1.NewNonSplitVoteOption(opt), Stake: sp.proof}
 	return m, p, sp
@@ -683,10 +763,12 @@ func TestStakeVoteTally(t *testing.T) {
 	e.shield(uint64(10_000 * ssErth))
 	e.shield(uint64(200 * ssErth))
 
-	n1 := e.delegate(vB, uint64(1_000*ssErth))
-	n2 := e.delegate(vB, uint64(600*ssErth))
-	n4 := e.delegate(vB, uint64(300*ssErth))
-	n5 := e.delegate(vB, uint64(200*ssErth))
+	// Several notes at vB: a wallet that does not merge (the chain cannot
+	// tell); each votes on its own.
+	n1 := e.delegateWith(vB, uint64(1_000*ssErth), true)
+	n2 := e.delegateWith(vB, uint64(600*ssErth), true)
+	n4 := e.delegateWith(vB, uint64(300*ssErth), true)
+	n5 := e.delegateWith(vB, uint64(200*ssErth), true)
 	n3 := e.delegate(vA, uint64(400*ssErth))
 	// An ERTH note in the snapshot, kept for the expired-root check below.
 	snapErth := e.shield(uint64(ssErth))
@@ -800,7 +882,7 @@ func TestStakeVoteTally(t *testing.T) {
 	}
 	e.next(5 * time.Second)
 	oldFee := e.feeOnly()
-	oldPlan := e.stake(&stakePlan{denom: n2.denom, ins: []*snote{n2}, outs: []*snote{e.freshStake(n2.denom, n2.amount-1)},
+	oldPlan := e.stake(&stakePlan{denom: n2.denom, ins: []*snote{n2}, out: e.freshStake(n2.denom, n2.amount-1),
 		vOut: 1, atSize: snap.TreeSize})
 	old := &sstypes.MsgUndelegate{Bundle: oldFee.b, Validator: e.valoper(vB), Amount: 1, Stake: oldPlan.proof,
 		Pc: privacy.FieldBytes(ssDet("old-pc", 0)), Ciphertext: shieldedtest.BlindCT("old")}
@@ -1095,7 +1177,7 @@ func TestGroundworksPositions(t *testing.T) {
 	// proof (another salt: another owner tag) is refused.
 	up := func(splits []allocationtypes.AllocationWeight, salt fr.Element) (*sstypes.MsgUpdatePosition, *pendingBundle, *stakePlan) {
 		pt := e.feeOnly()
-		sp := e.ownerProof(salt, nil)
+		sp := e.ownerProof(salt)
 		return &sstypes.MsgUpdatePosition{Bundle: pt.b, PositionId: id, Splits: splits, Stake: sp.proof}, pt, sp
 	}
 	m, pt, sp := up(nil, key)
@@ -1113,18 +1195,26 @@ func TestGroundworksPositions(t *testing.T) {
 	res = e.checkTx(e.privateTx(wrong))
 	require.Equal(t, sstypes.ErrSignature.ABCICode(), res.Code, res.Log)
 
-	// Unlock: the derth comes back as a stake note of the same owner.
+	// Unlock: the derth comes back into the owner's stake note (merged with
+	// the lock's change).
 	pt = e.feeOnly()
-	back := e.freshStake(dn.denom, 0)
-	usp := e.ownerProof(key, back)
+	change := e.unspentStake(dn.denom)
+	usp := e.unlockPlan(id, key)
 	um := &sstypes.MsgUnlockPosition{Bundle: pt.b, PositionId: id, Stake: usp.proof}
 	e.prove(um, pt)
 	e.proveStake(um, usp)
 	fb = e.run(e.privateTx(um))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
 	e.settle(pt)
-	back = e.mintedStake(fb, back)
-	require.Equal(t, uint64(500*ssErth), back.amount)
+	e.settleStake(usp)
+	back := usp.out
+	require.True(t, back.known)
+	want := uint64(500 * ssErth)
+	if change != nil {
+		require.True(t, change.spent, "merged")
+		want += change.amount
+	}
+	require.Equal(t, want, back.amount)
 	_, err = e.app.ShieldedStakingKeeper.Positions.Get(e.ctx(), id)
 	require.ErrorIs(t, err, collections.ErrNotFound)
 	require.True(t, e.app.BankKeeper.GetBalance(e.ctx(), e.app.ShieldedStakingKeeper.ModuleAddress(), dn.denom).IsZero())
@@ -1431,35 +1521,30 @@ func TestStakeNotesOwnerLocked(t *testing.T) {
 	asset := privacy.AssetID(dn.denom)
 	other := privacy.OwnerPK(ssDet("nk", 99))
 
-	restake := func(outs ...*snote) (*sstypes.MsgRestake, *pendingBundle, *stakePlan) {
+	restake := func(out *snote) (*sstypes.MsgRestake, *pendingBundle, *stakePlan) {
 		p := e.feeOnly()
-		sp := e.stake(&stakePlan{denom: dn.denom, ins: []*snote{dn}, outs: outs})
+		sp := e.stake(&stakePlan{denom: dn.denom, ins: []*snote{dn}, out: out})
 		return &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: sp.proof}, p, sp
 	}
 
 	// The transfer attempt: an output note of another owner. No witness
 	// exists (proven only when the circuits are at hand: a refused witness
 	// leaves nothing to cache).
-	a, b := e.freshStake(dn.denom, 400*uint64(ssErth)), e.freshStake(dn.denom, 600*uint64(ssErth))
-	steal, _, ssp := restake(a, b)
-	steal.Stake.Commitments[0] = privacy.FieldBytes(privacy.StakeCM(asset, a.amount, privacy.StakePC(other, a.rho, a.rcm)))
+	a := e.freshStake(dn.denom, 1_000*uint64(ssErth))
+	steal, _, ssp := restake(a)
+	steal.Stake.Commitment = privacy.FieldBytes(privacy.StakeCM(asset, a.amount, privacy.StakePC(other, a.rho, a.rcm), fr.Element{}))
 	ssp.proof = steal.Stake
 	_, err := e.tryProveStake(steal, ssp)
-	if shieldedtest.Circuits() != "" {
-		require.ErrorIs(t, err, shieldedtest.ErrWitnessRefused)
-	} else {
-		require.ErrorIs(t, err, shieldedtest.ErrNoCircuits)
-	}
+	requireRefused(t, err)
 
-	// An honest split, and the same proof with its first output swapped for
+	// An honest restake, and the same proof with its output swapped for
 	// another owner's (fee bundle re-proven over the forged msg): the stake
 	// proof no longer verifies.
-	honest, hp, hsp := restake(a, b)
+	honest, hp, hsp := restake(a)
 	e.prove(honest, hp)
 	e.proveStake(honest, hsp)
 	forged := *honest
-	forged.Stake.Commitments = [][]byte{privacy.FieldBytes(privacy.StakeCM(asset, a.amount, privacy.StakePC(other, a.rho, a.rcm))),
-		honest.Stake.Commitments[1]}
+	forged.Stake.Commitment = privacy.FieldBytes(privacy.StakeCM(asset, a.amount, privacy.StakePC(other, a.rho, a.rcm), fr.Element{}))
 	fb := e.feeOnly()
 	forged.Bundle = fb.b
 	e.prove(&forged, fb)
@@ -1469,8 +1554,8 @@ func TestStakeNotesOwnerLocked(t *testing.T) {
 	require.Equal(t, uint32(0), r.Code, r.Log)
 	e.settle(hp)
 	e.settleStake(hsp)
-	require.True(t, a.known && b.known)
-	require.Equal(t, uint64(1_000*ssErth), e.stakeBalance(dn.denom), "split, still the owner's")
+	require.True(t, a.known)
+	require.Equal(t, uint64(1_000*ssErth), e.stakeBalance(dn.denom), "still the owner's")
 	e.invariants()
 
 	// derth is never a pool asset, a dex token or a swap output.

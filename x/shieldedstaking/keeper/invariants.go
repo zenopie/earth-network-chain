@@ -48,9 +48,15 @@ import (
 //     retry time; every MATURED record with untried payouts is marked for
 //     the sweep.
 //  9. Redelegations: every x/staking redelegation is this module's,
-//     between two different validators, with 1..max_entries entries
+//     between two different validators, with 1..MaxEntryHeightsPerPair
+//     entries, every unmatured entry's shares exactly its moves' shares
 //     (checkRedelegationRecord, as at genesis); no unbonding delegation is
 //     left set aside (ShelteredUnbondings is empty outside BeginBlock).
+//  10. Slash debt: every unmatured move belongs to an entry of its (src,
+//     dst) at its entry height; its retained is its debt row's, or its
+//     credit when it has none; the debt tree's size is 0 or 1 + its last
+//     leaf index, with one key and one retained value per leaf; no slash
+//     is left watched outside BeginBlock.
 func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertERTH(ctx); err != nil {
 		return err
@@ -76,7 +82,83 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertRedelegations(ctx); err != nil {
 		return err
 	}
+	if err := k.assertDebt(ctx); err != nil {
+		return err
+	}
 	return k.assertEscrows(ctx)
+}
+
+func (k Keeper) assertDebt(ctx context.Context) error {
+	if has, err := k.WatchSrc.Has(ctx); err != nil {
+		return err
+	} else if has {
+		return types.ErrInvariant.Wrap("a slash is still watched after its block's start")
+	}
+	t, err := k.debtTree(ctx)
+	if err != nil {
+		return err
+	}
+	var leaves, idx, rows uint64
+	last := uint64(0)
+	if err := k.DebtLeafKeys.Walk(ctx, nil, func(i uint64, key []byte) (bool, error) {
+		leaves++
+		last = i
+		if j, err := k.DebtIndex.Get(ctx, key); err != nil || j != i {
+			return true, types.ErrInvariant.Wrapf("debt leaf %d: its key %X does not index it", i, key)
+		}
+		if _, err := k.DebtRetained.Get(ctx, key); err != nil {
+			return true, types.ErrInvariant.Wrapf("debt leaf %d: no retained value", i)
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	if err := k.DebtIndex.Walk(ctx, nil, func([]byte, uint64) (bool, error) { idx++; return false, nil }); err != nil {
+		return err
+	}
+	if err := k.DebtRetained.Walk(ctx, nil, func([]byte, uint64) (bool, error) { rows++; return false, nil }); err != nil {
+		return err
+	}
+	want := uint64(0)
+	if leaves > 0 {
+		want = last + 1
+	}
+	if t.Size() != want || idx != leaves || rows != leaves {
+		return types.ErrInvariant.Wrapf("debt tree: size %d (want %d), %d leaves, %d keys, %d rows", t.Size(), want, leaves, idx, rows)
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime()
+	return k.Moves.Walk(ctx, nil, func(key []byte, mv types.Move) (bool, error) {
+		r, err := k.DebtRetained.Get(ctx, key)
+		switch {
+		case err == nil && !mv.Retained.Equal(math.NewIntFromUint64(r)):
+			return true, types.ErrInvariant.Wrapf("move %X: retained %s, its debt row %d", key, mv.Retained, r)
+		case errors.Is(err, collections.ErrNotFound) && !mv.Retained.Equal(mv.Credited):
+			return true, types.ErrInvariant.Wrapf("move %X: cut to %s without a debt row", key, mv.Retained)
+		case err != nil && !errors.Is(err, collections.ErrNotFound):
+			return true, err
+		}
+		if mv.Completion <= now.UnixNano() {
+			return false, nil // matured: pruned at the end of the block
+		}
+		src, err := k.valAddr(mv.SrcValidator)
+		if err != nil {
+			return true, err
+		}
+		dst, err := k.valAddr(mv.DstValidator)
+		if err != nil {
+			return true, err
+		}
+		red, err := k.staking.GetRedelegation(ctx, k.modAddr, src, dst)
+		if err != nil {
+			return true, types.ErrInvariant.Wrapf("move %X: no redelegation %s -> %s", key, mv.SrcValidator, mv.DstValidator)
+		}
+		for _, e := range red.Entries {
+			if e.CreationHeight == mv.EntryHeight {
+				return false, nil
+			}
+		}
+		return true, types.ErrInvariant.Wrapf("move %X: no entry at height %d", key, mv.EntryHeight)
+	})
 }
 
 func (k Keeper) assertNfTree(ctx context.Context) error {

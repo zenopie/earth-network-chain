@@ -53,8 +53,15 @@ func (h StakingHooks) BeforeDelegationCreated(_ context.Context, del sdk.AccAddr
 	return h.guard(del, val)
 }
 
-func (h StakingHooks) BeforeDelegationSharesModified(_ context.Context, del sdk.AccAddress, val sdk.ValAddress) error {
-	return h.guard(del, val)
+// BeforeDelegationSharesModified guards transparent delegation and, while a
+// slash of a validator the module redelegated from runs, counts the
+// module's unbondings there: one per slashed entry (moves.go).
+func (h StakingHooks) BeforeDelegationSharesModified(ctx context.Context, del sdk.AccAddress, val sdk.ValAddress) error {
+	if err := h.guard(del, val); err != nil {
+		return err
+	}
+	h.k.countSlashUnbond(ctx, del, val)
+	return nil
 }
 
 // BeforeValidatorSlashed haircuts v's pending undelegations by fraction. It

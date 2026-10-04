@@ -41,6 +41,10 @@ var (
 	// (circuits/vote).
 	TagSNFL = tag("earth.snfl")
 	TagVNF  = tag("earth.vnf")
+	// Stake note slash labels and the slash debt tree's leaves (circuits/stake,
+	// circuits/vote; ORCHARD_DESIGN.md section 20).
+	TagSLabel = tag("earth.slabel")
+	TagDebtL  = tag("earth.debtl")
 
 	// Chain-side only: no circuit computes these. They define the public
 	// `signal` input the circuits bind (see Signal).
@@ -105,15 +109,31 @@ func ScopeNullifier(idSecret, scope fr.Element) fr.Element { return H(TagSN, idS
 func PC(ownerPK, rho, rcm fr.Element) fr.Element { return H(TagPC, ownerPK, rho, rcm) }
 
 // StakePC is a stake note's hidden owner: H(TAG_SPC, owner_pk, rho, rcm).
-// Stake notes are owner-locked: circuits/stake outputs, and lets the chain
-// mint to, only stake pcs of the spender's own owner_pk.
+// Stake notes are owner-locked: circuits/stake outputs only stake pcs of the
+// spender's own owner_pk.
 func StakePC(ownerPK, rho, rcm fr.Element) fr.Element { return H(TagSPC, ownerPK, rho, rcm) }
 
-// StakeCM is a stake note: H(TAG_STAKE, asset, amount, spc), asset =
-// AssetID("derth/<valoper>") (delegated stake) or
-// AssetID("unbond/<valoper>/<epoch>") (an unbonding claim).
-func StakeCM(asset fr.Element, amount uint64, spc fr.Element) fr.Element {
-	return H(TagStake, asset, U64(amount), spc)
+// StakeCM is a stake note: H(TAG_STAKE, asset, amount, spc, label), asset =
+// AssetID("derth/<valoper>"), label 0 for an ordinary note or StakeLabel of
+// the redelegation whose exposure it holds (privacy_core::stake_cm).
+func StakeCM(asset fr.Element, amount uint64, spc, label fr.Element) fr.Element {
+	return H(TagStake, asset, U64(amount), spc, label)
+}
+
+// StakeLabel is a stake note's slash label: H(TAG_SLABEL, move_key,
+// move_time, exposed). The note holds `exposed` derth a redelegation
+// credited (move_key: its credit nullifier; move_time: the time it named,
+// unix seconds) while a slash of its source may still cut it
+// (privacy_core::stake_label).
+func StakeLabel(moveKey fr.Element, moveTime, exposed uint64) fr.Element {
+	return H(TagSLabel, moveKey, U64(moveTime), U64(exposed))
+}
+
+// DebtLeaf is a leaf of the slash debt indexed tree: H(TAG_DEBTL, key,
+// next_key, next_index, retained) (privacy_core::debt_leaf). key is a
+// slashed redelegation's move key, retained what its exposure is still worth.
+func DebtLeaf(key, nextKey fr.Element, nextIndex, retained uint64) fr.Element {
+	return H(TagDebtL, key, nextKey, U64(nextIndex), U64(retained))
 }
 
 // StakeNF is a stake note's nullifier: H(TAG_SNF, nk, rho, position).

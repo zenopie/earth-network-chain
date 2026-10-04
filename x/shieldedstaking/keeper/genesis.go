@@ -31,6 +31,10 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.checkUnbondingEntries(ctx, gs.Params); err != nil {
 		return err
 	}
+	// The moves before x/staking's redelegations are checked against them.
+	if err := k.initMoves(ctx, gs); err != nil {
+		return err
+	}
 	if err := k.checkGenesisDelegations(ctx, gs); err != nil {
 		return err
 	}
@@ -551,6 +555,22 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}); err != nil {
 		return nil, err
 	}
+	// Moves still open to slashing, the debt rows in insertion order (each
+	// with its latest retained), and the longest unbonding_time seen.
+	if err := k.Moves.Walk(ctx, nil, func(_ []byte, mv types.Move) (bool, error) {
+		gs.Moves = append(gs.Moves, mv)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if gs.DebtRows, err = k.DebtRows(ctx, 0, ^uint64(0)); err != nil {
+		return nil, err
+	}
+	if m, err := k.MaxUnbonding.Get(ctx); err == nil {
+		gs.MaxUnbondingSeconds = m
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
 	return gs, nil
 }
 
@@ -614,7 +634,9 @@ func (k Keeper) checkGenesisDelegations(ctx context.Context, gs types.GenesisSta
 // checkRedelegationRecord is the rule for an x/staking redelegation, at
 // genesis and in invariant 9: only this module redelegates (a private
 // redelegation; an operator's self-bond cannot move), between two different
-// canonical validators, with at most max_entries entries.
+// canonical validators, with 1..MaxEntryHeightsPerPair entries, and every
+// entry a slash can still reach owned by moves whose shares are exactly its
+// shares (so a slash of it is owed by them: moves.go).
 func (k Keeper) checkRedelegationRecord(ctx context.Context, r stakingtypes.Redelegation) error {
 	del, err := k.addressCodec.StringToBytes(r.DelegatorAddress)
 	if err != nil {
@@ -635,15 +657,89 @@ func (k Keeper) checkRedelegationRecord(ctx context.Context, r stakingtypes.Rede
 	if src.Equals(dst) {
 		return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s -> itself", r.ValidatorSrcAddress)
 	}
-	maxEntries, err := k.staking.MaxEntries(ctx)
+	if len(r.Entries) == 0 || len(r.Entries) > types.MaxEntryHeightsPerPair {
+		return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s -> %s has %d entries (1..%d)",
+			r.ValidatorSrcAddress, r.ValidatorDstAddress, len(r.Entries), types.MaxEntryHeightsPerPair)
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime()
+	id := entryID(r.ValidatorSrcAddress, r.ValidatorDstAddress)
+	seen := map[int64]bool{}
+	for _, e := range r.Entries {
+		if e.IsMature(now) {
+			continue
+		}
+		if seen[e.CreationHeight] {
+			return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s: two entries at height %d", id, e.CreationHeight)
+		}
+		seen[e.CreationHeight] = true
+		sum := math.LegacyZeroDec()
+		rng := collections.NewSuperPrefixedTripleRange[string, int64, []byte](id, e.CreationHeight)
+		if err := k.MovesByEntry.Walk(ctx, rng, func(key collections.Triple[string, int64, []byte]) (bool, error) {
+			mv, err := k.Moves.Get(ctx, key.K3())
+			if err != nil {
+				return true, err
+			}
+			sum = sum.Add(mv.Shares)
+			return false, nil
+		}); err != nil {
+			return err
+		}
+		if !sum.Equal(e.SharesDst) {
+			return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s at height %d: its moves hold %s shares, the entry %s",
+				id, e.CreationHeight, sum, e.SharesDst)
+		}
+	}
+	return nil
+}
+
+// initMoves loads the moves, the slash debt tree (rows re-set in insertion
+// order: the same tree) and the longest unbonding_time seen. Every move with
+// a cut exposure has its row; a move's indexes are rebuilt.
+func (k Keeper) initMoves(ctx context.Context, gs types.GenesisState) error {
+	t, err := k.debtTree(ctx)
 	if err != nil {
 		return err
 	}
-	if len(r.Entries) == 0 || uint32(len(r.Entries)) > maxEntries {
-		return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s -> %s has %d entries (max_entries %d)",
-			r.ValidatorSrcAddress, r.ValidatorDstAddress, len(r.Entries), maxEntries)
+	if t.Size() != 0 {
+		return fmt.Errorf("slash debt tree is not empty at genesis")
 	}
-	return nil
+	for i, r := range gs.DebtRows {
+		key, err := privacy.FieldFromBytes(r.Key)
+		if err != nil {
+			return fmt.Errorf("debt row %d: %w", i, err)
+		}
+		if _, err := t.Set(key, r.Retained); err != nil {
+			return fmt.Errorf("debt row %d: %w", i, err)
+		}
+	}
+	if err := k.DebtSize.Set(ctx, t.Size()); err != nil {
+		return err
+	}
+	for _, mv := range gs.Moves {
+		if _, err := k.valAddr(mv.SrcValidator); err != nil {
+			return fmt.Errorf("genesis move: %w", err)
+		}
+		if _, err := k.valAddr(mv.DstValidator); err != nil {
+			return fmt.Errorf("genesis move: %w", err)
+		}
+		r, err := k.DebtRetained.Get(ctx, mv.Key)
+		slashed := err == nil
+		if err != nil && !errors.Is(err, collections.ErrNotFound) {
+			return err
+		}
+		if slashed && !mv.Retained.Equal(math.NewIntFromUint64(r)) || !slashed && !mv.Retained.Equal(mv.Credited) {
+			return fmt.Errorf("genesis move %X: retained %s does not match its debt row", mv.Key, mv.Retained)
+		}
+		if err := k.putMove(ctx, mv); err != nil {
+			return err
+		}
+	}
+	if gs.MaxUnbondingSeconds > 0 {
+		if err := k.MaxUnbonding.Set(ctx, gs.MaxUnbondingSeconds); err != nil {
+			return err
+		}
+	}
+	return k.noteMaxUnbonding(ctx)
 }
 
 func (k Keeper) delegationAddrs(del, val string) (sdk.AccAddress, sdk.ValAddress, error) {

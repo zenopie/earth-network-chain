@@ -30,9 +30,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{RpcMethod: "Positions", Use: "positions", Short: "List Groundworks positions"},
 				{
-					RpcMethod: "Redelegation", Use: "redelegation [src-valoper] [dst-valoper]",
-					Short:          "Show x/staking's limits on a private redelegation between two validators",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "src_validator"}, {ProtoField: "dst_validator"}},
+					RpcMethod: "DebtTree", Use: "debt-tree",
+					Short: "Show the slash debt tree's rows, root and the label window",
+				},
+				{
+					RpcMethod: "Move", Use: "move [key-hex]",
+					Short:          "Show a private redelegation still open to slashing, and its debt row",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "key"}},
 				},
 				{
 					RpcMethod: "Snapshot", Use: "snapshot [proposal-id]", Short: "Show a proposal's stake-vote snapshot",

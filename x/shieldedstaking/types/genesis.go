@@ -50,6 +50,12 @@ func (gs GenesisState) Validate() error {
 		if v.EpochRate.IsNil() || v.EpochRate.IsNegative() {
 			return fmt.Errorf("%s: invalid epoch rate", v.Validator)
 		}
+		if err := nonNeg("slash_debt", v.SlashDebt); err != nil {
+			return err
+		}
+	}
+	if err := gs.validateMoves(); err != nil {
+		return err
 	}
 	recs := map[string]bool{}
 	for _, r := range gs.UnbondRecords {
@@ -293,6 +299,57 @@ func checkVoteNullifiers(v StakeVote, used map[string]bool) error {
 			return fmt.Errorf("vote nullifier %s used twice", k)
 		}
 		used[k] = true
+	}
+	return nil
+}
+
+// validateMoves: the debt rows' keys are canonical, nonzero and distinct;
+// every move names two different canonical validators, a canonical nonzero
+// key of its own, a positive credit that fits a note, retained in
+// 0..credited, positive shares and an entry (height, completion), and a cut
+// exposure has its row.
+func (gs GenesisState) validateMoves() error {
+	rows := map[string]uint64{}
+	for i, r := range gs.DebtRows {
+		k, err := privacy.FieldFromBytes(r.Key)
+		if err != nil || k.IsZero() {
+			return fmt.Errorf("debt row %d: key is not a canonical nonzero field element", i)
+		}
+		if _, dup := rows[string(r.Key)]; dup {
+			return fmt.Errorf("debt row %d: repeated key", i)
+		}
+		rows[string(r.Key)] = r.Retained
+	}
+	keys := map[string]bool{}
+	for _, mv := range gs.Moves {
+		k, err := privacy.FieldFromBytes(mv.Key)
+		if err != nil || k.IsZero() || keys[string(mv.Key)] {
+			return fmt.Errorf("move %X: key is malformed or repeated", mv.Key)
+		}
+		keys[string(mv.Key)] = true
+		if err := CanonicalValoper(mv.SrcValidator); err != nil {
+			return fmt.Errorf("move %X: %w", mv.Key, err)
+		}
+		if err := CanonicalValoper(mv.DstValidator); err != nil {
+			return fmt.Errorf("move %X: %w", mv.Key, err)
+		}
+		if mv.SrcValidator == mv.DstValidator {
+			return fmt.Errorf("move %X: to its own source", mv.Key)
+		}
+		if mv.Credited.IsNil() || !shieldedtypes.FitsNote(mv.Credited) {
+			return fmt.Errorf("move %X: credited must be 1..2^63-1", mv.Key)
+		}
+		if mv.Retained.IsNil() || mv.Retained.IsNegative() || mv.Retained.GT(mv.Credited) {
+			return fmt.Errorf("move %X: retained must be 0..credited", mv.Key)
+		}
+		if mv.Shares.IsNil() || !mv.Shares.IsPositive() || mv.EntryHeight <= 0 || mv.Completion <= 0 || mv.MoveTime == 0 {
+			return fmt.Errorf("move %X: needs positive shares, an entry height, a completion and a move time", mv.Key)
+		}
+		if r, ok := rows[string(mv.Key)]; ok && !math.NewIntFromUint64(r).Equal(mv.Retained) {
+			return fmt.Errorf("move %X: retained %s, its debt row %d", mv.Key, mv.Retained, r)
+		} else if !ok && !mv.Retained.Equal(mv.Credited) {
+			return fmt.Errorf("move %X: a cut exposure without a debt row", mv.Key)
+		}
 	}
 	return nil
 }

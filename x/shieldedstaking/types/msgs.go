@@ -179,15 +179,16 @@ func bundle(b *shieldedtypes.Bundle) []*shieldedtypes.Bundle { return []*shielde
 // ---- the stake proof -------------------------------------------------------
 
 // StakeProofInputs is the stake circuit's public input count.
-const StakeProofInputs = 11
+const StakeProofInputs = 16
 
 var zero32 = make([]byte, 32)
 
 func isZero(b []byte) bool { return bytes.Equal(b, zero32) }
 
 // StakeAsset is a stake denom's asset id (zk/privacy.AssetID): the stake
-// circuit's public asset. 0 for a msg naming no stake denom (a position's
-// update, unlock or vote, whose proof spends and creates nothing).
+// circuit's public asset. 0 for no stake denom (a position's update or vote,
+// whose proof spends and creates nothing; the credit lane of a msg crediting
+// no second asset).
 func StakeAsset(denom string) fr.Element {
 	if denom == "" {
 		return fr.Element{}
@@ -195,111 +196,127 @@ func StakeAsset(denom string) fr.Element {
 	return privacy.AssetID(denom)
 }
 
-// ValidateBasic checks a stake proof's shape: a proof, canonical 32-byte
-// fields, exactly two nullifiers and two commitments (zero for none), the
-// spent ones distinct, exactly two ciphertext slots (a 153-byte wallet stake
-// ciphertext for a non-zero commitment, empty for a zero one).
+// StakeLanes is what the chain supplies to a stake proof for a msg: lane A's
+// denom, the derth it credits (v_in) and the derth leaving (v_out); the
+// credit lane's denom, the derth it credits there (cr_v_in) and the move
+// time labelling it (cr_move_time), "", 0 and 0 when the msg credits no
+// second asset.
+type StakeLanes struct {
+	Denom          string
+	VIn, VOut      uint64
+	CreditDenom    string
+	CreditIn       uint64
+	CreditMoveTime uint64
+}
+
+// ValidateBasic checks a stake proof's form: a proof, every field a canonical
+// 32-byte element, exactly two lane A nullifiers, the non-zero nullifiers
+// distinct, and a 153-byte wallet stake ciphertext exactly for each non-zero
+// commitment. Which slots a msg must use is shape's.
 func (p *StakeProof) ValidateBasic() error {
 	if err := shieldedtypes.CheckProofLength(p.Proof); err != nil {
 		return errorsmod.Wrapf(ErrInvalidMsg, "stake proof: %v", err)
 	}
-	if _, err := field("stake anchor", p.Anchor); err != nil {
-		return err
-	}
-	if _, err := field("stake spc_mint", p.SpcMint); err != nil {
-		return err
-	}
-	if _, err := field("stake owner_tag", p.OwnerTag); err != nil {
-		return err
-	}
-	if len(p.Nullifiers) != 2 || len(p.Commitments) != 2 {
-		return errorsmod.Wrap(ErrInvalidMsg, "a stake proof carries exactly two nullifiers and two commitments")
-	}
-	for i := range 2 {
-		if _, err := field("stake nullifier", p.Nullifiers[i]); err != nil {
-			return err
-		}
-		if _, err := field("stake commitment", p.Commitments[i]); err != nil {
+	for _, f := range []struct {
+		name string
+		b    []byte
+	}{
+		{"stake anchor", p.Anchor}, {"stake owner_tag", p.OwnerTag}, {"stake commitment", p.Commitment},
+		{"stake credit_nullifier", p.CreditNullifier}, {"stake credit_commitment", p.CreditCommitment},
+		{"stake debt_root", p.DebtRoot},
+	} {
+		if _, err := field(f.name, f.b); err != nil {
 			return err
 		}
 	}
-	if !isZero(p.Nullifiers[0]) && bytes.Equal(p.Nullifiers[0], p.Nullifiers[1]) {
-		return errorsmod.Wrap(ErrInvalidMsg, "duplicate stake nullifier")
+	if len(p.Nullifiers) != 2 {
+		return errorsmod.Wrap(ErrInvalidMsg, "a stake proof carries exactly two nullifiers")
 	}
-	// One ciphertext slot per commitment, always both: empty for an unused
-	// (zero) output, present for a created note. A missing slot and an empty
-	// one sighash alike, so allowing both was two encodings of one msg.
-	if len(p.Ciphertexts) != 2 {
-		return errorsmod.Wrap(ErrInvalidMsg, "a stake proof carries exactly two ciphertexts (empty for a zero commitment)")
-	}
-	for i, ct := range p.Ciphertexts {
-		if isZero(p.Commitments[i]) != (len(ct) == 0) {
-			return errorsmod.Wrapf(ErrInvalidMsg, "ciphertext %d must be present iff commitment %d is non-zero", i, i)
+	for _, nf := range p.Nullifiers {
+		if _, err := field("stake nullifier", nf); err != nil {
+			return err
 		}
-		if len(ct) != 0 && len(ct) != privacy.WalletStakeCiphertextBytes {
-			return errorsmod.Wrapf(ErrInvalidMsg, "ciphertext %d must be exactly %d bytes (wallet stake note), got %d",
-				i, privacy.WalletStakeCiphertextBytes, len(ct))
+	}
+	// A proof that clears nothing (clear_before 0) reads no debt root: one
+	// encoding, the zero root.
+	if p.ClearBefore == 0 && !isZero(p.DebtRoot) {
+		return errorsmod.Wrap(ErrInvalidMsg, "debt_root is zero when clear_before is 0 (the proof clears no label)")
+	}
+	seen := map[string]bool{}
+	for _, nf := range p.SpentNullifiers() {
+		if seen[string(nf)] {
+			return errorsmod.Wrap(ErrInvalidMsg, "duplicate stake nullifier")
+		}
+		seen[string(nf)] = true
+	}
+	// One encoding per msg: a ciphertext exactly for a created note.
+	for _, o := range []struct {
+		name   string
+		cm, ct []byte
+	}{{"ciphertext", p.Commitment, p.Ciphertext}, {"credit_ciphertext", p.CreditCommitment, p.CreditCiphertext}} {
+		if isZero(o.cm) != (len(o.ct) == 0) {
+			return errorsmod.Wrapf(ErrInvalidMsg, "%s must be present iff its commitment is non-zero", o.name)
+		}
+		if len(o.ct) != 0 && len(o.ct) != privacy.WalletStakeCiphertextBytes {
+			return errorsmod.Wrapf(ErrInvalidMsg, "%s must be exactly %d bytes (wallet stake note), got %d",
+				o.name, privacy.WalletStakeCiphertextBytes, len(o.ct))
 		}
 	}
 	return nil
 }
 
-// mints checks spc_ciphertext against whether the msg has the chain mint a
-// stake note to spc_mint: then the note's blind stake ciphertext
-// (zk/privacy.EncryptBlindStakeNote, 177 bytes) is required, else none.
-func (p *StakeProof) mints(mints bool) error {
-	if !mints {
-		if len(p.SpcCiphertext) != 0 {
-			return errorsmod.Wrap(ErrInvalidMsg, "spc_ciphertext is only for a msg that mints a stake note")
-		}
-		return nil
-	}
-	if err := shieldedtypes.CheckBlindCiphertext("spc_ciphertext", p.SpcCiphertext); err != nil {
-		return errorsmod.Wrap(ErrInvalidMsg, err.Error())
-	}
-	return nil
-}
-
-// SpentNullifiers is the proof's non-zero nullifiers, in order.
+// SpentNullifiers is the proof's non-zero nullifiers, in order: lane A's,
+// then the credit lane's. Each is spent (inserted); the chain cannot tell a
+// padding nullifier from a real one, and need not.
 func (p *StakeProof) SpentNullifiers() [][]byte {
 	var out [][]byte
-	for _, nf := range p.Nullifiers {
-		if !isZero(nf) {
+	for _, nf := range append(append([][]byte{}, p.Nullifiers...), p.CreditNullifier) {
+		if len(nf) != 0 && !isZero(nf) {
 			out = append(out, nf)
 		}
 	}
 	return out
 }
 
-// Outputs is the proof's non-zero commitments, in order, each with its
-// ciphertext (nil when none).
+// Outputs is the proof's non-zero commitments, in append order (lane A's,
+// then the credit lane's), each with its ciphertext.
 func (p *StakeProof) Outputs() (cms, cts [][]byte) {
-	for i, cm := range p.Commitments {
-		if isZero(cm) {
-			continue
-		}
-		var ct []byte
-		if i < len(p.Ciphertexts) {
-			ct = p.Ciphertexts[i]
-		}
-		cms, cts = append(cms, cm), append(cts, ct)
+	if len(p.Commitment) != 0 && !isZero(p.Commitment) {
+		cms, cts = append(cms, p.Commitment), append(cts, p.Ciphertext)
+	}
+	if len(p.CreditCommitment) != 0 && !isZero(p.CreditCommitment) {
+		cms, cts = append(cms, p.CreditCommitment), append(cts, p.CreditCiphertext)
 	}
 	return cms, cts
 }
 
-// shape checks how many notes the proof spends (at least minSpends, none
-// when minSpends is 0) and whether it may create any.
-func (p *StakeProof) shape(minSpends int, creates bool) error {
+// shape checks the slots a msg uses, so that every msg of a kind looks the
+// same. notes: lane A spends (nf_0 non-zero: the owner's note, or padding;
+// nf_1 optional, a second note being merged) and creates (the merged note,
+// the change, or a padding zero note); without notes, lane A is all zero (a
+// position's update or vote). credit: the credit lane spends (the owner's
+// note of the credited asset, or padding) and creates the merged note; else
+// it is zero.
+func (p *StakeProof) shape(notes, credit bool) error {
 	if err := p.ValidateBasic(); err != nil {
 		return err
 	}
-	if n := len(p.SpentNullifiers()); n < minSpends {
-		return errorsmod.Wrapf(ErrInvalidMsg, "the stake proof must spend at least %d note(s)", minSpends)
-	} else if minSpends == 0 && n != 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "the stake proof spends nothing for this msg")
+	if notes {
+		if isZero(p.Nullifiers[0]) {
+			return errorsmod.Wrap(ErrInvalidMsg, "the stake proof spends a note (or pads with its own nullifier) in its first slot")
+		}
+		if isZero(p.Commitment) {
+			return errorsmod.Wrap(ErrInvalidMsg, "the stake proof creates a note (the merged note, the change or a zero note)")
+		}
+	} else if !isZero(p.Nullifiers[0]) || !isZero(p.Nullifiers[1]) || !isZero(p.Commitment) {
+		return errorsmod.Wrap(ErrInvalidMsg, "the stake proof spends and creates nothing for this msg")
 	}
-	if cms, _ := p.Outputs(); !creates && len(cms) != 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "the stake proof creates no note for this msg")
+	if credit {
+		if isZero(p.CreditNullifier) || isZero(p.CreditCommitment) {
+			return errorsmod.Wrap(ErrInvalidMsg, "the stake proof's credit lane spends a note (or pads) and creates the merged note")
+		}
+	} else if !isZero(p.CreditNullifier) || !isZero(p.CreditCommitment) {
+		return errorsmod.Wrap(ErrInvalidMsg, "this msg credits no second asset: the credit lane is zero")
 	}
 	return nil
 }
@@ -310,9 +327,9 @@ func fieldOrZero(b []byte) fr.Element {
 }
 
 // StakeFields are the stake proof's values every staking msg's sighash binds
-// first: anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0), Bytes(ct_1), spc_mint,
-// owner_tag, Bytes(spc_ciphertext) (an absent ciphertext is Bytes of
-// nothing).
+// first: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
+// Bytes(credit_ct), owner_tag, clear_before, debt_root (an absent ciphertext
+// is Bytes of nothing).
 func (p *StakeProof) StakeFields() []fr.Element {
 	at := func(xs [][]byte, i int) []byte {
 		if i < len(xs) {
@@ -322,30 +339,33 @@ func (p *StakeProof) StakeFields() []fr.Element {
 	}
 	return []fr.Element{
 		fieldOrZero(p.Anchor), fieldOrZero(at(p.Nullifiers, 0)), fieldOrZero(at(p.Nullifiers, 1)),
-		fieldOrZero(at(p.Commitments, 0)), fieldOrZero(at(p.Commitments, 1)),
-		privacy.Bytes(at(p.Ciphertexts, 0)), privacy.Bytes(at(p.Ciphertexts, 1)),
-		fieldOrZero(p.SpcMint), fieldOrZero(p.OwnerTag), privacy.Bytes(p.SpcCiphertext),
+		fieldOrZero(p.Commitment), privacy.Bytes(p.Ciphertext),
+		fieldOrZero(p.CreditNullifier), fieldOrZero(p.CreditCommitment), privacy.Bytes(p.CreditCiphertext),
+		fieldOrZero(p.OwnerTag), privacy.U64(p.ClearBefore), fieldOrZero(p.DebtRoot),
 	}
 }
 
 // PublicInputs lays out the stake circuit's public inputs: anchor, asset,
-// nf_0, nf_1, cm_out_0, cm_out_1, v_in (always 0), v_out, spc_mint,
-// owner_tag, sighash. Call after ValidateBasic.
-func (p *StakeProof) PublicInputs(asset fr.Element, vOut uint64, sighash fr.Element) [][]byte {
+// nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf,
+// cr_cm, cr_v_in, cr_move_time, owner_tag, sighash. Call after
+// ValidateBasic.
+func (p *StakeProof) PublicInputs(l StakeLanes, sighash fr.Element) [][]byte {
+	u := func(v uint64) []byte { return privacy.FieldBytes(privacy.U64(v)) }
 	return [][]byte{
-		p.Anchor, privacy.FieldBytes(asset), p.Nullifiers[0], p.Nullifiers[1], p.Commitments[0], p.Commitments[1],
-		privacy.FieldBytes(privacy.U64(0)), privacy.FieldBytes(privacy.U64(vOut)), p.SpcMint, p.OwnerTag,
-		privacy.FieldBytes(sighash),
+		p.Anchor, privacy.FieldBytes(StakeAsset(l.Denom)), p.Nullifiers[0], p.Nullifiers[1], p.Commitment,
+		u(l.VIn), u(l.VOut), u(p.ClearBefore), p.DebtRoot,
+		privacy.FieldBytes(StakeAsset(l.CreditDenom)), p.CreditNullifier, p.CreditCommitment, u(l.CreditIn),
+		u(l.CreditMoveTime), p.OwnerTag, privacy.FieldBytes(sighash),
 	}
 }
 
-// StakeMsg is a staking msg with a stake proof: the proof, the stake denom
-// its notes are ("" for none) and what leaves them (v_out).
+// StakeMsg is a staking msg with a stake proof and what the chain supplies
+// to it. MsgUnlockPosition's lane A follows its position (the keeper fills
+// it in: StakeLanes returns none).
 type StakeMsg interface {
 	shieldedtypes.PrivateMsg
 	StakeProofOf() *StakeProof
-	StakeDenom() string
-	VOut() uint64
+	StakeLanes() StakeLanes
 }
 
 var (
@@ -364,11 +384,12 @@ func withStake(p *StakeProof, fields ...fr.Element) []fr.Element {
 }
 
 // VoteWeightSigFigs is how many significant decimal digits a stake vote's
-// weight may have. Minted note amounts are public (delegate, undelegate and
-// unlock events), so an exact weight links a vote to the mint that made its
-// note, and the same note's votes across proposals. Every wallet rounds the
-// weight down to this many digits, and the chain refuses any other, so all
-// weights fall in the same buckets (audit 6 C-L3). The circuit asks only
+// weight may have. Credited amounts are public (delegate, unlock and
+// redelegate events), and a note's amount is one of them when the note holds
+// nothing else, so an exact weight could link a vote to the txs that made
+// its note, and the same note's votes across proposals. Every wallet rounds
+// the weight down to this many digits, and the chain refuses any other, so
+// all weights fall in the same buckets (audit 6 C-L3). The circuit asks only
 // 0 < weight <= amount.
 const VoteWeightSigFigs = 3
 
@@ -403,23 +424,31 @@ func positive(what string, v uint64) error {
 func (m *MsgDelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgDelegate) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, m.Amount) }
 func (m *MsgDelegate) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgDelegate) StakeDenom() string                      { return DerthDenom(m.Validator) }
-func (m *MsgDelegate) VOut() uint64                            { return 0 }
+
+// StakeLanes: derth/<validator>, crediting derth.
+func (m *MsgDelegate) StakeLanes() StakeLanes {
+	return StakeLanes{Denom: DerthDenom(m.Validator), VIn: m.Derth}
+}
 
 // Delegated is the uerth delegated: what the bundle releases beyond the fee
 // (amount, once ValidateBasic passed).
 func (m *MsgDelegate) Delegated() uint64 { return released(m, BondDenom) }
 
-// SighashFields: StakeFields, Bytes(validator), amount.
+// SighashFields: StakeFields, Bytes(validator), amount, derth.
 func (m *MsgDelegate) SighashFields(address.Codec) ([]fr.Element, error) {
-	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount)), nil
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount), privacy.U64(m.Derth)), nil
 }
 
+// ValidateBasic: a positive amount released by the bundle, a positive derth,
+// and a proof merging into the owner's derth/<validator> note.
 func (m *MsgDelegate) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
 	if err := positive("amount", m.Amount); err != nil {
+		return err
+	}
+	if err := positive("derth", m.Derth); err != nil {
 		return err
 	}
 	if err := checkMoves(m, BondDenom, 0); err != nil {
@@ -428,10 +457,7 @@ func (m *MsgDelegate) ValidateBasic() error {
 	if released(m, BondDenom) != m.Amount {
 		return errorsmod.Wrap(ErrInvalidMsg, "the bundle must release amount uerth beyond its fee")
 	}
-	if err := m.Stake.shape(0, false); err != nil {
-		return err
-	}
-	return m.Stake.mints(true)
+	return m.Stake.shape(true, false)
 }
 
 // ---- MsgRestake -----------------------------------------------------------
@@ -439,8 +465,9 @@ func (m *MsgDelegate) ValidateBasic() error {
 func (m *MsgRestake) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgRestake) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgRestake) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgRestake) StakeDenom() string                      { return DerthDenom(m.Validator) }
-func (m *MsgRestake) VOut() uint64                            { return 0 }
+
+// StakeLanes: derth/<validator>, nothing in or out.
+func (m *MsgRestake) StakeLanes() StakeLanes { return StakeLanes{Denom: DerthDenom(m.Validator)} }
 
 // SighashFields: StakeFields, Bytes(validator).
 func (m *MsgRestake) SighashFields(address.Codec) ([]fr.Element, error) {
@@ -448,22 +475,13 @@ func (m *MsgRestake) SighashFields(address.Codec) ([]fr.Element, error) {
 }
 
 func (m *MsgRestake) ValidateBasic() error {
-	if err := m.Stake.mints(false); err != nil {
-		return err
-	}
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
 	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
-	if err := m.Stake.shape(1, true); err != nil {
-		return err
-	}
-	if cms, _ := m.Stake.Outputs(); len(cms) == 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "a restake creates at least one note")
-	}
-	return nil
+	return m.Stake.shape(true, false)
 }
 
 // ---- MsgUndelegate --------------------------------------------------------
@@ -471,8 +489,11 @@ func (m *MsgRestake) ValidateBasic() error {
 func (m *MsgUndelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgUndelegate) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgUndelegate) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgUndelegate) StakeDenom() string                      { return DerthDenom(m.Validator) }
-func (m *MsgUndelegate) VOut() uint64                            { return m.Amount }
+
+// StakeLanes: derth/<validator>, amount leaving.
+func (m *MsgUndelegate) StakeLanes() StakeLanes {
+	return StakeLanes{Denom: DerthDenom(m.Validator), VOut: m.Amount}
+}
 
 // SighashFields: StakeFields, Bytes(validator), amount, pc,
 // Bytes(ciphertext).
@@ -485,12 +506,9 @@ func (m *MsgUndelegate) SighashFields(address.Codec) ([]fr.Element, error) {
 		privacy.Bytes(m.Ciphertext)), nil
 }
 
-// ValidateBasic: the proof spends derth and may return change; no stake note
-// is minted (spc_ciphertext empty); pc and ciphertext name the payout notes.
+// ValidateBasic: the proof spends derth and creates the change (or a zero
+// note); pc and ciphertext name the payout notes.
 func (m *MsgUndelegate) ValidateBasic() error {
-	if err := m.Stake.mints(false); err != nil {
-		return err
-	}
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
@@ -503,7 +521,7 @@ func (m *MsgUndelegate) ValidateBasic() error {
 	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
 		return err
 	}
-	return m.Stake.shape(1, true)
+	return m.Stake.shape(true, false)
 }
 
 // ---- MsgRedelegate --------------------------------------------------------
@@ -511,19 +529,27 @@ func (m *MsgUndelegate) ValidateBasic() error {
 func (m *MsgRedelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgRedelegate) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgRedelegate) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgRedelegate) StakeDenom() string                      { return DerthDenom(m.SrcValidator) }
-func (m *MsgRedelegate) VOut() uint64                            { return m.Amount }
+
+// StakeLanes: derth/<src>, amount leaving; the credit lane derth/<dst>,
+// crediting dst_derth labelled with move_time.
+func (m *MsgRedelegate) StakeLanes() StakeLanes {
+	return StakeLanes{Denom: DerthDenom(m.SrcValidator), VOut: m.Amount,
+		CreditDenom: DerthDenom(m.DstValidator), CreditIn: m.DstDerth, CreditMoveTime: m.MoveTime}
+}
+
+// MoveKey is the move's key: its credit nullifier (the label's move_key).
+func (m *MsgRedelegate) MoveKey() []byte { return m.Stake.CreditNullifier }
 
 // SighashFields: StakeFields, Bytes(src_validator), Bytes(dst_validator),
-// amount.
+// amount, dst_derth, move_time.
 func (m *MsgRedelegate) SighashFields(address.Codec) ([]fr.Element, error) {
 	return withStake(&m.Stake, privacy.Bytes([]byte(m.SrcValidator)), privacy.Bytes([]byte(m.DstValidator)),
-		privacy.U64(m.Amount)), nil
+		privacy.U64(m.Amount), privacy.U64(m.DstDerth), privacy.U64(m.MoveTime)), nil
 }
 
 // ValidateBasic: two different canonical validators; the proof spends
-// derth/<src> (amount leaving, change back to the owner) and the chain mints
-// derth/<dst> to spc_mint (spc_ciphertext required).
+// derth/<src> (amount leaving, the change or a zero note back to the owner)
+// and merges dst_derth into the owner's derth/<dst> note.
 func (m *MsgRedelegate) ValidateBasic() error {
 	if err := checkValidator(m.SrcValidator); err != nil {
 		return err
@@ -537,30 +563,36 @@ func (m *MsgRedelegate) ValidateBasic() error {
 	if err := positive("amount", m.Amount); err != nil {
 		return err
 	}
+	if err := positive("dst_derth", m.DstDerth); err != nil {
+		return err
+	}
+	if err := positive("move_time", m.MoveTime); err != nil {
+		return err
+	}
 	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
-	if err := m.Stake.shape(1, true); err != nil {
-		return err
-	}
-	return m.Stake.mints(true)
+	return m.Stake.shape(true, true)
 }
 
 // ---- MsgStakeVote ---------------------------------------------------------
 
 // MaxVoteNotes is how many stake notes one vote proof carries (circuits/vote
 // MAX_NOTES): every MsgStakeVote has exactly this many vote nullifier slots.
-const MaxVoteNotes = 4
+// One note per validator (ORCHARD_DESIGN.md section 20) needs one; the second
+// covers a note made beside a labelled one.
+const MaxVoteNotes = 2
 
 // VoteProofInputs is the vote circuit's public input count: note_root,
-// nf_root, asset, weight, proposal_id, MaxVoteNotes vote nullifiers, sighash.
-const VoteProofInputs = 6 + MaxVoteNotes
+// nf_root, debt_root, asset, weight, proposal_id, MaxVoteNotes vote
+// nullifiers, sighash.
+const VoteProofInputs = 7 + MaxVoteNotes
 
 func (m *MsgStakeVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgStakeVote) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 
 // SighashFields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
-// weight, vote_nullifiers[0..MaxVoteNotes-1].
+// weight, vote_nullifiers[0..MaxVoteNotes-1], debt_root.
 func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
 	if len(m.VoteNullifiers) != MaxVoteNotes {
 		return nil, errorsmod.Wrapf(ErrInvalidMsg, "a stake vote carries exactly %d vote nullifiers", MaxVoteNotes)
@@ -574,7 +606,11 @@ func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
 		}
 		out = append(out, vnf)
 	}
-	return out, nil
+	root, err := field("debt_root", m.DebtRoot)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, root), nil
 }
 
 // UsedVoteNullifiers is the msg's non-zero vote nullifiers, in order (one
@@ -608,6 +644,9 @@ func (m *MsgStakeVote) ValidateBasic() error {
 	if err := shieldedtypes.CheckProofLength(m.Proof); err != nil {
 		return errorsmod.Wrapf(ErrInvalidMsg, "vote proof: %v", err)
 	}
+	if _, err := field("debt_root", m.DebtRoot); err != nil {
+		return err
+	}
 	if len(m.VoteNullifiers) != MaxVoteNotes {
 		return errorsmod.Wrapf(ErrInvalidMsg, "a stake vote carries exactly %d vote nullifiers (zero for an unused slot)", MaxVoteNotes)
 	}
@@ -637,12 +676,13 @@ func (m *MsgStakeVote) ValidateBasic() error {
 }
 
 // VotePublicInputs lays out the vote circuit's public inputs: note_root,
-// nf_root (the proposal's snapshot roots), asset = AssetID(derth/<validator>),
-// weight, proposal_id, vote_nullifiers[0..MaxVoteNotes-1], sighash. Call after
+// nf_root (the proposal's snapshot roots), debt_root (the msg's, checked to
+// be the current one), asset = AssetID(derth/<validator>), weight,
+// proposal_id, vote_nullifiers[0..MaxVoteNotes-1], sighash. Call after
 // ValidateBasic.
 func (m *MsgStakeVote) VotePublicInputs(noteRoot, nfRoot []byte, sighash fr.Element) [][]byte {
 	out := [][]byte{
-		noteRoot, nfRoot, privacy.FieldBytes(privacy.AssetID(DerthDenom(m.Validator))),
+		noteRoot, nfRoot, m.DebtRoot, privacy.FieldBytes(privacy.AssetID(DerthDenom(m.Validator))),
 		privacy.FieldBytes(privacy.U64(m.Weight)), privacy.FieldBytes(privacy.U64(m.ProposalId)),
 	}
 	out = append(out, m.VoteNullifiers...)
@@ -654,8 +694,11 @@ func (m *MsgStakeVote) VotePublicInputs(noteRoot, nfRoot []byte, sighash fr.Elem
 func (m *MsgLockPosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgLockPosition) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgLockPosition) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgLockPosition) StakeDenom() string                      { return DerthDenom(m.Validator) }
-func (m *MsgLockPosition) VOut() uint64                            { return m.Amount }
+
+// StakeLanes: derth/<validator>, amount leaving into the position.
+func (m *MsgLockPosition) StakeLanes() StakeLanes {
+	return StakeLanes{Denom: DerthDenom(m.Validator), VOut: m.Amount}
+}
 
 // SighashFields: StakeFields, Bytes(validator), amount,
 // Bytes(SplitsBytes(splits)).
@@ -665,9 +708,6 @@ func (m *MsgLockPosition) SighashFields(address.Codec) ([]fr.Element, error) {
 }
 
 func (m *MsgLockPosition) ValidateBasic() error {
-	if err := m.Stake.mints(false); err != nil {
-		return err
-	}
 	if err := checkValidator(m.Validator); err != nil {
 		return err
 	}
@@ -680,14 +720,15 @@ func (m *MsgLockPosition) ValidateBasic() error {
 	if len(m.Splits) > allocationtypes.MaxVoterOptions {
 		return errorsmod.Wrap(ErrInvalidMsg, "too many splits")
 	}
-	return m.Stake.shape(1, true)
+	return m.Stake.shape(true, false)
 }
 
 func (m *MsgUpdatePosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgUpdatePosition) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgUpdatePosition) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgUpdatePosition) StakeDenom() string                      { return "" }
-func (m *MsgUpdatePosition) VOut() uint64                            { return 0 }
+
+// StakeLanes: none (the proof shows only the owner tag).
+func (m *MsgUpdatePosition) StakeLanes() StakeLanes { return StakeLanes{} }
 
 // SighashFields: StakeFields, position_id, Bytes(SplitsBytes(splits)).
 func (m *MsgUpdatePosition) SighashFields(address.Codec) ([]fr.Element, error) {
@@ -695,44 +736,49 @@ func (m *MsgUpdatePosition) SighashFields(address.Codec) ([]fr.Element, error) {
 }
 
 func (m *MsgUpdatePosition) ValidateBasic() error {
-	if err := m.Stake.mints(false); err != nil {
-		return err
-	}
 	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
 	if len(m.Splits) > allocationtypes.MaxVoterOptions {
 		return errorsmod.Wrap(ErrInvalidMsg, "too many splits")
 	}
-	return m.Stake.shape(0, false)
+	return m.Stake.shape(false, false)
 }
 
 func (m *MsgUnlockPosition) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgUnlockPosition) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgUnlockPosition) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgUnlockPosition) StakeDenom() string                      { return "" }
-func (m *MsgUnlockPosition) VOut() uint64                            { return 0 }
+
+// StakeLanes: none here. The keeper supplies derth/<the position's
+// validator>, crediting the position's derth (UnlockLanes).
+func (m *MsgUnlockPosition) StakeLanes() StakeLanes { return StakeLanes{} }
+
+// UnlockLanes is what the chain supplies to an unlock of p: derth/<its
+// validator>, crediting its derth.
+func UnlockLanes(p Position) StakeLanes {
+	return StakeLanes{Denom: DerthDenom(p.Validator), VIn: p.Derth.Uint64()}
+}
 
 // SighashFields: StakeFields, position_id.
 func (m *MsgUnlockPosition) SighashFields(address.Codec) ([]fr.Element, error) {
 	return withStake(&m.Stake, privacy.U64(m.PositionId)), nil
 }
 
+// ValidateBasic: the proof merges the position's derth into the owner's
+// note (or pads).
 func (m *MsgUnlockPosition) ValidateBasic() error {
-	if err := m.Stake.mints(true); err != nil {
-		return err
-	}
 	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
-	return m.Stake.shape(0, false)
+	return m.Stake.shape(true, false)
 }
 
 func (m *MsgPositionVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgPositionVote) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgPositionVote) StakeProofOf() *StakeProof               { return &m.Stake }
-func (m *MsgPositionVote) StakeDenom() string                      { return "" }
-func (m *MsgPositionVote) VOut() uint64                            { return 0 }
+
+// StakeLanes: none (the proof shows only the owner tag).
+func (m *MsgPositionVote) StakeLanes() StakeLanes { return StakeLanes{} }
 
 // SighashFields: StakeFields, position_id, proposal_id,
 // Bytes(OptionsBytes(options)).
@@ -742,16 +788,13 @@ func (m *MsgPositionVote) SighashFields(address.Codec) ([]fr.Element, error) {
 }
 
 func (m *MsgPositionVote) ValidateBasic() error {
-	if err := m.Stake.mints(false); err != nil {
-		return err
-	}
 	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
 	if err := ValidateOptions(m.Options); err != nil {
 		return err
 	}
-	return m.Stake.shape(0, false)
+	return m.Stake.shape(false, false)
 }
 
 // ---- MsgUpdateParams ------------------------------------------------------

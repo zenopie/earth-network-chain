@@ -9,12 +9,9 @@ import (
 	"strconv"
 
 	"cosmossdk.io/collections"
-	errorsmod "cosmossdk.io/errors"
-	"cosmossdk.io/math"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/privacy"
@@ -30,8 +27,9 @@ import (
 //	spc = H(TAG_SPC, owner_pk, rho, rcm)   cm = H(TAG_STAKE, asset, amount, spc)
 //	nf  = H(TAG_SNF, nk, rho, position)     asset = AssetID(stake denom)
 //
-// Notes a msg's proof creates carry hidden amounts; notes the chain mints
-// (a delegation's derth, an unlocked position) carry public ones, emitted with the stake pc.
+// Every note is a stake proof's output, its amount hidden: the chain mints
+// no stake note (ORCHARD_DESIGN.md section 20). A note may carry a slash
+// label (moves.go), hidden in its commitment like everything else.
 
 // stakeNodeStore backs zk/merkle's tree with StakeTreeNodes.
 type stakeNodeStore struct {
@@ -105,8 +103,7 @@ func (k Keeper) checkStakeCapacity(ctx context.Context, n uint64) error {
 	return nil
 }
 
-// appendStake appends cm, emitting the note (with its ciphertext, or the
-// public denom, amount and stake pc of a note the chain mints).
+// appendStake appends cm, emitting the note with its ciphertext.
 func (k Keeper) appendStake(ctx context.Context, cm []byte, attrs ...sdk.Attribute) (uint64, error) {
 	leaf, err := privacy.FieldFromBytes(cm)
 	if err != nil {
@@ -130,30 +127,6 @@ func (k Keeper) appendStake(ctx context.Context, cm []byte, attrs ...sdk.Attribu
 		sdk.NewAttribute(types.AttributeKeyCommitment, hex.EncodeToString(cm)),
 	}, attrs...)...))
 	return pos, nil
-}
-
-// mintStake appends a stake note of amount of denom to the stake pc spc: a
-// note the chain mints, its amount and denom public.
-func (k Keeper) mintStake(ctx context.Context, denom string, amount math.Int, spc, ciphertext []byte) (uint64, error) {
-	if !shieldedtypes.FitsNote(amount) {
-		return 0, errorsmod.Wrapf(types.ErrAmount, "a stake note holds 1..2^63-1, not %s", amount)
-	}
-	pc, err := privacy.FieldFromBytes(spc)
-	if err != nil {
-		return 0, types.ErrStakeTree.Wrapf("spc: %v", err)
-	}
-	// The note discovery rule: every minted stake note carries its blind
-	// stake ciphertext (zk/privacy.EncryptBlindStakeNote), emitted with it.
-	if err := shieldedtypes.CheckBlindCiphertext("spc_ciphertext", ciphertext); err != nil {
-		return 0, types.ErrStakeTree.Wrap(err.Error())
-	}
-	cm := privacy.FieldBytes(privacy.StakeCM(privacy.AssetID(denom), amount.Uint64(), pc))
-	return k.appendStake(ctx, cm,
-		sdk.NewAttribute(types.AttributeKeyDenom, denom),
-		sdk.NewAttribute(types.AttributeKeyAmount, amount.String()),
-		sdk.NewAttribute(types.AttributeKeySpc, hex.EncodeToString(spc)),
-		sdk.NewAttribute(types.AttributeKeyCiphertext, base64.StdEncoding.EncodeToString(ciphertext)),
-	)
 }
 
 // checkStakeNullifiers refuses a spent nullifier.
@@ -205,9 +178,8 @@ func (k Keeper) recordStakeRoot(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if t.Size() == 0 {
-		return nil
-	}
+	// The empty tree's root too: a first delegation pads its input with its
+	// own nullifier, so it proves against an anchor before any note exists.
 	r, err := t.Root()
 	if err != nil {
 		return err

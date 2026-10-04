@@ -3,16 +3,14 @@ package keeper
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"strconv"
-	"time"
 
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
@@ -24,8 +22,11 @@ import (
 // A staker moves d derth/A to validator B with no unbonding gap. The stake
 // proof spends derth/A notes (v_out = d, change back to the owner); the chain
 // moves their live value u = floor(d x B_A / S_A) from A's book to B's and
-// mints derth/B worth what arrived, at B's live rate, to spc_mint (the same
-// owner's: the stake circuit binds spc_mint to the spender).
+// credits the msg's dst_derth of derth/B, checked to be at most what
+// arrived buys at B's live rate, to the owner's derth/B note: the proof's
+// credit lane spends that note (or pads) and creates the merged one,
+// labelled with the move (moves.go), so derth/B stays with the spender (the
+// circuit binds every output to the spender's owner_pk).
 //
 // The value moves at once, never through an unbonding:
 //
@@ -35,39 +36,33 @@ import (
 //  2. Out of A's delegation queue first: P_A is ERTH waiting for the epoch
 //     end to be delegated to A. min(u, P_A) moves to P_B as a book entry; it
 //     was never bonded at A, so no x/staking entry is needed or made.
-//  3. The rest from the module's bonded stake at A, with x/staking's
-//     BeginRedelegate (module -> module, A -> B), under its rules: no
-//     transitive redelegation (refused while stake redelegated INTO A
-//     matures), at most max_entries maturing entries per (A, B). The rest
-//     never exceeds D_A - U_A: B_A >= u with W_A = 0 and P_A spent.
-//  4. B mints floor(arrived x S_B / B_B), arrived being the measured rise of
-//     B's backing (u, less x/staking's truncation): rounding favours the
-//     book on both sides. A value exceeding A's queue by at most
+//  3. The rest from the module's bonded stake at A, unbonded at A and
+//     bonded at B at once with x/staking's primitives (moveBonded), the
+//     redelegation entry recorded by the module itself: no transitive lock,
+//     no max_entries. The rest never exceeds D_A - U_A: B_A >= u with W_A = 0
+//     and P_A spent.
+//  4. B credits dst_derth <= floor(arrived x S_B / B_B), arrived being the
+//     measured rise of B's backing (u, less x/staking's truncation):
+//     rounding, and what arrived buys beyond dst_derth, favour the book on
+//     both sides (creditDst). A value exceeding A's queue by at most
 //     bondedDust (0.001 ERTH) moves out of the queue alone, the excess left
 //     to A's book.
 //
 // It runs in the private ante, atomically with the spend (ExecutesInAnte):
-// anything x/staking refuses fails the tx before a note is spent or a fee
-// paid. CheckPrivateAction refuses the same things earlier, before any
-// proof is verified.
+// anything refused fails the tx before a note is spent or a fee paid.
+// CheckPrivateAction refuses the same things earlier, before any proof is
+// verified.
 //
-// Slashing. x/staking slashes a redelegation entry for an infraction of A
-// committed before it (the entry's creation height is at or after the
-// infraction height) while it matures: slash_fraction x the entry's shares
-// at B, unbonded from the module's delegation at B and burnt. B's book
-// absorbs it, pro rata: every derth/B note loses the same fraction through
-// B's rate. The redelegated notes are derth/B like any other (nothing links
-// them to the redelegation), so the loss cannot follow them; their owner
-// bears their pro-rata share. B's undelegations already under way are
-// spared: x/staking would take the slash from them first
-// (prepareRedelegationSlash sets them aside for the slash). The value that
-// moved out of A's queue was never bonded at A and carries no entry. See
-// ORCHARD_DESIGN.md section 19.
-//
-// The module is ONE delegator to x/staking, so its limits are shared by
-// every private staker: one redelegation into A blocks every redelegation
-// out of A's bonded stake until it matures, and max_entries bounds the
-// redelegations from A to B maturing at once (Query/Redelegation).
+// Slashing. x/staking slashes the module's redelegation entry for an
+// infraction of A committed before it while it matures: slash_fraction x
+// the entry's shares at B, unbonded from the module's delegation at B and
+// burnt. The module covers it so B's rate does not move, and the moves of
+// the slashed entries owe it through their notes' labels (moves.go: the
+// slash debt). B's undelegations already under way are spared: x/staking
+// would take the slash from them first (prepareRedelegationSlash sets them
+// aside for the slash). The value that moved out of A's queue was never
+// bonded at A and carries no entry. See ORCHARD_DESIGN.md sections 19 and
+// 20.
 
 // bondedDust is the most a redelegation's value may exceed the source's
 // queue by and still move out of the queue alone, the excess left to the
@@ -77,107 +72,15 @@ import (
 var bondedDust = math.NewInt(1_000)
 
 // gasRedelegate is MsgRedelegate's base gas: two reward withdrawals, the
-// books, x/staking's BeginRedelegate (an unbond, a delegate, the entry and
-// its queue) and the mint.
+// books, the bonded move (an unbond, a delegate, the entry and its queue)
+// and the move's record.
 const gasRedelegate uint64 = 700_000
-
-// liquidAt is v's value outside x/staking: its delegation queue and the
-// module's unwithdrawn rewards there (withdrawn into the queue first).
-func (k Keeper) liquidAt(ctx context.Context, valoper string, val sdk.ValAddress) (math.Int, error) {
-	vs, err := k.ValidatorState(ctx, valoper)
-	if err != nil {
-		return math.Int{}, err
-	}
-	_, del, v, found, err := k.delegation(ctx, val)
-	if err != nil {
-		return math.Int{}, err
-	}
-	w := math.ZeroInt()
-	if found && del.Shares.IsPositive() {
-		if w, err = k.pendingRewards(ctx, v, del); err != nil {
-			return math.Int{}, err
-		}
-	}
-	return vs.PendingDelegation.Add(w), nil
-}
-
-// checkRedelegationLimits refuses what x/staking's BeginRedelegate would
-// for the module from src to dst: a transitive redelegation, or one past
-// max_entries for the pair. It names when the limit lifts.
-func (k Keeper) checkRedelegationLimits(ctx context.Context, srcoper, dstoper string, src, dst sdk.ValAddress) error {
-	if _, err := k.staking.GetValidator(ctx, src); err != nil {
-		return types.ErrRedelegation.Wrapf("%s: %v", srcoper, err)
-	}
-	// (When it lifts is Query/Redelegation's to say: finding it walks every
-	// redelegation of the module, too much for a refusal that costs the
-	// sender nothing.)
-	if recv, err := k.staking.HasReceivingRedelegation(ctx, k.modAddr, src); err != nil {
-		return err
-	} else if recv {
-		return types.ErrRedelegation.Wrapf("private stake redelegated to %s is maturing: x/staking refuses a transitive redelegation out of it until it completes (Query/Redelegation: src_locked_until; undelegating is not affected)",
-			srcoper)
-	}
-	if full, err := k.staking.HasMaxRedelegationEntries(ctx, k.modAddr, src, dst); err != nil {
-		return err
-	} else if full {
-		n, earliest, err := k.pairEntries(ctx, src, dst)
-		if err != nil {
-			return err
-		}
-		return types.ErrRedelegation.Wrapf("%d private redelegations %s -> %s are maturing, x/staking's max_entries; the next completes at %s",
-			n, srcoper, dstoper, time.Unix(0, earliest).UTC().Format(time.RFC3339))
-	}
-	return nil
-}
-
-// receivingUntil is when the last of the module's redelegation entries into
-// val completes (unix ns; 0 if none).
-func (k Keeper) receivingUntil(ctx context.Context, val sdk.ValAddress) (int64, error) {
-	reds, err := k.staking.GetRedelegations(ctx, k.modAddr, ^uint16(0))
-	if err != nil {
-		return 0, err
-	}
-	var until int64
-	for _, r := range reds {
-		dst, err := k.staking.ValidatorAddressCodec().StringToBytes(r.ValidatorDstAddress)
-		if err != nil {
-			return 0, err
-		}
-		if !bytes.Equal(dst, val) {
-			continue
-		}
-		for _, e := range r.Entries {
-			if t := e.CompletionTime.UnixNano(); t > until {
-				until = t
-			}
-		}
-	}
-	return until, nil
-}
-
-// pairEntries is the module's maturing src -> dst entries and when the
-// earliest completes (0 if none).
-func (k Keeper) pairEntries(ctx context.Context, src, dst sdk.ValAddress) (int, int64, error) {
-	red, err := k.staking.GetRedelegation(ctx, k.modAddr, src, dst)
-	if errors.Is(err, stakingtypes.ErrNoRedelegation) {
-		return 0, 0, nil
-	} else if err != nil {
-		return 0, 0, err
-	}
-	var earliest int64
-	for _, e := range red.Entries {
-		if t := e.CompletionTime.UnixNano(); earliest == 0 || t < earliest {
-			earliest = t
-		}
-	}
-	return len(red.Entries), earliest, nil
-}
 
 // checkRedelegate refuses, read-only, what executeRedelegate would: the
 // same validator twice, a destination this module will not delegate to (or
-// whose book is settling), more derth than exists, a value or a mint below
-// min_delegation or above one note, and an x/staking limit when the value
-// does not fit in the source's queue. Returns the value u at the live rate.
+// whose book is settling), more derth than exists, a value or a credit below
+// min_delegation or above one note, a credit the value does not buy, and a
+// move_time out of range. Returns the value u at the live rate.
 func (k Keeper) checkRedelegate(ctx context.Context, m *types.MsgRedelegate) (math.Int, error) {
 	src, err := k.valAddr(m.SrcValidator)
 	if err != nil {
@@ -185,6 +88,9 @@ func (k Keeper) checkRedelegate(ctx context.Context, m *types.MsgRedelegate) (ma
 	}
 	dst, err := k.valAddr(m.DstValidator)
 	if err != nil {
+		return math.Int{}, err
+	}
+	if err := checkMoveTime(ctx, m.MoveTime); err != nil {
 		return math.Int{}, err
 	}
 	if bytes.Equal(src, dst) {
@@ -219,24 +125,14 @@ func (k Keeper) checkRedelegate(ctx context.Context, m *types.MsgRedelegate) (ma
 	if u.LT(params.MinDelegation) {
 		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "the redelegation is worth %s%s, less than the minimum %s", u, types.BondDenom, params.MinDelegation)
 	}
-	minted, err := derthFor(u, bB, sB)
+	// An estimate (x/staking may truncate what arrives by a uerth):
+	// executeRedelegate checks the arrival itself, in the ante.
+	buys, err := derthFor(u, bB, sB)
 	if err != nil {
 		return math.Int{}, err
 	}
-	if minted.LT(params.MinDelegation) {
-		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "the redelegation mints %s derth, less than the minimum %s (rate %s)", minted, params.MinDelegation, rateOf(bB, sB))
-	}
-	if err := fitsNote(minted); err != nil {
+	if err := checkCredit("redelegation", math.NewIntFromUint64(m.DstDerth), buys, params.MinDelegation, rateOf(bB, sB)); err != nil {
 		return math.Int{}, err
-	}
-	liquid, err := k.liquidAt(ctx, m.SrcValidator, src)
-	if err != nil {
-		return math.Int{}, err
-	}
-	if u.Sub(liquid).GT(bondedDust) {
-		if err := k.checkRedelegationLimits(ctx, m.SrcValidator, m.DstValidator, src, dst); err != nil {
-			return math.Int{}, err
-		}
 	}
 	return u, nil
 }
@@ -308,28 +204,18 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 		u, bonded = queued, math.ZeroInt()
 	}
 
-	// 3. The rest moves bonded, with x/staking's redelegation.
-	var completion int64
+	// 3. The rest moves bonded, at once, its x/staking entry recorded.
+	var completion, entryHeight int64
+	shares := math.LegacyZeroDec()
 	late := math.ZeroInt()
 	if bonded.IsPositive() {
-		if err := k.checkRedelegationLimits(ctx, m.SrcValidator, m.DstValidator, src, dst); err != nil {
-			return nil, err
-		}
-		shares, err := k.staking.ValidateUnbondAmount(ctx, k.modAddr, src, bonded)
-		if err != nil {
-			return nil, errorsmod.Wrapf(types.ErrRedelegation, "%s from %s: %v", bonded, m.SrcValidator, err)
-		}
 		before := k.bank.GetBalance(ctx, k.modAddr, types.BondDenom).Amount
-		t, err := k.staking.BeginRedelegation(ctx, k.modAddr, src, dst, shares)
-		if err != nil {
-			return nil, errorsmod.Wrapf(types.ErrRedelegation, "%s -> %s: %v", m.SrcValidator, m.DstValidator, err)
+		if shares, entryHeight, completion, err = k.moveBonded(ctx, src, dst, bonded); err != nil {
+			return nil, err
 		}
 		// Whatever the delegation changes paid (nothing: both were just
 		// withdrawn) is the destination's, as every reward is booked.
 		late = k.bank.GetBalance(ctx, k.modAddr, types.BondDenom).Amount.Sub(before)
-		if t.After(ctx.BlockTime()) {
-			completion = t.UnixNano()
-		}
 	}
 
 	// 4. The books: the source's queue and supply, the destination's queue.
@@ -358,36 +244,32 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 	if err != nil {
 		return nil, err
 	}
-	// late (nothing, in practice) is the existing holders': it joins the
-	// base the new derth is priced against, not what arrived.
-	base := bB0.Add(late)
-	arrived := bB1.Sub(base)
-	minted, err := derthFor(arrived, base, sB0)
+	credited, err := k.creditDst(ctx, m, bB0, sB0, bB1, late, params.MinDelegation)
 	if err != nil {
-		return nil, err
-	}
-	if minted.LT(params.MinDelegation) {
-		return nil, errorsmod.Wrapf(types.ErrAmount, "the redelegation mints %s derth, less than the minimum %s", minted, params.MinDelegation)
-	}
-	if vsB, err = k.ValidatorState(ctx, m.DstValidator); err != nil {
-		return nil, err
-	}
-	if err := k.checkpointSupply(ctx, &vsB); err != nil {
-		return nil, err
-	}
-	vsB.DerthSupply = vsB.DerthSupply.Add(minted)
-	if err := k.Validators.Set(ctx, m.DstValidator, vsB); err != nil {
 		return nil, err
 	}
 
-	// 6. The notes: the source's spent (change back), the destination's
-	// minted to the owner.
-	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
-		return nil, err
-	}
-	pos, err := k.mintStake(ctx, types.DerthDenom(m.DstValidator), minted, m.Stake.SpcMint, m.Stake.SpcCiphertext)
+	// 6. The notes: the source's spent (the change back), the owner's
+	// derth/<dst> note spent (or padded) and the merged, labelled one created.
+	positions, err := k.applyStakeProof(ctx, &m.Stake)
 	if err != nil {
 		return nil, err
+	}
+	var pos uint64
+	if len(positions) > 0 {
+		pos = positions[len(positions)-1]
+	}
+
+	// 7. The move, while a slash of the source can reach its entry.
+	if entryHeight != 0 {
+		mv := types.Move{
+			Key: m.MoveKey(), SrcValidator: m.SrcValidator, DstValidator: m.DstValidator,
+			Height: ctx.BlockHeight(), MoveTime: m.MoveTime, Credited: credited, Shares: shares,
+			EntryHeight: entryHeight, Completion: completion, Retained: credited,
+		}
+		if err := k.putMove(ctx, mv); err != nil {
+			return nil, err
+		}
 	}
 	completionAttr := ""
 	if completion > 0 {
@@ -398,12 +280,49 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 		sdk.NewAttribute(types.AttributeKeyDstValidator, m.DstValidator),
 		sdk.NewAttribute(types.AttributeKeyDerth, d.String()),
 		sdk.NewAttribute(types.AttributeKeyValue, u.String()),
-		sdk.NewAttribute(types.AttributeKeyMinted, minted.String()),
+		sdk.NewAttribute(types.AttributeKeyCredited, credited.String()),
 		sdk.NewAttribute(types.AttributeKeyQueued, queued.String()),
 		sdk.NewAttribute(types.AttributeKeyBonded, bonded.String()),
 		sdk.NewAttribute(types.AttributeKeyCompletion, completionAttr),
+		sdk.NewAttribute(types.AttributeKeyMoveKey, hex.EncodeToString(m.MoveKey())),
+		sdk.NewAttribute(types.AttributeKeyMoveTime, strconv.FormatUint(m.MoveTime, 10)),
 	))
-	return &types.MsgRedelegateResponse{Value: u.Uint64(), Derth: minted.Uint64(), Position: pos, CompletionTime: completion}, nil
+	return &types.MsgRedelegateResponse{Value: u.Uint64(), Derth: credited.Uint64(), Position: pos, CompletionTime: completion}, nil
+}
+
+// creditDst credits the msg's dst_derth to the destination's book: it must
+// be at most what arrived buys at the destination's rate before the move
+// (bB0 and sB0; arrived is the rise of its backing to bB1, less late, the
+// existing holders' rewards paid by the move itself). What arrived buys
+// beyond dst_derth stays in the book. The note side is the proof's credit
+// lane (applyStakeProof): the owner's derth/<dst> note merged with
+// dst_derth. Kept apart from how the value moves, which a later redesign of
+// the redelegation's internals may replace.
+func (k Keeper) creditDst(ctx sdk.Context, m *types.MsgRedelegate, bB0, sB0, bB1, late, min math.Int) (math.Int, error) {
+	// late (nothing, in practice) is the existing holders': it joins the
+	// base the new derth is priced against, not what arrived.
+	base := bB0.Add(late)
+	arrived := bB1.Sub(base)
+	buys, err := derthFor(arrived, base, sB0)
+	if err != nil {
+		return math.Int{}, err
+	}
+	credited := math.NewIntFromUint64(m.DstDerth)
+	if err := checkCredit("redelegation", credited, buys, min, rateOf(base, sB0)); err != nil {
+		return math.Int{}, err
+	}
+	vsB, err := k.ValidatorState(ctx, m.DstValidator)
+	if err != nil {
+		return math.Int{}, err
+	}
+	if err := k.checkpointSupply(ctx, &vsB); err != nil {
+		return math.Int{}, err
+	}
+	vsB.DerthSupply = vsB.DerthSupply.Add(credited)
+	if err := k.Validators.Set(ctx, m.DstValidator, vsB); err != nil {
+		return math.Int{}, err
+	}
+	return credited, nil
 }
 
 // Redelegate returns what the private ante's run of the redelegation did.
@@ -455,7 +374,9 @@ func (h ActionHandler) ExecutePrivateAction(ctx sdk.Context, msg shieldedtypes.P
 //     would take from them up to the whole amount besides. Set aside, the
 //     slash takes exactly slash_fraction x the entry's shares from the
 //     module's delegation at dst: dst's book absorbs it, pro rata;
-//   - dst is re-weighed at the end of the block (its rate may have fallen).
+//   - the slash is watched (openSlashWatch): what it burns at dst becomes the
+//     slash debt of the moves it reached (moves.go);
+//   - dst is re-weighed at the end of the block.
 //
 // restoreSheltered puts the unbonding delegations back: at the start of the
 // next slash (before anything else, so a slash of dst itself sees its own
@@ -475,6 +396,7 @@ func (k Keeper) prepareRedelegationSlash(ctx context.Context, src sdk.ValAddress
 		k.failure(ctx, "redelegation_slash", src.String(), err)
 		return
 	}
+	k.openSlashWatch(ctx, src, reds)
 	mod := k.modString(ctx)
 	seen := map[string]bool{}
 	for _, r := range reds {
@@ -541,9 +463,11 @@ func (k Keeper) restoreSheltered(ctx context.Context) {
 	}
 }
 
-// BeginBlocker puts back the unbonding delegations a slash set aside this
-// block (it runs after x/slashing and x/evidence).
+// BeginBlocker settles the last slash watched this block and puts back the
+// unbonding delegations a slash set aside (it runs after x/slashing and
+// x/evidence, before any tx).
 func (k Keeper) BeginBlocker(ctx context.Context) error {
+	k.finishSlashWatch(ctx)
 	k.restoreSheltered(ctx)
 	return nil
 }
@@ -555,39 +479,4 @@ func (k Keeper) modString(context.Context) string {
 		return ""
 	}
 	return s
-}
-
-// Redelegation reports x/staking's limits on a private redelegation from
-// src to dst right now.
-func (q queryServer) Redelegation(ctx context.Context, req *types.QueryRedelegationRequest) (*types.QueryRedelegationResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "empty request")
-	}
-	src, err := q.k.valAddr(req.SrcValidator)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-	dst, err := q.k.valAddr(req.DstValidator)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-	until, err := q.k.receivingUntil(ctx, src)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	n, earliest, err := q.k.pairEntries(ctx, src, dst)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	maxEntries, err := q.k.staking.MaxEntries(ctx)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	liquid, err := q.k.liquidAt(ctx, req.SrcValidator, src)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	return &types.QueryRedelegationResponse{
-		SrcLockedUntil: until, Entries: uint32(n), MaxEntries: maxEntries, PairFreesAt: earliest, Queue: liquid,
-	}, nil
 }

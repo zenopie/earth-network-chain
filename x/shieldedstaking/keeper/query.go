@@ -168,3 +168,55 @@ func (q queryServer) StakeNullifierTree(ctx context.Context, req *types.QuerySta
 	}
 	return res, nil
 }
+
+// DebtTree pages the slash debt tree's rows, with its size, root and the
+// label window.
+func (q queryServer) DebtTree(ctx context.Context, req *types.QueryDebtTreeRequest) (*types.QueryDebtTreeResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+	limit := req.Limit
+	if limit == 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := q.k.DebtRows(ctx, req.Start, limit)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	root, size, err := q.k.DebtRoot(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	window, err := q.k.labelWindow(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	cb, err := q.k.ClearBefore(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QueryDebtTreeResponse{Rows: rows, Size_: size, Root: root, WindowSeconds: window, ClearBefore: cb}, nil
+}
+
+// Move is a move still open to slashing, and its debt row if slashed.
+func (q queryServer) Move(ctx context.Context, req *types.QueryMoveRequest) (*types.QueryMoveResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+	key, err := hex.DecodeString(req.Key)
+	if err != nil || len(key) != 32 {
+		return nil, status.Error(codes.InvalidArgument, "key: 64 hex characters")
+	}
+	res := &types.QueryMoveResponse{}
+	if mv, err := q.k.Moves.Get(ctx, key); err == nil {
+		res.Move, res.Found = mv, true
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if r, err := q.k.DebtRetained.Get(ctx, key); err == nil {
+		res.Slashed, res.Retained = true, r
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return res, nil
+}

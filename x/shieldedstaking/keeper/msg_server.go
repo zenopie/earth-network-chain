@@ -39,17 +39,18 @@ func (k msgServer) UpdateParams(ctx context.Context, req *types.MsgUpdateParams)
 	return &types.MsgUpdateParamsResponse{}, k.Params.Set(ctx, req.Params)
 }
 
-// Delegate: the ERTH joins the validator's queue, and derth/v is minted at the
-// live rate as a stake note to the proof's spc_mint (the delegator's own).
+// Delegate: the ERTH joins the validator's queue, and the derth it buys at
+// the live rate (the msg's derth, checked) is credited to the owner's
+// derth/v note: the proof spends it (or pads) and creates the merged note.
 func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types.MsgDelegateResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
 		return nil, err
 	}
-	d, err := k.checkDelegate(ctx, m)
-	if err != nil {
+	if err := k.checkDelegate(ctx, m); err != nil {
 		return nil, err
 	}
+	d := math.NewIntFromUint64(m.Derth)
 	paid, err := k.shielded.ReleaseToModule(ctx, m, types.BondDenom, types.ModuleName)
 	if err != nil {
 		return nil, err
@@ -66,7 +67,7 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
-	pos, err := k.mintStake(ctx, types.DerthDenom(m.Validator), d, m.Stake.SpcMint, m.Stake.SpcCiphertext)
+	pos, err := k.applyStakeProof(ctx, &m.Stake)
 	if err != nil {
 		return nil, err
 	}
@@ -75,11 +76,11 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 		sdk.NewAttribute(types.AttributeKeyAmount, paid.Amount.String()),
 		sdk.NewAttribute(types.AttributeKeyDerth, d.String()),
 	))
-	return &types.MsgDelegateResponse{Derth: d.Uint64(), Position: pos}, nil
+	return &types.MsgDelegateResponse{Derth: m.Derth, Position: firstPosition(pos)}, nil
 }
 
-// Restake merges or splits the owner's stake notes: the proof's outputs are
-// appended, its inputs spent. Nothing else changes.
+// Restake merges the owner's stake notes: the proof's output is appended,
+// its inputs spent. Nothing else changes.
 func (k msgServer) Restake(goCtx context.Context, m *types.MsgRestake) (*types.MsgRestakeResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -237,8 +238,8 @@ func (k msgServer) UpdatePosition(goCtx context.Context, m *types.MsgUpdatePosit
 	return &types.MsgUpdatePositionResponse{}, nil
 }
 
-// UnlockPosition closes a position; its derth goes back to a stake note of
-// its owner.
+// UnlockPosition closes a position; its derth is credited to its owner's
+// stake note (the proof spends it, or pads, and creates the merged note).
 func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosition) (*types.MsgUnlockPositionResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -251,7 +252,7 @@ func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosit
 	if _, err := k.applyPositionSplit(ctx, p, nil, true); err != nil {
 		return nil, err
 	}
-	pos, err := k.mintStake(ctx, types.DerthDenom(p.Validator), p.Derth, m.Stake.SpcMint, m.Stake.SpcCiphertext)
+	pos, err := k.applyStakeProof(ctx, &m.Stake)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +263,7 @@ func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosit
 		return nil, err
 	}
 	k.positionEvent(ctx, "unlock", p)
-	return &types.MsgUnlockPositionResponse{Position: pos}, nil
+	return &types.MsgUnlockPositionResponse{Position: firstPosition(pos)}, nil
 }
 
 // PositionVote records (or replaces) a position's vote.
@@ -297,4 +298,13 @@ func (k Keeper) positionEvent(ctx sdk.Context, action string, p types.Position) 
 		sdk.NewAttribute(types.AttributeKeyDerth, p.Derth.String()),
 		sdk.NewAttribute(types.AttributeKeyWeight, p.Weight.String()),
 	))
+}
+
+// firstPosition is lane A's output's position (the merged note's), 0 when
+// the proof created none (never, for a msg its shape admits).
+func firstPosition(pos []uint64) uint64 {
+	if len(pos) == 0 {
+		return 0
+	}
+	return pos[0]
 }

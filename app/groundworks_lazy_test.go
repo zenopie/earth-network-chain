@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -22,7 +23,6 @@ import (
 	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
-	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
@@ -98,8 +98,9 @@ func (g *gwEnv) updatePos(id uint64, owner int, splits []allocationtypes.Allocat
 
 func (g *gwEnv) unlockPos(id uint64, owner int) {
 	g.t.Helper()
-	m := &sstypes.MsgUnlockPosition{PositionId: id, Stake: sstypes.StakeProof{
-		OwnerTag: ownerTag(owner), SpcMint: privacy.FieldBytes(ssDet("gw-back", id)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
+	st := fakeStake("gw-back-"+strconv.FormatUint(id, 10), false)
+	st.OwnerTag = ownerTag(owner)
+	m := &sstypes.MsgUnlockPosition{PositionId: id, Stake: st}
 	_, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).UnlockPosition(g.fakeAuthorized(m), m)
 	require.NoError(g.t, err)
 }

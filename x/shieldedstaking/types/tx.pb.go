@@ -124,39 +124,67 @@ func (m *MsgUpdateParamsResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
-// StakeProof is a stake circuit proof and its public values. The chain
-// supplies the rest of its public inputs: asset (the msg's derth asset id,
-// 0 for a position msg), v_in (0), v_out (the msg's amount, or 0) and the sighash. Public
-// input order: anchor, asset, nf_0, nf_1, cm_out_0, cm_out_1, v_in, v_out,
-// spc_mint, owner_tag, sighash.
+// StakeProof is a stake circuit proof (circuits/stake) and its public values.
+// The circuit has two lanes, each of one stake asset:
+//
+//	lane A (asset):     in_0 + in_1 + v_in == out + v_out   (unexposed value)
+//	lane B (cr_asset):  cr_in + cr_v_in    == cr_out      (the credit lane)
+//
+// Slash labels (ORCHARD_DESIGN.md section 20): a redelegation's credit is
+// labelled (move key = the credit nullifier, move_time, exposed = cr_v_in);
+// the exposure never leaves its note until the label clears (lane A, once
+// move_time < clear_before, at what the debt tree under debt_root says).
+//
+// The chain supplies asset (the msg's stake asset id, 0 for a position
+// update or vote), v_in (derth it credits), v_out (derth leaving), cr_asset,
+// cr_v_in, cr_move_time (0, 0 and 0 unless the msg credits a second asset:
+// a redelegation's derth/<dst> and its move_time) and the sighash. Public
+// input order: anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before,
+// debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, owner_tag,
+// sighash.
+//
+// An input of amount 0 publishes 0 (none) or its own would-be nullifier
+// H(TAG_SNF, nk, rho, position) (padding: indistinguishable from a real
+// spend). An output of amount 0 publishes 0 (none) or the commitment of a
+// zero note of the owner (padding). The chain requires, per msg, which slots
+// are non-zero, so that every msg of a kind has the same shape.
 type StakeProof struct {
 	// proof is the bb v5.0.0 UltraHonk proof of circuits/stake.
 	Proof []byte `protobuf:"bytes,1,opt,name=proof,proto3" json:"proof,omitempty"`
-	// anchor is a stake-tree root (32 bytes): one recorded within
-	// stake_root_window_seconds, or a vote's proposal snapshot root. Not
-	// checked when the proof spends nothing.
+	// anchor is a stake-tree root (32 bytes) recorded within
+	// stake_root_window_seconds (or the latest). Checked whenever the proof
+	// publishes a nullifier, padding included.
 	Anchor []byte `protobuf:"bytes,2,opt,name=anchor,proto3" json:"anchor,omitempty"`
-	// nullifiers: exactly two, 32 bytes each; all zero for an input not used.
+	// nullifiers: exactly two (lane A), 32 bytes each; zero for no input.
 	Nullifiers [][]byte `protobuf:"bytes,3,rep,name=nullifiers,proto3" json:"nullifiers,omitempty"`
-	// commitments: exactly two output stake notes, 32 bytes each; all zero for
-	// an output not made. Appended to the stake tree in order.
-	Commitments [][]byte `protobuf:"bytes,4,rep,name=commitments,proto3" json:"commitments,omitempty"`
-	// ciphertexts: one per commitment (empty for none), emitted for the owner's
-	// other devices.
-	Ciphertexts [][]byte `protobuf:"bytes,5,rep,name=ciphertexts,proto3" json:"ciphertexts,omitempty"`
-	// spc_mint is a stake pc of the same owner (32 bytes) the chain mints to
-	// when the msg mints a stake note.
-	SpcMint []byte `protobuf:"bytes,6,opt,name=spc_mint,json=spcMint,proto3" json:"spc_mint,omitempty"`
 	// owner_tag is H(TAG_OTAG, owner_pk, salt) (32 bytes): stored by
 	// LockPosition, compared by a position's later msgs.
 	OwnerTag []byte `protobuf:"bytes,7,opt,name=owner_tag,json=ownerTag,proto3" json:"owner_tag,omitempty"`
-	// spc_ciphertext is the amount-blind stake ciphertext (zk/privacy
-	// EncryptBlindStakeNote: rho, rcm, memo of spc_mint's note), exactly 177
-	// bytes, for the note the chain mints to spc_mint: required by the msgs
-	// that mint one (Delegate, UnlockPosition), empty otherwise. spc_mint is
-	// proven for every msg but used only by those two. The owner recomputes spc and cm from the denom and amount the
-	// chain publishes with the note.
-	SpcCiphertext []byte `protobuf:"bytes,8,opt,name=spc_ciphertext,json=spcCiphertext,proto3" json:"spc_ciphertext,omitempty"`
+	// commitment is lane A's output (32 bytes): the owner's merged note, change
+	// or a padding zero note; zero for none. Appended to the stake tree first.
+	Commitment []byte `protobuf:"bytes,9,opt,name=commitment,proto3" json:"commitment,omitempty"`
+	// ciphertext is the wallet stake ciphertext of commitment (exactly 201
+	// bytes, zk/privacy.WalletStakeCiphertextBytes, label fields included) when
+	// it is non-zero, else empty; emitted for the owner's other devices.
+	Ciphertext []byte `protobuf:"bytes,10,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	// credit_nullifier is lane B's input (32 bytes): the owner's existing note
+	// of the credited asset merged into credit_commitment, or a padding
+	// nullifier; zero when the msg credits no second asset.
+	CreditNullifier []byte `protobuf:"bytes,11,opt,name=credit_nullifier,json=creditNullifier,proto3" json:"credit_nullifier,omitempty"`
+	// credit_commitment is lane B's output (32 bytes); zero when the msg
+	// credits no second asset. Appended after commitment.
+	CreditCommitment []byte `protobuf:"bytes,12,opt,name=credit_commitment,json=creditCommitment,proto3" json:"credit_commitment,omitempty"`
+	// credit_ciphertext is credit_commitment's wallet stake ciphertext when it
+	// is non-zero, else empty.
+	CreditCiphertext []byte `protobuf:"bytes,13,opt,name=credit_ciphertext,json=creditCiphertext,proto3" json:"credit_ciphertext,omitempty"`
+	// clear_before lets lane A clear a slash label whose move_time is below it
+	// (the circuit's clear_before): at most the block time less the label
+	// window (Query/DebtTree's clear_before; 0 when the proof clears nothing).
+	ClearBefore uint64 `protobuf:"varint,14,opt,name=clear_before,json=clearBefore,proto3" json:"clear_before,omitempty"`
+	// debt_root is the slash debt tree's root the proof reads (32 bytes): it
+	// must be the current one (it changes only when a slash reaches a
+	// redelegation, at the start of a block).
+	DebtRoot []byte `protobuf:"bytes,15,opt,name=debt_root,json=debtRoot,proto3" json:"debt_root,omitempty"`
 }
 
 func (m *StakeProof) Reset()         { *m = StakeProof{} }
@@ -213,27 +241,6 @@ func (m *StakeProof) GetNullifiers() [][]byte {
 	return nil
 }
 
-func (m *StakeProof) GetCommitments() [][]byte {
-	if m != nil {
-		return m.Commitments
-	}
-	return nil
-}
-
-func (m *StakeProof) GetCiphertexts() [][]byte {
-	if m != nil {
-		return m.Ciphertexts
-	}
-	return nil
-}
-
-func (m *StakeProof) GetSpcMint() []byte {
-	if m != nil {
-		return m.SpcMint
-	}
-	return nil
-}
-
 func (m *StakeProof) GetOwnerTag() []byte {
 	if m != nil {
 		return m.OwnerTag
@@ -241,26 +248,75 @@ func (m *StakeProof) GetOwnerTag() []byte {
 	return nil
 }
 
-func (m *StakeProof) GetSpcCiphertext() []byte {
+func (m *StakeProof) GetCommitment() []byte {
 	if m != nil {
-		return m.SpcCiphertext
+		return m.Commitment
+	}
+	return nil
+}
+
+func (m *StakeProof) GetCiphertext() []byte {
+	if m != nil {
+		return m.Ciphertext
+	}
+	return nil
+}
+
+func (m *StakeProof) GetCreditNullifier() []byte {
+	if m != nil {
+		return m.CreditNullifier
+	}
+	return nil
+}
+
+func (m *StakeProof) GetCreditCommitment() []byte {
+	if m != nil {
+		return m.CreditCommitment
+	}
+	return nil
+}
+
+func (m *StakeProof) GetCreditCiphertext() []byte {
+	if m != nil {
+		return m.CreditCiphertext
+	}
+	return nil
+}
+
+func (m *StakeProof) GetClearBefore() uint64 {
+	if m != nil {
+		return m.ClearBefore
+	}
+	return 0
+}
+
+func (m *StakeProof) GetDebtRoot() []byte {
+	if m != nil {
+		return m.DebtRoot
 	}
 	return nil
 }
 
 // MsgDelegate: bundle releases amount uerth into the module for validator
-// (the rest of its uerth balance is the fee); the chain mints
-// derth/<validator> at the live rate as a stake note to stake.spc_mint, whose
-// owner the stake proof knows nk for (one delegates only to oneself). The
-// proof spends and creates nothing. The ERTH is delegated at the epoch's end.
+// (the rest of its uerth balance is the fee) and the owner's derth/<validator>
+// note grows by derth: the stake proof (asset derth/<validator>, v_in =
+// derth, v_out = 0) spends the owner's existing derth/<validator> note (or a
+// padding input) and creates the merged note. The wallet names derth; the
+// chain refuses it unless amount buys it at the live rate:
+// derth <= floor(amount x S / B) (= amount while S is 0), and derth >=
+// min_delegation. Whatever amount buys beyond derth stays in the validator's
+// book (every holder's rate, the delegator's included). The ERTH is delegated
+// at the epoch's end.
 //
-// sighash fields: StakeFields(stake), Bytes(validator), amount.
+// sighash fields: StakeFields(stake), Bytes(validator), amount, derth.
 type MsgDelegate struct {
 	Bundle    types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	Validator string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
 	Stake     StakeProof   `protobuf:"bytes,4,opt,name=stake,proto3" json:"stake"`
 	// amount is the uerth delegated.
 	Amount uint64 `protobuf:"varint,5,opt,name=amount,proto3" json:"amount,omitempty"`
+	// derth is the derth/<validator> credited to the owner's note (v_in).
+	Derth uint64 `protobuf:"varint,6,opt,name=derth,proto3" json:"derth,omitempty"`
 }
 
 func (m *MsgDelegate) Reset()         { *m = MsgDelegate{} }
@@ -324,7 +380,15 @@ func (m *MsgDelegate) GetAmount() uint64 {
 	return 0
 }
 
-// MsgDelegateResponse returns the derth minted and the stake note's position.
+func (m *MsgDelegate) GetDerth() uint64 {
+	if m != nil {
+		return m.Derth
+	}
+	return 0
+}
+
+// MsgDelegateResponse returns the derth credited and the merged stake note's
+// position.
 type MsgDelegateResponse struct {
 	Derth    uint64 `protobuf:"varint,1,opt,name=derth,proto3" json:"derth,omitempty"`
 	Position uint64 `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
@@ -377,9 +441,12 @@ func (m *MsgDelegateResponse) GetPosition() uint64 {
 	return 0
 }
 
-// MsgRestake merges or splits stake notes: the proof spends one or two of
-// the owner's derth/<validator> notes and creates one or two of the same
-// owner, the amounts balancing (hidden). bundle pays the fee only.
+// MsgRestake merges stake notes: the proof spends one or two of the owner's
+// derth/<validator> notes and creates one of the same owner, the amounts
+// balancing (hidden). Needed only for an owner holding more than one note at
+// a validator (notes made before a wallet adopted the one-note rule, or by
+// two devices at once); every other msg merges as it goes. bundle pays the
+// fee only.
 //
 // sighash fields: StakeFields(stake), Bytes(validator).
 type MsgRestake struct {
@@ -442,7 +509,7 @@ func (m *MsgRestake) GetStake() StakeProof {
 	return StakeProof{}
 }
 
-// MsgRestakeResponse returns the new notes' positions.
+// MsgRestakeResponse returns the merged note's position (one entry).
 type MsgRestakeResponse struct {
 	Positions []uint64 `protobuf:"varint,1,rep,packed,name=positions,proto3" json:"positions,omitempty"`
 }
@@ -496,8 +563,8 @@ func (m *MsgRestakeResponse) GetPositions() []uint64 {
 // as ordinary transferable notes to pc in the shielded pool, with
 // ciphertext, by itself: no claim msg, no fee. A payout above 2^63-1 is
 // minted as several notes to the same pc and ciphertext. bundle pays the fee
-// only. stake.spc_mint is proven but unused (no stake note is minted);
-// stake.spc_ciphertext must be empty.
+// only. The proof always creates lane A's output: the change, or a padding
+// zero note when nothing is left.
 //
 // sighash fields: StakeFields(stake), Bytes(validator), amount, pc,
 // Bytes(ciphertext).
@@ -643,7 +710,7 @@ func (m *MsgUndelegateResponse) GetPayoutId() uint64 {
 	return 0
 }
 
-// MsgStakeVote votes up to four derth/<validator> stake notes of one owner
+// MsgStakeVote votes up to two derth/<validator> stake notes of one owner
 // on proposal_id with ONE public weight, without spending them. proof
 // (circuits/vote) shows, against the proposal's snapshot
 // (ProposalSnapshot.root and .nf_root), that every used slot's note was in
@@ -657,15 +724,19 @@ func (m *MsgUndelegateResponse) GetPayoutId() uint64 {
 // notes can vote on every other open proposal and be spent as usual. bundle
 // pays the fee against the shielded pool's current roots.
 //
-// An owner with more than four notes at a validator merges them first
+// With one note per validator (ORCHARD_DESIGN.md section 20) a vote uses one
+// slot: the note the owner held at the snapshot, even if it has since been
+// merged into a newer note (its nullifier entered the tree after nf_root).
+// An owner with more than two notes at a validator merges them first
 // (MsgRestake), or votes the rest in a second MsgStakeVote (its own weight).
 //
-// Public inputs (the chain supplies all but the proof and vote_nullifiers):
-// note_root, nf_root, asset = AssetID(derth/<validator>), weight,
-// proposal_id, vote_nullifiers[0..3], sighash.
+// Public inputs (the chain supplies all but the proof, vote_nullifiers and
+// debt_root): note_root, nf_root, debt_root, asset =
+// AssetID(derth/<validator>), weight, proposal_id, vote_nullifiers[0..1],
+// sighash.
 //
 // sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
-// weight, vote_nullifiers[0..3].
+// weight, vote_nullifiers[0..1], debt_root.
 type MsgStakeVote struct {
 	Bundle     types.Bundle             `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	ProposalId uint64                   `protobuf:"varint,2,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
@@ -674,9 +745,12 @@ type MsgStakeVote struct {
 	Weight     uint64                   `protobuf:"varint,5,opt,name=weight,proto3" json:"weight,omitempty"`
 	// proof is the bb v5.0.0 UltraHonk proof of circuits/vote.
 	Proof []byte `protobuf:"bytes,8,opt,name=proof,proto3" json:"proof,omitempty"`
-	// vote_nullifiers: exactly four, 32 bytes each: the used slots' vote
+	// vote_nullifiers: exactly two, 32 bytes each: the used slots' vote
 	// nullifiers first (at least one, distinct, non-zero), then zeros.
 	VoteNullifiers [][]byte `protobuf:"bytes,10,rep,name=vote_nullifiers,json=voteNullifiers,proto3" json:"vote_nullifiers,omitempty"`
+	// debt_root is the current slash debt tree root (32 bytes): a labelled
+	// note votes its amount less what slashes have cut from its exposure.
+	DebtRoot []byte `protobuf:"bytes,11,opt,name=debt_root,json=debtRoot,proto3" json:"debt_root,omitempty"`
 }
 
 func (m *MsgStakeVote) Reset()         { *m = MsgStakeVote{} }
@@ -761,6 +835,13 @@ func (m *MsgStakeVote) GetVoteNullifiers() [][]byte {
 	return nil
 }
 
+func (m *MsgStakeVote) GetDebtRoot() []byte {
+	if m != nil {
+		return m.DebtRoot
+	}
+	return nil
+}
+
 // MsgStakeVoteResponse is empty (nothing is minted).
 type MsgStakeVoteResponse struct {
 }
@@ -800,9 +881,9 @@ var xxx_messageInfo_MsgStakeVoteResponse proto.InternalMessageInfo
 
 // MsgLockPosition: the proof spends the owner's derth/<validator> notes,
 // amount of them leaving (v_out) into a new Groundworks position splitting
-// its weight by splits, any change back to the owner. The position stores
-// stake.owner_tag: only its owner can update, unlock or vote it. bundle pays
-// the fee only.
+// its weight by splits, the change (or a padding zero note) back to the
+// owner. The position stores stake.owner_tag: only its owner can update,
+// unlock or vote it. bundle pays the fee only.
 //
 // sighash fields: StakeFields(stake), Bytes(validator), amount,
 // Bytes(SplitsBytes(splits)).
@@ -1036,8 +1117,10 @@ func (m *MsgUpdatePositionResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdatePositionResponse proto.InternalMessageInfo
 
-// MsgUnlockPosition closes a position and mints its derth as a stake note of
-// its owner to stake.spc_mint. The proof spends and creates nothing; its
+// MsgUnlockPosition closes a position and credits its derth to its owner's
+// derth/<validator> note: the stake proof (asset derth/<position's
+// validator>, v_in = the position's derth, v_out = 0) spends the owner's
+// existing note (or a padding input) and creates the merged note; its
 // owner_tag must be the position's. bundle pays the fee only.
 //
 // sighash fields: StakeFields(stake), position_id.
@@ -1101,7 +1184,7 @@ func (m *MsgUnlockPosition) GetStake() StakeProof {
 	return StakeProof{}
 }
 
-// MsgUnlockPositionResponse returns the stake note's position.
+// MsgUnlockPositionResponse returns the merged stake note's position.
 type MsgUnlockPositionResponse struct {
 	Position uint64 `protobuf:"varint,1,opt,name=position,proto3" json:"position,omitempty"`
 }
@@ -1267,23 +1350,35 @@ func (m *MsgPositionVoteResponse) XXX_DiscardUnknown() {
 var xxx_messageInfo_MsgPositionVoteResponse proto.InternalMessageInfo
 
 // MsgRedelegate moves amount of the owner's derth/<src_validator> to
-// dst_validator with no unbonding gap. The proof spends derth/<src> notes,
-// amount of them leaving (v_out), any change back to the owner as
-// derth/<src> notes; the chain moves their live ERTH value u from src's book
-// to dst's (out of src's delegation queue first, then the rest of the
-// module's bonded stake with x/staking's BeginRedelegate) and mints
-// derth/<dst> at dst's live rate, worth what arrived, as a stake note to
-// stake.spc_mint (the same owner's, as for a delegation), with
-// stake.spc_ciphertext (required). bundle pays the fee only.
+// dst_validator with no unbonding gap. The proof's lane A (asset
+// derth/<src>, v_out = amount) spends derth/<src> notes, the change (or a
+// padding zero note) back to the owner; its credit lane (asset derth/<dst>,
+// cr_v_in = dst_derth) spends the owner's existing derth/<dst> note (or a
+// padding input) and creates the merged derth/<dst> note, which must be
+// unlabelled. The chain moves the spent derth's live ERTH value u from src's
+// book to dst's (out of src's delegation queue first, then the rest of the
+// module's bonded stake, unbonded at src and bonded at dst at once, with a
+// redelegation entry the module records itself) and refuses dst_derth unless
+// what arrived buys
+// it at dst's live rate: dst_derth <= floor(arrived x S_dst / B_dst) (=
+// arrived while S_dst is 0), and dst_derth >= min_delegation. What arrived
+// beyond dst_derth stays in dst's book. bundle pays the fee only.
 //
 // It runs in the private ante, atomically with the spend: a redelegation
-// x/staking refuses (a transitive one, while stake redelegated to
-// src_validator matures; one past max_entries for the pair) or that would
-// mint less than min_delegation derth fails the tx before anything is spent
-// or paid. A validator's operator cannot redelegate its self-bond.
+// whose dst_derth the arrival does not cover, or whose move_time is out of
+// range, fails the tx before anything is spent or paid. A validator's
+// operator cannot redelegate its self-bond.
+//
+// The credited derth is labelled with the move: until the move's x/staking
+// entry matures (the label window), a slash of src_validator for an
+// infraction before the move cuts it (the slash debt tree), and it cannot
+// leave the note (no undelegating, locking or redelegating it on; the rest
+// of the note moves freely). x/staking's transitive and max_entries limits
+// do not apply: the module moves its stake with x/staking's primitives and
+// records the entry itself.
 //
 // sighash fields: StakeFields(stake), Bytes(src_validator),
-// Bytes(dst_validator), amount.
+// Bytes(dst_validator), amount, dst_derth, move_time.
 type MsgRedelegate struct {
 	Bundle       types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	SrcValidator string       `protobuf:"bytes,2,opt,name=src_validator,json=srcValidator,proto3" json:"src_validator,omitempty"`
@@ -1291,6 +1386,13 @@ type MsgRedelegate struct {
 	// amount is the derth/<src_validator> leaving the notes (v_out).
 	Amount uint64     `protobuf:"varint,4,opt,name=amount,proto3" json:"amount,omitempty"`
 	Stake  StakeProof `protobuf:"bytes,5,opt,name=stake,proto3" json:"stake"`
+	// dst_derth is the derth/<dst_validator> credited to the owner's note
+	// (the credit lane's cr_v_in).
+	DstDerth uint64 `protobuf:"varint,6,opt,name=dst_derth,json=dstDerth,proto3" json:"dst_derth,omitempty"`
+	// move_time labels the credited derth (unix seconds; cr_move_time): the
+	// block time must be in [move_time, move_time + move_time_slack]. The
+	// label's window closes at move_time + the label window (Query/DebtTree).
+	MoveTime uint64 `protobuf:"varint,7,opt,name=move_time,json=moveTime,proto3" json:"move_time,omitempty"`
 }
 
 func (m *MsgRedelegate) Reset()         { *m = MsgRedelegate{} }
@@ -1361,10 +1463,25 @@ func (m *MsgRedelegate) GetStake() StakeProof {
 	return StakeProof{}
 }
 
+func (m *MsgRedelegate) GetDstDerth() uint64 {
+	if m != nil {
+		return m.DstDerth
+	}
+	return 0
+}
+
+func (m *MsgRedelegate) GetMoveTime() uint64 {
+	if m != nil {
+		return m.MoveTime
+	}
+	return 0
+}
+
 // MsgRedelegateResponse: the ERTH value moved, the derth/<dst_validator>
-// minted and its stake note's position, and when x/staking's redelegation
-// entry completes (unix ns; 0 when none was made: the value moved out of the
-// source's delegation queue alone, or the source was not bonded).
+// credited and the merged stake note's position, and when x/staking's
+// redelegation entry completes (unix ns; 0 when none was made: the value
+// moved out of the source's delegation queue alone, or the source was not
+// bonded).
 type MsgRedelegateResponse struct {
 	Value          uint64 `protobuf:"varint,1,opt,name=value,proto3" json:"value,omitempty"`
 	Derth          uint64 `protobuf:"varint,2,opt,name=derth,proto3" json:"derth,omitempty"`
@@ -1460,91 +1577,99 @@ func init() {
 func init() { proto.RegisterFile("earth/shieldedstaking/v1/tx.proto", fileDescriptor_ebf40c3361e45611) }
 
 var fileDescriptor_ebf40c3361e45611 = []byte{
-	// 1343 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x58, 0x4f, 0x6f, 0x1b, 0x45,
-	0x14, 0xcf, 0x7a, 0xd7, 0xce, 0xfa, 0xc5, 0x49, 0xdd, 0x25, 0xd0, 0x8d, 0x5b, 0xb9, 0xae, 0xdb,
-	0x34, 0x21, 0x50, 0x5b, 0x49, 0xa5, 0x56, 0x2a, 0x17, 0x9a, 0x22, 0xa1, 0x46, 0x04, 0xa2, 0x6d,
-	0x29, 0x12, 0x12, 0x32, 0xdb, 0xdd, 0xc9, 0x7a, 0x95, 0xdd, 0x9d, 0xd5, 0xce, 0xd8, 0x6d, 0x6f,
-	0x88, 0x13, 0xe2, 0x84, 0x38, 0xf0, 0x19, 0x38, 0xe6, 0xd0, 0x13, 0x9f, 0xa0, 0x70, 0xaa, 0x38,
-	0x71, 0x42, 0xa8, 0x3d, 0xe4, 0xc2, 0x37, 0x40, 0x08, 0x34, 0x33, 0xfb, 0xcf, 0x9b, 0xc4, 0x36,
-	0x4d, 0x40, 0x5c, 0xa2, 0x9d, 0x37, 0xbf, 0x99, 0x37, 0xef, 0xf7, 0x7e, 0xf3, 0xde, 0xc4, 0x70,
-	0x09, 0x99, 0x11, 0xed, 0x77, 0x49, 0xdf, 0x45, 0x9e, 0x8d, 0x6c, 0x42, 0xcd, 0x3d, 0x37, 0x70,
-	0xba, 0xc3, 0xf5, 0x2e, 0x7d, 0xdc, 0x09, 0x23, 0x4c, 0xb1, 0xa6, 0x73, 0x48, 0xa7, 0x00, 0xe9,
-	0x0c, 0xd7, 0x1b, 0x67, 0x4d, 0xdf, 0x0d, 0x70, 0x97, 0xff, 0x15, 0xe0, 0xc6, 0x39, 0x0b, 0x13,
-	0x1f, 0x93, 0xae, 0x83, 0x87, 0x6c, 0x13, 0x07, 0x0f, 0x0b, 0x13, 0x3e, 0xe1, 0xbb, 0xfb, 0xc4,
-	0x89, 0x27, 0x96, 0xc4, 0x44, 0x8f, 0x8f, 0xba, 0x62, 0x10, 0x4f, 0x5d, 0x11, 0x87, 0x33, 0x3d,
-	0x0f, 0x5b, 0x26, 0x75, 0x71, 0xc0, 0x56, 0x66, 0xa3, 0x18, 0xd5, 0x1a, 0x0d, 0x81, 0x61, 0x92,
-	0xef, 0x18, 0xb1, 0x7c, 0x6c, 0x90, 0xa1, 0x19, 0x99, 0x7e, 0xe2, 0x6e, 0xd1, 0xc1, 0x0e, 0x16,
-	0xc7, 0x60, 0x5f, 0xc2, 0xda, 0xfe, 0x49, 0x82, 0x33, 0xdb, 0xc4, 0xf9, 0x38, 0xb4, 0x4d, 0x8a,
-	0x76, 0x38, 0x5e, 0xbb, 0x01, 0x55, 0x73, 0x40, 0xfb, 0x38, 0x72, 0xe9, 0x13, 0x5d, 0x6a, 0x49,
-	0xab, 0xd5, 0x4d, 0xfd, 0xe7, 0xa7, 0xd7, 0x16, 0xe3, 0xd3, 0xdf, 0xb6, 0xed, 0x08, 0x11, 0x72,
-	0x8f, 0x46, 0x6e, 0xe0, 0x18, 0x19, 0x54, 0xbb, 0x03, 0x15, 0xe1, 0x51, 0x2f, 0xb5, 0xa4, 0xd5,
-	0xb9, 0x8d, 0x56, 0xe7, 0x38, 0x6e, 0x3b, 0xc2, 0xd3, 0x66, 0xf5, 0xd9, 0xaf, 0x17, 0x67, 0xbe,
-	0x3f, 0xd8, 0x5f, 0x93, 0x8c, 0x78, 0xe9, 0xad, 0x5b, 0x5f, 0x1e, 0xec, 0xaf, 0x65, 0x9b, 0x7e,
-	0x7d, 0xb0, 0xbf, 0xb6, 0x22, 0x02, 0x7c, 0x7c, 0x28, 0xc4, 0xc2, 0xc1, 0xdb, 0x4b, 0x70, 0xae,
-	0x60, 0x32, 0x10, 0x09, 0x71, 0x40, 0x50, 0xfb, 0x4f, 0x09, 0xe0, 0x1e, 0x35, 0xf7, 0xd0, 0x4e,
-	0x84, 0xf1, 0xae, 0xb6, 0x08, 0xe5, 0x90, 0x7d, 0xf0, 0xf0, 0x6a, 0x86, 0x18, 0x68, 0x6f, 0x40,
-	0xc5, 0x0c, 0xac, 0x3e, 0x8e, 0x78, 0x00, 0x35, 0x23, 0x1e, 0x69, 0x4d, 0x80, 0x60, 0xe0, 0x79,
-	0xee, 0xae, 0x8b, 0x22, 0xa2, 0xcb, 0x2d, 0x79, 0xb5, 0x66, 0xe4, 0x2c, 0x5a, 0x0b, 0xe6, 0x2c,
-	0xec, 0xfb, 0x2e, 0xf5, 0x51, 0x40, 0x89, 0xae, 0x70, 0x40, 0xde, 0xc4, 0x11, 0x6e, 0xd8, 0x47,
-	0x11, 0x45, 0x8f, 0x29, 0xd1, 0xcb, 0x31, 0x22, 0x33, 0x69, 0x4b, 0xa0, 0x92, 0xd0, 0xea, 0xf9,
-	0x6e, 0x40, 0xf5, 0x0a, 0xf7, 0x3e, 0x4b, 0x42, 0x6b, 0xdb, 0x0d, 0xa8, 0x76, 0x1e, 0xaa, 0xf8,
-	0x51, 0x80, 0xa2, 0x1e, 0x35, 0x1d, 0x7d, 0x96, 0xcf, 0xa9, 0xdc, 0x70, 0xdf, 0x74, 0xb4, 0x65,
-	0x58, 0x60, 0xeb, 0xb2, 0xad, 0x74, 0x95, 0x23, 0xe6, 0x49, 0x68, 0xdd, 0x49, 0x8d, 0xed, 0x1f,
-	0x25, 0x98, 0xdb, 0x26, 0xce, 0x7b, 0xc8, 0x43, 0x8e, 0x49, 0x91, 0x76, 0x13, 0x2a, 0x0f, 0x07,
-	0x81, 0xed, 0x21, 0xce, 0xc0, 0xdc, 0xc6, 0x52, 0x21, 0x57, 0x2c, 0x49, 0x9b, 0x1c, 0xb0, 0xa9,
-	0xb0, 0x24, 0x19, 0x31, 0x5c, 0xbb, 0x00, 0xd5, 0xa1, 0xe9, 0xb9, 0xb6, 0x49, 0x63, 0x9a, 0xaa,
-	0x46, 0x66, 0xd0, 0xde, 0x85, 0x32, 0x4b, 0x0e, 0xd2, 0x15, 0xbe, 0xeb, 0x95, 0xe3, 0x15, 0x90,
-	0x25, 0x23, 0x76, 0x20, 0x16, 0xf2, 0x1c, 0xf8, 0x78, 0x10, 0x50, 0xbd, 0xdc, 0x92, 0x56, 0x15,
-	0x23, 0x1e, 0x6d, 0x29, 0xaa, 0x5c, 0x57, 0x0c, 0x79, 0x17, 0xa1, 0xf6, 0xfb, 0xf0, 0x5a, 0x2e,
-	0x94, 0x24, 0xc5, 0x2c, 0xa7, 0x36, 0x8a, 0x68, 0x9f, 0x47, 0xa4, 0x18, 0x62, 0xa0, 0x35, 0x40,
-	0x0d, 0x31, 0x71, 0xd9, 0x8d, 0xe2, 0xc7, 0x55, 0x8c, 0x74, 0xdc, 0xde, 0x97, 0x00, 0xb6, 0x89,
-	0x63, 0x20, 0xe1, 0xfa, 0xff, 0xca, 0x49, 0x3e, 0xf6, 0x0d, 0xd0, 0xb2, 0x13, 0xa7, 0xa1, 0x5f,
-	0x80, 0x6a, 0x12, 0x14, 0xd1, 0xa5, 0x96, 0xbc, 0xaa, 0x18, 0x99, 0xa1, 0xfd, 0x87, 0x04, 0xf3,
-	0xec, 0x5e, 0x04, 0xf6, 0xbf, 0x9c, 0xfd, 0x2c, 0x77, 0x72, 0x3e, 0x77, 0x19, 0x03, 0xe5, 0x57,
-	0x55, 0xc5, 0x02, 0x94, 0x42, 0x2b, 0xbe, 0x17, 0xa5, 0xd0, 0x62, 0x37, 0x32, 0xa7, 0x78, 0x71,
-	0x27, 0x72, 0x96, 0x2d, 0x45, 0x55, 0xea, 0x65, 0xc1, 0x98, 0x03, 0xaf, 0x8f, 0x04, 0x9f, 0xd7,
-	0xcb, 0xd0, 0xf4, 0x06, 0x28, 0x96, 0x85, 0x18, 0xb0, 0xcb, 0x16, 0x9a, 0x4f, 0xf0, 0x80, 0xf6,
-	0x5c, 0x9b, 0x67, 0x8c, 0x09, 0x86, 0x1b, 0xee, 0xda, 0x5b, 0x8a, 0x2a, 0xd5, 0x4b, 0x71, 0x3a,
-	0xca, 0x36, 0x0a, 0xb0, 0x9f, 0x53, 0xd3, 0xb3, 0x12, 0xd4, 0xb6, 0x89, 0xc3, 0x43, 0x78, 0x80,
-	0x4f, 0xc2, 0xf2, 0x45, 0x98, 0x0b, 0x23, 0x1c, 0x62, 0x62, 0x7a, 0xec, 0x14, 0xe2, 0x7c, 0x90,
-	0x98, 0xee, 0xda, 0xa3, 0x69, 0x90, 0x8b, 0x69, 0x78, 0x07, 0x66, 0x71, 0x28, 0xb4, 0xc0, 0x4a,
-	0xd1, 0xdc, 0xc6, 0xa5, 0x4e, 0x5c, 0xba, 0x59, 0xc3, 0x1a, 0xae, 0x77, 0x3e, 0x41, 0xae, 0xd3,
-	0xa7, 0xc8, 0x66, 0xa7, 0xfc, 0x88, 0x23, 0x8d, 0x64, 0x05, 0xcb, 0xe1, 0x23, 0x3e, 0x9d, 0xdc,
-	0x3f, 0x31, 0xca, 0x2a, 0xa6, 0x9a, 0xaf, 0x98, 0x2b, 0x70, 0x66, 0x88, 0x29, 0xea, 0xe5, 0xca,
-	0x23, 0xf0, 0xda, 0xb6, 0xc0, 0xcc, 0x1f, 0xa6, 0xd6, 0x2d, 0x45, 0xad, 0xd4, 0x67, 0xb7, 0x14,
-	0x75, 0xb6, 0xae, 0x6e, 0x29, 0x6a, 0xb5, 0x0e, 0x3c, 0x39, 0x71, 0x7a, 0x05, 0x3a, 0xdb, 0xa4,
-	0x7d, 0x15, 0x16, 0xf3, 0x4c, 0x26, 0x29, 0x13, 0xfc, 0xe7, 0x28, 0xff, 0xb6, 0xc4, 0xbb, 0xd7,
-	0x07, 0xd8, 0xda, 0xdb, 0x89, 0x6d, 0xff, 0xb5, 0xb6, 0xef, 0x40, 0x85, 0x84, 0x9e, 0x4b, 0x13,
-	0xae, 0x97, 0x63, 0x77, 0xb9, 0x46, 0x3e, 0x5c, 0xef, 0xdc, 0x4e, 0x47, 0x82, 0xfb, 0xc4, 0xb5,
-	0x58, 0x9a, 0x5d, 0x90, 0xca, 0xab, 0x97, 0x88, 0x72, 0xbd, 0x22, 0x04, 0x7f, 0x8b, 0x77, 0xc1,
-	0x3c, 0x27, 0xa9, 0xe4, 0x99, 0xb0, 0x62, 0x1b, 0x13, 0x96, 0x14, 0x0b, 0x2b, 0x36, 0xdd, 0xb5,
-	0xdb, 0x7f, 0x49, 0x70, 0x36, 0x6b, 0xa1, 0x27, 0xa6, 0xb4, 0xe0, 0xaf, 0x54, 0xf4, 0x97, 0x63,
-	0x4f, 0x3e, 0x05, 0xf6, 0xca, 0xaf, 0xce, 0x5e, 0x5a, 0x2e, 0xce, 0xc3, 0xd2, 0x21, 0x02, 0xd2,
-	0x57, 0xc4, 0x0f, 0x31, 0x3d, 0x81, 0x77, 0x2a, 0x8a, 0x9b, 0x48, 0xcf, 0xa9, 0xb6, 0x8e, 0x9b,
-	0x22, 0xb2, 0x91, 0xb3, 0xa7, 0xca, 0xc8, 0xb7, 0x49, 0xa9, 0xd0, 0x26, 0xbf, 0x13, 0xb7, 0x2c,
-	0x59, 0x73, 0xf2, 0xda, 0x36, 0x36, 0xe6, 0x42, 0xf1, 0x93, 0x0f, 0x15, 0xbf, 0x13, 0x95, 0xb7,
-	0x53, 0xbd, 0x69, 0xe2, 0xbd, 0x99, 0xe7, 0x25, 0x55, 0xca, 0xef, 0xa2, 0xe7, 0x1a, 0xe8, 0xe4,
-	0x3d, 0xf7, 0x32, 0xcc, 0x93, 0xc8, 0xea, 0x15, 0x6b, 0x53, 0x8d, 0x44, 0xd6, 0x83, 0xb4, 0x3c,
-	0x5d, 0x86, 0x79, 0x9b, 0xd0, 0x5e, 0xb1, 0x2b, 0xd4, 0x6c, 0x42, 0x1f, 0x1c, 0x51, 0xc3, 0x94,
-	0xd3, 0xed, 0xcf, 0xed, 0xaf, 0x24, 0xde, 0x65, 0xb3, 0x70, 0x0f, 0x77, 0x59, 0x29, 0xdf, 0x65,
-	0xd3, 0xb7, 0x5a, 0xe9, 0xb8, 0xb7, 0x9a, 0x3c, 0x2a, 0x42, 0xd6, 0x69, 0x2c, 0xec, 0x87, 0x1e,
-	0xe2, 0xca, 0xa1, 0xae, 0x2f, 0x2e, 0x85, 0x6c, 0x2c, 0x64, 0xe6, 0xfb, 0xae, 0x8f, 0x36, 0x9e,
-	0xaa, 0x20, 0x6f, 0x13, 0x47, 0xf3, 0xa0, 0x36, 0xf2, 0x5f, 0xcd, 0x9b, 0xc7, 0x47, 0x55, 0xf8,
-	0xa7, 0xa1, 0xb1, 0x3e, 0x35, 0x34, 0x0d, 0xf3, 0x73, 0x50, 0xd3, 0xb7, 0xf5, 0xf2, 0xd8, 0xe5,
-	0x09, 0xac, 0x71, 0x6d, 0x2a, 0x58, 0xea, 0xe1, 0x33, 0x98, 0x4d, 0x1e, 0xaa, 0x57, 0xc6, 0xae,
-	0x8c, 0x51, 0x8d, 0xb7, 0xa7, 0x41, 0xa5, 0xdb, 0xef, 0x02, 0xe4, 0x1e, 0x88, 0x2b, 0xe3, 0x19,
-	0x48, 0x81, 0x8d, 0xee, 0x94, 0xc0, 0xd4, 0x8f, 0x05, 0xd5, 0xec, 0x85, 0x74, 0x75, 0xec, 0xea,
-	0x14, 0xd7, 0xe8, 0x4c, 0x87, 0x4b, 0x9d, 0x78, 0x50, 0x1b, 0x79, 0x13, 0x8c, 0xcf, 0x7d, 0x1e,
-	0x3a, 0x21, 0xf7, 0x47, 0x76, 0xd5, 0x08, 0x16, 0x0a, 0x0d, 0xf3, 0xad, 0x69, 0x04, 0x94, 0x78,
-	0xbc, 0xfe, 0x0f, 0xc0, 0x23, 0x3e, 0x47, 0xbb, 0xd0, 0x04, 0x9f, 0x23, 0xe0, 0x49, 0x3e, 0x8f,
-	0xee, 0x11, 0x1e, 0xd4, 0x46, 0x7a, 0xc0, 0x78, 0x56, 0xf3, 0xd0, 0x09, 0xac, 0x1e, 0x55, 0x41,
-	0x99, 0x20, 0x73, 0xd5, 0x73, 0x65, 0x82, 0x98, 0xa7, 0x14, 0xe4, 0xe1, 0x02, 0xd5, 0x28, 0x7f,
-	0x71, 0xb0, 0xbf, 0x26, 0x6d, 0xee, 0x3c, 0x7b, 0xd1, 0x94, 0x9e, 0xbf, 0x68, 0x4a, 0xbf, 0xbd,
-	0x68, 0x4a, 0xdf, 0xbc, 0x6c, 0xce, 0x3c, 0x7f, 0xd9, 0x9c, 0xf9, 0xe5, 0x65, 0x73, 0xe6, 0xd3,
-	0x1b, 0x8e, 0x4b, 0xfb, 0x83, 0x87, 0x1d, 0x0b, 0xfb, 0x5d, 0xbe, 0xf7, 0xb5, 0x00, 0xd1, 0x47,
-	0x38, 0xda, 0xeb, 0x1e, 0xf7, 0xbb, 0x04, 0x7d, 0x12, 0x22, 0xf2, 0xb0, 0xc2, 0x7f, 0x61, 0xb9,
-	0xfe, 0x77, 0x00, 0x00, 0x00, 0xff, 0xff, 0xc9, 0x8b, 0x74, 0x20, 0x85, 0x12, 0x00, 0x00,
+	// 1461 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x58, 0x4b, 0x6f, 0xdb, 0xc6,
+	0x16, 0x36, 0x45, 0x4a, 0xa6, 0x8e, 0x64, 0x5b, 0xe1, 0xf5, 0xbd, 0xa1, 0x95, 0xc0, 0x51, 0x94,
+	0x87, 0x1d, 0xe7, 0x46, 0x82, 0x1d, 0x20, 0x01, 0xd2, 0x4d, 0xe3, 0x04, 0x28, 0x62, 0xd4, 0xa9,
+	0xc1, 0xa4, 0x29, 0x50, 0xa0, 0x50, 0x69, 0x72, 0x4c, 0x11, 0x26, 0x39, 0x04, 0x67, 0xac, 0x24,
+	0xbb, 0xa2, 0xab, 0xa2, 0xab, 0xa2, 0x8b, 0xfe, 0x84, 0xa2, 0x4b, 0x2f, 0xb2, 0xea, 0x2f, 0x08,
+	0xba, 0x0a, 0xba, 0xea, 0xaa, 0x2d, 0x12, 0x14, 0xfe, 0x11, 0x5d, 0xb4, 0x98, 0x19, 0xbe, 0xfd,
+	0x52, 0x63, 0xb7, 0xe8, 0xc6, 0xe0, 0x9c, 0xf9, 0x66, 0xce, 0xeb, 0x9b, 0x73, 0x8e, 0x05, 0x17,
+	0x91, 0x19, 0xd1, 0x61, 0x9f, 0x0c, 0x5d, 0xe4, 0xd9, 0xc8, 0x26, 0xd4, 0xdc, 0x76, 0x03, 0xa7,
+	0x3f, 0x5a, 0xee, 0xd3, 0x67, 0xbd, 0x30, 0xc2, 0x14, 0x6b, 0x3a, 0x87, 0xf4, 0x4a, 0x90, 0xde,
+	0x68, 0xb9, 0x7d, 0xc6, 0xf4, 0xdd, 0x00, 0xf7, 0xf9, 0x5f, 0x01, 0x6e, 0x9f, 0xb5, 0x30, 0xf1,
+	0x31, 0xe9, 0x3b, 0x78, 0xc4, 0x2e, 0x71, 0xf0, 0xa8, 0xb4, 0xe1, 0x13, 0x7e, 0xbb, 0x4f, 0x9c,
+	0x78, 0x63, 0x4e, 0x6c, 0x0c, 0xf8, 0xaa, 0x2f, 0x16, 0xf1, 0xd6, 0x65, 0x61, 0x9c, 0xe9, 0x79,
+	0xd8, 0x32, 0xa9, 0x8b, 0x03, 0x76, 0x32, 0x5b, 0xc5, 0xa8, 0x4e, 0xd1, 0x05, 0x86, 0x49, 0xbe,
+	0x63, 0xc4, 0x95, 0x43, 0x9d, 0x0c, 0xcd, 0xc8, 0xf4, 0x13, 0x75, 0xb3, 0x0e, 0x76, 0xb0, 0x30,
+	0x83, 0x7d, 0x09, 0x69, 0xf7, 0x07, 0x09, 0x66, 0xd6, 0x89, 0xf3, 0x61, 0x68, 0x9b, 0x14, 0x6d,
+	0x70, 0xbc, 0x76, 0x0b, 0xea, 0xe6, 0x0e, 0x1d, 0xe2, 0xc8, 0xa5, 0xcf, 0x75, 0xa9, 0x23, 0x2d,
+	0xd6, 0x57, 0xf5, 0x1f, 0x5f, 0xdc, 0x98, 0x8d, 0xad, 0xbf, 0x6b, 0xdb, 0x11, 0x22, 0xe4, 0x11,
+	0x8d, 0xdc, 0xc0, 0x31, 0x32, 0xa8, 0x76, 0x0f, 0x6a, 0x42, 0xa3, 0x5e, 0xe9, 0x48, 0x8b, 0x8d,
+	0x95, 0x4e, 0xef, 0xb0, 0xd8, 0xf6, 0x84, 0xa6, 0xd5, 0xfa, 0xcb, 0x9f, 0x2f, 0x4c, 0x7c, 0xb7,
+	0xb7, 0xbb, 0x24, 0x19, 0xf1, 0xd1, 0x3b, 0x77, 0x3e, 0xdf, 0xdb, 0x5d, 0xca, 0x2e, 0xfd, 0x72,
+	0x6f, 0x77, 0x69, 0x41, 0x38, 0xf8, 0x6c, 0x9f, 0x8b, 0x25, 0xc3, 0xbb, 0x73, 0x70, 0xb6, 0x24,
+	0x32, 0x10, 0x09, 0x71, 0x40, 0x50, 0xf7, 0xa5, 0x0c, 0xf0, 0x88, 0x9a, 0xdb, 0x68, 0x23, 0xc2,
+	0x78, 0x4b, 0x9b, 0x85, 0x6a, 0xc8, 0x3e, 0xb8, 0x7b, 0x4d, 0x43, 0x2c, 0xb4, 0xff, 0x41, 0xcd,
+	0x0c, 0xac, 0x21, 0x8e, 0xb8, 0x03, 0x4d, 0x23, 0x5e, 0x69, 0xf3, 0x00, 0xc1, 0x8e, 0xe7, 0xb9,
+	0x5b, 0x2e, 0x8a, 0x88, 0x2e, 0x77, 0xe4, 0xc5, 0xa6, 0x91, 0x93, 0x68, 0xe7, 0xa0, 0x8e, 0x9f,
+	0x06, 0x28, 0x1a, 0x50, 0xd3, 0xd1, 0x27, 0xf9, 0x51, 0x95, 0x0b, 0x1e, 0x9b, 0x0e, 0x3b, 0x6c,
+	0x61, 0xdf, 0x77, 0xa9, 0x8f, 0x02, 0xaa, 0xd7, 0xf9, 0x6e, 0x4e, 0xc2, 0xf7, 0xdd, 0x70, 0x88,
+	0x22, 0x8a, 0x9e, 0x51, 0x1d, 0xe2, 0xfd, 0x54, 0xa2, 0x5d, 0x83, 0x96, 0x15, 0x21, 0xdb, 0xa5,
+	0x83, 0x54, 0xa3, 0xde, 0xe0, 0xa8, 0x19, 0x21, 0x7f, 0x98, 0x88, 0xb5, 0xeb, 0x70, 0x26, 0x86,
+	0xe6, 0x34, 0x36, 0x39, 0x36, 0xbe, 0xe3, 0x5e, 0xa6, 0x37, 0x07, 0xce, 0xd4, 0x4f, 0x15, 0xc0,
+	0x99, 0x11, 0x17, 0xa1, 0x69, 0x79, 0xc8, 0x8c, 0x06, 0x9b, 0x68, 0x0b, 0x47, 0x48, 0x9f, 0xee,
+	0x48, 0x8b, 0x8a, 0xd1, 0xe0, 0xb2, 0x55, 0x2e, 0x62, 0x41, 0xb0, 0xd1, 0x26, 0x1d, 0x44, 0x18,
+	0x53, 0x7d, 0x46, 0x04, 0x81, 0x09, 0x0c, 0x8c, 0xe9, 0x9a, 0xa2, 0x2a, 0xad, 0xea, 0x9a, 0xa2,
+	0x56, 0x5b, 0xb5, 0x35, 0x45, 0xad, 0xb5, 0x26, 0xd7, 0x14, 0x55, 0x6d, 0xd5, 0x8d, 0x46, 0x66,
+	0x28, 0x31, 0x1a, 0x99, 0x21, 0xc4, 0x50, 0x49, 0x68, 0x0d, 0x7c, 0x37, 0xa0, 0xc6, 0x34, 0xfb,
+	0xca, 0xb6, 0xba, 0xbf, 0x48, 0xd0, 0x58, 0x27, 0xce, 0x7d, 0xe4, 0x21, 0xc7, 0xa4, 0x48, 0xbb,
+	0x0d, 0xb5, 0xcd, 0x9d, 0xc0, 0xf6, 0x10, 0x4f, 0x66, 0x63, 0x65, 0xae, 0x44, 0x3b, 0xc6, 0xb7,
+	0x55, 0x0e, 0x58, 0x55, 0x18, 0xdf, 0x8c, 0x18, 0xae, 0x9d, 0x87, 0xfa, 0xc8, 0xf4, 0x5c, 0xdb,
+	0xa4, 0x71, 0xc6, 0xeb, 0x46, 0x26, 0xd0, 0xde, 0x85, 0x2a, 0xe3, 0x19, 0xd2, 0x15, 0x7e, 0xeb,
+	0xe5, 0xc3, 0xc9, 0x9c, 0xf1, 0x2a, 0x56, 0x20, 0x0e, 0x72, 0x3a, 0xf9, 0x78, 0x27, 0xa0, 0x7a,
+	0x95, 0x87, 0x2b, 0x5e, 0x31, 0xf2, 0xd9, 0x28, 0xa2, 0x43, 0xbd, 0xc6, 0xc5, 0x62, 0xb1, 0xa6,
+	0xa8, 0x72, 0x4b, 0x31, 0xe4, 0x2d, 0x84, 0xba, 0xef, 0xc1, 0x7f, 0x72, 0x0e, 0x26, 0x1c, 0xce,
+	0xce, 0x49, 0xb9, 0x73, 0x5a, 0x1b, 0xd4, 0x10, 0x13, 0x97, 0x95, 0x0c, 0xee, 0x84, 0x62, 0xa4,
+	0xeb, 0xee, 0xae, 0x04, 0xb0, 0x4e, 0x1c, 0x03, 0x09, 0x83, 0xfe, 0xad, 0x91, 0xca, 0xfb, 0xbe,
+	0x02, 0x5a, 0x66, 0x71, 0xea, 0xfa, 0x79, 0xa8, 0x27, 0x4e, 0x11, 0x5d, 0xea, 0xc8, 0x8b, 0x8a,
+	0x91, 0x09, 0xba, 0xbf, 0x4b, 0x30, 0xc5, 0x1e, 0x7e, 0x60, 0xff, 0xcd, 0x9c, 0xc8, 0x32, 0x2a,
+	0x17, 0x32, 0x9a, 0x46, 0xa0, 0xfa, 0xb6, 0x5c, 0x99, 0x86, 0x4a, 0x68, 0x71, 0x42, 0x34, 0x8d,
+	0x4a, 0x68, 0x95, 0xaa, 0xc2, 0x64, 0xb9, 0x2a, 0x88, 0x07, 0x25, 0x22, 0xe6, 0xc0, 0x7f, 0x0b,
+	0xce, 0xe7, 0xf9, 0x32, 0x32, 0xbd, 0x1d, 0x14, 0xd3, 0x42, 0x2c, 0xd8, 0x3b, 0x0d, 0xcd, 0xe7,
+	0x78, 0x87, 0x0e, 0x5c, 0x9b, 0x67, 0x8c, 0x11, 0x86, 0x0b, 0x1e, 0xd8, 0x6b, 0x8a, 0x2a, 0xb5,
+	0x2a, 0x71, 0x3a, 0xaa, 0x36, 0x0a, 0xb0, 0x9f, 0x63, 0xd3, 0x6f, 0x15, 0x68, 0xae, 0x13, 0x87,
+	0xbb, 0xf0, 0x04, 0x9f, 0x24, 0xca, 0x17, 0xa0, 0x11, 0x46, 0x38, 0xc4, 0xc4, 0xf4, 0x98, 0x15,
+	0xc2, 0x3e, 0x48, 0x44, 0x0f, 0xec, 0x62, 0x1a, 0xe4, 0x72, 0x1a, 0xde, 0x81, 0x49, 0x1c, 0x0a,
+	0x2e, 0x28, 0x1d, 0x79, 0xb1, 0xb1, 0x72, 0xb1, 0x17, 0xf7, 0x26, 0xd6, 0x91, 0x47, 0xcb, 0xbd,
+	0x8f, 0x90, 0xeb, 0x0c, 0x29, 0xb2, 0x99, 0x95, 0x1f, 0x70, 0xa4, 0x91, 0x9c, 0x60, 0x39, 0x7c,
+	0xca, 0xb7, 0x93, 0x57, 0x29, 0x56, 0x59, 0x4b, 0x50, 0xf3, 0x2d, 0x61, 0x01, 0x66, 0x46, 0x98,
+	0xa2, 0x41, 0xae, 0xfe, 0x03, 0xaf, 0xff, 0xd3, 0x4c, 0xfc, 0xb0, 0xd0, 0x03, 0xb2, 0xf2, 0xd7,
+	0xd8, 0x57, 0xfe, 0x44, 0xc9, 0x9b, 0x6c, 0xa9, 0x6b, 0x8a, 0x5a, 0x6f, 0x01, 0xcf, 0x5c, 0x9c,
+	0x7b, 0x71, 0x55, 0xa6, 0xa1, 0x7b, 0x15, 0x66, 0xf3, 0x61, 0x4e, 0xf2, 0x29, 0x92, 0x93, 0xcb,
+	0xc7, 0xd7, 0x15, 0xde, 0xbb, 0xdf, 0xc7, 0xd6, 0xf6, 0x46, 0x2c, 0xfb, 0xa7, 0x89, 0x7f, 0x0f,
+	0x6a, 0x24, 0xf4, 0x5c, 0x9a, 0x24, 0xe2, 0x4a, 0xac, 0x2e, 0x37, 0xc6, 0x8c, 0x96, 0x7b, 0x77,
+	0xd3, 0x95, 0x48, 0x4c, 0xa2, 0x5a, 0x1c, 0xcd, 0x5e, 0x4f, 0xed, 0xed, 0xeb, 0x47, 0xb5, 0x55,
+	0x13, 0xaf, 0xe1, 0x0e, 0x9f, 0x01, 0xf2, 0x31, 0x49, 0xdf, 0x03, 0x63, 0x5d, 0x2c, 0x63, 0xac,
+	0x93, 0x62, 0xd6, 0xc5, 0xa2, 0x07, 0x76, 0xf7, 0x0f, 0x09, 0xce, 0x64, 0x03, 0xc4, 0x89, 0x43,
+	0x5a, 0xd2, 0x57, 0x29, 0xeb, 0xcb, 0x45, 0x4f, 0x3e, 0x85, 0xe8, 0x55, 0xdf, 0x3e, 0x7a, 0x69,
+	0x2d, 0x39, 0x07, 0x73, 0xfb, 0x02, 0x90, 0xce, 0x50, 0xdf, 0xc7, 0xe1, 0x09, 0xbc, 0x53, 0x61,
+	0xdc, 0xb1, 0xe1, 0x39, 0xd5, 0xbe, 0x72, 0x5b, 0x78, 0x56, 0xb0, 0x3d, 0x65, 0x46, 0xbe, 0x87,
+	0x4a, 0xa5, 0x1e, 0xfa, 0x8d, 0x78, 0x65, 0xc9, 0x99, 0x93, 0x17, 0xbe, 0x23, 0x7d, 0x2e, 0x55,
+	0x46, 0x79, 0x5f, 0x65, 0x3c, 0x51, 0xed, 0x3b, 0xd5, 0x97, 0x26, 0xa6, 0xed, 0x7c, 0x5c, 0x52,
+	0xa6, 0x7c, 0x5b, 0xe1, 0x0d, 0xd9, 0x40, 0x27, 0x6f, 0xc8, 0x97, 0x60, 0x8a, 0x44, 0xd6, 0xa0,
+	0x5c, 0x9b, 0x9a, 0x24, 0xb2, 0x9e, 0xa4, 0xe5, 0xe9, 0x12, 0x4c, 0xd9, 0x84, 0x0e, 0xca, 0x2d,
+	0xa3, 0x69, 0x13, 0xfa, 0xe4, 0x80, 0x1a, 0xa6, 0x9c, 0x72, 0xf3, 0x66, 0xb5, 0x9f, 0xd0, 0x41,
+	0x7e, 0xa8, 0x53, 0x6d, 0x42, 0xef, 0xf3, 0xf9, 0xec, 0x1c, 0xd4, 0x7d, 0x3c, 0x42, 0x03, 0xea,
+	0xfa, 0x88, 0x37, 0x72, 0xc5, 0x50, 0x99, 0xe0, 0xb1, 0xeb, 0xa3, 0xee, 0x17, 0x12, 0x6f, 0xde,
+	0x59, 0xa0, 0xf6, 0x37, 0x6f, 0x29, 0xdf, 0xbc, 0xd3, 0x11, 0xb0, 0x72, 0xd8, 0x08, 0x28, 0x17,
+	0xe9, 0xcb, 0x1a, 0x98, 0x85, 0xfd, 0xd0, 0x43, 0x9c, 0x73, 0xdc, 0x08, 0xe6, 0xbe, 0x6c, 0x4c,
+	0x67, 0x62, 0x66, 0xca, 0xca, 0x0b, 0x15, 0xe4, 0x75, 0xe2, 0x68, 0x1e, 0x34, 0x0b, 0xff, 0x0d,
+	0x5e, 0x3b, 0x3c, 0x1e, 0xa5, 0x7f, 0xb6, 0xda, 0xcb, 0x63, 0x43, 0x53, 0x37, 0x3f, 0x05, 0x35,
+	0x1d, 0xe4, 0xaf, 0x1c, 0x79, 0x3c, 0x81, 0xb5, 0x6f, 0x8c, 0x05, 0x4b, 0x35, 0x7c, 0x02, 0x93,
+	0xc9, 0xfc, 0x7b, 0xf9, 0xc8, 0x93, 0x31, 0xaa, 0xfd, 0xff, 0x71, 0x50, 0xe9, 0xf5, 0x5b, 0x00,
+	0xb9, 0xb9, 0x73, 0xe1, 0xe8, 0x08, 0xa4, 0xc0, 0x76, 0x7f, 0x4c, 0x60, 0xaa, 0xc7, 0x82, 0x7a,
+	0x36, 0x78, 0x5d, 0x3d, 0xf2, 0x74, 0x8a, 0x6b, 0xf7, 0xc6, 0xc3, 0xa5, 0x4a, 0x3c, 0x68, 0x16,
+	0xa6, 0x89, 0xa3, 0x73, 0x9f, 0x87, 0x1e, 0x93, 0xfb, 0x03, 0xfb, 0x71, 0x04, 0xd3, 0xa5, 0x56,
+	0x7b, 0x7d, 0x1c, 0x02, 0x25, 0x1a, 0x6f, 0xfe, 0x05, 0x70, 0x41, 0x67, 0xb1, 0x7f, 0x1d, 0xa3,
+	0xb3, 0x00, 0x3e, 0x4e, 0xe7, 0xc1, 0xdd, 0xc5, 0x83, 0x66, 0xa1, 0x7b, 0x1c, 0x1d, 0xd5, 0x3c,
+	0xf4, 0x98, 0xa8, 0x1e, 0x54, 0x7b, 0x19, 0x21, 0x73, 0x75, 0x77, 0xe1, 0x18, 0x32, 0x8f, 0x49,
+	0xc8, 0xfd, 0x05, 0xaa, 0x5d, 0xfd, 0x6c, 0x6f, 0x77, 0x49, 0x5a, 0xdd, 0x78, 0xf9, 0x7a, 0x5e,
+	0x7a, 0xf5, 0x7a, 0x5e, 0xfa, 0xf5, 0xf5, 0xbc, 0xf4, 0xd5, 0x9b, 0xf9, 0x89, 0x57, 0x6f, 0xe6,
+	0x27, 0x7e, 0x7a, 0x33, 0x3f, 0xf1, 0xf1, 0x2d, 0xc7, 0xa5, 0xc3, 0x9d, 0xcd, 0x9e, 0x85, 0xfd,
+	0x3e, 0xbf, 0xfb, 0x46, 0x80, 0xe8, 0x53, 0x1c, 0x6d, 0xf7, 0x0f, 0xfb, 0x3d, 0x87, 0x3e, 0x0f,
+	0x11, 0xd9, 0xac, 0xf1, 0x5f, 0xa6, 0x6e, 0xfe, 0x19, 0x00, 0x00, 0xff, 0xff, 0x06, 0xb7, 0xac,
+	0x7d, 0xbd, 0x13, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -1561,28 +1686,30 @@ const _ = grpc.SupportPackageIsVersion4
 type MsgClient interface {
 	// UpdateParams updates the module parameters (governance).
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
-	// Delegate stakes ERTH privately: a derth stake note to its owner.
+	// Delegate stakes ERTH privately: the derth is merged into the owner's
+	// derth stake note.
 	Delegate(ctx context.Context, in *MsgDelegate, opts ...grpc.CallOption) (*MsgDelegateResponse, error)
-	// Restake merges or splits stake notes of one owner.
+	// Restake merges stake notes of one owner.
 	Restake(ctx context.Context, in *MsgRestake, opts ...grpc.CallOption) (*MsgRestakeResponse, error)
 	// Undelegate unbonds derth; the chain pays its ERTH value out as notes
 	// at maturity.
 	Undelegate(ctx context.Context, in *MsgUndelegate, opts ...grpc.CallOption) (*MsgUndelegateResponse, error)
 	// ClaimUnbonding (retired): undelegations pay out by themselves.
-	// StakeVote votes up to four stake notes of one owner at one validator on
+	// StakeVote votes up to two stake notes of one owner at one validator on
 	// an x/gov proposal, with one weight.
 	StakeVote(ctx context.Context, in *MsgStakeVote, opts ...grpc.CallOption) (*MsgStakeVoteResponse, error)
 	// LockPosition locks derth into a Groundworks position.
 	LockPosition(ctx context.Context, in *MsgLockPosition, opts ...grpc.CallOption) (*MsgLockPositionResponse, error)
 	// UpdatePosition changes a position's split (its owner proves it).
 	UpdatePosition(ctx context.Context, in *MsgUpdatePosition, opts ...grpc.CallOption) (*MsgUpdatePositionResponse, error)
-	// UnlockPosition returns a position's derth as a stake note of its owner.
+	// UnlockPosition returns a position's derth into its owner's stake note.
 	UnlockPosition(ctx context.Context, in *MsgUnlockPosition, opts ...grpc.CallOption) (*MsgUnlockPositionResponse, error)
 	// PositionVote votes a position's derth on an x/gov proposal (its owner
 	// proves it).
 	PositionVote(ctx context.Context, in *MsgPositionVote, opts ...grpc.CallOption) (*MsgPositionVoteResponse, error)
 	// Redelegate moves derth from one validator to another with no unbonding
-	// gap: derth/<src> notes are spent, derth/<dst> is minted to their owner.
+	// gap: derth/<src> notes are spent, derth/<dst> is merged into their
+	// owner's derth/<dst> note.
 	Redelegate(ctx context.Context, in *MsgRedelegate, opts ...grpc.CallOption) (*MsgRedelegateResponse, error)
 }
 
@@ -1688,28 +1815,30 @@ func (c *msgClient) Redelegate(ctx context.Context, in *MsgRedelegate, opts ...g
 type MsgServer interface {
 	// UpdateParams updates the module parameters (governance).
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
-	// Delegate stakes ERTH privately: a derth stake note to its owner.
+	// Delegate stakes ERTH privately: the derth is merged into the owner's
+	// derth stake note.
 	Delegate(context.Context, *MsgDelegate) (*MsgDelegateResponse, error)
-	// Restake merges or splits stake notes of one owner.
+	// Restake merges stake notes of one owner.
 	Restake(context.Context, *MsgRestake) (*MsgRestakeResponse, error)
 	// Undelegate unbonds derth; the chain pays its ERTH value out as notes
 	// at maturity.
 	Undelegate(context.Context, *MsgUndelegate) (*MsgUndelegateResponse, error)
 	// ClaimUnbonding (retired): undelegations pay out by themselves.
-	// StakeVote votes up to four stake notes of one owner at one validator on
+	// StakeVote votes up to two stake notes of one owner at one validator on
 	// an x/gov proposal, with one weight.
 	StakeVote(context.Context, *MsgStakeVote) (*MsgStakeVoteResponse, error)
 	// LockPosition locks derth into a Groundworks position.
 	LockPosition(context.Context, *MsgLockPosition) (*MsgLockPositionResponse, error)
 	// UpdatePosition changes a position's split (its owner proves it).
 	UpdatePosition(context.Context, *MsgUpdatePosition) (*MsgUpdatePositionResponse, error)
-	// UnlockPosition returns a position's derth as a stake note of its owner.
+	// UnlockPosition returns a position's derth into its owner's stake note.
 	UnlockPosition(context.Context, *MsgUnlockPosition) (*MsgUnlockPositionResponse, error)
 	// PositionVote votes a position's derth on an x/gov proposal (its owner
 	// proves it).
 	PositionVote(context.Context, *MsgPositionVote) (*MsgPositionVoteResponse, error)
 	// Redelegate moves derth from one validator to another with no unbonding
-	// gap: derth/<src> notes are spent, derth/<dst> is minted to their owner.
+	// gap: derth/<src> notes are spent, derth/<dst> is merged into their
+	// owner's derth/<dst> note.
 	Redelegate(context.Context, *MsgRedelegate) (*MsgRedelegateResponse, error)
 }
 
@@ -2065,12 +2194,52 @@ func (m *StakeProof) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if len(m.SpcCiphertext) > 0 {
-		i -= len(m.SpcCiphertext)
-		copy(dAtA[i:], m.SpcCiphertext)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.SpcCiphertext)))
+	if len(m.DebtRoot) > 0 {
+		i -= len(m.DebtRoot)
+		copy(dAtA[i:], m.DebtRoot)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.DebtRoot)))
 		i--
-		dAtA[i] = 0x42
+		dAtA[i] = 0x7a
+	}
+	if m.ClearBefore != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.ClearBefore))
+		i--
+		dAtA[i] = 0x70
+	}
+	if len(m.CreditCiphertext) > 0 {
+		i -= len(m.CreditCiphertext)
+		copy(dAtA[i:], m.CreditCiphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.CreditCiphertext)))
+		i--
+		dAtA[i] = 0x6a
+	}
+	if len(m.CreditCommitment) > 0 {
+		i -= len(m.CreditCommitment)
+		copy(dAtA[i:], m.CreditCommitment)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.CreditCommitment)))
+		i--
+		dAtA[i] = 0x62
+	}
+	if len(m.CreditNullifier) > 0 {
+		i -= len(m.CreditNullifier)
+		copy(dAtA[i:], m.CreditNullifier)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.CreditNullifier)))
+		i--
+		dAtA[i] = 0x5a
+	}
+	if len(m.Ciphertext) > 0 {
+		i -= len(m.Ciphertext)
+		copy(dAtA[i:], m.Ciphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
+		i--
+		dAtA[i] = 0x52
+	}
+	if len(m.Commitment) > 0 {
+		i -= len(m.Commitment)
+		copy(dAtA[i:], m.Commitment)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Commitment)))
+		i--
+		dAtA[i] = 0x4a
 	}
 	if len(m.OwnerTag) > 0 {
 		i -= len(m.OwnerTag)
@@ -2078,31 +2247,6 @@ func (m *StakeProof) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i = encodeVarintTx(dAtA, i, uint64(len(m.OwnerTag)))
 		i--
 		dAtA[i] = 0x3a
-	}
-	if len(m.SpcMint) > 0 {
-		i -= len(m.SpcMint)
-		copy(dAtA[i:], m.SpcMint)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.SpcMint)))
-		i--
-		dAtA[i] = 0x32
-	}
-	if len(m.Ciphertexts) > 0 {
-		for iNdEx := len(m.Ciphertexts) - 1; iNdEx >= 0; iNdEx-- {
-			i -= len(m.Ciphertexts[iNdEx])
-			copy(dAtA[i:], m.Ciphertexts[iNdEx])
-			i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertexts[iNdEx])))
-			i--
-			dAtA[i] = 0x2a
-		}
-	}
-	if len(m.Commitments) > 0 {
-		for iNdEx := len(m.Commitments) - 1; iNdEx >= 0; iNdEx-- {
-			i -= len(m.Commitments[iNdEx])
-			copy(dAtA[i:], m.Commitments[iNdEx])
-			i = encodeVarintTx(dAtA, i, uint64(len(m.Commitments[iNdEx])))
-			i--
-			dAtA[i] = 0x22
-		}
 	}
 	if len(m.Nullifiers) > 0 {
 		for iNdEx := len(m.Nullifiers) - 1; iNdEx >= 0; iNdEx-- {
@@ -2150,6 +2294,11 @@ func (m *MsgDelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Derth != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Derth))
+		i--
+		dAtA[i] = 0x30
+	}
 	if m.Amount != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Amount))
 		i--
@@ -2431,6 +2580,13 @@ func (m *MsgStakeVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.DebtRoot) > 0 {
+		i -= len(m.DebtRoot)
+		copy(dAtA[i:], m.DebtRoot)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.DebtRoot)))
+		i--
+		dAtA[i] = 0x5a
+	}
 	if len(m.VoteNullifiers) > 0 {
 		for iNdEx := len(m.VoteNullifiers) - 1; iNdEx >= 0; iNdEx-- {
 			i -= len(m.VoteNullifiers[iNdEx])
@@ -2882,6 +3038,16 @@ func (m *MsgRedelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.MoveTime != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.MoveTime))
+		i--
+		dAtA[i] = 0x38
+	}
+	if m.DstDerth != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.DstDerth))
+		i--
+		dAtA[i] = 0x30
+	}
 	{
 		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
@@ -3022,27 +3188,34 @@ func (m *StakeProof) Size() (n int) {
 			n += 1 + l + sovTx(uint64(l))
 		}
 	}
-	if len(m.Commitments) > 0 {
-		for _, b := range m.Commitments {
-			l = len(b)
-			n += 1 + l + sovTx(uint64(l))
-		}
-	}
-	if len(m.Ciphertexts) > 0 {
-		for _, b := range m.Ciphertexts {
-			l = len(b)
-			n += 1 + l + sovTx(uint64(l))
-		}
-	}
-	l = len(m.SpcMint)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	l = len(m.OwnerTag)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
-	l = len(m.SpcCiphertext)
+	l = len(m.Commitment)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Ciphertext)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.CreditNullifier)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.CreditCommitment)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.CreditCiphertext)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.ClearBefore != 0 {
+		n += 1 + sovTx(uint64(m.ClearBefore))
+	}
+	l = len(m.DebtRoot)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
@@ -3065,6 +3238,9 @@ func (m *MsgDelegate) Size() (n int) {
 	n += 1 + l + sovTx(uint64(l))
 	if m.Amount != 0 {
 		n += 1 + sovTx(uint64(m.Amount))
+	}
+	if m.Derth != 0 {
+		n += 1 + sovTx(uint64(m.Derth))
 	}
 	return n
 }
@@ -3193,6 +3369,10 @@ func (m *MsgStakeVote) Size() (n int) {
 			l = len(b)
 			n += 1 + l + sovTx(uint64(l))
 		}
+	}
+	l = len(m.DebtRoot)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
 	}
 	return n
 }
@@ -3358,6 +3538,12 @@ func (m *MsgRedelegate) Size() (n int) {
 	}
 	l = m.Stake.Size()
 	n += 1 + l + sovTx(uint64(l))
+	if m.DstDerth != 0 {
+		n += 1 + sovTx(uint64(m.DstDerth))
+	}
+	if m.MoveTime != 0 {
+		n += 1 + sovTx(uint64(m.MoveTime))
+	}
 	return n
 }
 
@@ -3682,104 +3868,6 @@ func (m *StakeProof) Unmarshal(dAtA []byte) error {
 			m.Nullifiers = append(m.Nullifiers, make([]byte, postIndex-iNdEx))
 			copy(m.Nullifiers[len(m.Nullifiers)-1], dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Commitments", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Commitments = append(m.Commitments, make([]byte, postIndex-iNdEx))
-			copy(m.Commitments[len(m.Commitments)-1], dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 5:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertexts", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Ciphertexts = append(m.Ciphertexts, make([]byte, postIndex-iNdEx))
-			copy(m.Ciphertexts[len(m.Ciphertexts)-1], dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 6:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SpcMint", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.SpcMint = append(m.SpcMint[:0], dAtA[iNdEx:postIndex]...)
-			if m.SpcMint == nil {
-				m.SpcMint = []byte{}
-			}
-			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field OwnerTag", wireType)
@@ -3814,9 +3902,9 @@ func (m *StakeProof) Unmarshal(dAtA []byte) error {
 				m.OwnerTag = []byte{}
 			}
 			iNdEx = postIndex
-		case 8:
+		case 9:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SpcCiphertext", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Commitment", wireType)
 			}
 			var byteLen int
 			for shift := uint(0); ; shift += 7 {
@@ -3843,9 +3931,198 @@ func (m *StakeProof) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SpcCiphertext = append(m.SpcCiphertext[:0], dAtA[iNdEx:postIndex]...)
-			if m.SpcCiphertext == nil {
-				m.SpcCiphertext = []byte{}
+			m.Commitment = append(m.Commitment[:0], dAtA[iNdEx:postIndex]...)
+			if m.Commitment == nil {
+				m.Commitment = []byte{}
+			}
+			iNdEx = postIndex
+		case 10:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.Ciphertext == nil {
+				m.Ciphertext = []byte{}
+			}
+			iNdEx = postIndex
+		case 11:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CreditNullifier", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.CreditNullifier = append(m.CreditNullifier[:0], dAtA[iNdEx:postIndex]...)
+			if m.CreditNullifier == nil {
+				m.CreditNullifier = []byte{}
+			}
+			iNdEx = postIndex
+		case 12:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CreditCommitment", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.CreditCommitment = append(m.CreditCommitment[:0], dAtA[iNdEx:postIndex]...)
+			if m.CreditCommitment == nil {
+				m.CreditCommitment = []byte{}
+			}
+			iNdEx = postIndex
+		case 13:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CreditCiphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.CreditCiphertext = append(m.CreditCiphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.CreditCiphertext == nil {
+				m.CreditCiphertext = []byte{}
+			}
+			iNdEx = postIndex
+		case 14:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ClearBefore", wireType)
+			}
+			m.ClearBefore = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ClearBefore |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 15:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DebtRoot", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DebtRoot = append(m.DebtRoot[:0], dAtA[iNdEx:postIndex]...)
+			if m.DebtRoot == nil {
+				m.DebtRoot = []byte{}
 			}
 			iNdEx = postIndex
 		default:
@@ -4011,6 +4288,25 @@ func (m *MsgDelegate) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.Amount |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Derth", wireType)
+			}
+			m.Derth = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Derth |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -4952,6 +5248,40 @@ func (m *MsgStakeVote) Unmarshal(dAtA []byte) error {
 			}
 			m.VoteNullifiers = append(m.VoteNullifiers, make([]byte, postIndex-iNdEx))
 			copy(m.VoteNullifiers[len(m.VoteNullifiers)-1], dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 11:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DebtRoot", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DebtRoot = append(m.DebtRoot[:0], dAtA[iNdEx:postIndex]...)
+			if m.DebtRoot == nil {
+				m.DebtRoot = []byte{}
+			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -6133,6 +6463,44 @@ func (m *MsgRedelegate) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DstDerth", wireType)
+			}
+			m.DstDerth = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DstDerth |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MoveTime", wireType)
+			}
+			m.MoveTime = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MoveTime |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])

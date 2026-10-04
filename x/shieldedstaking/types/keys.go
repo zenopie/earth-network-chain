@@ -172,7 +172,46 @@ var (
 	// it redelegated from runs (redelegate.go): only inside BeginBlock,
 	// emptied by this module's BeginBlocker; never exported.
 	ShelteredUnbondingsKey = collections.NewPrefix(45)
+	// Slash debt of private redelegations (moves.go, debt_tree.go):
+	// MovesKey holds every move a slash of its source can still reach, by
+	// move key; MovesByEntryKey indexes them by their x/staking entry
+	// (src "/" dst, entry height, key); MovesByCompletionKey by when the
+	// entry matures (completion ns, key).
+	MovesKey             = collections.NewPrefix(46)
+	MovesByEntryKey      = collections.NewPrefix(47)
+	MovesByCompletionKey = collections.NewPrefix(48)
+	// The slash debt indexed tree: its nodes, key -> leaf index (ordered by
+	// key: the low-leaf lookup), leaf index -> key (insertion order), key ->
+	// retained, and its leaf count.
+	DebtNodesKey    = collections.NewPrefix(49)
+	DebtIndexKey    = collections.NewPrefix(50)
+	DebtLeafKeysKey = collections.NewPrefix(51)
+	DebtRetainedKey = collections.NewPrefix(52)
+	DebtSizeKey     = collections.NewPrefix(53)
+	// MaxUnbondingKey is the longest x/staking unbonding_time seen (seconds):
+	// the label window is this plus MoveTimeSlackSeconds.
+	MaxUnbondingKey = collections.NewPrefix(54)
+	// The slash in progress (moves.go): its source, and per destination the
+	// module's shares there when it began and how many of the module's
+	// entries x/staking unbonded there. Only inside BeginBlock.
+	WatchSrcKey    = collections.NewPrefix(55)
+	WatchSharesKey = collections.NewPrefix(56)
+	WatchCallsKey  = collections.NewPrefix(57)
 )
+
+// MoveTimeSlackSeconds is how far a redelegation's block time may be after
+// the move_time its msg names (and so its label carries): the label window
+// covers the x/staking entry's maturity from any block time in range.
+const MoveTimeSlackSeconds = 600
+
+// MaxEntryHeightsPerPair bounds the module's x/staking redelegation entries
+// per (src, dst): one per block with a bonded move (moves in one block share
+// it). Past it a move joins the latest entry, which then takes the move's
+// height and completion: earlier moves in that entry stay exposed to
+// infractions up to the later height (they pay, never the source's other
+// stakers). Reaching it takes this many blocks with moves of at least
+// min_delegation each, locked in place for the unbonding time.
+const MaxEntryHeightsPerPair = 4096
 
 // UnbondPayoutRetryDelay is how long after its attempts-th failure a payout
 // is retried.

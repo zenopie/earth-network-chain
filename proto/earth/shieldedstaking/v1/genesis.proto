@@ -46,6 +46,15 @@ message GenesisState {
   // next_unbond_payout_id the next id to issue.
   repeated UnbondPayout unbond_payouts = 17 [(gogoproto.nullable) = false];
   uint64 next_unbond_payout_id = 18;
+  // moves are the private redelegations a slash of their source can still
+  // reach (each with an x/staking entry, or none when nothing was bonded).
+  repeated Move moves = 19 [(gogoproto.nullable) = false];
+  // debt_rows are the slash debt tree's rows in insertion order, each with
+  // its latest retained value (InitGenesis rebuilds the same tree).
+  repeated DebtRow debt_rows = 20 [(gogoproto.nullable) = false];
+  // max_unbonding_seconds is the longest x/staking unbonding_time seen: a
+  // label's window is this plus move_time_slack.
+  uint64 max_unbonding_seconds = 21;
 }
 
 // RetiringEscrow is a scheduled reward-escrow retirement: validator's escrow

@@ -240,10 +240,10 @@ func TestDexAuditReleaseMapMatchesHandler(t *testing.T) {
 	v := e.valoper(e.genesisValidator())
 	// A restake (which releases nothing) whose bundle also releases ANML.
 	p := e.buildLegs(ssFee, leg{anml, 5})
-	z := make([]byte, 32)
 	pc := privacy.FieldBytes(ssDet("l5", 0))
-	m := &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes),
-		Anchor: z, Nullifiers: [][]byte{pc, z}, Commitments: [][]byte{pc, z}, SpcMint: pc, OwnerTag: pc}}
+	st := fakeStake("l5", false)
+	st.Proof, st.OwnerTag = make([]byte, shieldedtypes.ProofBytes), pc
+	m := &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: st}
 	require.Error(t, m.ValidateBasic(), "the first line")
 	ctx := shieldedtypes.WithTxFields(e.ctx(), ssTx)
 	_, err := e.app.ShieldedKeeper.CheckPrivateMsg(ctx, m)

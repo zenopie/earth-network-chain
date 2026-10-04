@@ -50,18 +50,50 @@ func (e *stakeEnv) auditFundPool(amt int64) {
 	require.NoError(e.t, err)
 }
 
+// exactDerth is what amt buys at val's live rate now: floor(amt x S / B),
+// amt while nothing is outstanding.
+func (e *stakeEnv) exactDerth(val sdk.ValAddress, amt uint64) uint64 {
+	b, s, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(val))
+	require.NoError(e.t, err)
+	if !s.IsPositive() {
+		return amt
+	}
+	return math.NewIntFromUint64(amt).Mul(s).Quo(b).Uint64()
+}
+
+// fakeStake is a well-formed stake proof for a handler driven with the ante
+// faked (no proof is read): lane A spends a nullifier of its own and creates
+// a note; with credit, the credit lane likewise (a redelegation's).
+func fakeStake(label string, credit bool) sstypes.StakeProof {
+	z := make([]byte, 32)
+	p := sstypes.StakeProof{Anchor: z, OwnerTag: z, DebtRoot: z,
+		Nullifiers: [][]byte{privacy.FieldBytes(ssDet("fake-snf/"+label, 0)), z},
+		Commitment: privacy.FieldBytes(ssDet("fake-scm/"+label, 0)), Ciphertext: shieldedtest.StakeCT("fake/" + label),
+		CreditNullifier: z, CreditCommitment: z}
+	if credit {
+		p.CreditNullifier = privacy.FieldBytes(ssDet("fake-snf/"+label, 1))
+		p.CreditCommitment = privacy.FieldBytes(ssDet("fake-scm/"+label, 1))
+		p.CreditCiphertext = shieldedtest.StakeCT("fake-cr/" + label)
+	}
+	return p
+}
+
 func auditDelegateMsg(valoper string, amt uint64, label string) *sstypes.MsgDelegate {
 	return &sstypes.MsgDelegate{
 		Bundle:    stubBundle(label, shieldedtypes.ValueBalance{Denom: "uerth", Amount: amt + 1}),
 		Amount:    amt,
+		Derth:     amt,
 		Validator: valoper,
-		Stake:     sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/"+label, 0)), SpcCiphertext: shieldedtest.BlindCT("spc")},
+		Stake:     fakeStake("audit/"+label, false),
 	}
 }
 
-// auditDelegate drives MsgDelegate's handler (ante faked) for amt uerth.
+// auditDelegate drives MsgDelegate's handler (ante faked) for amt uerth,
+// crediting exactly what it buys (the handler runs on the state it was
+// quoted on: no margin needed).
 func (e *stakeEnv) auditDelegate(val sdk.ValAddress, amt uint64, label string) *sstypes.MsgDelegateResponse {
 	m := auditDelegateMsg(e.valoper(val), amt, label)
+	m.Derth = e.exactDerth(val, amt)
 	res, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Delegate(e.fakeAuthorized(m), m)
 	require.NoError(e.t, err)
 	return res
@@ -91,7 +123,7 @@ func TestAuditValoperCaseAliasDrainsDelegation(t *testing.T) {
 		require.Error(t, err)
 
 		u := &sstypes.MsgUndelegate{Validator: alias, Amount: 1,
-			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("atk-pc", 1))},
+			Stake: fakeStake("atk", false),
 			Pc:    privacy.FieldBytes(ssDet("atk-pc", 1)), Ciphertext: shieldedtest.BlindCT("payout")}
 		require.Error(t, u.ValidateBasic())
 		_, err = srv.Undelegate(e.fakeAuthorized(u), u)
@@ -251,7 +283,7 @@ func TestAuditZeroHeightExportBreaksInvariants(t *testing.T) {
 	e.next(25 * time.Hour)
 	// an unbonding in flight across the export
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth / 4,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/z", 1))},
+		Stake: fakeStake("audit-pc/z", false),
 		Pc:    privacy.FieldBytes(ssDet("audit-pc/z", 1)), Ciphertext: shieldedtest.BlindCT("payout")}
 	_, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)
@@ -310,7 +342,7 @@ func TestAuditOrphanBackingNotCaptured(t *testing.T) {
 	e.next(25 * time.Hour)
 	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/o", 1))},
+		Stake: fakeStake("audit-pc/o", false),
 		Pc:    privacy.FieldBytes(ssDet("audit-pc/o", 1)), Ciphertext: shieldedtest.BlindCT("payout")}
 	ures, err := srv.Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)
@@ -472,7 +504,7 @@ func TestAuditDonationInflationHarmless(t *testing.T) {
 	e.next(25 * time.Hour)
 	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth - 1,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/atk", 1))},
+		Stake: fakeStake("audit-pc/atk", false),
 		Pc:    privacy.FieldBytes(ssDet("audit-pc/atk", 1)), Ciphertext: shieldedtest.BlindCT("payout")}
 	_, err := srv.Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)

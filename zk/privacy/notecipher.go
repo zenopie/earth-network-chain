@@ -208,7 +208,9 @@ func (n BlindNote) bytes() []byte {
 	return append(b, n.Memo[:]...)
 }
 
-func blindNoteAEAD(shared, epk []byte) (cipher.AEAD, error) { return blindAEAD(blindNoteSalt, shared, epk) }
+func blindNoteAEAD(shared, epk []byte) (cipher.AEAD, error) {
+	return blindAEAD(blindNoteSalt, shared, epk)
+}
 
 func blindAEAD(salt, shared, epk []byte) (cipher.AEAD, error) {
 	key := make([]byte, chacha20poly1305.KeySize)
@@ -279,54 +281,21 @@ func decryptBlind(salt []byte, version byte, ct []byte, ek [32]byte) (BlindNote,
 	return n, nil
 }
 
-// ---- blind stake ciphertext ("earth stake v1") ------------------------------
+// ---- wallet stake ciphertext -----------------------------------------------
 //
-// Every stake note the chain mints (derth at the live rate, an unbond claim,
-// an unlocked position) has a value the chain
-// decides, so its owner's wallet cannot know cm in advance. The msg carries
-// the note's secrets encrypted to the owner, exactly as a v2 note does, under
-// its own salt and version byte so the two can never be confused:
+// The chain mints no stake note (ORCHARD_DESIGN.md section 20): every stake
+// note is a stake proof's output and carries the wallet's own ciphertext of
+// it, for the owner's other devices, in one length the chain checks:
 //
-//	ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 12 zero bytes, aad = none, pt)
-//	key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.stake.v1", info = epk)
-//	pt    = 0x03 || rho (32) || rcm (32) || memo (64)
+//	ct = epk (32) || AEAD(0x04 || asset_id (32) || amount u64 || rho (32) ||
+//	     rcm (32) || move_key (32) || move_time u64 || exposed u64) || tag (16)
 //
-// 177 bytes. The owner opens it, recomputes spc = H(TAG_SPC, owner_pk, rho,
-// rcm) and cm = H(TAG_STAKE, AssetID(denom), amount, spc) with the denom and
-// amount the chain publishes for the stake note at that position, and accepts
-// it only if cm matches.
+// 201 bytes; the label fields are zero for an unlabelled note, so a note's
+// ciphertext does not say whether it holds a redelegation's exposure. The
+// wallet defines the AEAD (wallet stake note v2); the chain only checks the
+// length. The blind stake ciphertext ("earth stake v1", for notes the chain
+// minted) is retired with chain-minted stake notes.
 
-const (
-	// BlindStakeVersion is the stake ciphertext plaintext's leading byte.
-	BlindStakeVersion byte = 0x03
-	// BlindStakeCiphertextBytes is the stake ciphertext's length (as v2's).
-	BlindStakeCiphertextBytes = BlindNoteCiphertextBytes
-	// WalletStakeCiphertextBytes is the length of the ciphertext a stake
-	// proof's own output carries (the wallet's "earth stake note v1": epk ||
-	// AEAD of 0x03 || asset_id || amount u64 || rho || rcm): 32 + 105 + 16.
-	WalletStakeCiphertextBytes = 32 + 1 + 32 + 8 + 32 + 32 + 16
-)
-
-var blindStakeSalt = []byte("earth.stake.v1")
-
-// SPC is the stake note's owner commitment for ownerPK (StakePC).
-func (n BlindNote) SPC(ownerPK fr.Element) fr.Element { return StakePC(ownerPK, n.Rho, n.Rcm) }
-
-func (n BlindNote) stakeBytes() []byte {
-	b := n.bytes()
-	b[0] = BlindStakeVersion
-	return b
-}
-
-// EncryptBlindStakeNote encrypts a minted stake note's secrets to ekPub with
-// the ephemeral secret esk (32 random bytes; deterministic only in fixtures).
-func EncryptBlindStakeNote(n BlindNote, ekPub [32]byte, esk [32]byte) ([]byte, error) {
-	return encryptBlind(blindStakeSalt, n.stakeBytes(), ekPub, esk)
-}
-
-// DecryptBlindStakeNote opens a stake ciphertext with ek. The caller must
-// still check StakeCM(asset, amount, n.SPC(owner_pk)) == cm before trusting
-// it.
-func DecryptBlindStakeNote(ct []byte, ek [32]byte) (BlindNote, error) {
-	return decryptBlind(blindStakeSalt, BlindStakeVersion, ct, ek)
-}
+// WalletStakeCiphertextBytes is the length of every stake proof output's
+// ciphertext: 32 + 1 + 32 + 8 + 32 + 32 + 32 + 8 + 8 + 16.
+const WalletStakeCiphertextBytes = 32 + 1 + 32 + 8 + 32 + 32 + 32 + 8 + 8 + 16

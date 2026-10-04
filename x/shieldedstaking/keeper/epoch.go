@@ -44,9 +44,20 @@ import (
 // tree's, if the block moved them (a root is an anchor from the end of the
 // block that made it; a snapshot takes both from the end of the same block).
 func (k Keeper) EndBlocker(ctx context.Context) error {
-	// Never needed (the BeginBlocker did it), but nothing below may see the
-	// module's unbondings set aside.
+	// Never needed (the BeginBlocker did both), but nothing below may see a
+	// slash unsettled or the module's unbondings set aside.
+	k.finishSlashWatch(ctx)
 	k.restoreSheltered(ctx)
+	// Moves whose x/staking entry matured can no longer be slashed; the
+	// label window follows the longest unbonding_time seen (moves.go).
+	if err := k.guarded(ctx, func(cc context.Context) error {
+		if err := k.pruneMoves(cc, 1000); err != nil {
+			return err
+		}
+		return k.noteMaxUnbonding(cc)
+	}); err != nil {
+		k.failure(ctx, "moves", "", err)
+	}
 	// The note root and the nullifier root in ONE guarded call (audit 4,
 	// L-A): a snapshot pairs the latest of each as of the same block's end
 	// (a note in the root is unspent iff its nullifier is not under the nf

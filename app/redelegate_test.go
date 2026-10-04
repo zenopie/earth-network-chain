@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"cosmossdk.io/math"
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client/flags"
@@ -32,38 +34,62 @@ import (
 
 // ---- private redelegation helpers --------------------------------------------
 
-// redelegateMsg moves amount of the stake note in (derth/<src>) to dst: the
-// change back as a derth/<src> note, the derth/<dst> minted to a fresh stake
-// note of the wallet.
-func (e *stakeEnv) redelegateMsg(src, dst sdk.ValAddress, in *snote, amount uint64) (*sstypes.MsgRedelegate, *pendingBundle, *stakePlan, *snote) {
-	p := e.feeOnly()
-	dn := e.freshStake(sstypes.DerthDenom(e.valoper(dst)), 0)
-	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, outs: []*snote{e.freshStake(in.denom, in.amount-amount)},
-		vOut: amount, mint: dn})
-	m := &sstypes.MsgRedelegate{Bundle: p.b, SrcValidator: e.valoper(src), DstValidator: e.valoper(dst), Amount: amount, Stake: sp.proof}
-	e.prove(m, p)
-	e.proveStake(m, sp)
-	return m, p, sp, dn
+// quoteRedelegate is the derth/<dst> a wallet names for moving amount
+// derth/<src>: its value at src's live rate, bought at dst's, less 1% for the
+// rates' drift until the block (exactly the value while dst has no derth).
+func (e *stakeEnv) quoteRedelegate(src, dst sdk.ValAddress, amount uint64) uint64 {
+	bA, sA, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(src))
+	require.NoError(e.t, err)
+	u := math.NewIntFromUint64(amount).Mul(bA).Quo(sA)
+	bB, sB, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(dst))
+	require.NoError(e.t, err)
+	if !sB.IsPositive() {
+		return u.Uint64() - u.Uint64()/100
+	}
+	d := u.Mul(sB).Quo(bB).Uint64()
+	return d - d/100
 }
 
-// redelegate runs redelegateMsg and returns the derth/<dst> note and the
-// tx result.
+// redelegateMsg moves amount of the stake note in (derth/<src>) to dst: the
+// change back at src (a zero note when nothing is left; a labelled note
+// keeps its label), the credit merged into the wallet's unlabelled dst note
+// (or a padding input when it has none), labelled with the move.
+func (e *stakeEnv) redelegateMsg(src, dst sdk.ValAddress, in *snote, amount uint64) (*sstypes.MsgRedelegate, *pendingBundle, *stakePlan) {
+	p := e.feeOnly()
+	dstDenom := sstypes.DerthDenom(e.valoper(dst))
+	sp := &stakePlan{denom: in.denom, ins: []*snote{in}, vOut: amount,
+		credit: &creditLane{denom: dstDenom, in: e.unlabelledStake(dstDenom), vIn: e.quoteRedelegate(src, dst, amount),
+			moveTime: uint64(e.now.Unix())}}
+	if in.amount > amount {
+		sp.out = e.freshStake(in.denom, in.amount-amount)
+	}
+	e.stake(sp)
+	m := &sstypes.MsgRedelegate{Bundle: p.b, SrcValidator: e.valoper(src), DstValidator: e.valoper(dst), Amount: amount,
+		DstDerth: sp.credit.vIn, MoveTime: sp.credit.moveTime, Stake: sp.proof}
+	e.prove(m, p)
+	e.proveStake(m, sp)
+	return m, p, sp
+}
+
+// redelegate runs redelegateMsg and returns the wallet's derth/<dst> note
+// (merged, labelled) and the tx result.
 func (e *stakeEnv) redelegate(src, dst sdk.ValAddress, in *snote, amount uint64) (*snote, *abci.ExecTxResult) {
 	e.t.Helper()
-	m, p, sp, dn := e.redelegateMsg(src, dst, in, amount)
+	m, p, sp := e.redelegateMsg(src, dst, in, amount)
 	res := e.run(e.privateTx(m))
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.settle(p)
 	e.settleStake(sp)
-	return e.mintedStake(res, dn), res
+	require.True(e.t, sp.credit.out.known, "the derth/<dst> note is in the stake tree")
+	return sp.credit.out, res
 }
 
 // fakeRedelegate runs a redelegation's action as the private ante would,
-// without a proof or notes: for driving x/staking's limits and slashes.
-// Test-only.
+// without a proof or notes (fakeStake): for driving moves, slashes and
+// x/staking's entries. Test-only.
 func (e *stakeEnv) fakeRedelegate(src, dst sdk.ValAddress, amount uint64, label string) (*sstypes.MsgRedelegateResponse, error) {
 	m := &sstypes.MsgRedelegate{SrcValidator: e.valoper(src), DstValidator: e.valoper(dst), Amount: amount,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("redelegate-spc/"+label, 0)), SpcCiphertext: shieldedtest.BlindCT("redelegate/" + label)}}
+		DstDerth: e.quoteRedelegate(src, dst, amount), MoveTime: uint64(e.now.Unix()), Stake: fakeStake("redelegate/"+label, true)}
 	res, err := sskeeper.NewActionHandler(e.app.ShieldedStakingKeeper).ExecutePrivateAction(e.ctx(), m, nil)
 	if err != nil {
 		return nil, err
@@ -71,38 +97,35 @@ func (e *stakeEnv) fakeRedelegate(src, dst sdk.ValAddress, amount uint64, label 
 	return res.(*sstypes.MsgRedelegateResponse), nil
 }
 
-// redelegateStub is a well-formed, unproven MsgRedelegate with a real fee
-// bundle layout and a stake nullifier never spent: for a msg the chain must
-// refuse before verifying anything.
-func (e *stakeEnv) redelegateStub(src, dst sdk.ValAddress, amount uint64, label string) *sstypes.MsgRedelegate {
-	p := e.feeOnly()
-	z := make([]byte, 32)
-	m := &sstypes.MsgRedelegate{Bundle: p.b, SrcValidator: e.valoper(src), DstValidator: e.valoper(dst), Amount: amount,
-		Stake: sstypes.StakeProof{Anchor: z, SpcMint: privacy.FieldBytes(ssDet("stub-spc/"+label, 0)), OwnerTag: z,
-			Nullifiers: [][]byte{privacy.FieldBytes(ssDet("stub-snf/"+label, 0)), z}, Commitments: [][]byte{z, z},
-			Ciphertexts: [][]byte{nil, nil}, SpcCiphertext: shieldedtest.BlindCT("stub/" + label)}}
-	unproven(m)
-	return m
+// fakeMoveKey is the move key fakeRedelegate(label) records.
+func fakeMoveKey(label string) []byte {
+	return privacy.FieldBytes(ssDet("fake-snf/redelegate/"+label, 1))
 }
 
-// requireRedelegationRefused: CheckTx refuses m with ErrRedelegation
-// (containing want), and its fee note is not spent.
-func (e *stakeEnv) requireRedelegationRefused(m *sstypes.MsgRedelegate, want string) {
-	e.t.Helper()
-	res := e.checkTx(e.privateTx(m))
-	require.Equal(e.t, sstypes.ErrRedelegation.ABCICode(), res.Code, res.Log)
-	require.Contains(e.t, res.Log, want)
-	spent, err := e.app.ShieldedKeeper.Nullifiers.Has(e.ctx(), m.Bundle.Actions[0].Nullifier)
-	require.NoError(e.t, err)
-	require.False(e.t, spent, "nothing spent")
+// move is the open move key, if any.
+func (e *stakeEnv) move(key []byte) (sstypes.Move, bool) {
+	mv, err := e.app.ShieldedStakingKeeper.Moves.Get(e.ctx(), key)
+	if err != nil {
+		return mv, false
+	}
+	return mv, true
 }
 
-func (e *stakeEnv) redelegationQuery(src, dst sdk.ValAddress) *sstypes.QueryRedelegationResponse {
+// doubleSign has val misbehave at infraction (a past height): x/evidence
+// slashes 5% of its power then, and every module redelegation entry from val
+// created since. Returns the block's result.
+func (e *stakeEnv) doubleSign(val sdk.ValAddress, infraction int64) *abci.ResponseFinalizeBlock {
 	e.t.Helper()
-	q, err := sskeeper.NewQueryServerImpl(e.app.ShieldedStakingKeeper).Redelegation(e.ctx(),
-		&sstypes.QueryRedelegationRequest{SrcValidator: e.valoper(src), DstValidator: e.valoper(dst)})
+	ctx := e.ctx()
+	v, err := e.app.StakingKeeper.GetValidator(ctx, val)
 	require.NoError(e.t, err)
-	return q
+	power := v.ConsensusPower(e.app.StakingKeeper.PowerReduction(ctx))
+	cons, err := v.GetConsAddr()
+	require.NoError(e.t, err)
+	return e.block(5*time.Second, []abci.Misbehavior{{
+		Type: abci.MisbehaviorType_DUPLICATE_VOTE, Validator: abci.Validator{Address: cons, Power: power},
+		Height: infraction, Time: e.times[infraction], TotalVotingPower: power + 100,
+	}})
 }
 
 func evInt(t *testing.T, ev map[string]string, key string) math.Int {
@@ -112,15 +135,31 @@ func evInt(t *testing.T, ev map[string]string, key string) math.Int {
 	return v
 }
 
+// requireRateKept: a slash of redelegations into v moved no honest
+// holder's value: v's live rate r before the slash's block did not fall (it
+// rose by at most the block's rewards), though without the debt taken off
+// its supply it would have.
+func (e *stakeEnv) requireRateKept(v sdk.ValAddress, r math.LegacyDec, debt math.Int) {
+	e.t.Helper()
+	now := e.rate(v)
+	require.True(e.t, now.GTE(r), "rate %s -> %s", r, now)
+	require.True(e.t, now.LTE(r.Mul(math.LegacyNewDecWithPrec(1001, 3))), "rate %s -> %s", r, now)
+	b, s, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(v))
+	require.NoError(e.t, err)
+	uncovered := math.LegacyNewDecFromInt(b).QuoInt(s.Add(debt))
+	require.True(e.t, uncovered.LT(r), "without the debt the rate would be %s, below %s", uncovered, r)
+}
+
 // ---- tests --------------------------------------------------------------------
 
 // A private staker moves derth from A to B: the stake leaves A's delegation
-// and joins B's in the same block (x/staking's redelegation, no unbonding),
-// the derth/B note is worth what the derth/A was, the change stays at A,
-// both books keep their rates, and the stake earns at B at once. A value
-// that fits in A's delegation queue moves as a book entry, with no x/staking
-// entry. x/staking's transitive rule then holds B: a redelegation out of
-// B's bonded stake is refused before anything is spent.
+// and joins B's in the same block (unbonded at A, bonded at B, the
+// redelegation entry recorded by the module), the derth/B credit is merged
+// into the wallet's B note and labelled with the move, worth what the derth/A
+// was, the change stays at A, both books keep their rates, and the stake
+// earns at B at once. A value that fits in A's delegation queue moves as a
+// book entry, with no x/staking entry. There is no transitive lock: stake at
+// B moves out again at once, all but the labelled exposure.
 func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	e := initStakeEnv(t)
 	vA, _ := e.createValidator(1000 * ssErth)
@@ -130,16 +169,18 @@ func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	e.shield(uint64(5_000 * ssErth))
 	e.shield(uint64(100 * ssErth))
 	e.shield(uint64(100 * ssErth))
+	e.shield(uint64(100 * ssErth))
 	dA, dB := sstypes.DerthDenom(e.valoper(vA)), sstypes.DerthDenom(e.valoper(vB))
 
 	n := e.delegate(vA, uint64(3_000*ssErth))
-	e.days(2) // delegated, then an epoch of rewards compounded
+	old := e.delegate(vB, uint64(400*ssErth)) // the wallet's B note, unlabelled
+	e.days(2)                                 // delegated, then an epoch of rewards compounded
 	e.next(time.Hour)
-	rateA := e.rate(vA)
+	rateA, rateB := e.rate(vA), e.rate(vB)
 	require.True(t, rateA.GT(math.LegacyOneDec()), "rate %s", rateA)
-	supplyA := e.state(vA).DerthSupply
+	supplyA, supplyB := e.state(vA).DerthSupply, e.state(vB).DerthSupply
 	delA := e.modDelegation(vA)
-	require.True(t, e.modDelegation(vB).IsZero())
+	delB := e.modDelegation(vB)
 
 	// --- 1,000 derth/A to B, out of A's bonded stake (its queue is empty).
 	b, res := e.redelegate(vA, vB, n, uint64(1_000*ssErth))
@@ -149,27 +190,26 @@ func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	require.Equal(t, e.valoper(vA), ev["src_validator"])
 	require.Equal(t, e.valoper(vB), ev["dst_validator"])
 	require.Equal(t, fmt.Sprint(1_000*ssErth), ev["derth"])
-	value, minted, bonded, queued := evInt(t, ev, "value"), evInt(t, ev, "minted"), evInt(t, ev, "bonded"), evInt(t, ev, "queued")
-	// A's queue held only the rewards since the epoch end (withdrawn into it
-	// first): they move as a book entry, the rest moves bonded.
+	value, credited, bonded, queued := evInt(t, ev, "value"), evInt(t, ev, "credited"), evInt(t, ev, "bonded"), evInt(t, ev, "queued")
 	require.Equal(t, value, bonded.Add(queued))
 	require.True(t, bonded.GT(queued), "bonded %s queued %s", bonded, queued)
-	// Worth what it was at A's live rate (one 5 s block of rewards after
-	// rateA was read).
 	atRead := rateA.MulInt64(1_000 * ssErth).TruncateInt()
 	require.True(t, value.GTE(atRead), "value %s, at read %s", value, atRead)
 	require.InEpsilon(t, atRead.Int64(), value.Int64(), 1e-3)
-	// B had no derth: rate 1, so the derth/B minted is what arrived, at most
-	// x/staking's truncation below the value.
-	require.Equal(t, minted.Uint64(), b.amount)
-	require.True(t, value.Sub(minted).GTE(math.ZeroInt()) && value.Sub(minted).LTE(math.NewInt(2)), "value %s minted %s", value, minted)
+	// The credit: what the wallet named, at most what arrived buys at B's
+	// rate; merged into the old B note and labelled with the move.
+	require.Equal(t, credited.Uint64(), b.exposed)
+	require.Equal(t, old.amount+b.exposed, b.amount)
+	require.True(t, old.spent, "the old B note was merged")
+	require.Equal(t, ev["move_key"], hex.EncodeToString(privacy.FieldBytes(b.moveKey)))
+	require.Equal(t, fmt.Sprint(b.moveTime), ev["move_time"])
+	require.True(t, rateB.MulInt(credited).TruncateInt().LTE(value), "the credit is paid for")
 	require.Equal(t, dB, b.denom)
-	// A's book: exactly 1,000 derth less; the change stays at A.
 	require.Equal(t, supplyA.SubRaw(1_000*ssErth), e.state(vA).DerthSupply)
-	require.Equal(t, minted, e.state(vB).DerthSupply)
+	require.Equal(t, supplyB.Add(credited), e.state(vB).DerthSupply)
 	require.Equal(t, uint64(2_000*ssErth), e.stakeBalance(dA))
-	require.Equal(t, b.amount, e.stakeBalance(dB))
-	// x/staking: the module's stake moved in this block: one entry A -> B.
+	require.Equal(t, b.amount, e.stakeBalance(dB), "one note per validator")
+	// x/staking: one entry A -> B, recorded by the module, owned by the move.
 	red, err := e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
 	require.NoError(t, err)
 	require.Len(t, red.Entries, 1)
@@ -177,40 +217,43 @@ func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	completion, err := strconv.ParseInt(ev["completion_time"], 10, 64)
 	require.NoError(t, err)
 	require.Equal(t, red.Entries[0].CompletionTime.UnixNano(), completion)
+	mv, ok := e.move(privacy.FieldBytes(b.moveKey))
+	require.True(t, ok)
+	require.Equal(t, red.Entries[0].SharesDst, mv.Shares)
+	require.Equal(t, credited, mv.Credited)
+	require.Equal(t, credited, mv.Retained)
+	q, err := sskeeper.NewQueryServerImpl(e.app.ShieldedStakingKeeper).Move(e.ctx(),
+		&sstypes.QueryMoveRequest{Key: hex.EncodeToString(mv.Key)})
+	require.NoError(t, err)
+	require.True(t, q.Found)
+	require.False(t, q.Slashed)
 	require.InDelta(t, delA.Sub(bonded).Int64(), e.modDelegation(vA).Int64(), 2)
-	require.InDelta(t, bonded.Int64(), e.modDelegation(vB).Int64(), 2)
-	require.True(t, e.state(vB).PendingDelegation.GTE(queued), "the queued part waits in B's queue")
+	require.InDelta(t, delB.Add(bonded).Int64(), e.modDelegation(vB).Int64(), 2)
 	e.invariants()
 
-	// Query/Redelegation: one A -> B entry of 32; B is now a destination
-	// with a maturing entry (locked as a source until it completes).
-	q := e.redelegationQuery(vA, vB)
-	require.Equal(t, uint32(1), q.Entries)
-	require.Equal(t, uint32(32), q.MaxEntries)
-	require.Equal(t, completion, q.PairFreesAt)
-	require.Zero(t, q.SrcLockedUntil)
-	require.Equal(t, completion, e.redelegationQuery(vB, vA).SrcLockedUntil)
-
-	// --- it earns at B at once: B's live rate rises within the hour, no
-	// epoch end needed; the epoch end compounds it.
+	// --- it earns at B at once: B's live rate rises within the hour.
 	r0 := e.rate(vB)
 	e.next(time.Hour)
 	require.True(t, e.rate(vB).GT(r0), "rate %s -> %s", r0, e.rate(vB))
 	e.days(1)
-	require.True(t, e.state(vB).EpochRate.GT(math.LegacyOneDec()))
 	e.invariants()
 
 	// --- from A's queue: a delegation this epoch waits in A's queue; a
-	// redelegation that fits in it moves as a book entry, no x/staking
-	// entry, and joins B's queue for B's epoch end.
+	// redelegation that fits in it moves as a book entry, with no x/staking
+	// entry, and records no move (nothing a slash of A could reach). Its
+	// credit, labelled, cannot merge into the labelled B note: a second B
+	// note.
 	q2 := e.delegate(vA, uint64(500*ssErth))
 	pB := e.state(vB).PendingDelegation
-	_, res = e.redelegate(vA, vB, q2, q2.amount*3/4)
+	b2, res := e.redelegate(vA, vB, q2, uint64(150*ssErth))
 	ev = eventsOf(res.Events, sstypes.EventTypeRedelegate)[0]
 	value2 := evInt(t, ev, "value")
 	require.Equal(t, value2, evInt(t, ev, "queued"))
 	require.Equal(t, "0", ev["bonded"])
 	require.Equal(t, "", ev["completion_time"])
+	_, ok = e.move(privacy.FieldBytes(b2.moveKey))
+	require.False(t, ok, "no x/staking entry, no move to slash")
+	require.False(t, b.spent, "a labelled note takes no credit")
 	red, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
 	require.NoError(t, err)
 	require.Len(t, red.Entries, 1, "no new x/staking entry")
@@ -219,142 +262,218 @@ func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	e.days(1)
 	e.invariants()
 
-	// --- B received a maturing redelegation: x/staking refuses any
-	// redelegation out of the module's bonded stake at B until it
-	// completes. Refused in CheckTx, before anything is spent.
-	e.requireRedelegationRefused(e.redelegateStub(vB, vA, uint64(100*ssErth), "transitive"), "transitive")
+	// --- no transitive lock: B received a maturing redelegation, yet the
+	// unexposed part of the B note moves out of B's bonded stake at once.
+	// The exposure stays in the note.
+	back, res := e.redelegate(vB, vA, b, old.amount/2)
+	ev = eventsOf(res.Events, sstypes.EventTypeRedelegate)[0]
+	require.True(t, evInt(t, ev, "bonded").IsPositive(), "out of B's bonded stake")
+	require.NotEmpty(t, ev["completion_time"])
+	rest := e.noteLabelled(dB, b.moveKey)
+	require.NotNil(t, rest)
+	require.Equal(t, b.moveKey, rest.moveKey, "the label stays with the change")
+	require.Equal(t, b.exposed, rest.exposed)
+	require.Equal(t, b.amount-old.amount/2, rest.amount)
+	require.True(t, back.labelled(), "the move B -> A labels its own credit")
 	e.invariants()
 }
 
-// x/staking's max_entries bounds the module's maturing redelegations per
-// (source, destination) pair, shared by every private staker. The next is
-// refused (before anything is spent); another pair, or a value that fits in
-// the source's queue, still moves; once the entries complete, the pair is
-// free again.
-func TestRedelegateMaxEntries(t *testing.T) {
-	// unbonding_time 2 days and max_entries 3 (the module's floor:
-	// ceil(2 days / 1 day) + 1 = 3 entries).
-	e, err := initStakeEnvWith(t, func(appState map[string]json.RawMessage, _ sdk.AccAddress) {
-		var st map[string]any
-		require.NoError(t, json.Unmarshal(appState["staking"], &st))
-		params := st["params"].(map[string]any)
-		params["unbonding_time"] = "172800s"
-		params["max_entries"] = 3
-		bz, err := json.Marshal(st)
-		require.NoError(t, err)
-		appState["staking"] = bz
-	})
-	require.NoError(t, err)
-	e.auditFundPool(20_000 * ssErth)
+// No lock-out: a griefer's redelegation INTO A (dust, maturing for 21 days)
+// does not stop anyone else's redelegation out of A's bonded stake, and a
+// pair takes far more than x/staking's max_entries (32) maturing entries.
+// Moves in one block share one entry.
+func TestRedelegateNoLockout(t *testing.T) {
+	e := initStakeEnv(t)
+	e.auditFundPool(300_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	vC, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(vA, uint64(5_000*ssErth), "a")
-	e.auditDelegate(vB, uint64(1_000*ssErth), "b")
-	e.auditDelegate(vC, uint64(1_000*ssErth), "c")
+	mod := e.app.ShieldedStakingKeeper.ModuleAddress()
+	e.auditDelegate(vA, uint64(100_000*ssErth), "a")
+	e.auditDelegate(vC, uint64(2_000*ssErth), "c")
 	e.days(1)
 	e.next(time.Hour)
-	e.shield(uint64(100 * ssErth)) // fees for the refused msgs
 
-	for i := range 3 {
-		r, err := e.fakeRedelegate(vA, vB, uint64(600*ssErth), fmt.Sprint("ab", i))
-		require.NoError(t, err)
+	// The griefer: C -> A, bonded (the rest of its value).
+	g, err := e.fakeRedelegate(vC, vA, uint64(500*ssErth), "grief")
+	require.NoError(t, err)
+	require.Positive(t, g.CompletionTime)
+	e.next(5 * time.Second)
+
+	// Everyone else still moves A -> B out of A's bonded stake, 40 times in
+	// 40 blocks: 40 entries, past max_entries. (The first takes A's queue of
+	// rewards with it; each later one finds a block's worth.)
+	for i := range 40 {
+		amount := uint64(300 * ssErth)
+		if i == 0 {
+			amount = uint64(5_000 * ssErth)
+		}
+		r, err := e.fakeRedelegate(vA, vB, amount, fmt.Sprint("ab", i))
+		require.NoError(t, err, "move %d", i)
 		require.Positive(t, r.CompletionTime)
 		e.next(5 * time.Second)
 	}
-	q := e.redelegationQuery(vA, vB)
-	require.Equal(t, uint32(3), q.Entries)
-	require.Equal(t, uint32(3), q.MaxEntries)
-	require.Positive(t, q.PairFreesAt)
+	maxEntries, err := e.app.StakingKeeper.MaxEntries(e.ctx())
+	require.NoError(t, err)
+	red, err := e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
+	require.NoError(t, err)
+	require.Len(t, red.Entries, 40)
+	require.Greater(t, len(red.Entries), int(maxEntries))
 	e.invariants()
 
-	// The fourth A -> B is refused: by the action, and in CheckTx before
-	// anything is spent.
-	_, err = e.fakeRedelegate(vA, vB, uint64(600*ssErth), "ab3")
-	require.ErrorIs(t, err, sstypes.ErrRedelegation)
-	require.ErrorContains(t, err, "max_entries")
-	e.requireRedelegationRefused(e.redelegateStub(vA, vB, uint64(600*ssErth), "full"), "max_entries")
-
-	// Another pair is not full.
-	_, err = e.fakeRedelegate(vA, vC, uint64(600*ssErth), "ac")
+	// Two moves in one block share its entry (and are slashed together, pro
+	// rata).
+	_, err = e.fakeRedelegate(vA, vB, uint64(300*ssErth), "same1")
 	require.NoError(t, err)
-	// A value that fits in A's queue needs no x/staking entry.
-	e.auditDelegate(vA, uint64(500*ssErth), "queue")
-	r, err := e.fakeRedelegate(vA, vB, uint64(200*ssErth), "queued")
+	_, err = e.fakeRedelegate(vA, vB, uint64(300*ssErth), "same2")
 	require.NoError(t, err)
-	require.Zero(t, r.CompletionTime)
-	require.Equal(t, uint32(3), e.redelegationQuery(vA, vB).Entries)
 	e.next(5 * time.Second)
+	red, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
+	require.NoError(t, err)
+	require.Len(t, red.Entries, 41)
+	m1, ok1 := e.move(fakeMoveKey("same1"))
+	m2, ok2 := e.move(fakeMoveKey("same2"))
+	require.True(t, ok1 && ok2)
+	require.Equal(t, m1.EntryHeight, m2.EntryHeight)
+	require.Equal(t, red.Entries[40].SharesDst, m1.Shares.Add(m2.Shares))
 	e.invariants()
 
-	// Two days on, the entries have completed: the pair is free.
-	e.days(3)
-	require.Zero(t, e.redelegationQuery(vA, vB).Entries)
-	_, err = e.fakeRedelegate(vA, vB, uint64(600*ssErth), "again")
-	require.NoError(t, err)
-	e.next(5 * time.Second)
+	// Through maturity: the entries complete, the moves are forgotten.
+	e.days(22)
+	_, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
+	require.ErrorIs(t, err, stakingtypes.ErrNoRedelegation)
+	_, ok := e.move(fakeMoveKey("same1"))
+	require.False(t, ok)
 	e.invariants()
 }
 
-// No transitive redelegation: while stake the module redelegated INTO A
-// matures, x/staking refuses a redelegation out of the module's bonded
-// stake at A (the module is one delegator: one person's redelegation into A
-// holds every private staker of A). Undelegating is not affected, and a
-// value that fits in A's queue still moves. Once the incoming entry
-// completes, A is free.
-func TestRedelegateTransitiveRefused(t *testing.T) {
+// The slash debt, end to end with real proofs. A double-signs; the wallet
+// redelegates A -> B AFTER the infraction and BEFORE the evidence. When the
+// evidence lands, x/staking burns 5% of the move's entry shares from the
+// module's delegation at B; the module takes the derth they backed off B's
+// supply, so B's rate (every honest holder's value) does not move, and the
+// move owes it through its debt row. The exposed note pays wherever it goes
+// next: merged with a top-up it keeps its label; it cannot leave the note
+// while the window is open; its vote counts the haircut; once the window
+// closes, clearing the label gives the note exactly its unexposed part plus
+// the retained exposure, and an undelegation of it pays that, no more.
+func TestRedelegateSlashDebt(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
-	vC, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(vA, uint64(2_000*ssErth), "a")
-	e.auditDelegate(vC, uint64(2_000*ssErth), "c")
+	e.shield(uint64(5_000 * ssErth))
+	for range 6 {
+		e.shield(uint64(100 * ssErth))
+	}
+	dB := sstypes.DerthDenom(e.valoper(vB))
+	n := e.delegate(vA, uint64(2_000*ssErth))
+	e.auditDelegate(vB, uint64(3_000*ssErth), "honest") // B's other holders
 	e.days(1)
 	e.next(time.Hour)
-	e.shield(uint64(100 * ssErth))
 
-	in, err := e.fakeRedelegate(vC, vA, uint64(1_000*ssErth), "ca")
-	require.NoError(t, err)
-	require.Positive(t, in.CompletionTime)
+	// The infraction, then the move (two blocks later: x/evidence slashes
+	// entries created at or after infraction - 1).
 	e.next(5 * time.Second)
-	require.Equal(t, in.CompletionTime, e.redelegationQuery(vA, vB).SrcLockedUntil)
-
-	_, err = e.fakeRedelegate(vA, vB, uint64(1_000*ssErth), "ab")
-	require.ErrorIs(t, err, sstypes.ErrRedelegation)
-	require.ErrorContains(t, err, "transitive")
-	e.requireRedelegationRefused(e.redelegateStub(vA, vB, uint64(1_000*ssErth), "transitive"), "transitive")
-
-	// Undelegating from A goes on.
-	e.fakeUndelegate(vA, uint64(100*ssErth), "out")
-	// A value within A's queue moves without x/staking.
-	e.auditDelegate(vA, uint64(300*ssErth), "queue")
-	r, err := e.fakeRedelegate(vA, vB, uint64(200*ssErth), "queued")
-	require.NoError(t, err)
-	require.Zero(t, r.CompletionTime)
+	infraction := e.height
 	e.next(5 * time.Second)
+	e.next(5 * time.Second)
+	b, _ := e.redelegate(vA, vB, n, uint64(1_000*ssErth))
+	key := privacy.FieldBytes(b.moveKey)
+	mv, ok := e.move(key)
+	require.True(t, ok)
+	require.Greater(t, mv.EntryHeight, infraction)
 	e.invariants()
 
-	// Past the incoming entry's completion, A redelegates again.
-	e.days(22)
-	require.Zero(t, e.redelegationQuery(vA, vB).SrcLockedUntil)
-	r, err = e.fakeRedelegate(vA, vB, uint64(1_000*ssErth), "free")
+	// The evidence.
+	rateB := e.rate(vB)
+	supplyB := e.state(vB).DerthSupply
+	delB := e.modDelegation(vB)
+	res := e.doubleSign(vA, infraction)
+	require.Empty(t, eventsOf(res.Events, sstypes.EventTypeEpochFailure), "no deferred work")
+	sd := eventsOf(res.Events, sstypes.EventTypeSlashDebt)
+	require.Len(t, sd, 1)
+	debtD := evInt(t, sd[0], "debt")
+	require.True(t, debtD.IsPositive())
+	require.True(t, e.modDelegation(vB).LT(delB), "x/staking burnt the entry's slash at B")
+	// B's honest holders keep their value: the rate does not fall.
+	e.requireRateKept(vB, rateB, debtD)
+	require.Equal(t, supplyB.Sub(debtD), e.state(vB).DerthSupply)
+	require.Equal(t, debtD, e.state(vB).SlashDebt)
+	// The move owes it: about 5% of its credit (the slash was 5% of the
+	// value moved; the credit has since earned at B).
+	mv, ok = e.move(key)
+	require.True(t, ok)
+	require.Equal(t, mv.Credited.Sub(debtD), mv.Retained)
+	// x/staking burnt 5% of the entry (the bonded part of the move); the
+	// debt is the derth that backed, at B's rate.
+	red, err := e.app.StakingKeeper.GetRedelegation(e.ctx(), e.app.ShieldedStakingKeeper.ModuleAddress(), vA, vB)
 	require.NoError(t, err)
-	require.Positive(t, r.CompletionTime)
+	burnt := evInt(t, sd[0], "value")
+	require.InEpsilon(t, red.Entries[0].InitialBalance.Int64()/20, burnt.Int64(), 1e-6)
+	require.InEpsilon(t, math.LegacyNewDecFromInt(burnt).Quo(rateB).TruncateInt64(), debtD.Int64(), 1e-3)
+	q, err := sskeeper.NewQueryServerImpl(e.app.ShieldedStakingKeeper).Move(e.ctx(), &sstypes.QueryMoveRequest{Key: hex.EncodeToString(key)})
+	require.NoError(t, err)
+	require.True(t, q.Slashed)
+	require.Equal(t, mv.Retained.Uint64(), q.Retained)
+	moved := eventsOf(res.Events, sstypes.EventTypeMoveSlashed)
+	require.Len(t, moved, 1)
+	require.Equal(t, hex.EncodeToString(key), moved[0]["move_key"])
+	e.invariants()
+
+	// The exposed note moves on: a top-up merges into it and keeps the
+	// label (the exposure untouched).
+	b2 := e.delegate(vB, uint64(200*ssErth))
+	require.True(t, b.spent)
+	require.Equal(t, b.moveKey, b2.moveKey)
+	require.Equal(t, b.exposed, b2.exposed)
+	// It cannot leave while the window is open: an undelegation of more
+	// than the unexposed part has no proof, nor a clear.
+	um, usp := e.undelegateUnproven(vB, b2, b2.amount-b2.exposed+1)
+	_, err = e.tryProveStake(um, usp)
+	requireRefused(t, err)
+	// Its vote counts the haircut.
+	prop := e.submitProposal()
 	e.next(5 * time.Second)
+	value := e.clearedValue(b2)
+	require.Equal(t, b2.amount-b2.exposed+mv.Retained.Uint64(), value)
+	over, _, vpo := e.stakeVoteMsg(b2, prop, v1.NewNonSplitVoteOption(v1.OptionYes), sstypes.RoundVoteWeight(b2.amount), false)
+	_, err = e.tryProveVote(over, vpo)
+	requireRefused(t, err)
+	vote := e.stakeVoteNotes([]*snote{b2}, prop, v1.OptionYes)
+	require.Equal(t, sstypes.RoundVoteWeight(value), vote.Weight)
+	e.invariants()
+
+	// The window closes (the entry matures; the move is forgotten, its debt
+	// row stays): the label clears at the retained value, and the cleared
+	// note undelegates exactly that.
+	e.days(22)
+	_, ok = e.move(key)
+	require.False(t, ok)
+	q, err = sskeeper.NewQueryServerImpl(e.app.ShieldedStakingKeeper).Move(e.ctx(), &sstypes.QueryMoveRequest{Key: hex.EncodeToString(key)})
+	require.NoError(t, err)
+	require.False(t, q.Found)
+	require.True(t, q.Slashed)
+	cur := e.unspentStake(dB)
+	require.Equal(t, b2, cur)
+	cleared := e.restake([]*snote{cur}, true)
+	require.False(t, cleared.labelled())
+	require.Equal(t, value, cleared.amount)
+	rate := e.rate(vB)
+	un := e.undelegate(vB, cleared, cleared.amount)
+	// It pays its value at B's rate: the exposure's cut is not paid out.
+	require.InEpsilon(t, rate.MulInt64(int64(value)).TruncateInt64(), int64(un.value), 1e-3)
 	e.invariants()
 }
 
 // A slash of A for an infraction before a redelegation A -> B reaches the
-// redelegation's entry while it matures: x/staking takes slash_fraction x
-// the entry's shares from the module's delegation at B, and B's book
-// absorbs it pro rata (every derth/B loses through B's rate; B's epoch rate
-// follows at the end of the block). B's undelegations already under way
-// are not touched (x/staking would take the slash from them first: the
-// module sets them aside for the slash), the rewards the slash's unbond
-// would pay are booked, and every invariant holds.
+// entry while it matures (driven without notes): B's rate holds, B's supply
+// gives up the derth the burnt value backed (the moves' debt), B's
+// undelegations already under way are untouched (set aside for the slash),
+// the rewards the slash's unbond would pay are booked, and every invariant
+// holds. A move created before the infraction is not charged.
 func TestRedelegateSlashDuringMaturity(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(20_000 * ssErth)
@@ -366,55 +485,40 @@ func TestRedelegateSlashDuringMaturity(t *testing.T) {
 	e.auditDelegate(vB, uint64(2_000*ssErth), "b")
 	e.days(1)
 
-	// The infraction (x/evidence slashes entries created at or after the
-	// distribution height, infraction - 1: leave two blocks).
+	// A move before the infraction: not exposed to it.
+	_, err := e.fakeRedelegate(vA, vB, uint64(300*ssErth), "before")
+	require.NoError(t, err)
+	e.next(5 * time.Second)
 	e.next(5 * time.Second)
 	e.next(5 * time.Second)
 	infraction := e.height
-	ctx := e.ctx()
-	valA, err := e.app.StakingKeeper.GetValidator(ctx, vA)
-	require.NoError(t, err)
-	power := valA.ConsensusPower(e.app.StakingKeeper.PowerReduction(ctx))
-	consA, err := valA.GetConsAddr()
-	require.NoError(t, err)
 
-	// After the infraction: an undelegation from B reaches x/staking (its
-	// entry begins after the infraction), then A -> B moves 1,000.
+	// After the infraction: an undelegation from B reaches x/staking, then
+	// two moves A -> B in one block, and one more later.
 	e.fakeUndelegate(vB, uint64(20*ssErth), "b-out")
 	e.days(1)
 	ubd, err := e.app.StakingKeeper.GetUnbondingDelegation(e.ctx(), mod, vB)
 	require.NoError(t, err)
 	require.Len(t, ubd.Entries, 1)
-	require.Greater(t, ubd.Entries[0].CreationHeight, infraction)
 	ubdBalance := ubd.Entries[0].Balance
-	_, err = e.fakeRedelegate(vA, vB, uint64(1_000*ssErth), "ab")
+	_, err = e.fakeRedelegate(vA, vB, uint64(1_000*ssErth), "ab1")
+	require.NoError(t, err)
+	_, err = e.fakeRedelegate(vA, vB, uint64(500*ssErth), "ab2")
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	_, err = e.fakeRedelegate(vA, vB, uint64(250*ssErth), "ab3")
 	require.NoError(t, err)
 	e.next(5 * time.Second)
 	red, err := e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
 	require.NoError(t, err)
-	require.Len(t, red.Entries, 1)
-	require.Greater(t, red.Entries[0].CreationHeight, infraction)
-	entry := red.Entries[0]
+	require.Len(t, red.Entries, 3)
 	e.invariants()
 
-	delB := e.modDelegation(vB)
 	rateB := e.rate(vB)
-	epochB := e.state(vB).EpochRate
 	supplyB := e.state(vB).DerthSupply
-	valB, err := e.app.StakingKeeper.GetValidator(e.ctx(), vB)
-	require.NoError(t, err)
-	res := e.block(5*time.Second, []abci.Misbehavior{{
-		Type: abci.MisbehaviorType_DUPLICATE_VOTE, Validator: abci.Validator{Address: consA, Power: power},
-		Height: infraction, Time: e.times[infraction], TotalVotingPower: power + 100,
-	}})
+	res := e.doubleSign(vA, infraction)
 	require.Empty(t, eventsOf(res.Events, sstypes.EventTypeEpochFailure), "no deferred work")
-
-	ctx = e.ctx()
-	// The entry's slash: 5% of its shares at B, from the module's
-	// delegation at B.
-	slashed := math.LegacyNewDecWithPrec(5, 2).Mul(entry.SharesDst).MulInt(valB.Tokens).Quo(valB.DelegatorShares).TruncateInt()
-	require.True(t, slashed.IsPositive())
-	require.InDelta(t, delB.Sub(slashed).Int64(), e.modDelegation(vB).Int64(), 2)
+	ctx := e.ctx()
 	// B's undelegation in flight is untouched (and back in place).
 	ubd, err = e.app.StakingKeeper.GetUnbondingDelegation(ctx, mod, vB)
 	require.NoError(t, err)
@@ -423,52 +527,152 @@ func TestRedelegateSlashDuringMaturity(t *testing.T) {
 	has, err := e.app.ShieldedStakingKeeper.ShelteredUnbondings.Has(ctx, vB)
 	require.NoError(t, err)
 	require.False(t, has)
-	// B's book absorbs it: same supply, a lower rate, its epoch rate
-	// lowered at the end of the block (positions re-weigh at it).
-	require.Equal(t, supplyB, e.state(vB).DerthSupply)
-	require.True(t, e.rate(vB).LT(rateB), "rate %s -> %s", rateB, e.rate(vB))
-	require.True(t, e.state(vB).EpochRate.LT(epochB), "epoch rate %s -> %s", epochB, e.state(vB).EpochRate)
+	// B's rate holds; its supply gave up the debt.
+	debtD := evInt(t, eventsOf(res.Events, sstypes.EventTypeSlashDebt)[0], "debt")
+	e.requireRateKept(vB, rateB, debtD)
+	require.Equal(t, supplyB.Sub(debtD), e.state(vB).DerthSupply)
+	// The three moves after the infraction owe it, pro rata to their shares
+	// (5% each); the one before owes nothing.
+	before, _ := e.move(fakeMoveKey("before"))
+	require.Equal(t, before.Credited, before.Retained)
+	sum := math.ZeroInt()
+	for _, l := range []string{"ab1", "ab2", "ab3"} {
+		mv, ok := e.move(fakeMoveKey(l))
+		require.True(t, ok)
+		cut := mv.Credited.Sub(mv.Retained)
+		require.InEpsilon(t, mv.Credited.Int64()/20, cut.Int64(), 0.05, l)
+		sum = sum.Add(cut)
+	}
+	require.Equal(t, debtD, sum)
+	require.Len(t, eventsOf(res.Events, sstypes.EventTypeMoveSlashed), 3)
+	root, size, err := e.app.ShieldedStakingKeeper.DebtRoot(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), size, "the sentinel and three rows")
+	rr, err := e.debtTree().Root()
+	require.NoError(t, err)
+	require.Equal(t, privacy.FieldBytes(rr), root)
 	// A was slashed and tombstoned.
-	valA, err = e.app.StakingKeeper.GetValidator(ctx, vA)
+	valA, err := e.app.StakingKeeper.GetValidator(ctx, vA)
 	require.NoError(t, err)
 	require.True(t, valA.IsJailed())
-	// The books still balance: the rewards the slash's unbond would have
-	// paid outside them were booked first.
 	e.invariants()
 
-	// Through maturity: the entry completes, B's undelegation pays its full
-	// value, everything balances.
+	// Through maturity: the entries complete, B's undelegation pays its full
+	// value, the debt rows stay.
 	e.days(22)
 	e.invariants()
 	_, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
 	require.ErrorIs(t, err, stakingtypes.ErrNoRedelegation)
+	_, size, err = e.app.ShieldedStakingKeeper.DebtRoot(e.ctx())
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), size)
 }
 
-// Votes on a proposal whose snapshot predates the move: a derth/A note
-// votes as A once, before or after it moves (its nullifier entered the tree
-// after the snapshot's nullifier root), and its derth/B note never votes on
-// that proposal (minted after the snapshot, it is not under the note root).
-// No unit of stake votes twice; the tally's power stays within bonded
-// stake.
+// The merge rules, with real proofs: one note per validator; a top-up of a
+// labelled note keeps its label; a credit merges only into an unlabelled
+// note (a second labelled credit makes a second note); two labelled notes do
+// not merge, and the exposure does not leave its note, until their windows
+// close; then each clears (unslashed: at its whole exposure) and the notes
+// merge into one.
+func TestRedelegateMergeRules(t *testing.T) {
+	e := initStakeEnv(t)
+	vA, _ := e.createValidator(1000 * ssErth)
+	vB, _ := e.createValidator(1000 * ssErth)
+	vC, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(6_000 * ssErth))
+	for range 8 {
+		e.shield(uint64(100 * ssErth))
+	}
+	dB := sstypes.DerthDenom(e.valoper(vB))
+	// One note per validator: a second delegation merges.
+	a1 := e.delegate(vA, uint64(1_000*ssErth))
+	a2 := e.delegate(vA, uint64(500*ssErth))
+	require.True(t, a1.spent)
+	require.Equal(t, a1.amount+uint64(495*ssErth), a2.amount, "the top-up merged (1%% quote margin)")
+	c := e.delegate(vC, uint64(1_000*ssErth))
+	e.days(1)
+
+	// A -> B: the wallet has no B note (a padding input), the credit is a
+	// new labelled note.
+	b1, _ := e.redelegate(vA, vB, a2, uint64(600*ssErth))
+	require.True(t, b1.labelled())
+	require.Equal(t, b1.amount, b1.exposed)
+	// C -> B while the B note is labelled: a second labelled note.
+	b2, _ := e.redelegate(vC, vB, c, uint64(400*ssErth))
+	require.False(t, b1.spent)
+	require.NotEqual(t, b1.moveKey, b2.moveKey)
+	require.Equal(t, b1.amount+b2.amount, e.stakeBalance(dB))
+	// A top-up merges into one of them and keeps its label.
+	b3 := e.delegate(vB, uint64(100*ssErth))
+	require.True(t, b1.spent || b2.spent)
+	require.True(t, b3.labelled())
+	other := b1
+	if b1.spent {
+		other = b2
+	}
+	// The two labelled notes do not merge: no proof.
+	p := e.feeOnly()
+	sp := e.stake(&stakePlan{denom: dB, ins: []*snote{b3, other}, out: e.freshStake(dB, b3.amount+other.amount)})
+	m := &sstypes.MsgRestake{Bundle: p.b, Validator: e.valoper(vB), Stake: sp.proof}
+	_, err := e.tryProveStake(m, sp)
+	requireRefused(t, err)
+	// Nor does a lock take exposed derth.
+	p = e.feeOnly()
+	lsp := e.changePlan(other, other.amount, positionKey(9), false)
+	lm := &sstypes.MsgLockPosition{Bundle: p.b, Validator: e.valoper(vB), Amount: other.amount, Stake: lsp.proof}
+	_, err = e.tryProveStake(lm, lsp)
+	requireRefused(t, err)
+	// Nor can a label clear before its window closes (the chain refuses an
+	// early clear_before; the circuit, an open window).
+	early := &stakePlan{denom: dB, ins: []*snote{other}, out: e.freshStake(dB, other.amount), clear: true}
+	e.stake(early)
+	require.Less(t, early.proof.ClearBefore, other.moveTime, "the window is open")
+	em := &sstypes.MsgRestake{Bundle: e.feeOnly().b, Validator: e.valoper(vB), Stake: early.proof}
+	_, err = e.tryProveStake(em, early)
+	requireRefused(t, err)
+	e.invariants()
+
+	// Past the windows: clear each (never slashed: the whole exposure), then
+	// merge into one note.
+	e.days(22)
+	c1 := e.restake([]*snote{b3}, true)
+	require.False(t, c1.labelled())
+	require.Equal(t, b3.amount, c1.amount)
+	one := e.restake([]*snote{c1, other}, true)
+	require.False(t, one.labelled())
+	require.Equal(t, c1.amount+other.amount, one.amount)
+	require.Equal(t, one.amount, e.stakeBalance(dB))
+	e.invariants()
+}
+
+// Votes on a proposal whose snapshot predates a move: a derth/A note votes
+// as A once, before or after it moves (its nullifier entered the tree after
+// the snapshot's nullifier root), and its derth/B credit never votes on that
+// proposal (made after the snapshot, it is not under the note root). The
+// same holds for a top-up: the note that held the pre-existing value at the
+// snapshot votes it after being merged away; the merged note does not; no
+// unit of stake votes twice.
 func TestRedelegateVoteSnapshot(t *testing.T) {
 	e := initStakeEnv(t)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
+	vC, _ := e.createValidator(1000 * ssErth)
+	vD, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	e.shield(uint64(5_000 * ssErth))
-	e.shield(uint64(200 * ssErth))
-	e.shield(uint64(200 * ssErth))
+	for range 8 {
+		e.shield(uint64(200 * ssErth))
+	}
 	n1 := e.delegate(vA, uint64(1_000*ssErth))
-	n2 := e.delegate(vA, uint64(600*ssErth))
-	e.delegate(vA, uint64(400*ssErth)) // stays at A, does not vote
-	e.delegate(vB, uint64(500*ssErth))
+	n2 := e.delegate(vC, uint64(600*ssErth))
+	t1 := e.delegate(vD, uint64(500*ssErth))
 	e.days(1)
 	prop := e.submitProposal()
 
-	// n1 votes as A, then moves to B whole.
+	// n1 votes as A, then moves to B whole (its credit: a second B note).
 	e.stakeVote(n1, prop, v1.OptionYes)
 	b1, _ := e.redelegate(vA, vB, n1, n1.amount)
-	// n1 cannot vote again; b1 cannot vote on this proposal.
 	again, _, _ := e.stakeVoteMsg(n1, prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
 	res := e.checkTx(e.privateTx(again))
 	require.Equal(t, sstypes.ErrVoteNullifierUsed.ABCICode(), res.Code, res.Log)
@@ -476,29 +680,42 @@ func TestRedelegateVoteSnapshot(t *testing.T) {
 	_, err := e.tryProveVote(sb1, vpb1)
 	requireRefused(t, err)
 
-	// n2 moves first, then votes: as A, once; b2 cannot.
-	b2, _ := e.redelegate(vA, vB, n2, n2.amount)
+	// n2 moves first (C -> B), then votes as C, once; its credit cannot.
+	b2, _ := e.redelegate(vC, vB, n2, n2.amount)
 	e.stakeVote(n2, prop, v1.OptionNo)
-	again, _, _ = e.stakeVoteMsg(n2, prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
-	res = e.checkTx(e.privateTx(again))
-	require.Equal(t, sstypes.ErrVoteNullifierUsed.ABCICode(), res.Code, res.Log)
 	sb2, _, vpb2 := e.stakeVoteMsg(b2, prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
 	_, err = e.tryProveVote(sb2, vpb2)
 	requireRefused(t, err)
 
-	// The votes are A's, each once; B has none.
+	// t1 (D) is topped up after the snapshot: the merged note cannot vote on
+	// this proposal; t1, merged away, still votes its own value, once.
+	t2 := e.delegate(vD, uint64(300*ssErth))
+	require.True(t, t1.spent)
+	st2, _, vpt2 := e.stakeVoteMsg(t2, prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
+	_, err = e.tryProveVote(st2, vpt2)
+	requireRefused(t, err)
+	e.stakeVote(t1, prop, v1.OptionAbstain)
+	again, _, _ = e.stakeVoteMsg(t1, prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
+	res = e.checkTx(e.privateTx(again))
+	require.Equal(t, sstypes.ErrVoteNullifierUsed.ABCICode(), res.Code, res.Log)
+
+	// The votes: A's, C's and D's (t1's pre-existing value), each once; B
+	// (the credits) has none.
 	dec := func(x uint64) math.LegacyDec { return math.LegacyNewDecFromInt(math.NewIntFromUint64(x)) }
-	tA, err := e.app.ShieldedStakingKeeper.Tallies.Get(e.ctx(), collections.Join(prop, e.valoper(vA)))
-	require.NoError(t, err)
-	require.Equal(t, dec(sstypes.RoundVoteWeight(n1.amount)), tA.Yes)
-	require.Equal(t, dec(sstypes.RoundVoteWeight(n2.amount)), tA.No)
+	tally := func(v sdk.ValAddress) sstypes.VoteTally {
+		tl, err := e.app.ShieldedStakingKeeper.Tallies.Get(e.ctx(), collections.Join(prop, e.valoper(v)))
+		require.NoError(t, err)
+		return tl
+	}
+	require.Equal(t, dec(sstypes.RoundVoteWeight(n1.amount)), tally(vA).Yes)
+	require.Equal(t, dec(sstypes.RoundVoteWeight(n2.amount)), tally(vC).No)
+	require.Equal(t, dec(sstypes.RoundVoteWeight(t1.amount)), tally(vD).Abstain)
 	_, err = e.app.ShieldedStakingKeeper.Tallies.Get(e.ctx(), collections.Join(prop, e.valoper(vB)))
 	require.ErrorIs(t, err, collections.ErrNotFound)
-	require.Equal(t, 2, countVotes(t, e, prop))
+	require.Equal(t, 3, countVotes(t, e, prop))
 
 	// The tally counts no stake twice: its total power is within the bonded
-	// stake (the moved stake follows B's own vote; A's private votes are
-	// fractions of A's snapshot supply applied to what is left at A).
+	// stake.
 	ctx, _ := e.ctx().CacheContext()
 	p, err := e.app.GovKeeper.Proposals.Get(ctx, prop)
 	require.NoError(t, err)
@@ -513,25 +730,24 @@ func TestRedelegateVoteSnapshot(t *testing.T) {
 	bondedTokens, err := e.app.StakingKeeper.TotalBondedTokens(ctx)
 	require.NoError(t, err)
 	require.True(t, total.LTE(bondedTokens), "tally %s, bonded %s", total, bondedTokens)
-	noA, ok := math.NewIntFromString(tr.NoCount)
-	require.True(t, ok)
-	require.True(t, noA.LTE(e.modDelegation(vA)), "A's private votes count against what is left at A")
 	e.invariants()
 }
 
 // Groundworks weight is per validator and lives in positions. A note
 // redelegation leaves A's positions and rates as they are; a position's
-// weight moves from A to B by unlocking it (a derth/A note), redelegating
-// the note and locking it at B: A's voter loses the weight, B's voter gains
-// it at B's epoch rate, and the option's allocation follows.
+// weight moves from A to B by unlocking it (its derth merged back into the
+// A note), redelegating and, once the move's window closes and the label
+// clears, locking at B: A's voter loses the weight, B's voter gains it at
+// B's epoch rate, and the option's allocation follows.
 func TestRedelegateGroundworksWeight(t *testing.T) {
 	e := initStakeEnv(t)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	e.shield(uint64(3_000 * ssErth))
-	e.shield(uint64(100 * ssErth))
-	e.shield(uint64(100 * ssErth))
+	for range 6 {
+		e.shield(uint64(100 * ssErth))
+	}
 	gw := allocationtypes.STREAM_ID_GROUNDWORKS
 	ak := e.app.AllocationKeeper
 	gov := authtypes.NewModuleAddress("gov")
@@ -553,7 +769,6 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 	}
 
 	dn := e.delegate(vA, uint64(1_000*ssErth))
-	e.delegate(vB, uint64(500*ssErth))
 	e.days(2)
 	rateA := e.state(vA).EpochRate
 	require.True(t, rateA.GT(math.LegacyOneDec()))
@@ -563,8 +778,6 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 	vtA, err := voter(vA)
 	require.NoError(t, err)
 	require.Equal(t, wA, vtA.Weight)
-	_, err = voter(vB)
-	require.ErrorIs(t, err, collections.ErrNotFound)
 	require.Equal(t, wA, allocated())
 
 	// A note redelegation (the lock's change) leaves A's positions and
@@ -578,24 +791,38 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 	require.Equal(t, wA, vtA.Weight)
 	e.invariants()
 
-	// Unlock the position: A's voter goes.
+	// Unlock the position: its derth merges into the A note; A's voter goes.
 	pt := e.feeOnly()
-	back := e.freshStake(dn.denom, 0)
-	usp := e.ownerProof(positionKey(1), back)
+	usp := e.unlockPlan(id, positionKey(1))
 	um := &sstypes.MsgUnlockPosition{Bundle: pt.b, PositionId: id, Stake: usp.proof}
 	e.prove(um, pt)
 	e.proveStake(um, usp)
 	fb := e.run(e.privateTx(um))
 	require.Equal(t, uint32(0), fb.Code, fb.Log)
 	e.settle(pt)
-	back = e.mintedStake(fb, back)
+	e.settleStake(usp)
+	back := usp.out
+	require.True(t, back.known)
 	_, err = voter(vA)
 	require.ErrorIs(t, err, collections.ErrNotFound)
 	require.True(t, allocated().IsZero())
 
-	// Redelegate it to B and lock it there: B's voter carries it, at B's
+	// Redelegate it all to B (merged into the labelled B note? no: a
+	// labelled note takes no credit, so a second B note); once the windows
+	// close, clear and merge, and lock at B: B's voter carries it, at B's
 	// epoch rate.
-	b, _ := e.redelegate(vA, vB, back, back.amount)
+	e.redelegate(vA, vB, back, back.amount)
+	e.days(22)
+	dB := sstypes.DerthDenom(e.valoper(vB))
+	var bs []*snote
+	for _, n := range e.sw.notes {
+		if n.known && !n.spent && n.denom == dB {
+			bs = append(bs, n)
+		}
+	}
+	require.Len(t, bs, 2)
+	c1 := e.restake(bs[:1], true)
+	b := e.restake([]*snote{c1, bs[1]}, true)
 	e.lock(b, b.amount, positionKey(2), opt)
 	wB := e.state(vB).EpochRate.MulInt(math.NewIntFromUint64(b.amount)).TruncateInt()
 	vtB, err := voter(vB)
@@ -608,10 +835,12 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 	e.invariants()
 }
 
-// Redelegations in flight cross a genesis: x/staking exports the module's
-// entries, this module's InitGenesis accepts them (and still refuses anyone
-// else's), the books and invariants carry over, and the entry matures on
-// the imported chain's terms.
+// Redelegations in flight and the slash debt cross a genesis: x/staking
+// exports the module's entries, this module its moves, debt rows and the
+// longest unbonding time seen; InitGenesis rebuilds the same debt tree,
+// accepts the entries their moves own (and refuses anyone else's, or an
+// entry its moves do not add up to), and the books and invariants carry
+// over.
 func TestRedelegateGenesisRoundTrip(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(20_000 * ssErth)
@@ -619,14 +848,26 @@ func TestRedelegateGenesisRoundTrip(t *testing.T) {
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	mod := e.app.ShieldedStakingKeeper.ModuleAddress()
-	e.auditDelegate(vA, uint64(2_000*ssErth), "a")
+	e.auditDelegate(vA, uint64(4_000*ssErth), "a")
+	e.auditDelegate(vB, uint64(1_000*ssErth), "b")
 	e.days(1)
-	e.next(time.Hour)
+	e.next(5 * time.Second)
+	infraction := e.height
+	e.next(5 * time.Second)
+	e.next(5 * time.Second)
 	r, err := e.fakeRedelegate(vA, vB, uint64(1_000*ssErth), "ab")
 	require.NoError(t, err)
 	require.Positive(t, r.CompletionTime)
 	e.next(5 * time.Second)
+	_, err = e.fakeRedelegate(vA, vB, uint64(500*ssErth), "ab2")
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	e.doubleSign(vA, infraction)
+	e.next(5 * time.Second)
 	e.invariants()
+	_, size, err := e.app.ShieldedStakingKeeper.DebtRoot(e.ctx())
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), size)
 
 	importExport := func(edit func(appState map[string]json.RawMessage)) (*App, sdk.Context, error) {
 		exported, err := e.app.ExportAppStateAndValidators(false, nil, nil)
@@ -654,20 +895,40 @@ func TestRedelegateGenesisRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	red, err := fresh.StakingKeeper.GetRedelegation(fctx, mod, vA, vB)
 	require.NoError(t, err)
-	require.Len(t, red.Entries, 1)
-	require.Equal(t, r.CompletionTime, red.Entries[0].CompletionTime.UnixNano())
+	require.Len(t, red.Entries, 2)
 	gs1, err := e.app.ShieldedStakingKeeper.ExportGenesis(e.ctx())
 	require.NoError(t, err)
 	gs2, err := fresh.ShieldedStakingKeeper.ExportGenesis(fctx)
 	require.NoError(t, err)
 	require.Equal(t, gs1, gs2)
-	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
-	// Still transitive-locked on the imported chain: B received.
-	q, err := sskeeper.NewQueryServerImpl(fresh.ShieldedStakingKeeper).Redelegation(fctx,
-		&sstypes.QueryRedelegationRequest{SrcValidator: e.valoper(vB), DstValidator: e.valoper(vA)})
+	require.Len(t, gs1.Moves, 2)
+	require.Len(t, gs1.DebtRows, 2)
+	require.Positive(t, gs1.MaxUnbondingSeconds)
+	root1, _, err := e.app.ShieldedStakingKeeper.DebtRoot(e.ctx())
 	require.NoError(t, err)
-	require.Equal(t, r.CompletionTime, q.SrcLockedUntil)
+	root2, _, err := fresh.ShieldedStakingKeeper.DebtRoot(fctx)
+	require.NoError(t, err)
+	require.Equal(t, root1, root2)
+	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
 
+	edit := func(f func(gs *sstypes.GenesisState)) func(map[string]json.RawMessage) {
+		return func(appState map[string]json.RawMessage) {
+			var gs sstypes.GenesisState
+			require.NoError(t, e.app.AppCodec().UnmarshalJSON(appState[sstypes.ModuleName], &gs))
+			f(&gs)
+			bz, err := e.app.AppCodec().MarshalJSON(&gs)
+			require.NoError(t, err)
+			appState[sstypes.ModuleName] = bz
+		}
+	}
+	// An entry its moves do not add up to.
+	_, _, err = importExport(edit(func(gs *sstypes.GenesisState) { gs.Moves = gs.Moves[:1] }))
+	require.Error(t, err)
+	// A cut move without its debt row, a row with another value.
+	_, _, err = importExport(edit(func(gs *sstypes.GenesisState) { gs.DebtRows = gs.DebtRows[:1] }))
+	require.Error(t, err)
+	_, _, err = importExport(edit(func(gs *sstypes.GenesisState) { gs.DebtRows[0].Retained++ }))
+	require.Error(t, err)
 	// Anyone else's redelegation is refused at genesis.
 	_, _, err = importExport(func(appState map[string]json.RawMessage) {
 		var st map[string]any
@@ -679,19 +940,22 @@ func TestRedelegateGenesisRoundTrip(t *testing.T) {
 		require.NoError(t, err)
 		appState["staking"] = bz
 	})
-	require.ErrorContains(t, err, "genesis redelegation")
 	require.ErrorContains(t, err, "only private staking redelegates")
 
-	// The original matures and the entry goes.
+	// The original matures, the entries go, the debt rows stay.
 	e.days(22)
 	_, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
 	require.ErrorIs(t, err, stakingtypes.ErrNoRedelegation)
+	_, size, err = e.app.ShieldedStakingKeeper.DebtRoot(e.ctx())
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), size)
 	e.invariants()
 }
 
-// Invariant 9: a redelegation that is not the module's (x/staking state
-// nothing on chain can make: the hooks refuse it) is reported, and so is an
-// unbonding delegation left set aside after a slash.
+// Invariants 9 and 10: a redelegation that is not the module's, an entry
+// without the moves that own it, a move whose retained is not its row's,
+// an unbonding delegation left set aside, a slash left watched: each is
+// reported.
 func TestRedelegateInvariant(t *testing.T) {
 	e := initStakeEnv(t)
 	e.auditFundPool(10_000 * ssErth)
@@ -704,18 +968,62 @@ func TestRedelegateInvariant(t *testing.T) {
 	require.NoError(t, err)
 	e.next(5 * time.Second)
 	e.invariants()
+	k := e.app.ShieldedStakingKeeper
+	sk := e.app.StakingKeeper
 
 	ctx, _ := e.ctx().CacheContext()
-	sk := e.app.StakingKeeper
-	red, err := sk.GetRedelegation(ctx, e.app.ShieldedStakingKeeper.ModuleAddress(), vA, vB)
+	red, err := sk.GetRedelegation(ctx, k.ModuleAddress(), vA, vB)
 	require.NoError(t, err)
 	red.DelegatorAddress = e.bech(sdk.AccAddress(vA))
 	require.NoError(t, sk.SetRedelegation(ctx, red))
-	require.ErrorContains(t, e.app.ShieldedStakingKeeper.AssertInvariants(ctx), "only private staking redelegates")
+	require.ErrorContains(t, k.AssertInvariants(ctx), "only private staking redelegates")
 
 	ctx, _ = e.ctx().CacheContext()
-	ubd := stakingtypes.NewUnbondingDelegation(e.app.ShieldedStakingKeeper.ModuleAddress(), vB, 1, e.now, math.OneInt(), 1,
+	mv, ok := e.move(fakeMoveKey("ab"))
+	require.True(t, ok)
+	mv.Shares = mv.Shares.QuoInt64(2)
+	require.NoError(t, k.Moves.Set(ctx, mv.Key, mv))
+	require.ErrorContains(t, k.AssertInvariants(ctx), "its moves hold")
+
+	ctx, _ = e.ctx().CacheContext()
+	mv, _ = e.move(fakeMoveKey("ab"))
+	mv.Retained = mv.Retained.SubRaw(1)
+	require.NoError(t, k.Moves.Set(ctx, mv.Key, mv))
+	require.ErrorContains(t, k.AssertInvariants(ctx), "without a debt row")
+
+	ctx, _ = e.ctx().CacheContext()
+	ubd := stakingtypes.NewUnbondingDelegation(k.ModuleAddress(), vB, 1, e.now, math.OneInt(), 1,
 		sk.ValidatorAddressCodec(), e.app.AuthKeeper.AddressCodec())
-	require.NoError(t, e.app.ShieldedStakingKeeper.ShelteredUnbondings.Set(ctx, vB, ubd))
-	require.ErrorContains(t, e.app.ShieldedStakingKeeper.AssertInvariants(ctx), "set aside")
+	require.NoError(t, k.ShelteredUnbondings.Set(ctx, vB, ubd))
+	require.ErrorContains(t, k.AssertInvariants(ctx), "set aside")
+
+	ctx, _ = e.ctx().CacheContext()
+	require.NoError(t, k.WatchSrc.Set(ctx, e.valoper(vA)))
+	require.ErrorContains(t, k.AssertInvariants(ctx), "still watched")
+}
+
+// noteLabelled is the wallet's unspent note of denom labelled with the move
+// key, nil if none.
+func (e *stakeEnv) noteLabelled(denom string, key fr.Element) *snote {
+	for _, n := range e.sw.notes {
+		if n.known && !n.spent && n.denom == denom && n.moveKey == key {
+			return n
+		}
+	}
+	return nil
+}
+
+// undelegateUnproven is an undelegation of amount of in, built but not
+// proven (its stake proof for tryProveStake).
+func (e *stakeEnv) undelegateUnproven(val sdk.ValAddress, in *snote, amount uint64) (*sstypes.MsgUndelegate, *stakePlan) {
+	p := e.feeOnly()
+	out := e.w.fresh("uerth", 0)
+	sp := &stakePlan{denom: in.denom, ins: []*snote{in}, vOut: amount}
+	if in.amount > amount {
+		sp.out = e.freshStake(in.denom, in.amount-amount)
+	}
+	e.stake(sp)
+	m := &sstypes.MsgUndelegate{Bundle: p.b, Validator: e.valoper(val), Amount: amount, Stake: sp.proof,
+		Pc: privacy.FieldBytes(e.w.pc(out)), Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("payout/%d", e.w.seq))}
+	return m, sp
 }

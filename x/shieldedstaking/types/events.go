@@ -41,6 +41,15 @@ const (
 	EventTypeStakeNote      = "shieldedstaking_stake_note"
 	EventTypeStakeNullifier = "shieldedstaking_stake_nullifier"
 	EventTypeStakeRoot      = "shieldedstaking_stake_root"
+	// The slash debt of private redelegations (ORCHARD_DESIGN.md section
+	// 20): a slash reached the module's redelegation entries into a
+	// validator (EventTypeSlashDebt: the derth taken off its supply), each
+	// move it reached (EventTypeMoveSlashed: its debt and what its exposure
+	// is still worth), and the debt tree's row for it (EventTypeDebtRow:
+	// leaf index and the new root; the wallets' stream).
+	EventTypeSlashDebt   = "shieldedstaking_slash_debt"
+	EventTypeMoveSlashed = "shieldedstaking_move_slashed"
+	EventTypeDebtRow     = "shieldedstaking_debt_row"
 
 	AttributeKeyValidator    = "validator"
 	AttributeKeyAmount       = "amount"
@@ -80,7 +89,12 @@ const (
 	AttributeKeyRetryAt      = "retry_at"
 	AttributeKeySrcValidator = "src_validator"
 	AttributeKeyDstValidator = "dst_validator"
-	AttributeKeyMinted       = "minted"
+	AttributeKeyCredited     = "credited"
+	AttributeKeyMoveKey      = "move_key"
+	AttributeKeyMoveTime     = "move_time"
+	AttributeKeyRetained     = "retained"
+	AttributeKeyDebt         = "debt"
+	AttributeKeyEntries      = "entries"
 	AttributeKeyQueued       = "queued"
 	AttributeKeyBonded       = "bonded"
 	AttributeKeyCompletion   = "completion_time"
