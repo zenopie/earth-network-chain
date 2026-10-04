@@ -60,25 +60,62 @@ func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, re
 		return err
 	}
 
-	weight, err := k.stakingKeeper.GetDelegatorBonded(ctx, delAddr)
+	weight, err := k.bondedWeight(ctx, delAddr, removeVal)
 	if err != nil {
 		return err
-	}
-
-	// BeforeDelegationRemoved fires while the delegation still counts toward
-	// bonded, so subtract the tokens that are about to leave.
-	if removeVal != nil {
-		if del, err := k.stakingKeeper.GetDelegation(ctx, delAddr, *removeVal); err == nil {
-			if val, err := k.stakingKeeper.GetValidator(ctx, *removeVal); err == nil && val.IsBonded() {
-				weight = weight.Sub(val.TokensFromShares(del.Shares).TruncateInt())
-			}
-		}
 	}
 	if weight.IsNegative() {
 		weight = math.ZeroInt()
 	}
 
 	return k.resyncVoter(ctx, types.STREAM_ID_GROUNDWORKS, addrBz, voter.Percentages, weight)
+}
+
+// bondedWeight is GetDelegatorBonded (the stream's weight source), computed the
+// same way (each delegation's TokensFromSharesTruncated, summed, then rounded)
+// but leaving out the delegation to exclude, if any.
+//
+// BeforeDelegationRemoved fires while the delegation is still stored, so the
+// SDK's sum still counts it, whatever the validator's status: GetDelegatorBonded
+// adds every delegation, bonded, unbonding or unbonded alike. The removed
+// delegation is therefore left out whatever the status too. (It used to be
+// subtracted only from a Bonded validator, so a self-bond withdrawn from a
+// jailed, unbonding or not-yet-bonded validator kept its weight with no stake
+// behind it, and nothing ever resynced it.)
+//
+// Status changes need no resync: bonding, unbonding, jailing and unjailing move
+// a validator's tokens between pools but not its tokens or shares, so neither
+// this sum nor GetDelegatorBonded changes. A slash does change them, and
+// ResyncSlashed re-weighs the operator at EndBlock. A redelegation is an Unbond
+// (AfterDelegationModified, or BeforeDelegationRemoved) then a Delegate
+// (AfterDelegationModified), each resynced in turn.
+func (k Keeper) bondedWeight(ctx context.Context, delAddr sdk.AccAddress, exclude *sdk.ValAddress) (math.Int, error) {
+	if exclude == nil {
+		return k.stakingKeeper.GetDelegatorBonded(ctx, delAddr)
+	}
+	bonded := math.LegacyZeroDec()
+	var inner error
+	err := k.stakingKeeper.IterateDelegatorDelegations(ctx, delAddr, func(del stakingtypes.Delegation) bool {
+		valAddr, err := sdk.ValAddressFromBech32(del.ValidatorAddress)
+		if err != nil {
+			inner = err
+			return true
+		}
+		if valAddr.Equals(*exclude) {
+			return false
+		}
+		if val, err := k.stakingKeeper.GetValidator(ctx, valAddr); err == nil {
+			bonded = bonded.Add(val.TokensFromSharesTruncated(del.Shares))
+		}
+		return false
+	})
+	if err == nil {
+		err = inner
+	}
+	if err != nil {
+		return math.Int{}, err
+	}
+	return bonded.RoundInt(), nil
 }
 
 func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddress, _ sdk.ValAddress) error {

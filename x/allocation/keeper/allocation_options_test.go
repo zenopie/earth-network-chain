@@ -117,6 +117,9 @@ func (s *stubStaking) GetDelegatorBonded(_ context.Context, addr sdk.AccAddress)
 	}
 	return math.ZeroInt(), nil
 }
+func (*stubStaking) IterateDelegatorDelegations(context.Context, sdk.AccAddress, func(stakingtypes.Delegation) bool) error {
+	return nil
+}
 func (*stubStaking) GetDelegation(context.Context, sdk.AccAddress, sdk.ValAddress) (stakingtypes.Delegation, error) {
 	return stakingtypes.Delegation{}, nil
 }

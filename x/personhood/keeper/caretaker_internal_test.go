@@ -31,6 +31,9 @@ func (stakingStub) BondDenom(context.Context) (string, error) { return "uerth", 
 func (stakingStub) GetDelegatorBonded(context.Context, sdk.AccAddress) (math.Int, error) {
 	return math.ZeroInt(), nil
 }
+func (stakingStub) IterateDelegatorDelegations(context.Context, sdk.AccAddress, func(stakingtypes.Delegation) bool) error {
+	return nil
+}
 func (stakingStub) GetDelegation(context.Context, sdk.AccAddress, sdk.ValAddress) (stakingtypes.Delegation, error) {
 	return stakingtypes.Delegation{}, nil
 }

@@ -86,6 +86,9 @@ func (stubStaking) BondDenom(context.Context) (string, error) { return "uerth", 
 func (stubStaking) GetDelegatorBonded(context.Context, sdk.AccAddress) (math.Int, error) {
 	return math.ZeroInt(), nil
 }
+func (stubStaking) IterateDelegatorDelegations(context.Context, sdk.AccAddress, func(stakingtypes.Delegation) bool) error {
+	return nil
+}
 func (stubStaking) GetDelegation(context.Context, sdk.AccAddress, sdk.ValAddress) (stakingtypes.Delegation, error) {
 	return stakingtypes.Delegation{}, nil
 }

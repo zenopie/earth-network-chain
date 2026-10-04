@@ -40,8 +40,8 @@ type AuthKeeper interface {
 type StakingKeeper interface {
 	BondDenom(ctx context.Context) (string, error)
 	GetDelegatorBonded(ctx context.Context, delegator sdk.AccAddress) (math.Int, error)
-	GetDelegation(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) (stakingtypes.Delegation, error)
 	GetValidator(ctx context.Context, valAddr sdk.ValAddress) (stakingtypes.Validator, error)
+	IterateDelegatorDelegations(ctx context.Context, delegator sdk.AccAddress, cb func(delegation stakingtypes.Delegation) (stop bool)) error
 }
 
 // BankKeeper defines the expected interface for the Bank module.
