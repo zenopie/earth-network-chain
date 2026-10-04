@@ -407,13 +407,27 @@ func (k Keeper) closeOrphanedBallots(ctx context.Context, limit int) error {
 	// Subjects of a proposal x/gov ended are normally forgotten by
 	// AfterProposalVotingPeriodEnded; x/gov swallows a hook error, so one
 	// left behind is dropped here.
+	//
+	// This walk resumes and wraps too (audit 6 D-L-AS1): from the start each
+	// block, it only ever looked at the first limit entries, so subjects
+	// sorting after limit live ones were never dropped.
 	checked = 0
 	var ended []uint64
-	err = k.Subjects.Walk(ctx, nil, func(proposalID uint64, _ types.ProposalSubjects) (bool, error) {
+	subjCursor, err := k.SubjectSweepCursor.Get(ctx)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	var srng collections.Ranger[uint64]
+	if subjCursor > 0 {
+		srng = new(collections.Range[uint64]).StartExclusive(subjCursor)
+	}
+	lastSubject := uint64(0)
+	err = k.Subjects.Walk(ctx, srng, func(proposalID uint64, _ types.ProposalSubjects) (bool, error) {
 		if checked >= limit {
 			return true, nil
 		}
 		checked++
+		lastSubject = proposalID
 		p, err := k.gov.Proposals.Get(ctx, proposalID)
 		switch {
 		case errors.Is(err, collections.ErrNotFound):
@@ -427,6 +441,13 @@ func (k Keeper) closeOrphanedBallots(ctx context.Context, limit int) error {
 		return false, nil
 	})
 	if err != nil {
+		return err
+	}
+	nextSubject := lastSubject
+	if checked < limit {
+		nextSubject = 0 // reached the end: start over next block
+	}
+	if err := k.SubjectSweepCursor.Set(ctx, nextSubject); err != nil {
 		return err
 	}
 	for _, id := range ended {

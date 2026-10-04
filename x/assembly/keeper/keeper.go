@@ -54,6 +54,8 @@ type Keeper struct {
 	RemovalCooldown collections.Map[uint64, int64]
 	// OrphanSweepCursor: where closeOrphanedBallots resumes.
 	OrphanSweepCursor collections.Item[uint64]
+	// SubjectSweepCursor: where the Subjects part of that sweep resumes.
+	SubjectSweepCursor collections.Item[uint64]
 }
 
 func NewKeeper(
@@ -101,6 +103,8 @@ func NewKeeper(
 		RemovalCooldown: collections.NewMap(sb, types.RemovalCooldownKey, "removal_cooldown",
 			collections.Uint64Key, collections.Int64Value),
 		OrphanSweepCursor: collections.NewItem(sb, types.OrphanSweepCursorKey, "orphan_sweep_cursor",
+			collections.Uint64Value),
+		SubjectSweepCursor: collections.NewItem(sb, types.SubjectSweepCursorKey, "subject_sweep_cursor",
 			collections.Uint64Value),
 	}
 

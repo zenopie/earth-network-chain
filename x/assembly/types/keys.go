@@ -136,6 +136,9 @@ var (
 	// OrphanSweepCursorKey is the proposal id closeOrphanedBallots last
 	// looked at (0: start over). Derived; not exported.
 	OrphanSweepCursorKey = collections.NewPrefix("orphan_sweep_cursor")
+	// SubjectSweepCursorKey is the same for the Subjects walk (audit 6
+	// D-L-AS1). Derived; not exported.
+	SubjectSweepCursorKey = collections.NewPrefix("subject_sweep_cursor")
 )
 
 // ClosedVotePurgeLimit caps how many votes of closed ballots one block clears.

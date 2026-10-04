@@ -122,3 +122,28 @@ func TestAudit3EndedProposalSubjectsSwept(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, has)
 }
+
+// Audit 6 D-L-AS1: the Subjects walk resumes where it stopped, so subjects
+// of an ended proposal sorted after `limit` live ones are reached.
+func TestAudit6SubjectsSweepResumes(t *testing.T) {
+	e := newTestEnv(t)
+	for _, id := range []uint64{1, 2} {
+		e.openProposal(t, id, e.ctx.BlockTime().Add(time.Hour))
+	}
+	p, err := e.gov.Proposals.Get(e.ctx, 2)
+	require.NoError(t, err)
+	p.Status = v1.StatusRejected
+	require.NoError(t, e.gov.SetProposal(e.ctx, p))
+
+	require.NoError(t, e.k.closeOrphanedBallots(e.ctx, 1)) // looks at 1 only
+	has, err := e.k.Subjects.Has(e.ctx, 2)
+	require.NoError(t, err)
+	require.True(t, has)
+	require.NoError(t, e.k.closeOrphanedBallots(e.ctx, 1)) // resumes at 2
+	has, err = e.k.Subjects.Has(e.ctx, 2)
+	require.NoError(t, err)
+	require.False(t, has, "forgotten")
+	has, err = e.k.Subjects.Has(e.ctx, 1)
+	require.NoError(t, err)
+	require.True(t, has, "a live proposal's subjects stay")
+}
