@@ -10,6 +10,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/stretchr/testify/require"
 
@@ -17,10 +18,11 @@ import (
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 )
 
-// Audit 6 D6-1: an operator's Groundworks weight is its self-bond, whatever
-// its validator's status. A delegation removed from a validator that is not
-// Bonded (just created, jailed, unbonding, unbonded) used to keep its weight,
-// with no stake behind it.
+// Audit 6 D6-1: a delegation removed from a validator that is not Bonded
+// (just created, jailed, unbonding, unbonded) used to keep its weight, with
+// no stake behind it. Audit 7 D7-L2: an operator's Groundworks weight is its
+// self-bond at a Bonded validator only; outside the active set it weighs
+// nothing (its vote kept at weight zero while the bond remains).
 
 type gwWeightEnv struct {
 	*stakeEnv
@@ -57,8 +59,10 @@ func (g *gwWeightEnv) weight(op sdk.AccAddress) math.Int {
 	return v.Weight
 }
 
+// bonded is the operator's weight-bearing stake: its delegations at Bonded
+// validators.
 func (g *gwWeightEnv) bonded(op sdk.AccAddress) math.Int {
-	b, err := g.app.StakingKeeper.GetDelegatorBonded(g.ctx(), op)
+	b, err := g.app.AllocationKeeper.BondedWeight(g.ctx(), op)
 	require.NoError(g.t, err)
 	return b
 }
@@ -96,13 +100,22 @@ func (g *gwWeightEnv) checkConsistent(op sdk.AccAddress) {
 }
 
 // The audit's PoC: create, vote and undelegate the whole self-bond in one
-// block, while the validator is still Unbonded. The weight goes with the stake.
+// block, while the validator is still Unbonded. The vote finds no weight
+// (D7-L2); once Bonded it weighs the bond, and the weight goes with the stake.
 func TestAudit6GroundworksSameBlockCreateVoteUndelegate(t *testing.T) {
 	g := initGwWeightEnv(t)
 	base := g.allocated()
 	val, _ := g.createValidator(500 * ssErth)
 	op := sdk.AccAddress(val)
 	require.Equal(t, stakingtypes.Unbonded, g.status(val))
+	_, err := allocationkeeper.NewMsgServerImpl(g.app.AllocationKeeper).SetAllocations(g.ctx(), &allocationtypes.MsgSetAllocations{
+		Creator: g.bech(op), Stream: allocationtypes.STREAM_ID_GROUNDWORKS,
+		Percentages: []allocationtypes.AllocationWeight{{OptionId: g.opt, Percent: 100}},
+	})
+	require.ErrorIs(t, err, allocationtypes.ErrNoWeight, "an Unbonded validator's bond weighs nothing")
+	require.Equal(t, base, g.allocated())
+	g.next(5 * time.Second)
+	require.Equal(t, stakingtypes.Bonded, g.status(val))
 	g.vote(op)
 	require.Equal(t, math.NewInt(500*ssErth), g.weight(op))
 	require.Equal(t, base.AddRaw(500*ssErth), g.allocated())
@@ -130,7 +143,8 @@ func TestAudit6GroundworksJailedThenFullUnbond(t *testing.T) {
 	g.vote(op)
 	g.checkConsistent(op)
 
-	// Jailed: Unbonding, its tokens untouched. Nothing to resync.
+	// Jailed: Unbonding, its tokens untouched, its weight gone (D7-L2) in
+	// the block it left the active set; the vote stays.
 	v, err := g.app.StakingKeeper.GetValidator(g.ctx(), val)
 	require.NoError(t, err)
 	cons, err := v.GetConsAddr()
@@ -139,11 +153,15 @@ func TestAudit6GroundworksJailedThenFullUnbond(t *testing.T) {
 	g.next(5 * time.Second)
 	require.Equal(t, stakingtypes.Unbonding, g.status(val))
 	g.checkConsistent(op)
+	require.True(t, g.weight(op).IsZero())
+	require.Equal(t, base, g.allocated())
+	g.requireVoteKept(op)
 
 	// A partial withdrawal from the Unbonding validator.
 	g.undelegate(val, math.NewInt(200*ssErth))
 	g.checkConsistent(op)
-	require.True(t, g.weight(op).IsPositive())
+	require.True(t, g.weight(op).IsZero())
+	g.requireVoteKept(op)
 
 	// Past the unbonding time: Unbonded. The weight is unchanged.
 	g.days(22)
@@ -187,5 +205,48 @@ func TestAudit6GroundworksRedelegationRefused(t *testing.T) {
 	_, err := stakingkeeper.NewMsgServerImpl(g.app.StakingKeeper).BeginRedelegate(g.ctx(), stakingtypes.NewMsgBeginRedelegate(
 		g.bech(op), g.valoper(val), g.valoper(g.genesisValidator()), sdk.NewInt64Coin("uerth", 100*ssErth)))
 	require.Error(t, err)
+	g.checkConsistent(op)
+}
+
+// requireVoteKept: the operator's vote is stored (at weight zero) while its
+// bond remains outside the active set.
+func (g *gwWeightEnv) requireVoteKept(op sdk.AccAddress) {
+	g.t.Helper()
+	v, err := g.app.AllocationKeeper.Voters.Get(g.ctx(), collections.Join(uint32(allocationtypes.STREAM_ID_GROUNDWORKS), []byte(op)))
+	require.NoError(g.t, err)
+	require.NotEmpty(g.t, v.Percentages)
+}
+
+// Audit 7 D7-L2: a jailed validator's operator loses its Groundworks weight
+// in the block its validator leaves the active set, and gets it back, with
+// no new vote, in the block it is Bonded again (unjailed).
+func TestAudit7GroundworksBondedOnly(t *testing.T) {
+	g := initGwWeightEnv(t)
+	base := g.allocated()
+	val, key := g.createValidator(500 * ssErth)
+	op := sdk.AccAddress(val)
+	g.next(5 * time.Second)
+	g.vote(op)
+	require.Equal(t, math.NewInt(500*ssErth), g.weight(op))
+
+	v, err := g.app.StakingKeeper.GetValidator(g.ctx(), val)
+	require.NoError(t, err)
+	cons, err := v.GetConsAddr()
+	require.NoError(t, err)
+	require.NoError(t, g.app.SlashingKeeper.Jail(g.ctx(), cons))
+	g.next(5 * time.Second)
+	require.Equal(t, stakingtypes.Unbonding, g.status(val))
+	require.True(t, g.weight(op).IsZero())
+	require.Equal(t, base, g.allocated())
+	g.requireVoteKept(op)
+	g.checkConsistent(op)
+
+	// Unjailed: Bonded again at the block's end, the weight back.
+	res := g.run(g.signedTx(key, 300_000, 5_000, slashingtypes.NewMsgUnjail(g.valoper(val))))
+	require.Equal(t, uint32(0), res.Code, res.Log)
+	g.next(5 * time.Second)
+	require.Equal(t, stakingtypes.Bonded, g.status(val))
+	require.Equal(t, math.NewInt(500*ssErth), g.weight(op))
+	require.Equal(t, base.AddRaw(500*ssErth), g.allocated())
 	g.checkConsistent(op)
 }

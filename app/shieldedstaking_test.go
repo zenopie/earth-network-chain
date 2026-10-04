@@ -1336,8 +1336,10 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sumVoters(), o.AmountAllocated)
 
-	// A slash of vA: the operator's weight drops to its slashed bond at that
-	// block's end, though no delegation of its own changed.
+	// A double-sign slash of vA: it is jailed and tombstoned, out of the
+	// active set, so its operator's self-bond stops weighing at that block's
+	// end (audit 7 D7-L2: Bonded validators only), though no delegation of its
+	// own changed. The vote stays, at weight zero, while the bond does.
 	e.next(5 * time.Second)
 	e.next(5 * time.Second)
 	infraction := e.height
@@ -1355,7 +1357,7 @@ func TestGroundworksSelfBondWeight(t *testing.T) {
 	}})
 	after := bonded()
 	require.True(t, after.LT(before), "slashed: %s -> %s", before, after)
-	require.Equal(t, after, voterW(op), "weight follows the slash")
+	require.True(t, voterW(op).IsZero(), "a jailed validator's self-bond weighs nothing: %s", voterW(op))
 	slashed, err := ak.SlashedValidators.Has(e.ctx(), vA.Bytes())
 	require.NoError(t, err)
 	require.False(t, slashed, "the record is cleared at EndBlock")

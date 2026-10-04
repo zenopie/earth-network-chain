@@ -60,40 +60,40 @@ func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, re
 		return err
 	}
 
-	weight, err := k.bondedWeight(ctx, delAddr, removeVal)
+	weight, bondLeft, err := k.bondedWeight(ctx, delAddr, removeVal)
 	if err != nil {
 		return err
 	}
 	if weight.IsNegative() {
 		weight = math.ZeroInt()
 	}
-
-	return k.resyncVoter(ctx, types.STREAM_ID_GROUNDWORKS, addrBz, voter.Percentages, weight)
+	// A self-bond at a validator outside the active set weighs nothing, but
+	// the vote stays (at weight zero) while the bond does: the weight comes
+	// back when the validator is Bonded again, with no new vote.
+	return k.resyncVoterKeep(ctx, types.STREAM_ID_GROUNDWORKS, addrBz, voter.Percentages, weight, bondLeft)
 }
 
-// bondedWeight is GetDelegatorBonded (the stream's weight source), computed the
-// same way (each delegation's TokensFromSharesTruncated, summed, then rounded)
-// but leaving out the delegation to exclude, if any.
+// bondedWeight is an account's Groundworks weight: its stake at Bonded
+// validators (audit 7, D7-L2: a validator outside the active set, or
+// tombstoned, secures nothing, and an Unbonded validator's bond can leave in
+// one block), computed as GetDelegatorBonded computes its sum (each
+// delegation's TokensFromSharesTruncated, summed, then rounded), leaving out
+// the delegation to exclude, if any. bondLeft reports whether any
+// delegation (at any status) remains.
 //
 // BeforeDelegationRemoved fires while the delegation is still stored, so the
-// SDK's sum still counts it, whatever the validator's status: GetDelegatorBonded
-// adds every delegation, bonded, unbonding or unbonded alike. The removed
-// delegation is therefore left out whatever the status too. (It used to be
-// subtracted only from a Bonded validator, so a self-bond withdrawn from a
-// jailed, unbonding or not-yet-bonded validator kept its weight with no stake
-// behind it, and nothing ever resynced it.)
+// removed delegation is left out by name, whatever its validator's status.
 //
-// Status changes need no resync: bonding, unbonding, jailing and unjailing move
-// a validator's tokens between pools but not its tokens or shares, so neither
-// this sum nor GetDelegatorBonded changes. A slash does change them, and
-// ResyncSlashed re-weighs the operator at EndBlock. A redelegation is an Unbond
+// Status changes move weight now: a validator's operator is resynced when
+// its validator becomes Bonded or starts unbonding (AfterValidatorBonded,
+// AfterValidatorBeginUnbonding: recorded, resynced at EndBlock with the
+// slashed ones). A slash changes tokens and shares, and ResyncSlashed
+// re-weighs the operator at EndBlock. A redelegation is an Unbond
 // (AfterDelegationModified, or BeforeDelegationRemoved) then a Delegate
 // (AfterDelegationModified), each resynced in turn.
-func (k Keeper) bondedWeight(ctx context.Context, delAddr sdk.AccAddress, exclude *sdk.ValAddress) (math.Int, error) {
-	if exclude == nil {
-		return k.stakingKeeper.GetDelegatorBonded(ctx, delAddr)
-	}
+func (k Keeper) bondedWeight(ctx context.Context, delAddr sdk.AccAddress, exclude *sdk.ValAddress) (math.Int, bool, error) {
 	bonded := math.LegacyZeroDec()
+	left := false
 	var inner error
 	err := k.stakingKeeper.IterateDelegatorDelegations(ctx, delAddr, func(del stakingtypes.Delegation) bool {
 		valAddr, err := sdk.ValAddressFromBech32(del.ValidatorAddress)
@@ -101,10 +101,11 @@ func (k Keeper) bondedWeight(ctx context.Context, delAddr sdk.AccAddress, exclud
 			inner = err
 			return true
 		}
-		if valAddr.Equals(*exclude) {
+		if exclude != nil && valAddr.Equals(*exclude) {
 			return false
 		}
-		if val, err := k.stakingKeeper.GetValidator(ctx, valAddr); err == nil {
+		left = true
+		if val, err := k.stakingKeeper.GetValidator(ctx, valAddr); err == nil && val.IsBonded() {
 			bonded = bonded.Add(val.TokensFromSharesTruncated(del.Shares))
 		}
 		return false
@@ -113,9 +114,17 @@ func (k Keeper) bondedWeight(ctx context.Context, delAddr sdk.AccAddress, exclud
 		err = inner
 	}
 	if err != nil {
-		return math.Int{}, err
+		return math.Int{}, false, err
 	}
-	return bonded.RoundInt(), nil
+	return bonded.RoundInt(), left, nil
+}
+
+// BondedWeight is an account's Groundworks weight from its own stake: its
+// delegations at Bonded validators (bondedWeight). The stream's weight
+// source uses it for a new vote.
+func (k Keeper) BondedWeight(ctx context.Context, delAddr sdk.AccAddress) (math.Int, error) {
+	w, _, err := k.bondedWeight(ctx, delAddr, nil)
+	return w, err
 }
 
 func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddress, _ sdk.ValAddress) error {
@@ -131,15 +140,21 @@ func (h Hooks) BeforeDelegationRemoved(ctx context.Context, delAddr sdk.AccAddre
 // recorded and EndBlock (ResyncSlashed) resyncs its operator once the slash
 // has landed. Never errors: a slash must not fail over a weight record.
 func (h Hooks) BeforeValidatorSlashed(ctx context.Context, valAddr sdk.ValAddress, _ math.LegacyDec) error {
-	if err := h.k.SlashedValidators.Set(ctx, valAddr.Bytes()); err != nil {
-		sdk.UnwrapSDKContext(ctx).Logger().Error("allocation: could not record a slashed validator", "validator", valAddr.String(), "err", err)
-	}
+	h.k.recordResync(ctx, valAddr)
 	return nil
 }
 
-// ResyncSlashed re-weighs, at their post-slash bonded stake, the operators of
-// the validators slashed this block (a self-bond is an operator's Groundworks
-// weight), then forgets them. Each in its own cache; a failure is logged and
+// recordResync marks valAddr's operator for re-weighing at EndBlock
+// (ResyncSlashed). Never errors.
+func (k Keeper) recordResync(ctx context.Context, valAddr sdk.ValAddress) {
+	if err := k.SlashedValidators.Set(ctx, valAddr.Bytes()); err != nil {
+		sdk.UnwrapSDKContext(ctx).Logger().Error("allocation: could not record a validator to resync", "validator", valAddr.String(), "err", err)
+	}
+}
+
+// ResyncSlashed re-weighs, at their bonded stake now, the operators of the
+// validators slashed, bonded or unbonding this block (a self-bond at a
+// Bonded validator is an operator's Groundworks weight), then forgets them. Each in its own cache; a failure is logged and
 // skipped, never returned: this runs in EndBlock.
 func (k Keeper) ResyncSlashed(ctx context.Context) {
 	var vals [][]byte
@@ -165,10 +180,18 @@ func (h Hooks) BeforeValidatorModified(context.Context, sdk.ValAddress) error { 
 func (h Hooks) AfterValidatorRemoved(context.Context, sdk.ConsAddress, sdk.ValAddress) error {
 	return nil
 }
-func (h Hooks) AfterValidatorBonded(context.Context, sdk.ConsAddress, sdk.ValAddress) error {
+// AfterValidatorBonded and AfterValidatorBeginUnbonding: the operator's
+// self-bond starts or stops weighing (bondedWeight counts Bonded validators
+// only). x/staking calls them from its EndBlocker; the operator is recorded
+// and resynced at this module's EndBlock (ResyncSlashed, which runs after
+// x/staking's). Never errors.
+func (h Hooks) AfterValidatorBonded(ctx context.Context, _ sdk.ConsAddress, valAddr sdk.ValAddress) error {
+	h.k.recordResync(ctx, valAddr)
 	return nil
 }
-func (h Hooks) AfterValidatorBeginUnbonding(context.Context, sdk.ConsAddress, sdk.ValAddress) error {
+
+func (h Hooks) AfterValidatorBeginUnbonding(ctx context.Context, _ sdk.ConsAddress, valAddr sdk.ValAddress) error {
+	h.k.recordResync(ctx, valAddr)
 	return nil
 }
 func (h Hooks) BeforeDelegationCreated(context.Context, sdk.AccAddress, sdk.ValAddress) error {

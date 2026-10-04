@@ -242,9 +242,10 @@ func (k Keeper) positionWeight(ctx context.Context, valoper string, derth math.I
 //   - this module's own account: zero. Its delegations are the private stake,
 //     already counted through the positions; counting them again as an
 //     account's bond would weigh that stake twice;
-//   - any other account: its bonded stake. Transparent delegation is refused
-//     except a validator operator's self-bond, so that is all it can be: a
-//     validator's self-bond votes like any stake.
+//   - any other account: its stake at Bonded validators. Transparent
+//     delegation is refused except a validator operator's self-bond, so that
+//     is all it can be: a validator's self-bond votes like any stake, while
+//     its validator is in the active set.
 type PositionWeightSource struct{ k Keeper }
 
 // NewPositionWeightSource returns the source to register with x/allocation.
@@ -259,7 +260,8 @@ func (s PositionWeightSource) Weight(ctx context.Context, key []byte) (math.Int,
 	if !s.TracksBonded(key) {
 		return math.ZeroInt(), nil
 	}
-	return s.k.staking.GetDelegatorBonded(ctx, sdk.AccAddress(key))
+	// Bonded validators only (audit 7, D7-L2), as x/allocation resyncs it.
+	return s.k.allocation.BondedWeight(ctx, sdk.AccAddress(key))
 }
 
 // TracksBonded: x/allocation's staking hooks resync an account voter's weight
