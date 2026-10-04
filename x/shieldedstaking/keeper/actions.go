@@ -101,10 +101,10 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	if err != nil {
 		return 0, err
 	}
-	// A stake vote: the proof and one write (the vote and its nullifier),
-	// whatever the tree sizes.
-	if _, ok := msg.(*types.MsgStakeVote); ok {
-		return gasVote + proof + note, nil
+	// A stake vote: the proof, one write for the vote and one per vote
+	// nullifier it uses, whatever the tree sizes.
+	if m, ok := msg.(*types.MsgStakeVote); ok {
+		return gasVote + proof + uint64(1+len(m.UsedVoteNullifiers()))*note, nil
 	}
 	sm, ok := msg.(types.StakeMsg)
 	if !ok {
@@ -332,10 +332,12 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (type
 	if d.GT(supply) {
 		return snap, math.Int{}, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
 	}
-	if used, err := k.Votes.Has(ctx, collections.Join(m.ProposalId, noteVoteKey(m.VoteNullifier))); err != nil {
-		return snap, math.Int{}, err
-	} else if used {
-		return snap, math.Int{}, types.ErrVoteNullifierUsed.Wrapf("proposal %d, vote nullifier %X", m.ProposalId, m.VoteNullifier)
+	for _, vnf := range m.UsedVoteNullifiers() {
+		if used, err := k.UsedVoteNullifiers.Has(ctx, collections.Join(m.ProposalId, vnf)); err != nil {
+			return snap, math.Int{}, err
+		} else if used {
+			return snap, math.Int{}, types.ErrVoteNullifierUsed.Wrapf("proposal %d, vote nullifier %X", m.ProposalId, vnf)
+		}
 	}
 	return snap, d, nil
 }

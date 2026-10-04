@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"fmt"
 
 	"cosmossdk.io/math"
@@ -121,6 +122,7 @@ func (gs GenesisState) Validate() error {
 		}
 	}
 	voteKeys := map[string]bool{}
+	usedVnfs := map[string]bool{}
 	for _, v := range gs.Votes {
 		if k := fmt.Sprintf("%d/%x", v.ProposalId, v.Key); voteKeys[k] {
 			return fmt.Errorf("vote %s repeated", k)
@@ -132,6 +134,9 @@ func (gs GenesisState) Validate() error {
 		}
 		if !snaps[v.ProposalId] {
 			return fmt.Errorf("vote on proposal %d without a snapshot", v.ProposalId)
+		}
+		if err := checkVoteNullifiers(v, usedVnfs); err != nil {
+			return err
 		}
 		if err := CanonicalValoper(v.Validator); err != nil {
 			return fmt.Errorf("vote on proposal %d: %w", v.ProposalId, err)
@@ -257,6 +262,37 @@ func (gs GenesisState) validatePayouts() error {
 		if !o.Equal(r.Outstanding) {
 			return fmt.Errorf("unbond record %s: outstanding %s, its payouts sum to %s", key, r.Outstanding, o)
 		}
+	}
+	return nil
+}
+
+// checkVoteNullifiers: a note vote names 1..MaxVoteNotes vote nullifiers,
+// non-zero canonical field elements, its key's first, none used by another
+// vote on the proposal (used records proposal/vnf seen so far); a position
+// vote names none.
+func checkVoteNullifiers(v StakeVote, used map[string]bool) error {
+	if v.Position {
+		if len(v.VoteNullifiers) != 0 {
+			return fmt.Errorf("position vote on proposal %d carries vote nullifiers", v.ProposalId)
+		}
+		return nil
+	}
+	if len(v.VoteNullifiers) == 0 || len(v.VoteNullifiers) > MaxVoteNotes {
+		return fmt.Errorf("note vote on proposal %d: %d vote nullifiers, want 1..%d", v.ProposalId, len(v.VoteNullifiers), MaxVoteNotes)
+	}
+	if !bytes.Equal(v.VoteNullifiers[0], v.Key[1:]) {
+		return fmt.Errorf("note vote on proposal %d: key %x is not its first vote nullifier", v.ProposalId, v.Key)
+	}
+	for _, vnf := range v.VoteNullifiers {
+		f, err := privacy.FieldFromBytes(vnf)
+		if err != nil || f.IsZero() {
+			return fmt.Errorf("note vote on proposal %d: malformed vote nullifier %x", v.ProposalId, vnf)
+		}
+		k := fmt.Sprintf("%d/%x", v.ProposalId, vnf)
+		if used[k] {
+			return fmt.Errorf("vote nullifier %s used twice", k)
+		}
+		used[k] = true
 	}
 	return nil
 }

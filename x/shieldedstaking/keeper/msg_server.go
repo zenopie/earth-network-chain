@@ -159,9 +159,10 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	return &types.MsgUndelegateResponse{Value: u.Uint64(), PayoutId: id}, nil
 }
 
-// StakeVote records a stake note's vote. Nothing is spent or minted: the
-// vote nullifier (checked unused by checkStakeVote) stops the note voting on
-// this proposal again, and nothing else.
+// StakeVote records one vote of up to four stake notes, its weight once.
+// Nothing is spent or minted: the vote nullifiers (checked unused by
+// checkStakeVote, recorded by putVote) stop the notes voting on this
+// proposal again, and nothing else.
 func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*types.MsgStakeVoteResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -171,9 +172,10 @@ func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*typ
 	if err != nil {
 		return nil, err
 	}
+	vnfs := m.UsedVoteNullifiers()
 	v := types.StakeVote{
-		ProposalId: m.ProposalId, Key: noteVoteKey(m.VoteNullifier), Validator: m.Validator,
-		Derth: d, Options: m.Options,
+		ProposalId: m.ProposalId, Key: noteVoteKey(vnfs[0]), Validator: m.Validator,
+		Derth: d, Options: m.Options, VoteNullifiers: vnfs,
 	}
 	if err := k.putVote(ctx, v); err != nil {
 		return nil, err

@@ -79,6 +79,9 @@ type Keeper struct {
 	// Votes are keyed (proposal, 0x00||vote_nf) for note votes and
 	// (proposal, 0x01||position id) for position votes.
 	Votes collections.Map[collections.Pair[uint64, []byte], types.StakeVote]
+	// UsedVoteNullifiers are every vote nullifier a note vote used, per
+	// proposal (a vote of several notes is keyed by its first).
+	UsedVoteNullifiers collections.KeySet[collections.Pair[uint64, []byte]]
 	// Tallies aggregate Votes per (proposal, validator).
 	Tallies collections.Map[collections.Pair[uint64, string], types.VoteTally]
 
@@ -201,6 +204,8 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
 		Votes: collections.NewMap(sb, types.VotesKey, "votes",
 			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey), codec.CollValue[types.StakeVote](cdc)),
+		UsedVoteNullifiers: collections.NewKeySet(sb, types.UsedVoteNullifiersKey, "used_vote_nullifiers",
+			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey)),
 		Tallies: collections.NewMap(sb, types.TalliesKey, "tallies",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey), codec.CollValue[types.VoteTally](cdc)),
 		StakeTreeNodes: collections.NewMap(sb, types.StakeTreeNodesKey, "stake_tree_nodes",

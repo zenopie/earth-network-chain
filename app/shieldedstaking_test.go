@@ -588,7 +588,7 @@ func TestTransparentStakingBlocked(t *testing.T) {
 		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st,
 			Pc: pc, Ciphertext: shieldedtest.BlindCT("u")},
 		&sstypes.MsgStakeVote{Bundle: tr("v", "", 0, ssFee), ProposalId: 1, Validator: valoper, Options: opts,
-			Weight: 1, Proof: make([]byte, shieldedtypes.ProofBytes), VoteNullifier: pc},
+			Weight: 1, Proof: make([]byte, shieldedtypes.ProofBytes), VoteNullifiers: [][]byte{pc, z, z, z}},
 		&sstypes.MsgLockPosition{Bundle: tr("l", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st},
 		&sstypes.MsgUpdatePosition{Bundle: tr("up", "", 0, ssFee), Stake: none},
 		&sstypes.MsgUnlockPosition{Bundle: tr("ul", "", 0, ssFee), Stake: noneMint},

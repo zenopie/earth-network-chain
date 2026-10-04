@@ -84,73 +84,99 @@ func (e *stakeEnv) vnf(n *snote, proposalID uint64) []byte {
 	return privacy.FieldBytes(privacy.VoteNF(e.w.nk, n.rho, uint32(n.pos), proposalID))
 }
 
-// votePlan is a vote proof's witness: the note, its path under the
-// snapshot's note root, and its low leaf under the snapshot's nullifier root.
+// votePlan is a vote proof's witness: per used slot, the note, its path
+// under the snapshot's note root, and its low leaf under the snapshot's
+// nullifier root.
 type votePlan struct {
-	n    *snote
-	path [merkle.Depth]fr.Element
-	low  indexed.Witness
-	snap sstypes.ProposalSnapshot
+	notes []*snote
+	paths [][merkle.Depth]fr.Element
+	lows  []indexed.Witness
+	snap  sstypes.ProposalSnapshot
 }
 
-// votePlanFor lays out n's vote witness on proposalID. A note the snapshot
-// cannot prove (spent before it, or minted after) gets the best witness a
-// cheat has: the stale low leaf, or a path in the current tree.
-func (e *stakeEnv) votePlanFor(n *snote, proposalID uint64) *votePlan {
+// votePlanFor lays out the vote witness of ns (1..MaxVoteNotes notes of one
+// validator) on proposalID. A note the snapshot cannot prove (spent before
+// it, or minted after) gets the best witness a cheat has: the stale low
+// leaf, or a path in the current tree.
+func (e *stakeEnv) votePlanFor(ns []*snote, proposalID uint64) *votePlan {
 	e.t.Helper()
+	require.NotEmpty(e.t, ns)
+	require.LessOrEqual(e.t, len(ns), sstypes.MaxVoteNotes)
 	e.scanStake()
 	snap, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), proposalID)
 	require.NoError(e.t, err)
-	vp := &votePlan{n: n, snap: snap}
-	size := snap.TreeSize
-	if n.pos >= size {
-		size = uint64(len(e.sw.leaves)) // minted after the snapshot: today's tree
-	}
-	vp.path, err = e.stakeTree(size).Path(n.pos)
-	require.NoError(e.t, err)
+	vp := &votePlan{notes: ns, snap: snap}
 	nft := e.snapshotNfTree(snap)
-	nf := e.snf(n)
-	vp.low, err = nft.NonMembership(nf)
-	if err != nil {
-		// Spent before the snapshot: take the low leaf as it was before nf
-		// went in (its root is not the snapshot's).
-		require.ErrorIs(e.t, err, indexed.ErrExists)
-		stream := e.nullifierStream()
-		var before []fr.Element
-		for _, b := range stream {
-			v, _ := privacy.FieldFromBytes(b)
-			if v == nf {
-				break
-			}
-			before = append(before, v)
+	for _, n := range ns {
+		size := snap.TreeSize
+		if n.pos >= size {
+			size = uint64(len(e.sw.leaves)) // minted after the snapshot: today's tree
 		}
-		old, err := indexed.Rebuild(before)
+		path, err := e.stakeTree(size).Path(n.pos)
 		require.NoError(e.t, err)
-		vp.low, err = old.NonMembership(nf)
-		require.NoError(e.t, err)
+		nf := e.snf(n)
+		low, err := nft.NonMembership(nf)
+		if err != nil {
+			// Spent before the snapshot: take the low leaf as it was before nf
+			// went in (its root is not the snapshot's).
+			require.ErrorIs(e.t, err, indexed.ErrExists)
+			stream := e.nullifierStream()
+			var before []fr.Element
+			for _, b := range stream {
+				v, _ := privacy.FieldFromBytes(b)
+				if v == nf {
+					break
+				}
+				before = append(before, v)
+			}
+			old, err := indexed.Rebuild(before)
+			require.NoError(e.t, err)
+			low, err = old.NonMembership(nf)
+			require.NoError(e.t, err)
+		}
+		vp.paths = append(vp.paths, path)
+		vp.lows = append(vp.lows, low)
 	}
 	return vp
 }
 
 // voteWitness is vp's Prover.toml for msg under sighash, and the public
-// inputs.
+// inputs. Unused slots: amount 0, everything else zero.
 func (e *stakeEnv) voteWitness(m *sstypes.MsgStakeVote, vp *votePlan, sighash fr.Element) (string, [][]byte) {
 	pub := m.VotePublicInputs(vp.snap.Root, vp.snap.NfRoot, sighash)
 	q := func(x fr.Element) string { return fmt.Sprintf("\"0x%x\"", privacy.FieldBytes(x)) }
-	arr := func(xs [merkle.Depth]fr.Element) string {
+	path := func(xs [merkle.Depth]fr.Element) string {
 		parts := make([]string, len(xs))
 		for i, x := range xs {
 			parts[i] = q(x)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	}
+	const n = sstypes.MaxVoteNotes
+	var amount, rho, rcm, pos, paths, lowV, lowNV, lowNI, lowI, lowP [n]string
+	for i := range n {
+		var zero [merkle.Depth]fr.Element
+		amount[i], rho[i], rcm[i], pos[i], paths[i] = `"0"`, q(fr.Element{}), q(fr.Element{}), `"0"`, path(zero)
+		lowV[i], lowNV[i], lowNI[i], lowI[i], lowP[i] = q(fr.Element{}), q(fr.Element{}), `"0"`, `"0"`, path(zero)
+		if i < len(vp.notes) {
+			nt, lw := vp.notes[i], vp.lows[i]
+			amount[i], rho[i], rcm[i], pos[i], paths[i] = fmt.Sprintf(`"%d"`, nt.amount), q(nt.rho), q(nt.rcm), fmt.Sprintf(`"%d"`, nt.pos), path(vp.paths[i])
+			lowV[i], lowNV[i] = q(lw.Low.Value), q(lw.Low.NextValue)
+			lowNI[i], lowI[i], lowP[i] = fmt.Sprintf(`"%d"`, lw.Low.NextIndex), fmt.Sprintf(`"%d"`, lw.Index), path(lw.Path)
+		}
+	}
+	arr := func(xs [n]string) string { return "[" + strings.Join(xs[:], ", ") + "]" }
 	var b strings.Builder
-	fmt.Fprintf(&b, "nk = %s\namount = \"%d\"\nrho = %s\nrcm = %s\npos = \"%d\"\npath = %s\n",
-		q(e.w.nk), vp.n.amount, q(vp.n.rho), q(vp.n.rcm), vp.n.pos, arr(vp.path))
-	fmt.Fprintf(&b, "low_value = %s\nlow_next_value = %s\nlow_next_index = \"%d\"\nlow_index = \"%d\"\nlow_path = %s\n",
-		q(vp.low.Low.Value), q(vp.low.Low.NextValue), vp.low.Low.NextIndex, vp.low.Index, arr(vp.low.Path))
-	fmt.Fprintf(&b, "note_root = \"0x%x\"\nnf_root = \"0x%x\"\nasset = \"0x%x\"\nweight = \"%d\"\nproposal_id = \"%d\"\nvnf = \"0x%x\"\nsighash = \"0x%x\"\n",
-		pub[0], pub[1], pub[2], m.Weight, m.ProposalId, pub[5], pub[6])
+	fmt.Fprintf(&b, "nk = %s\namount = %s\nrho = %s\nrcm = %s\npos = %s\npath = %s\n",
+		q(e.w.nk), arr(amount), arr(rho), arr(rcm), arr(pos), arr(paths))
+	fmt.Fprintf(&b, "low_value = %s\nlow_next_value = %s\nlow_next_index = %s\nlow_index = %s\nlow_path = %s\n",
+		arr(lowV), arr(lowNV), arr(lowNI), arr(lowI), arr(lowP))
+	var vnfs [n]string
+	for i := range n {
+		vnfs[i] = fmt.Sprintf(`"0x%x"`, pub[5+i])
+	}
+	fmt.Fprintf(&b, "note_root = \"0x%x\"\nnf_root = \"0x%x\"\nasset = \"0x%x\"\nweight = \"%d\"\nproposal_id = \"%d\"\nvnf = %s\nsighash = \"0x%x\"\n",
+		pub[0], pub[1], pub[2], m.Weight, m.ProposalId, arr(vnfs), pub[5+n])
 	return b.String(), pub
 }
 
@@ -169,21 +195,40 @@ func (e *stakeEnv) tryProveVote(m *sstypes.MsgStakeVote, vp *votePlan) ([]byte, 
 	return e.voteProver().TryProve(toml, pub)
 }
 
-// stakeVoteMsg is n's vote on proposalID with weight (0: all of n, rounded
-// down to three significant digits), its fee
-// bundle paid from any current ERTH note. With prove, its bundle and vote
-// proof are proven (failing the test if the circuit refuses).
-func (e *stakeEnv) stakeVoteMsg(n *snote, proposalID uint64, opts []*v1.WeightedVoteOption, weight uint64, prove bool) (*sstypes.MsgStakeVote, *pendingBundle, *votePlan) {
+// voteNullifiers is the MaxVoteNotes vote nullifier slots of ns on
+// proposalID: theirs first, then zeros.
+func (e *stakeEnv) voteNullifiers(ns []*snote, proposalID uint64) [][]byte {
+	out := make([][]byte, sstypes.MaxVoteNotes)
+	for i := range out {
+		out[i] = make([]byte, 32)
+		if i < len(ns) {
+			out[i] = e.vnf(ns[i], proposalID)
+		}
+	}
+	return out
+}
+
+// stakeVoteNotesMsg is the vote of ns (one validator's) on proposalID with
+// weight (0: their sum, rounded down to three significant digits, as every
+// wallet does), its fee bundle paid from any current ERTH note. With prove,
+// its bundle and vote proof are proven (failing the test if the circuit
+// refuses).
+func (e *stakeEnv) stakeVoteNotesMsg(ns []*snote, proposalID uint64, opts []*v1.WeightedVoteOption, weight uint64, prove bool) (*sstypes.MsgStakeVote, *pendingBundle, *votePlan) {
 	e.t.Helper()
-	v, ok := sstypes.ParseDerthDenom(n.denom)
+	v, ok := sstypes.ParseDerthDenom(ns[0].denom)
 	require.True(e.t, ok)
 	if weight == 0 {
-		weight = sstypes.RoundVoteWeight(n.amount) // as every wallet does
+		var sum uint64
+		for _, n := range ns {
+			require.Equal(e.t, ns[0].denom, n.denom)
+			sum += n.amount
+		}
+		weight = sstypes.RoundVoteWeight(sum)
 	}
-	vp := e.votePlanFor(n, proposalID)
+	vp := e.votePlanFor(ns, proposalID)
 	fee := e.feeOnly()
 	m := &sstypes.MsgStakeVote{Bundle: fee.b, ProposalId: proposalID, Validator: v, Options: opts,
-		Weight: weight, VoteNullifier: e.vnf(n, proposalID)}
+		Weight: weight, VoteNullifiers: e.voteNullifiers(ns, proposalID)}
 	if !prove {
 		unproven(m)
 		return m, fee, vp
@@ -195,10 +240,16 @@ func (e *stakeEnv) stakeVoteMsg(n *snote, proposalID uint64, opts []*v1.Weighted
 	return m, fee, vp
 }
 
-// stakeVote votes all of n on proposalID; the note stays unspent.
-func (e *stakeEnv) stakeVote(n *snote, proposalID uint64, opt v1.VoteOption) {
+// stakeVoteMsg is stakeVoteNotesMsg for the one note n.
+func (e *stakeEnv) stakeVoteMsg(n *snote, proposalID uint64, opts []*v1.WeightedVoteOption, weight uint64, prove bool) (*sstypes.MsgStakeVote, *pendingBundle, *votePlan) {
+	return e.stakeVoteNotesMsg([]*snote{n}, proposalID, opts, weight, prove)
+}
+
+// stakeVoteNotes votes all of ns on proposalID in one msg; the notes stay
+// unspent. Returns the msg.
+func (e *stakeEnv) stakeVoteNotes(ns []*snote, proposalID uint64, opt v1.VoteOption) *sstypes.MsgStakeVote {
 	e.t.Helper()
-	m, p, _ := e.stakeVoteMsg(n, proposalID, v1.NewNonSplitVoteOption(opt), 0, true)
+	m, p, _ := e.stakeVoteNotesMsg(ns, proposalID, v1.NewNonSplitVoteOption(opt), 0, true)
 	res := e.run(e.privateTx(m))
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.settle(p)
@@ -206,7 +257,19 @@ func (e *stakeEnv) stakeVote(n *snote, proposalID uint64, opt v1.VoteOption) {
 	require.Empty(e.t, eventsOf(res.Events, sstypes.EventTypeStakeNote), "a vote mints no stake note")
 	ev := eventsOf(res.Events, sstypes.EventTypeStakeVote)
 	require.Len(e.t, ev, 1)
-	require.Equal(e.t, fmt.Sprintf("%x", m.VoteNullifier), ev[0][sstypes.AttributeKeyVoteNF])
+	hs := make([]string, len(ns))
+	for i, b := range m.UsedVoteNullifiers() {
+		hs[i] = fmt.Sprintf("%x", b)
+	}
+	require.Equal(e.t, strings.Join(hs, ","), ev[0][sstypes.AttributeKeyVoteNFs])
+	require.Equal(e.t, fmt.Sprint(m.Weight), ev[0][sstypes.AttributeKeyDerth], "one weight for the vote")
+	return m
+}
+
+// stakeVote votes all of n on proposalID; the note stays unspent.
+func (e *stakeEnv) stakeVote(n *snote, proposalID uint64, opt v1.VoteOption) {
+	e.t.Helper()
+	e.stakeVoteNotes([]*snote{n}, proposalID, opt)
 }
 
 // requireRefused: the circuit refused a witness (or, without the circuits at
@@ -291,7 +354,7 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 	// A fresh (forged) vote nullifier for n on prop1: the proof does not
 	// verify.
 	forged, fp, _ := e.stakeVoteMsg(n, prop1, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
-	forged.VoteNullifier = privacy.FieldBytes(ssDet("forged-vnf", 0))
+	forged.VoteNullifiers[0] = privacy.FieldBytes(ssDet("forged-vnf", 0))
 	forgedProof := *forged
 	e.prove(&forgedProof, fp)
 	forgedProof.Proof = make([]byte, shieldedtypes.ProofBytes)
@@ -358,7 +421,7 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 	size2, root2, latest2, err := fresh.ShieldedStakingKeeper.StakeNullifierTree(fctx)
 	require.NoError(t, err)
 	require.Equal(t, []any{size1, root1, latest1}, []any{size2, root2, latest2})
-	used, err := fresh.ShieldedStakingKeeper.Votes.Has(fctx, collections.Join(prop1, append([]byte{0}, e.vnf(n, prop1)...)))
+	used, err := fresh.ShieldedStakingKeeper.UsedVoteNullifiers.Has(fctx, collections.Join(prop1, e.vnf(n, prop1)))
 	require.NoError(t, err)
 	require.True(t, used)
 	// A snapshot whose nf root the nullifiers do not rebuild is refused.
@@ -381,4 +444,95 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 		return err
 	}()
 	require.ErrorContains(t, err, "stake nullifier root")
+}
+
+// One vote per person: up to four of an owner's stake notes at a validator
+// vote in one msg with ONE public weight (their sum rounded down to three
+// significant digits), each note's vote nullifier recorded. A note already
+// in a vote is refused in another (even mixed with fresh notes); notes
+// beyond four vote in a second msg; the tally counts each weight once; the
+// shape rules hold before any proof is read.
+func TestStakeVoteManyNotesOneWeight(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(5_000 * ssErth))
+	e.shield(uint64(200 * ssErth))
+	var ns []*snote
+	for i, amt := range []int64{123, 456, 789, 1011, 1213} {
+		ns = append(ns, e.delegate(vB, uint64(amt*ssErth+int64(i)*7_777)))
+	}
+	e.next(5 * time.Second)
+	prop := e.submitProposal()
+
+	// The shape, before any proof: exactly four slots, used ones first,
+	// distinct; five notes do not fit.
+	m, _, _ := e.stakeVoteNotesMsg(ns[:2], prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
+	z := make([]byte, 32)
+	for name, vnfs := range map[string][][]byte{
+		"three slots":   m.VoteNullifiers[:3],
+		"five slots":    append(append([][]byte{}, m.VoteNullifiers...), z),
+		"gap":           {m.VoteNullifiers[0], z, m.VoteNullifiers[1], z},
+		"none used":     {z, z, z, z},
+		"repeated note": {m.VoteNullifiers[0], m.VoteNullifiers[0], z, z},
+	} {
+		bad := *m
+		bad.VoteNullifiers = vnfs
+		require.Error(t, bad.ValidateBasic(), name)
+	}
+	require.NoError(t, m.ValidateBasic())
+
+	// Four notes, one msg, one weight.
+	var sum4 uint64
+	for _, n := range ns[:4] {
+		sum4 += n.amount
+	}
+	v4 := e.stakeVoteNotes(ns[:4], prop, v1.OptionYes)
+	require.Equal(t, sstypes.RoundVoteWeight(sum4), v4.Weight)
+	require.Less(t, v4.Weight, sum4, "the exact sum is not published")
+	for _, n := range ns[:4] {
+		used, err := e.app.ShieldedStakingKeeper.UsedVoteNullifiers.Has(e.ctx(), collections.Join(prop, e.vnf(n, prop)))
+		require.NoError(t, err)
+		require.True(t, used)
+	}
+	require.Equal(t, 1, countVotes(t, e, prop))
+
+	// A note that voted cannot vote again, not even beside a fresh one.
+	again, _, _ := e.stakeVoteNotesMsg([]*snote{ns[4], ns[2]}, prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
+	res := e.checkTx(e.privateTx(again))
+	require.Equal(t, sstypes.ErrVoteNullifierUsed.ABCICode(), res.Code, res.Log)
+
+	// The fifth note votes in a second msg (its own weight).
+	e.stakeVote(ns[4], prop, v1.OptionNo)
+	require.Equal(t, 2, countVotes(t, e, prop))
+
+	tl, err := e.app.ShieldedStakingKeeper.Tallies.Get(e.ctx(), collections.Join(prop, e.valoper(vB)))
+	require.NoError(t, err)
+	require.Equal(t, math.LegacyNewDecFromInt(math.NewIntFromUint64(v4.Weight)), tl.Yes)
+	require.Equal(t, math.LegacyNewDecFromInt(math.NewIntFromUint64(sstypes.RoundVoteWeight(ns[4].amount))), tl.No)
+	e.invariants()
+
+	// Genesis carries each note vote with its vote nullifiers, keyed by the first.
+	gs, err := e.app.ShieldedStakingKeeper.ExportGenesis(e.ctx())
+	require.NoError(t, err)
+	require.NoError(t, gs.Validate())
+	noteVotes := 0
+	for _, v := range gs.Votes {
+		if !v.Position {
+			noteVotes++
+			require.Equal(t, v.Key[1:], v.VoteNullifiers[0])
+		}
+	}
+	require.Equal(t, 2, noteVotes)
+	// A genesis whose votes share a vote nullifier is refused.
+	bad := *gs
+	bad.Votes = append([]sstypes.StakeVote(nil), gs.Votes...)
+	for i := range bad.Votes {
+		if len(bad.Votes[i].VoteNullifiers) == 1 {
+			v := bad.Votes[i]
+			v.VoteNullifiers = [][]byte{v.VoteNullifiers[0], e.vnf(ns[0], prop)}
+			bad.Votes[i] = v
+		}
+	}
+	require.ErrorContains(t, bad.Validate(), "used twice")
 }

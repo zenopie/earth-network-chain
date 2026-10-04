@@ -69,7 +69,7 @@ const (
 	AttributeKeyIndex        = "index"
 	AttributeKeyNfRoot       = "nf_root"
 	AttributeKeyNfSize       = "nf_size"
-	AttributeKeyVoteNF       = "vote_nullifier"
+	AttributeKeyVoteNFs      = "vote_nullifiers"
 	AttributeKeyPayoutID     = "payout_id"
 	AttributeKeyNotes        = "notes"
 	AttributeKeyPositions    = "positions"

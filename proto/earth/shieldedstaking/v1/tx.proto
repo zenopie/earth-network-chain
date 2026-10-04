@@ -189,22 +189,29 @@ message MsgUndelegateResponse {
 // MsgClaimUnbonding and MsgClaimUnbondingResponse are retired (undelegations
 // pay out at maturity by themselves). Their type URLs are unregistered.
 
-// MsgStakeVote votes one derth/<validator> stake note on proposal_id without
-// spending it. proof (circuits/vote) shows, against the proposal's snapshot
-// (ProposalSnapshot.root and .nf_root), that the note was in the stake tree
-// and unspent when voting began, that 0 < weight <= its amount, and that
-// vote_nullifier = H(TAG_VNF, nk, rho, position, proposal_id). The chain
-// refuses a vote nullifier already used on the proposal (final: no
-// re-vote) and records weight at the validator. Nothing is spent or minted:
-// the note can vote on every other open proposal and be spent as usual.
-// bundle pays the fee against the shielded pool's current roots.
+// MsgStakeVote votes up to four derth/<validator> stake notes of one owner
+// on proposal_id with ONE public weight, without spending them. proof
+// (circuits/vote) shows, against the proposal's snapshot
+// (ProposalSnapshot.root and .nf_root), that every used slot's note was in
+// the stake tree and unspent when voting began, that its vote nullifier is
+// H(TAG_VNF, nk, rho, position, proposal_id) under the one nk, that an unused
+// slot's vote nullifier is 0, and that 0 < weight <= the notes' sum. The
+// wallet votes the sum rounded down to three significant digits (weight must
+// have at most three; RoundVoteWeight). The chain refuses a vote nullifier
+// repeated in the msg or already used on the proposal (final: no re-vote)
+// and records weight at the validator once. Nothing is spent or minted: the
+// notes can vote on every other open proposal and be spent as usual. bundle
+// pays the fee against the shielded pool's current roots.
 //
-// Public inputs (the chain supplies all but the proof and vote_nullifier):
+// An owner with more than four notes at a validator merges them first
+// (MsgRestake), or votes the rest in a second MsgStakeVote (its own weight).
+//
+// Public inputs (the chain supplies all but the proof and vote_nullifiers):
 // note_root, nf_root, asset = AssetID(derth/<validator>), weight,
-// proposal_id, vote_nullifier, sighash.
+// proposal_id, vote_nullifiers[0..3], sighash.
 //
 // sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
-// weight, vote_nullifier.
+// weight, vote_nullifiers[0..3].
 message MsgStakeVote {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   uint64 proposal_id = 2;
@@ -219,8 +226,13 @@ message MsgStakeVote {
   reserved "stake";
   // proof is the bb v5.0.0 UltraHonk proof of circuits/vote.
   bytes proof = 8;
-  // vote_nullifier is 32 bytes, one per note and proposal.
-  bytes vote_nullifier = 9;
+  // vote_nullifier (9): the one-note vote's single nullifier, replaced by
+  // vote_nullifiers.
+  reserved 9;
+  reserved "vote_nullifier";
+  // vote_nullifiers: exactly four, 32 bytes each: the used slots' vote
+  // nullifiers first (at least one, distinct, non-zero), then zeros.
+  repeated bytes vote_nullifiers = 10;
 }
 
 // MsgStakeVoteResponse is empty (nothing is minted).

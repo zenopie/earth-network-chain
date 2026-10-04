@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
@@ -26,11 +27,12 @@ import (
 // root and the stake nullifier tree's (both as of the end of the last block
 // that changed them) and, lazily, per validator, the derth supply. A
 // derth/v stake note that was in the tree then and unspent then votes WITHOUT
-// being spent: MsgStakeVote's vote proof (circuits/vote) shows the note under
-// the snapshot's note root, its spend nullifier absent from the snapshot's
-// nullifier tree (a low leaf), and publishes a weight (at most its amount)
-// and its vote nullifier H(TAG_VNF, nk, rho, position, proposal), which the
-// chain refuses a second time on that proposal. The note stays where it is:
+// being spent: MsgStakeVote's vote proof (circuits/vote) shows up to four
+// notes of one owner under the snapshot's note root, each one's spend
+// nullifier absent from the snapshot's nullifier tree (a low leaf), and
+// publishes ONE weight (at most their sum) and each note's vote nullifier
+// H(TAG_VNF, nk, rho, position, proposal), which the chain refuses a second
+// time on that proposal (UsedVoteNullifiers). The note stays where it is:
 // it votes on every other open proposal with another vote nullifier and is
 // spent as usual. Votes reveal no spend nullifier, so they are linked neither
 // to each other nor to the note's later spend (only by their public weight
@@ -416,14 +418,23 @@ func (k Keeper) putVote(ctx context.Context, v types.StakeVote) error {
 	if err := k.Votes.Set(ctx, key, v); err != nil {
 		return err
 	}
+	for _, vnf := range v.VoteNullifiers {
+		if err := k.UsedVoteNullifiers.Set(ctx, collections.Join(v.ProposalId, vnf)); err != nil {
+			return err
+		}
+	}
 	attrs := []sdk.Attribute{
 		sdk.NewAttribute(types.AttributeKeyProposal, strconv.FormatUint(v.ProposalId, 10)),
 		sdk.NewAttribute(types.AttributeKeyValidator, v.Validator),
 		sdk.NewAttribute(types.AttributeKeyDerth, v.Derth.String()),
 		sdk.NewAttribute(types.AttributeKeyOptions, v1.WeightedVoteOptions(v.Options).String()),
 	}
-	if !v.Position && len(v.Key) == 33 {
-		attrs = append(attrs, sdk.NewAttribute(types.AttributeKeyVoteNF, hex.EncodeToString(v.Key[1:])))
+	if !v.Position {
+		hs := make([]string, len(v.VoteNullifiers))
+		for i, vnf := range v.VoteNullifiers {
+			hs[i] = hex.EncodeToString(vnf)
+		}
+		attrs = append(attrs, sdk.NewAttribute(types.AttributeKeyVoteNFs, strings.Join(hs, ",")))
 	}
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeStakeVote, attrs...))
 	return nil
@@ -469,6 +480,23 @@ func (k Keeper) sweepSnapshots(ctx context.Context) {
 				}
 			}
 			budget -= len(votes)
+			if budget <= 0 {
+				return nil // more next block
+			}
+			var used []collections.Pair[uint64, []byte]
+			if err := k.UsedVoteNullifiers.Walk(cc, collections.NewPrefixedPairRange[uint64, []byte](id),
+				func(key collections.Pair[uint64, []byte]) (bool, error) {
+					used = append(used, key)
+					return len(used) >= budget, nil
+				}); err != nil {
+				return err
+			}
+			for _, key := range used {
+				if err := k.UsedVoteNullifiers.Remove(cc, key); err != nil {
+					return err
+				}
+			}
+			budget -= len(used)
 			if budget <= 0 {
 				return nil // more next block
 			}

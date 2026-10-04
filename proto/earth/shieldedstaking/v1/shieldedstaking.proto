@@ -276,12 +276,12 @@ message ValidatorSnapshot {
   ];
 }
 
-// StakeVote is one private stake vote: spent stake notes' (keyed by the
-// stake proof's first nullifier) or a position's.
+// StakeVote is one private stake vote: up to four stake notes' (keyed by
+// their first vote nullifier) or a position's.
 message StakeVote {
   uint64 proposal_id = 1;
-  // key is 0x00 || the stake proof's first nullifier (32 bytes) of a note vote,
-  // or 0x01 || the position id (8 bytes big-endian) of a position vote.
+  // key is 0x00 || the first vote nullifier (32 bytes) of a note vote, or
+  // 0x01 || the position id (8 bytes big-endian) of a position vote.
   bytes key = 2;
   bool position = 3;
   string validator = 4;
@@ -292,6 +292,9 @@ message StakeVote {
     (amino.dont_omitempty) = true
   ];
   repeated cosmos.gov.v1.WeightedVoteOption options = 6;
+  // vote_nullifiers are a note vote's vote nullifiers (1..4, the first the
+  // key's); empty for a position vote.
+  repeated bytes vote_nullifiers = 7;
 }
 
 // VoteTally is the derth voted privately for one validator on one proposal,

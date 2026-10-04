@@ -505,23 +505,50 @@ func (m *MsgUndelegate) ValidateBasic() error {
 
 // ---- MsgStakeVote ---------------------------------------------------------
 
-// VoteProofInputs is the vote circuit's public input count.
-const VoteProofInputs = 7
+// MaxVoteNotes is how many stake notes one vote proof carries (circuits/vote
+// MAX_NOTES): every MsgStakeVote has exactly this many vote nullifier slots.
+const MaxVoteNotes = 4
+
+// VoteProofInputs is the vote circuit's public input count: note_root,
+// nf_root, asset, weight, proposal_id, MaxVoteNotes vote nullifiers, sighash.
+const VoteProofInputs = 6 + MaxVoteNotes
 
 func (m *MsgStakeVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgStakeVote) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 
 // SighashFields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
-// weight, vote_nullifier.
+// weight, vote_nullifiers[0..MaxVoteNotes-1].
 func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
-	vnf, err := field("vote_nullifier", m.VoteNullifier)
-	if err != nil {
-		return nil, err
+	if len(m.VoteNullifiers) != MaxVoteNotes {
+		return nil, errorsmod.Wrapf(ErrInvalidMsg, "a stake vote carries exactly %d vote nullifiers", MaxVoteNotes)
 	}
-	return []fr.Element{privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
-		privacy.Bytes(OptionsBytes(m.Options)), privacy.U64(m.Weight), vnf}, nil
+	out := []fr.Element{privacy.U64(m.ProposalId), privacy.Bytes([]byte(m.Validator)),
+		privacy.Bytes(OptionsBytes(m.Options)), privacy.U64(m.Weight)}
+	for _, b := range m.VoteNullifiers {
+		vnf, err := field("vote_nullifier", b)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vnf)
+	}
+	return out, nil
 }
 
+// UsedVoteNullifiers is the msg's non-zero vote nullifiers, in order (one
+// per note voted). Call after ValidateBasic.
+func (m *MsgStakeVote) UsedVoteNullifiers() [][]byte {
+	var out [][]byte
+	for _, b := range m.VoteNullifiers {
+		if !isZero(b) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// ValidateBasic: exactly MaxVoteNotes vote nullifier slots, canonical field
+// elements, the used ones first (at least one), distinct, the rest zero; a
+// positive weight of at most three significant digits.
 func (m *MsgStakeVote) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
@@ -538,25 +565,45 @@ func (m *MsgStakeVote) ValidateBasic() error {
 	if err := shieldedtypes.CheckProofLength(m.Proof); err != nil {
 		return errorsmod.Wrapf(ErrInvalidMsg, "vote proof: %v", err)
 	}
-	vnf, err := field("vote_nullifier", m.VoteNullifier)
-	if err != nil {
-		return err
+	if len(m.VoteNullifiers) != MaxVoteNotes {
+		return errorsmod.Wrapf(ErrInvalidMsg, "a stake vote carries exactly %d vote nullifiers (zero for an unused slot)", MaxVoteNotes)
 	}
-	if vnf.IsZero() {
-		return errorsmod.Wrap(ErrInvalidMsg, "vote_nullifier must be non-zero")
+	seen := map[string]bool{}
+	zeros := false
+	for i, b := range m.VoteNullifiers {
+		vnf, err := field("vote_nullifier", b)
+		if err != nil {
+			return err
+		}
+		if vnf.IsZero() {
+			zeros = true
+			continue
+		}
+		if zeros {
+			return errorsmod.Wrapf(ErrInvalidMsg, "vote nullifier %d follows an unused slot: used slots come first", i)
+		}
+		if seen[string(b)] {
+			return errorsmod.Wrap(ErrInvalidMsg, "repeated vote nullifier: a note votes once")
+		}
+		seen[string(b)] = true
+	}
+	if len(seen) == 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "a stake vote votes at least one note")
 	}
 	return ValidateOptions(m.Options)
 }
 
 // VotePublicInputs lays out the vote circuit's public inputs: note_root,
 // nf_root (the proposal's snapshot roots), asset = AssetID(derth/<validator>),
-// weight, proposal_id, vote_nullifier, sighash. Call after ValidateBasic.
+// weight, proposal_id, vote_nullifiers[0..MaxVoteNotes-1], sighash. Call after
+// ValidateBasic.
 func (m *MsgStakeVote) VotePublicInputs(noteRoot, nfRoot []byte, sighash fr.Element) [][]byte {
-	return [][]byte{
+	out := [][]byte{
 		noteRoot, nfRoot, privacy.FieldBytes(privacy.AssetID(DerthDenom(m.Validator))),
 		privacy.FieldBytes(privacy.U64(m.Weight)), privacy.FieldBytes(privacy.U64(m.ProposalId)),
-		m.VoteNullifier, privacy.FieldBytes(sighash),
 	}
+	out = append(out, m.VoteNullifiers...)
+	return append(out, privacy.FieldBytes(sighash))
 }
 
 // ---- positions ------------------------------------------------------------

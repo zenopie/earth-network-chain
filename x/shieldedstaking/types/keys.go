@@ -163,6 +163,10 @@ var (
 	PayoutRetriesKey   = collections.NewPrefix(41)
 	MaturedRecordsKey  = collections.NewPrefix(42)
 	UnbondPayoutSeqKey = collections.NewPrefix(43)
+	// UsedVoteNullifiersKey holds every (proposal, vote nullifier) a note
+	// vote used (votes.go): a vote's every note, not only its first, which
+	// keys the vote.
+	UsedVoteNullifiersKey = collections.NewPrefix(44)
 )
 
 // UnbondPayoutRetryDelay is how long after its attempts-th failure a payout
