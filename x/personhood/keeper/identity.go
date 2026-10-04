@@ -179,6 +179,21 @@ func (k Keeper) recordIdentityRoot(ctx context.Context) error {
 }
 
 func (k Keeper) putIdentityRoot(ctx context.Context, rec types.IdentityRoot, latest bool) error {
+	// A root can recur: the tree's root does not commit to its size, so when
+	// every leaf appended since root R was zeroed again, the root is R once
+	// more. Its record moves to the new time; its old by-time entry must go
+	// with it, or the prune would later delete the record through the stale
+	// entry while the new one still holds it (the anchor expiring early), and
+	// export would find a by-time entry with no record (audit 6 B6-2).
+	if old, err := k.IdentityRoots.Get(ctx, rec.Root); err == nil {
+		if old.Time != rec.Time {
+			if err := k.IdentityRootsByTime.Remove(ctx, collections.Join(old.Time, rec.Root)); err != nil {
+				return err
+			}
+		}
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
 	if err := k.IdentityRoots.Set(ctx, rec.Root, rec); err != nil {
 		return err
 	}
