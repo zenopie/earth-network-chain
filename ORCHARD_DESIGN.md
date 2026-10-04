@@ -1298,7 +1298,25 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
   clear_before ≥ the chain's − 3,600 s and the root is current; a slash
   reaching a redelegation changes the root: re-prove). Owner tag salt as
   8.2.
-- **Delegate quote**: `Query/Validator` for B and S; derth = floor(amount ×
+- **Validator list** (`Query/Validators`, `/earth/shieldedstaking/v1/validators`):
+  wallets read **every page** of it, at one height (the response's `height`;
+  pin later pages with the `x-cosmos-block-height` header), and quote from
+  it; never ask about one validator (`Query/Validator`, x/staking's
+  per-validator queries) before a staking msg: that ties the asking IP to
+  the intent. Pages walk x/staking's validators in its key order (standard
+  `PageRequest`; limit at most 200, default 100; `count_total` on an offset
+  page); the last page also carries the books of validators x/staking has
+  removed (`staking.operator_address` ""). Each `ValidatorQuote`: x/staking's
+  `Validator` (status, jailed, tokens, shares, commission, description,
+  unbonding time), `tombstoned`, `delegatable` and `refusal` (why a
+  delegation or a redelegation into it would be refused: unknown, jailed,
+  tombstoned, slashed to nothing, or settling), `book` (P =
+  pending_delegation, U = pending_undelegation, S = derth_supply,
+  epoch_rate, slash_debt), `backing` B, `supply` S, `rate`, `delegation` D,
+  `rewards` W, and `redelegations` (the module's x/staking entries out of it
+  per destination: `entries`, `counted_entries`, for MsgRedelegate's gas,
+  8.3). Snapshots (votes) and the debt tree are global queries already.
+- **Delegate quote**: B and S from the list; derth = floor(amount ×
   S / B) less a margin for the rate's drift until the tx lands (~10 ppm), or
   amount exactly while S = 0. Lane A spends your derth/<v> note or pads (a
   fresh rho, position 0, nf = H(TAG_SNF, nk, rho, 0)); output = old + derth (a
@@ -1314,7 +1332,9 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
   floor(arrives × S_dst / B_dst) less both rates' margins, arrives = value −
   1,001 uerth (a bonded part up to 0.001 ERTH stays with src and x/staking
   truncates a uerth), or value exactly when src is Unbonded and its queue
-  covers it. Lane A as an undelegation; lane B spends your unlabelled
+  covers it. The split (8.7 step 3) uses src's `delegation` D, `book` U and
+  queue P + `rewards` W (the rewards join the queue first); dst must be
+  `delegatable`. Lane A as an undelegation; lane B spends your unlabelled
   derth/<dst> note (or pads), cr_v_in = dst_derth, cr_move_time = move_time =
   the latest block's time. Gas varies with the pair's entry count: simulate.
   A refused quote costs nothing.

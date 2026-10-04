@@ -33,6 +33,13 @@ type BankKeeper interface {
 	SendCoins(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) error
 }
 
+// StakingValidatorsQuerier is x/staking's paged Query/Validators
+// (stakingkeeper.Querier): Query/Validators walks x/staking's validators
+// with it, in x/staking's own key order and page semantics.
+type StakingValidatorsQuerier interface {
+	Validators(ctx context.Context, req *stakingtypes.QueryValidatorsRequest) (*stakingtypes.QueryValidatorsResponse, error)
+}
+
 // StakingKeeper is x/staking, driven by this module as a delegator.
 type StakingKeeper interface {
 	ValidatorAddressCodec() address.Codec

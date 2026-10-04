@@ -21,6 +21,10 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "validator"}},
 				},
 				{
+					RpcMethod: "Validators", Use: "validators",
+					Short: "List every validator's book, rate, status and delegatability (what wallets quote from)",
+				},
+				{
 					RpcMethod: "UnbondRecord", Use: "unbond-record [valoper] [epoch]", Short: "Show one epoch's private undelegation record",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "validator"}, {ProtoField: "epoch"}},
 				},

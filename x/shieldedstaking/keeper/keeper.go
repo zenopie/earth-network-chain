@@ -37,6 +37,7 @@ type Keeper struct {
 	auth       types.AuthKeeper
 	bank       types.BankKeeper
 	staking    types.StakingKeeper
+	stakingQ   types.StakingValidatorsQuerier
 	distr      types.DistrKeeper
 	slashing   types.SlashingKeeper
 	shielded   shieldedkeeper.Keeper
@@ -174,6 +175,7 @@ func NewKeeper(
 	auth types.AuthKeeper,
 	bank types.BankKeeper,
 	staking types.StakingKeeper,
+	stakingQ types.StakingValidatorsQuerier,
 	distr types.DistrKeeper,
 	slashing types.SlashingKeeper,
 	shielded shieldedkeeper.Keeper,
@@ -191,6 +193,7 @@ func NewKeeper(
 		auth:         auth,
 		bank:         bank,
 		staking:      staking,
+		stakingQ:     stakingQ,
 		distr:        distr,
 		slashing:     slashing,
 		shielded:     shielded,

@@ -10,6 +10,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
@@ -44,7 +45,7 @@ type ModuleInputs struct {
 
 	AuthKeeper       types.AuthKeeper
 	BankKeeper       types.BankKeeper
-	StakingKeeper    types.StakingKeeper
+	StakingKeeper    *stakingkeeper.Keeper
 	DistrKeeper      types.DistrKeeper
 	SlashingKeeper   types.SlashingKeeper
 	ShieldedKeeper   shieldedkeeper.Keeper
@@ -76,7 +77,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		authority = authtypes.NewModuleAddressOrBech32Address(in.Config.Authority)
 	}
 	k := keeper.NewKeeper(in.StoreService, in.Cdc, in.AddressCodec, authority,
-		in.AuthKeeper, in.BankKeeper, in.StakingKeeper, in.DistrKeeper, in.SlashingKeeper,
+		in.AuthKeeper, in.BankKeeper, in.StakingKeeper, stakingkeeper.NewQuerier(in.StakingKeeper), in.DistrKeeper, in.SlashingKeeper,
 		in.ShieldedKeeper, in.AllocationKeeper)
 
 	keeper.RegisterPrivateActions(in.ShieldedKeeper.RegisterPrivateAction, keeper.NewActionHandler(k))

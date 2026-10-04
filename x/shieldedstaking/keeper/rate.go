@@ -116,29 +116,47 @@ func (k Keeper) pendingRewards(ctx context.Context, v stakingtypes.Validator, de
 
 // Backing is B_v and S_v.
 func (k Keeper) Backing(ctx context.Context, valoper string) (backing, supply math.Int, err error) {
-	vs, err := k.ValidatorState(ctx, valoper)
+	bk, err := k.book(ctx, valoper)
 	if err != nil {
 		return math.Int{}, math.Int{}, err
+	}
+	return bk.backing, bk.supply, nil
+}
+
+// bookParts is v's book with the parts of its backing: B = D + W + P - U
+// (floored at zero), S.
+type bookParts struct {
+	state      types.ValidatorState
+	delegation math.Int // D
+	rewards    math.Int // W
+	backing    math.Int // B
+	supply     math.Int // S
+}
+
+func (k Keeper) book(ctx context.Context, valoper string) (bookParts, error) {
+	vs, err := k.ValidatorState(ctx, valoper)
+	if err != nil {
+		return bookParts{}, err
 	}
 	val, err := k.valAddr(valoper)
 	if err != nil {
-		return math.Int{}, math.Int{}, err
+		return bookParts{}, err
 	}
 	d, del, v, found, err := k.delegation(ctx, val)
 	if err != nil {
-		return math.Int{}, math.Int{}, err
+		return bookParts{}, err
 	}
 	w := math.ZeroInt()
 	if found && !del.Shares.IsZero() {
 		if w, err = k.pendingRewards(ctx, v, del); err != nil {
-			return math.Int{}, math.Int{}, err
+			return bookParts{}, err
 		}
 	}
 	b := d.Add(w).Add(vs.PendingDelegation).Sub(vs.PendingUndelegation)
 	if b.IsNegative() {
 		b = math.ZeroInt()
 	}
-	return b, k.Supply(ctx, valoper), nil
+	return bookParts{state: vs, delegation: d, rewards: w, backing: b, supply: vs.DerthSupply}, nil
 }
 
 // Rate is the live rate_v.

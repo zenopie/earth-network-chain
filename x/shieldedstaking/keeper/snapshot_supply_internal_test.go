@@ -29,7 +29,7 @@ func TestSnapshotSupplyIsStartOfBlock(t *testing.T) {
 	ctx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("tt")).Ctx
 	enc := moduletestutil.MakeTestEncodingConfig()
 	k := NewKeeper(runtime.NewKVStoreService(key), enc.Codec, addresscodec.NewBech32Codec("earth"),
-		authtypes.NewModuleAddress("gov"), nil, nil, nil, nil, nil, shieldedkeeper.Keeper{}, allocationkeeper.Keeper{})
+		authtypes.NewModuleAddress("gov"), nil, nil, nil, nil, nil, nil, shieldedkeeper.Keeper{}, allocationkeeper.Keeper{})
 	const val = "earthvaloper1test"
 	at := func(h int64) sdk.Context { return ctx.WithBlockHeight(h) }
 	change := func(c sdk.Context, d int64) {

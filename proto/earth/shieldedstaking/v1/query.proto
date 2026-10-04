@@ -3,6 +3,7 @@ package earth.shieldedstaking.v1;
 
 import "amino/amino.proto";
 import "cosmos/base/query/v1beta1/pagination.proto";
+import "cosmos/staking/v1beta1/staking.proto";
 import "cosmos_proto/cosmos.proto";
 import "earth/shieldedstaking/v1/params.proto";
 import "earth/shieldedstaking/v1/shieldedstaking.proto";
@@ -25,6 +26,17 @@ service Query {
   // Validator is one validator's book, live rate and derth supply.
   rpc Validator(QueryValidatorRequest) returns (QueryValidatorResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/validators/{validator}";
+  }
+  // Validators is every validator, paged: its book, its x/staking record and
+  // whether it takes delegations. Everything a wallet needs to quote a
+  // delegation, undelegation, redelegation or stake vote, read as one list
+  // so that no query names the validator a wallet is about to act on (a
+  // per-validator read ties the asking IP to an intent shortly before a
+  // public msg). Pages walk x/staking's validators in its key order; the
+  // last page (no next_key) also carries every book whose validator
+  // x/staking has removed.
+  rpc Validators(QueryValidatorsRequest) returns (QueryValidatorsResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/validators";
   }
   // UnbondRecord is one epoch's private undelegation from a validator.
   rpc UnbondRecord(QueryUnbondRecordRequest) returns (QueryUnbondRecordResponse) {
@@ -124,6 +136,95 @@ message QueryValidatorResponse {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+}
+
+// QueryValidatorsRequest is the request type for Query/Validators. The
+// page limit is at most 200 (0: 100).
+message QueryValidatorsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryValidatorsResponse is one page of Query/Validators. height is the
+// block the page was read at: a wallet reads every page at the same height
+// (the x-cosmos-block-height header) so the quotes are of one state.
+message QueryValidatorsResponse {
+  repeated ValidatorQuote validators = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+  int64 height = 3;
+}
+
+// ValidatorQuote is what quoting a staking msg at one validator reads
+// (ORCHARD_DESIGN.md 12.2): the book B = D + W + P - U and S, the rate,
+// the queue, bond status and the delegation refusals.
+message ValidatorQuote {
+  // validator is the operator address (canonical bech32).
+  string validator = 1;
+  // staking is x/staking's validator: status (bonded, unbonding, unbonded),
+  // jailed, tokens, delegator shares, commission, description, unbonding
+  // height and time. Empty (operator_address "") for a book whose validator
+  // x/staking has removed.
+  cosmos.staking.v1beta1.Validator staking = 2 [(gogoproto.nullable) = false];
+  // tombstoned: x/slashing tombstoned its consensus key.
+  bool tombstoned = 3;
+  // delegatable: a delegation or a redelegation into it would be taken now
+  // (not unknown, jailed, tombstoned or slashed to nothing, and its book is
+  // not settling: S = 0 with B > 0). refusal is why not ("" when
+  // delegatable). Undelegations, redelegations out and stake votes do not
+  // depend on it.
+  bool delegatable = 4;
+  string refusal = 5;
+  // book is the module's ValidatorState: pending_delegation (P, the queue),
+  // pending_undelegation (U), derth_supply (S), epoch_rate (Groundworks
+  // weight), slash_debt. Zero values when it has no book yet.
+  ValidatorState book = 6 [(gogoproto.nullable) = false];
+  // backing is B = D + W + P - U, supply S and rate B / S (1 while S = 0):
+  // the live values every conversion uses.
+  string backing = 7 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string supply = 8 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string rate = 9 [
+    (cosmos_proto.scalar) = "cosmos.Dec",
+    (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // delegation is D, the module's delegation in tokens (truncated), and
+  // rewards W, its unwithdrawn uerth rewards: with P and U, how a
+  // redelegation's value splits between the queue and the bonded part.
+  string delegation = 10 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string rewards = 11 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // redelegations are the module's x/staking redelegations out of this
+  // validator, one per destination: what a MsgRedelegate's gas grows with.
+  repeated RedelegationLoad redelegations = 12 [(gogoproto.nullable) = false];
+}
+
+// RedelegationLoad is the module's x/staking redelegation record from one
+// validator to dst_validator: entries in it, and counted_entries those of
+// positive height (at MaxEntryHeightsPerPair, 1,024, a move first merges
+// two: ORCHARD_DESIGN.md 8.3 gas, 8.7).
+message RedelegationLoad {
+  string dst_validator = 1;
+  uint32 entries = 2;
+  uint32 counted_entries = 3;
 }
 
 // QueryUnbondRecordRequest is the request type for Query/UnbondRecord.

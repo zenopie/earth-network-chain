@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"errors"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -53,6 +55,146 @@ func (q queryServer) Validator(ctx context.Context, req *types.QueryValidatorReq
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	return &types.QueryValidatorResponse{State: vs, Rate: rateOf(b, s), Supply: s, Backing: b}, nil
+}
+
+// MaxValidatorsPage is Query/Validators' largest page.
+const MaxValidatorsPage = 200
+
+// Validators pages every validator with what quoting reads (ValidatorQuote):
+// x/staking's validators through its own paged query (its keys, its
+// next_key), then, on the last page, every book whose validator x/staking
+// has removed.
+func (q queryServer) Validators(ctx context.Context, req *types.QueryValidatorsRequest) (*types.QueryValidatorsResponse, error) {
+	if q.k.stakingQ == nil {
+		return nil, status.Error(codes.Unavailable, "x/staking's validator query is not wired")
+	}
+	page := &query.PageRequest{}
+	if req != nil && req.Pagination != nil {
+		p := *req.Pagination
+		page = &p
+	}
+	if page.Limit == 0 {
+		page.Limit = query.DefaultLimit
+	}
+	if page.Limit > MaxValidatorsPage {
+		page.Limit = MaxValidatorsPage
+	}
+	sres, err := q.k.stakingQ.Validators(ctx, &stakingtypes.QueryValidatorsRequest{Pagination: page})
+	if err != nil {
+		return nil, err
+	}
+	res := &types.QueryValidatorsResponse{
+		Validators: make([]types.ValidatorQuote, 0, len(sres.Validators)),
+		Pagination: sres.Pagination,
+		Height:     sdk.UnwrapSDKContext(ctx).BlockHeight(),
+	}
+	for _, v := range sres.Validators {
+		vq, err := q.k.validatorQuote(ctx, v.OperatorAddress, v)
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		res.Validators = append(res.Validators, vq)
+	}
+	if res.Pagination == nil {
+		res.Pagination = &query.PageResponse{}
+	}
+	last := len(res.Pagination.NextKey) == 0
+	// x/staking counts a total only for a page asked by offset.
+	countTotal := page.CountTotal && len(page.Key) == 0
+	if !last && !countTotal {
+		return res, nil
+	}
+	// Books left by validators x/staking removed (a book outlives its
+	// validator only while its value winds down): on the last page, and
+	// in the total.
+	removed, err := q.k.removedValidatorBooks(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if countTotal {
+		res.Pagination.Total += uint64(len(removed))
+	}
+	if last {
+		for _, valoper := range removed {
+			vq, err := q.k.validatorQuote(ctx, valoper, stakingtypes.Validator{})
+			if err != nil {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+			res.Validators = append(res.Validators, vq)
+		}
+	}
+	return res, nil
+}
+
+// removedValidatorBooks are the books whose validator x/staking has
+// removed, in key order.
+func (k Keeper) removedValidatorBooks(ctx context.Context) ([]string, error) {
+	var removed []string
+	err := k.Validators.Walk(ctx, nil, func(valoper string, _ types.ValidatorState) (bool, error) {
+		val, err := k.valAddr(valoper)
+		if err != nil {
+			return true, err
+		}
+		if _, err := k.staking.GetValidator(ctx, val); errors.Is(err, stakingtypes.ErrNoValidatorFound) {
+			removed = append(removed, valoper)
+		} else if err != nil {
+			return true, err
+		}
+		return false, nil
+	})
+	return removed, err
+}
+
+// validatorQuote is one validator's ValidatorQuote; v is x/staking's
+// validator (zero when x/staking removed it).
+func (k Keeper) validatorQuote(ctx context.Context, valoper string, v stakingtypes.Validator) (types.ValidatorQuote, error) {
+	val, err := k.valAddr(valoper)
+	if err != nil {
+		return types.ValidatorQuote{}, err
+	}
+	bk, err := k.book(ctx, valoper)
+	if err != nil {
+		return types.ValidatorQuote{}, err
+	}
+	vq := types.ValidatorQuote{
+		Validator:  valoper,
+		Staking:    v,
+		Book:       bk.state,
+		Backing:    bk.backing,
+		Supply:     bk.supply,
+		Rate:       rateOf(bk.backing, bk.supply),
+		Delegation: bk.delegation,
+		Rewards:    bk.rewards,
+	}
+	if v.OperatorAddress != "" {
+		if cons, err := v.GetConsAddr(); err == nil {
+			vq.Tombstoned = k.slashing.IsTombstoned(ctx, cons)
+		}
+	}
+	refusal := k.checkDelegatable(ctx, valoper)
+	if refusal == nil && !bk.supply.IsPositive() && bk.backing.IsPositive() {
+		refusal = types.ErrValidator.Wrapf("%s's book is settling (no derth, %s%s backing) until the epoch end", valoper, bk.backing, types.BondDenom)
+	}
+	if refusal != nil {
+		vq.Refusal = refusal.Error()
+	} else {
+		vq.Delegatable = true
+	}
+	reds, err := k.staking.GetRedelegationsFromSrcValidator(ctx, val)
+	if err != nil {
+		return types.ValidatorQuote{}, err
+	}
+	for _, red := range reds {
+		if red.DelegatorAddress != k.modString(ctx) {
+			continue
+		}
+		vq.Redelegations = append(vq.Redelegations, types.RedelegationLoad{
+			DstValidator:   red.ValidatorDstAddress,
+			Entries:        uint32(len(red.Entries)),
+			CountedEntries: uint32(countedEntries(red.Entries)),
+		})
+	}
+	return vq, nil
 }
 
 func (q queryServer) UnbondRecord(ctx context.Context, req *types.QueryUnbondRecordRequest) (*types.QueryUnbondRecordResponse, error) {
