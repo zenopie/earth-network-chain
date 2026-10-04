@@ -1261,6 +1261,17 @@ redelegation record decoded once a pass):
 Allocation and position splits drop options pruned since. A zero-height
 export drops open moves (8.7).
 
+### 11.4 Launch ceremony
+
+The committed genesis is the placeholder until the operator runs
+`scripts/ceremony.sh --genesis-time <RFC3339> --pubkey <json>`
+(networks/genesis/README.md): operator `earth1n6amvk…` (its mnemonic read
+from the deploy .env at run time only), consensus key `PGqvPN4C…`, the
+devnet faucet and gas wallet removed, genesis rebuilt. The genesis sha256
+at the top of this document is the placeholder's; the ceremony prints the
+launch one. `TestLaunchCeremony` reports PENDING CEREMONY until then
+(`EARTH_REQUIRE_CEREMONY=1` fails instead).
+
 ---
 
 ## 12. Wallet formats

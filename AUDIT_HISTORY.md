@@ -252,6 +252,9 @@ max_entries shared, griefable) is gone with change 4.
 - Standing audit assumptions (ORCHARD_DESIGN, soundness): bb's MSM black box
   for witness points; gnark-crypto grumpkin is partially audited; the
   value-base sign check is the only defence against the −G inflation case.
-- **Open, needs the user (audit 6):** `networks/genesis/accounts.json` still
-  holds the devnet faucet (`earth1s7rgs…`) and gas wallet (`earth1jtc2z…`);
-  the genesis validator swap to `earth1n6amvk…` needs the ceremony gentx.
+- **Open, needs the user (audit 6):** the launch ceremony. `accounts.json`
+  still holds the devnet faucet (`earth1s7rgs…`) and gas wallet
+  (`earth1jtc2z…`) and the placeholder validator; `scripts/ceremony.sh
+  --genesis-time <RFC3339> --pubkey <json>` removes them, swaps in
+  `earth1n6amvk…`, signs the gentx and rebuilds genesis. `TestLaunchCeremony`
+  reports PENDING CEREMONY until it has run.

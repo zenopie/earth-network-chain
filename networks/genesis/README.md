@@ -57,34 +57,39 @@ and rebuild. Adding a CSCA means adding the certificate under `csca/` — the
 trust store on disk and the one in genesis cannot disagree, because one is
 generated from the other.
 
-## TODO(ceremony): a new consensus key for the privacy relaunch
+## The launch ceremony (pending until it has run)
 
-The relaunch keeps chain-id `earth-1`, but `gentx/genesis-validator.json` still
-carries the old devnet validator's consensus pubkey and is a placeholder. A key
-that signed earth-1 heights before must not sign them again: at the genesis
-ceremony the operator runs
+The committed sources are the **placeholder** set: the gentx is signed by the
+placeholder account `earth14e6s…` (already with the launch consensus key
+`PGqvPN4C…`, which never signed any chain), `accounts.json` still funds the
+devnet faucet `earth1s7rgs…` and the ads-for-gas wallet `earth1jtc2z…`, and
+`genesis_time` is a past placeholder. On the operator's machine, one command
+turns them into the launch genesis:
 
-    VALIDATOR_MNEMONIC='...' scripts/ceremony-gentx.sh [--pubkey '<remote signer pubkey>']
+    scripts/ceremony.sh --genesis-time <RFC3339> --pubkey '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"PGqvPN4CxEkxvvh3tSBX0SGeBgjMdqQwZkdHt8FRLm4="}'
 
-which keeps the operator, self-delegation, moniker and commission, swaps in a
-fresh consensus key (refusing to reuse the old one), and is followed by
-`make genesis && make genesis-check`.
+It reads `VALIDATOR_MNEMONIC` (from the environment, else only that line of
+the deploy repo's `.env`, or `--env-file`), checks it is the launch operator
+`earth1n6amvkgfrrgy6ulhurewnm0endkgye69fkcapr`, removes the two devnet
+accounts, swaps the validator account for the operator with the same 1,000
+ERTH, sets `genesis_time` (UTC, in the future), signs a new gentx with the
+given consensus key (refusing one that signed an earlier earth-1), rebuilds
+`networks/genesis.json` and runs `make genesis-check` and the genesis tests
+with the ceremony required. Any failure restores every source. Then commit
+the sources with the rebuilt genesis and publish its sha256.
+
+Until then `TestLaunchCeremony` (networks/ceremony_test.go) checks what holds
+in both states (one gentx, the launch consensus key, signed by its funded
+operator; exactly the placeholder set, never a mix) and reports **PENDING
+CEREMONY** as a skip; `EARTH_REQUIRE_CEREMONY=1 go test ./networks/` (what
+the script and a release build run) fails instead.
 
 ## Still to decide before this is a real launch
 
 These are in `docs/LAUNCH_CHECKLIST.md` and none of them is a thing this script
-can decide for you. The values here are today's devnet values:
+can decide for you:
 
-- **`genesis_time`** is the timestamp of the machine that first generated the
-  file. It must be a real UTC instant near the actual launch, and the container
-  entrypoint has to stop rewriting it at boot — that rewrite is why no two nodes
-  can currently share a chain.
-- **`gentx/` is empty**, so the validator set at height 1 is empty. Either
-  collect gentxs from the launch operators or launch and take
-  `MsgCreateValidator` after height 1 — both work, leaving it implicit does not.
-- **The one keyed account is a devnet key.** `earth1jtc2zj…` is the ads-for-gas
-  hot wallet and its key has no value. Replace it with real operational funding
-  from a key that has never been on a laptop.
-- **`app_version` is `0`.** Set it to the launch app version.
-- **The verifying keys are placeholders**, and `min_deposit`, the minimum gas
-  price and the slashing window are all still devnet numbers.
+- **`genesis_time`** must be a real UTC instant near the actual launch (the
+  ceremony sets it), and the container entrypoint must not rewrite it at boot.
+- `min_deposit`, the minimum gas price and the slashing window are still the
+  devnet numbers.
