@@ -125,8 +125,8 @@ func (m *MsgUpdateParamsResponse) XXX_DiscardUnknown() {
 var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
 // StakeProof is a stake circuit proof and its public values. The chain
-// supplies the rest of its public inputs: asset (the msg's derth or unbond
-// asset id), v_in (0), v_out (the msg's amount, or 0) and the sighash. Public
+// supplies the rest of its public inputs: asset (the msg's derth asset id,
+// 0 for a position msg), v_in (0), v_out (the msg's amount, or 0) and the sighash. Public
 // input order: anchor, asset, nf_0, nf_1, cm_out_0, cm_out_1, v_in, v_out,
 // spc_mint, owner_tag, sighash.
 type StakeProof struct {
@@ -153,8 +153,8 @@ type StakeProof struct {
 	// spc_ciphertext is the amount-blind stake ciphertext (zk/privacy
 	// EncryptBlindStakeNote: rho, rcm, memo of spc_mint's note), exactly 177
 	// bytes, for the note the chain mints to spc_mint: required by the msgs
-	// that mint one (Delegate, Undelegate, UnlockPosition), empty
-	// otherwise. The owner recomputes spc and cm from the denom and amount the
+	// that mint one (Delegate, UnlockPosition), empty otherwise. spc_mint is
+	// proven for every msg but used only by those two. The owner recomputes spc and cm from the denom and amount the
 	// chain publishes with the note.
 	SpcCiphertext []byte `protobuf:"bytes,8,opt,name=spc_ciphertext,json=spcCiphertext,proto3" json:"spc_ciphertext,omitempty"`
 }
@@ -488,16 +488,30 @@ func (m *MsgRestakeResponse) GetPositions() []uint64 {
 }
 
 // MsgUndelegate: the proof spends derth/<validator> notes, amount of them
-// leaving (v_out), any change back to the owner; the chain mints an
-// owner-locked unbond/<validator>/<epoch> claim of the derth's live ERTH value
-// to stake.spc_mint. bundle pays the fee only.
+// leaving (v_out), any change back to the owner. The chain books the derth's
+// live ERTH value u into this epoch's undelegation for validator and queues
+// a payout of it to pc: once the epoch's SDK unbonding entry has matured
+// (about unbonding_time after the epoch end), the chain mints
+// u x payout / requested ERTH (the record's slash-adjusted payout, pro rata)
+// as ordinary transferable notes to pc in the shielded pool, with
+// ciphertext, by itself: no claim msg, no fee. A payout above 2^63-1 is
+// minted as several notes to the same pc and ciphertext. bundle pays the fee
+// only. stake.spc_mint is proven but unused (no stake note is minted);
+// stake.spc_ciphertext must be empty.
 //
-// sighash fields: StakeFields(stake), Bytes(validator), amount.
+// sighash fields: StakeFields(stake), Bytes(validator), amount, pc,
+// Bytes(ciphertext).
 type MsgUndelegate struct {
 	Bundle    types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle"`
 	Validator string       `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
 	Amount    uint64       `protobuf:"varint,3,opt,name=amount,proto3" json:"amount,omitempty"`
 	Stake     StakeProof   `protobuf:"bytes,5,opt,name=stake,proto3" json:"stake"`
+	// pc is the payout notes' owner commitment (32 bytes, a field element):
+	// PC(owner_pk, rho, rcm) of the wallet's own pool address, or anyone's.
+	Pc []byte `protobuf:"bytes,6,opt,name=pc,proto3" json:"pc,omitempty"`
+	// ciphertext is the payout notes' amount-blind v2 ciphertext (zk/privacy
+	// EncryptBlindNote, exactly 177 bytes), emitted with every payout note.
+	Ciphertext []byte `protobuf:"bytes,7,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
 }
 
 func (m *MsgUndelegate) Reset()         { *m = MsgUndelegate{} }
@@ -561,11 +575,25 @@ func (m *MsgUndelegate) GetStake() StakeProof {
 	return StakeProof{}
 }
 
-// MsgUndelegateResponse returns the claim's denom, value and position.
+func (m *MsgUndelegate) GetPc() []byte {
+	if m != nil {
+		return m.Pc
+	}
+	return nil
+}
+
+func (m *MsgUndelegate) GetCiphertext() []byte {
+	if m != nil {
+		return m.Ciphertext
+	}
+	return nil
+}
+
+// MsgUndelegateResponse returns the ERTH value booked and the payout's id
+// (UnbondPayout.id; the shieldedstaking_unbond_payout event names it).
 type MsgUndelegateResponse struct {
-	Denom    string `protobuf:"bytes,1,opt,name=denom,proto3" json:"denom,omitempty"`
 	Value    uint64 `protobuf:"varint,2,opt,name=value,proto3" json:"value,omitempty"`
-	Position uint64 `protobuf:"varint,3,opt,name=position,proto3" json:"position,omitempty"`
+	PayoutId uint64 `protobuf:"varint,4,opt,name=payout_id,json=payoutId,proto3" json:"payout_id,omitempty"`
 }
 
 func (m *MsgUndelegateResponse) Reset()         { *m = MsgUndelegateResponse{} }
@@ -601,13 +629,6 @@ func (m *MsgUndelegateResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUndelegateResponse proto.InternalMessageInfo
 
-func (m *MsgUndelegateResponse) GetDenom() string {
-	if m != nil {
-		return m.Denom
-	}
-	return ""
-}
-
 func (m *MsgUndelegateResponse) GetValue() uint64 {
 	if m != nil {
 		return m.Value
@@ -615,177 +636,9 @@ func (m *MsgUndelegateResponse) GetValue() uint64 {
 	return 0
 }
 
-func (m *MsgUndelegateResponse) GetPosition() uint64 {
+func (m *MsgUndelegateResponse) GetPayoutId() uint64 {
 	if m != nil {
-		return m.Position
-	}
-	return 0
-}
-
-// MsgClaimUnbonding: once unbond/<validator>/<epoch> has matured, the proof
-// spends the owner's claim notes, amount of them leaving (v_out), any change
-// back; the chain mints ERTH = amount x payout / requested to pc in the
-// shielded pool (an ordinary, transferable note), less fee_from_output.
-//
-// With fee_from_output the msg carries no bundle: the fee comes out of the
-// claimed ERTH and the claim runs in the private ante, atomically with the
-// spend. Otherwise the bundle's uerth balance is the fee. A claim is the only
-// private msg that may pay from its output. ciphertext is the payout note's
-// amount-blind v2 ciphertext (177 bytes).
-//
-// sighash fields: StakeFields(stake), Bytes(validator), epoch, amount, pc,
-// Bytes(ciphertext), fee_from_output.
-type MsgClaimUnbonding struct {
-	// bundle is absent (no actions) when fee_from_output pays the fee.
-	Bundle        *types.Bundle `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle,omitempty"`
-	Validator     string        `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
-	Epoch         uint64        `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	Amount        uint64        `protobuf:"varint,4,opt,name=amount,proto3" json:"amount,omitempty"`
-	Pc            []byte        `protobuf:"bytes,5,opt,name=pc,proto3" json:"pc,omitempty"`
-	Ciphertext    []byte        `protobuf:"bytes,6,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	FeeFromOutput uint64        `protobuf:"varint,7,opt,name=fee_from_output,json=feeFromOutput,proto3" json:"fee_from_output,omitempty"`
-	Stake         StakeProof    `protobuf:"bytes,9,opt,name=stake,proto3" json:"stake"`
-}
-
-func (m *MsgClaimUnbonding) Reset()         { *m = MsgClaimUnbonding{} }
-func (m *MsgClaimUnbonding) String() string { return proto.CompactTextString(m) }
-func (*MsgClaimUnbonding) ProtoMessage()    {}
-func (*MsgClaimUnbonding) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{9}
-}
-func (m *MsgClaimUnbonding) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *MsgClaimUnbonding) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_MsgClaimUnbonding.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *MsgClaimUnbonding) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MsgClaimUnbonding.Merge(m, src)
-}
-func (m *MsgClaimUnbonding) XXX_Size() int {
-	return m.Size()
-}
-func (m *MsgClaimUnbonding) XXX_DiscardUnknown() {
-	xxx_messageInfo_MsgClaimUnbonding.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_MsgClaimUnbonding proto.InternalMessageInfo
-
-func (m *MsgClaimUnbonding) GetBundle() *types.Bundle {
-	if m != nil {
-		return m.Bundle
-	}
-	return nil
-}
-
-func (m *MsgClaimUnbonding) GetValidator() string {
-	if m != nil {
-		return m.Validator
-	}
-	return ""
-}
-
-func (m *MsgClaimUnbonding) GetEpoch() uint64 {
-	if m != nil {
-		return m.Epoch
-	}
-	return 0
-}
-
-func (m *MsgClaimUnbonding) GetAmount() uint64 {
-	if m != nil {
-		return m.Amount
-	}
-	return 0
-}
-
-func (m *MsgClaimUnbonding) GetPc() []byte {
-	if m != nil {
-		return m.Pc
-	}
-	return nil
-}
-
-func (m *MsgClaimUnbonding) GetCiphertext() []byte {
-	if m != nil {
-		return m.Ciphertext
-	}
-	return nil
-}
-
-func (m *MsgClaimUnbonding) GetFeeFromOutput() uint64 {
-	if m != nil {
-		return m.FeeFromOutput
-	}
-	return 0
-}
-
-func (m *MsgClaimUnbonding) GetStake() StakeProof {
-	if m != nil {
-		return m.Stake
-	}
-	return StakeProof{}
-}
-
-// MsgClaimUnbondingResponse returns the ERTH minted to pc (the claim less
-// fee_from_output; 0 if slashed away) and the note's position.
-type MsgClaimUnbondingResponse struct {
-	Amount   uint64 `protobuf:"varint,1,opt,name=amount,proto3" json:"amount,omitempty"`
-	Position uint64 `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
-}
-
-func (m *MsgClaimUnbondingResponse) Reset()         { *m = MsgClaimUnbondingResponse{} }
-func (m *MsgClaimUnbondingResponse) String() string { return proto.CompactTextString(m) }
-func (*MsgClaimUnbondingResponse) ProtoMessage()    {}
-func (*MsgClaimUnbondingResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{10}
-}
-func (m *MsgClaimUnbondingResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *MsgClaimUnbondingResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_MsgClaimUnbondingResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *MsgClaimUnbondingResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MsgClaimUnbondingResponse.Merge(m, src)
-}
-func (m *MsgClaimUnbondingResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *MsgClaimUnbondingResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_MsgClaimUnbondingResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_MsgClaimUnbondingResponse proto.InternalMessageInfo
-
-func (m *MsgClaimUnbondingResponse) GetAmount() uint64 {
-	if m != nil {
-		return m.Amount
-	}
-	return 0
-}
-
-func (m *MsgClaimUnbondingResponse) GetPosition() uint64 {
-	if m != nil {
-		return m.Position
+		return m.PayoutId
 	}
 	return 0
 }
@@ -822,7 +675,7 @@ func (m *MsgStakeVote) Reset()         { *m = MsgStakeVote{} }
 func (m *MsgStakeVote) String() string { return proto.CompactTextString(m) }
 func (*MsgStakeVote) ProtoMessage()    {}
 func (*MsgStakeVote) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{11}
+	return fileDescriptor_ebf40c3361e45611, []int{9}
 }
 func (m *MsgStakeVote) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -908,7 +761,7 @@ func (m *MsgStakeVoteResponse) Reset()         { *m = MsgStakeVoteResponse{} }
 func (m *MsgStakeVoteResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgStakeVoteResponse) ProtoMessage()    {}
 func (*MsgStakeVoteResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{12}
+	return fileDescriptor_ebf40c3361e45611, []int{10}
 }
 func (m *MsgStakeVoteResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -957,7 +810,7 @@ func (m *MsgLockPosition) Reset()         { *m = MsgLockPosition{} }
 func (m *MsgLockPosition) String() string { return proto.CompactTextString(m) }
 func (*MsgLockPosition) ProtoMessage()    {}
 func (*MsgLockPosition) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{13}
+	return fileDescriptor_ebf40c3361e45611, []int{11}
 }
 func (m *MsgLockPosition) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1030,7 +883,7 @@ func (m *MsgLockPositionResponse) Reset()         { *m = MsgLockPositionResponse
 func (m *MsgLockPositionResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgLockPositionResponse) ProtoMessage()    {}
 func (*MsgLockPositionResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{14}
+	return fileDescriptor_ebf40c3361e45611, []int{12}
 }
 func (m *MsgLockPositionResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1081,7 +934,7 @@ func (m *MsgUpdatePosition) Reset()         { *m = MsgUpdatePosition{} }
 func (m *MsgUpdatePosition) String() string { return proto.CompactTextString(m) }
 func (*MsgUpdatePosition) ProtoMessage()    {}
 func (*MsgUpdatePosition) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{15}
+	return fileDescriptor_ebf40c3361e45611, []int{13}
 }
 func (m *MsgUpdatePosition) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1146,7 +999,7 @@ func (m *MsgUpdatePositionResponse) Reset()         { *m = MsgUpdatePositionResp
 func (m *MsgUpdatePositionResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgUpdatePositionResponse) ProtoMessage()    {}
 func (*MsgUpdatePositionResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{16}
+	return fileDescriptor_ebf40c3361e45611, []int{14}
 }
 func (m *MsgUpdatePositionResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1190,7 +1043,7 @@ func (m *MsgUnlockPosition) Reset()         { *m = MsgUnlockPosition{} }
 func (m *MsgUnlockPosition) String() string { return proto.CompactTextString(m) }
 func (*MsgUnlockPosition) ProtoMessage()    {}
 func (*MsgUnlockPosition) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{17}
+	return fileDescriptor_ebf40c3361e45611, []int{15}
 }
 func (m *MsgUnlockPosition) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1249,7 +1102,7 @@ func (m *MsgUnlockPositionResponse) Reset()         { *m = MsgUnlockPositionResp
 func (m *MsgUnlockPositionResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgUnlockPositionResponse) ProtoMessage()    {}
 func (*MsgUnlockPositionResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{18}
+	return fileDescriptor_ebf40c3361e45611, []int{16}
 }
 func (m *MsgUnlockPositionResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1304,7 +1157,7 @@ func (m *MsgPositionVote) Reset()         { *m = MsgPositionVote{} }
 func (m *MsgPositionVote) String() string { return proto.CompactTextString(m) }
 func (*MsgPositionVote) ProtoMessage()    {}
 func (*MsgPositionVote) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{19}
+	return fileDescriptor_ebf40c3361e45611, []int{17}
 }
 func (m *MsgPositionVote) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1376,7 +1229,7 @@ func (m *MsgPositionVoteResponse) Reset()         { *m = MsgPositionVoteResponse
 func (m *MsgPositionVoteResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgPositionVoteResponse) ProtoMessage()    {}
 func (*MsgPositionVoteResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ebf40c3361e45611, []int{20}
+	return fileDescriptor_ebf40c3361e45611, []int{18}
 }
 func (m *MsgPositionVoteResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1415,8 +1268,6 @@ func init() {
 	proto.RegisterType((*MsgRestakeResponse)(nil), "earth.shieldedstaking.v1.MsgRestakeResponse")
 	proto.RegisterType((*MsgUndelegate)(nil), "earth.shieldedstaking.v1.MsgUndelegate")
 	proto.RegisterType((*MsgUndelegateResponse)(nil), "earth.shieldedstaking.v1.MsgUndelegateResponse")
-	proto.RegisterType((*MsgClaimUnbonding)(nil), "earth.shieldedstaking.v1.MsgClaimUnbonding")
-	proto.RegisterType((*MsgClaimUnbondingResponse)(nil), "earth.shieldedstaking.v1.MsgClaimUnbondingResponse")
 	proto.RegisterType((*MsgStakeVote)(nil), "earth.shieldedstaking.v1.MsgStakeVote")
 	proto.RegisterType((*MsgStakeVoteResponse)(nil), "earth.shieldedstaking.v1.MsgStakeVoteResponse")
 	proto.RegisterType((*MsgLockPosition)(nil), "earth.shieldedstaking.v1.MsgLockPosition")
@@ -1432,90 +1283,84 @@ func init() {
 func init() { proto.RegisterFile("earth/shieldedstaking/v1/tx.proto", fileDescriptor_ebf40c3361e45611) }
 
 var fileDescriptor_ebf40c3361e45611 = []byte{
-	// 1327 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x58, 0xcf, 0x6f, 0x1b, 0xc5,
-	0x17, 0xcf, 0xda, 0x6b, 0x67, 0xfd, 0xe2, 0xa4, 0xee, 0x7e, 0xf3, 0xfd, 0x76, 0xe3, 0x56, 0xae,
-	0x6b, 0x35, 0x6d, 0xbe, 0x29, 0xb5, 0x95, 0x54, 0x6a, 0xa5, 0x72, 0xa1, 0x09, 0x02, 0x35, 0xc2,
-	0x34, 0xda, 0x52, 0x90, 0x90, 0x90, 0xd9, 0xec, 0x8e, 0xd7, 0xab, 0xec, 0xee, 0xac, 0x76, 0xc6,
-	0x6e, 0x7b, 0x43, 0x1c, 0x39, 0x21, 0x0e, 0xfc, 0x0d, 0x1c, 0x73, 0x40, 0x42, 0xe2, 0xc4, 0xb1,
-	0xc0, 0xa5, 0xe2, 0xc4, 0x09, 0xa1, 0xf6, 0x90, 0xbf, 0x02, 0x81, 0x76, 0x66, 0xf6, 0x67, 0x1b,
-	0xc7, 0x6d, 0x02, 0xe2, 0x12, 0xed, 0x7b, 0xf3, 0x99, 0x79, 0xf3, 0x3e, 0x9f, 0x37, 0x6f, 0x26,
-	0x86, 0x4b, 0xc8, 0x08, 0xe9, 0xa8, 0x47, 0x46, 0x0e, 0x72, 0x2d, 0x64, 0x11, 0x6a, 0xec, 0x3b,
-	0xbe, 0xdd, 0x9b, 0x6c, 0xf4, 0xe8, 0xa3, 0x6e, 0x10, 0x62, 0x8a, 0x55, 0x8d, 0x41, 0xba, 0x05,
-	0x48, 0x77, 0xb2, 0xd1, 0x3c, 0x6b, 0x78, 0x8e, 0x8f, 0x7b, 0xec, 0x2f, 0x07, 0x37, 0xcf, 0x99,
-	0x98, 0x78, 0x98, 0xf4, 0x6c, 0x3c, 0x89, 0x16, 0xb1, 0xf1, 0xa4, 0x30, 0xe0, 0x11, 0xb6, 0xba,
-	0x47, 0x6c, 0x31, 0xb0, 0xc2, 0x07, 0x06, 0xcc, 0xea, 0x71, 0x43, 0x0c, 0x5d, 0xe6, 0x9b, 0x33,
-	0x5c, 0x17, 0x9b, 0x06, 0x75, 0xb0, 0x1f, 0xcd, 0x4c, 0x2d, 0x81, 0x6a, 0xe7, 0x53, 0x88, 0x30,
-	0xf1, 0xb7, 0x40, 0xac, 0x1e, 0x99, 0x64, 0x60, 0x84, 0x86, 0x17, 0x87, 0x5b, 0xb6, 0xb1, 0x8d,
-	0xf9, 0x36, 0xa2, 0x2f, 0xee, 0xed, 0xfc, 0x24, 0xc1, 0x99, 0x3e, 0xb1, 0x1f, 0x04, 0x96, 0x41,
-	0xd1, 0x2e, 0xc3, 0xab, 0x37, 0xa1, 0x66, 0x8c, 0xe9, 0x08, 0x87, 0x0e, 0x7d, 0xac, 0x49, 0x6d,
-	0x69, 0xad, 0xb6, 0xa5, 0xfd, 0xf2, 0xed, 0xf5, 0x65, 0xb1, 0xfb, 0x3b, 0x96, 0x15, 0x22, 0x42,
-	0xee, 0xd3, 0xd0, 0xf1, 0x6d, 0x3d, 0x85, 0xaa, 0xdb, 0x50, 0xe5, 0x11, 0xb5, 0x52, 0x5b, 0x5a,
-	0x5b, 0xd8, 0x6c, 0x77, 0x8f, 0xe2, 0xb6, 0xcb, 0x23, 0x6d, 0xd5, 0x9e, 0xfc, 0x76, 0x71, 0xee,
-	0x9b, 0xc3, 0x83, 0x75, 0x49, 0x17, 0x53, 0x6f, 0xdf, 0xfe, 0xfc, 0xf0, 0x60, 0x3d, 0x5d, 0xf4,
-	0x8b, 0xc3, 0x83, 0xf5, 0xab, 0x3c, 0xc1, 0x47, 0x2f, 0xa4, 0x58, 0xd8, 0x78, 0x67, 0x05, 0xce,
-	0x15, 0x5c, 0x3a, 0x22, 0x01, 0xf6, 0x09, 0xea, 0xfc, 0x21, 0x01, 0xdc, 0xa7, 0xc6, 0x3e, 0xda,
-	0x0d, 0x31, 0x1e, 0xaa, 0xcb, 0x50, 0x09, 0xa2, 0x0f, 0x96, 0x5e, 0x5d, 0xe7, 0x86, 0xfa, 0x3f,
-	0xa8, 0x1a, 0xbe, 0x39, 0xc2, 0x21, 0x4b, 0xa0, 0xae, 0x0b, 0x4b, 0x6d, 0x01, 0xf8, 0x63, 0xd7,
-	0x75, 0x86, 0x0e, 0x0a, 0x89, 0x56, 0x6e, 0x97, 0xd7, 0xea, 0x7a, 0xc6, 0xa3, 0xb6, 0x61, 0xc1,
-	0xc4, 0x9e, 0xe7, 0x50, 0x0f, 0xf9, 0x94, 0x68, 0x32, 0x03, 0x64, 0x5d, 0x0c, 0xe1, 0x04, 0x23,
-	0x14, 0x52, 0xf4, 0x88, 0x12, 0xad, 0x22, 0x10, 0xa9, 0x4b, 0x5d, 0x01, 0x85, 0x04, 0xe6, 0xc0,
-	0x73, 0x7c, 0xaa, 0x55, 0x59, 0xf4, 0x79, 0x12, 0x98, 0x7d, 0xc7, 0xa7, 0xea, 0x79, 0xa8, 0xe1,
-	0x87, 0x3e, 0x0a, 0x07, 0xd4, 0xb0, 0xb5, 0x79, 0x36, 0xa6, 0x30, 0xc7, 0x07, 0x86, 0xad, 0xae,
-	0xc2, 0x52, 0x34, 0x2f, 0x5d, 0x4a, 0x53, 0x18, 0x62, 0x91, 0x04, 0xe6, 0x76, 0xe2, 0xec, 0xfc,
-	0x28, 0xc1, 0x42, 0x9f, 0xd8, 0x6f, 0x23, 0x17, 0xd9, 0x06, 0x45, 0xea, 0x2d, 0xa8, 0xee, 0x8d,
-	0x7d, 0xcb, 0x45, 0x8c, 0x81, 0x85, 0xcd, 0x95, 0x82, 0x56, 0x91, 0x48, 0x5b, 0x0c, 0xb0, 0x25,
-	0x47, 0x22, 0xe9, 0x02, 0xae, 0x5e, 0x80, 0xda, 0xc4, 0x70, 0x1d, 0xcb, 0xa0, 0x82, 0xa6, 0x9a,
-	0x9e, 0x3a, 0xd4, 0xb7, 0xa0, 0x12, 0x89, 0x83, 0x34, 0x99, 0xad, 0x7a, 0xf9, 0xe8, 0x0a, 0x48,
-	0xc5, 0x10, 0x01, 0xf8, 0x44, 0xa6, 0x81, 0x87, 0xc7, 0x3e, 0xd5, 0x2a, 0x6d, 0x69, 0x4d, 0xd6,
-	0x85, 0xb5, 0x23, 0x2b, 0xe5, 0x86, 0xac, 0x97, 0x87, 0x08, 0x75, 0xde, 0x85, 0xff, 0x64, 0x52,
-	0x89, 0x25, 0x8e, 0x34, 0xb5, 0x50, 0x48, 0x47, 0x2c, 0x23, 0x59, 0xe7, 0x86, 0xda, 0x04, 0x25,
-	0xc0, 0xc4, 0x89, 0x4e, 0x14, 0xdb, 0xae, 0xac, 0x27, 0x76, 0xe7, 0x40, 0x02, 0xe8, 0x13, 0x5b,
-	0x47, 0x3c, 0xf4, 0xbf, 0x95, 0x93, 0x6c, 0xee, 0x9b, 0xa0, 0xa6, 0x3b, 0x4e, 0x52, 0xbf, 0x00,
-	0xb5, 0x38, 0x29, 0xa2, 0x49, 0xed, 0xf2, 0x9a, 0xac, 0xa7, 0x8e, 0xce, 0xcf, 0x12, 0x2c, 0x46,
-	0xe7, 0xc2, 0xb7, 0xfe, 0x66, 0xf5, 0x53, 0xed, 0xca, 0x59, 0xed, 0x52, 0x06, 0x2a, 0xaf, 0xcf,
-	0x80, 0xdc, 0xa8, 0x70, 0x06, 0x06, 0xf0, 0xdf, 0x5c, 0x32, 0x79, 0xfd, 0x7d, 0xec, 0xf1, 0x96,
-	0xa5, 0x73, 0x23, 0xf2, 0x4e, 0x0c, 0x77, 0x8c, 0x84, 0xf8, 0xdc, 0xc8, 0x55, 0x45, 0xb9, 0x50,
-	0x15, 0xdf, 0x95, 0xe0, 0x6c, 0x9f, 0xd8, 0xdb, 0xae, 0xe1, 0x78, 0x0f, 0xfc, 0x3d, 0xec, 0x5b,
-	0x8e, 0x6f, 0xab, 0x1b, 0x33, 0x53, 0x36, 0x23, 0x59, 0xcb, 0x50, 0x41, 0x01, 0x36, 0x47, 0x22,
-	0x3e, 0x37, 0x32, 0x14, 0xca, 0x39, 0x0a, 0x97, 0xa0, 0x14, 0x98, 0x8c, 0xbf, 0xba, 0x5e, 0x0a,
-	0xcc, 0xa8, 0x25, 0x65, 0x8e, 0x3c, 0x6f, 0x18, 0x19, 0x8f, 0x7a, 0x05, 0xce, 0x0c, 0x11, 0x1a,
-	0x0c, 0x43, 0xec, 0x0d, 0xf0, 0x98, 0x06, 0x63, 0xca, 0x3a, 0x87, 0xac, 0x2f, 0x0e, 0x11, 0x7a,
-	0x27, 0xc4, 0xde, 0x3d, 0xe6, 0x4c, 0xa5, 0xa9, 0xbd, 0xbe, 0x34, 0x4a, 0xa3, 0xc6, 0xa5, 0xb9,
-	0x07, 0x2b, 0x2f, 0x10, 0x97, 0xc8, 0x93, 0x66, 0x26, 0xe5, 0x32, 0x9b, 0x7a, 0x40, 0x4b, 0x50,
-	0xef, 0x13, 0x9b, 0x85, 0xfe, 0x10, 0x9f, 0xa4, 0x70, 0x2f, 0xc2, 0x42, 0x10, 0xe2, 0x00, 0x13,
-	0xc3, 0x1d, 0x38, 0x96, 0x08, 0x04, 0xb1, 0xeb, 0xae, 0x95, 0x17, 0xab, 0x5c, 0x14, 0xeb, 0x4d,
-	0x98, 0xc7, 0x01, 0x3f, 0x5e, 0x51, 0x77, 0x5f, 0xd8, 0xbc, 0xd4, 0x15, 0xb7, 0x61, 0xf4, 0x06,
-	0x98, 0x6c, 0x74, 0x3f, 0x42, 0x8e, 0x3d, 0xa2, 0xc8, 0x8a, 0x76, 0x79, 0x8f, 0x21, 0xf5, 0x78,
-	0x46, 0x94, 0xf9, 0x43, 0x36, 0x1c, 0xb7, 0x34, 0x6e, 0xa5, 0x97, 0x90, 0x92, 0xbd, 0x84, 0x56,
-	0x61, 0x69, 0x82, 0x29, 0x1a, 0x24, 0xf7, 0x0b, 0x93, 0xa6, 0xae, 0x2f, 0x46, 0xde, 0xf7, 0x63,
-	0xe7, 0x8e, 0xac, 0x54, 0x1b, 0xf3, 0x3b, 0xb2, 0x32, 0xdf, 0x50, 0x18, 0xf9, 0x42, 0x8e, 0xce,
-	0x15, 0x58, 0xce, 0x32, 0x16, 0xd3, 0xbf, 0x23, 0x2b, 0x52, 0xa3, 0x94, 0xa1, 0xf6, 0xab, 0x12,
-	0xbb, 0xf8, 0xdf, 0xc3, 0xe6, 0xfe, 0xae, 0xf0, 0xfd, 0xd3, 0x6d, 0x61, 0x1b, 0xaa, 0x24, 0x70,
-	0x1d, 0x1a, 0x73, 0xba, 0x2a, 0xc2, 0x65, 0xde, 0x40, 0x93, 0x8d, 0xee, 0x9d, 0xc4, 0xe2, 0x1c,
-	0xc7, 0xa1, 0xf9, 0xd4, 0xb4, 0x80, 0xab, 0xaf, 0x5f, 0xc0, 0x95, 0x46, 0x95, 0x17, 0xf0, 0x6d,
-	0xf6, 0x80, 0xc8, 0x72, 0x92, 0x94, 0x6f, 0x54, 0x40, 0xc2, 0x17, 0x15, 0x90, 0x24, 0x0a, 0x48,
-	0xb8, 0xee, 0x5a, 0x9d, 0x3f, 0x25, 0xd6, 0x36, 0xc4, 0xeb, 0xe3, 0xc4, 0x94, 0x16, 0xe2, 0x95,
-	0x8a, 0xf1, 0x32, 0xec, 0x95, 0x4f, 0x81, 0xbd, 0xd3, 0xe8, 0xcc, 0xe7, 0xd9, 0xf1, 0xcf, 0x13,
-	0x90, 0x3c, 0xc0, 0xbe, 0x17, 0xf4, 0xf8, 0xee, 0xa9, 0x54, 0xdc, 0xb1, 0xf4, 0x9c, 0xea, 0xad,
-	0x7b, 0x8b, 0x67, 0x96, 0xdb, 0x7b, 0x52, 0x19, 0xd9, 0x06, 0x26, 0x15, 0x1a, 0xd8, 0xd7, 0xfc,
-	0x94, 0xc5, 0x73, 0x4e, 0xde, 0xc3, 0xa6, 0xe6, 0x5c, 0x68, 0x72, 0xe5, 0x17, 0x9a, 0xdc, 0x89,
-	0xda, 0xd8, 0xa9, 0x9e, 0x34, 0xfe, 0x54, 0xcf, 0xf2, 0x12, 0xf3, 0xb9, 0xf9, 0x83, 0x02, 0xe5,
-	0x3e, 0xb1, 0x55, 0x17, 0xea, 0xb9, 0x7f, 0x4b, 0xfe, 0x7f, 0x74, 0xc0, 0xc2, 0xab, 0xbf, 0xb9,
-	0x31, 0x33, 0x34, 0x51, 0xf1, 0x53, 0x50, 0x92, 0xc7, 0xf1, 0xea, 0xd4, 0xe9, 0x31, 0xac, 0x79,
-	0x7d, 0x26, 0x58, 0x12, 0xe1, 0x13, 0x98, 0x8f, 0x5f, 0x9a, 0x97, 0xa7, 0xce, 0x14, 0xa8, 0xe6,
-	0x1b, 0xb3, 0xa0, 0x92, 0xe5, 0x87, 0x00, 0x99, 0x17, 0xde, 0xd5, 0xe9, 0x0c, 0x24, 0xc0, 0x66,
-	0x6f, 0x46, 0x60, 0x12, 0x27, 0x84, 0xa5, 0xc2, 0xd3, 0xe8, 0xda, 0xd4, 0x25, 0xf2, 0xe0, 0xe6,
-	0x8d, 0x57, 0x00, 0x27, 0x31, 0x4d, 0xa8, 0xa5, 0x6f, 0x80, 0x2b, 0x53, 0x57, 0x48, 0x70, 0xcd,
-	0xee, 0x6c, 0xb8, 0x24, 0x88, 0x0b, 0xf5, 0xdc, 0x6d, 0x38, 0xbd, 0xde, 0xb2, 0xd0, 0x63, 0xea,
-	0xed, 0xa5, 0xf7, 0x49, 0x08, 0x4b, 0x85, 0xab, 0xe2, 0xda, 0x2c, 0x45, 0x1b, 0x47, 0xbc, 0xf1,
-	0x0a, 0xe0, 0x5c, 0xcc, 0x7c, 0xff, 0x3d, 0x26, 0x66, 0x0e, 0x7c, 0x5c, 0xcc, 0x97, 0x77, 0x47,
-	0x17, 0xea, 0xb9, 0xee, 0x37, 0x9d, 0xd5, 0x2c, 0xf4, 0x18, 0x56, 0x5f, 0xd6, 0x3b, 0x9a, 0x95,
-	0xcf, 0x0e, 0x0f, 0xd6, 0xa5, 0xad, 0xdd, 0x27, 0xcf, 0x5a, 0xd2, 0xd3, 0x67, 0x2d, 0xe9, 0xf7,
-	0x67, 0x2d, 0xe9, 0xcb, 0xe7, 0xad, 0xb9, 0xa7, 0xcf, 0x5b, 0x73, 0xbf, 0x3e, 0x6f, 0xcd, 0x7d,
-	0x7c, 0xd3, 0x76, 0xe8, 0x68, 0xbc, 0xd7, 0x35, 0xb1, 0xd7, 0x63, 0xab, 0x5f, 0xf7, 0x11, 0x7d,
-	0x88, 0xc3, 0xfd, 0xde, 0x51, 0x3f, 0x32, 0xd0, 0xc7, 0x01, 0x22, 0x7b, 0x55, 0xf6, 0x73, 0xc9,
-	0x8d, 0xbf, 0x02, 0x00, 0x00, 0xff, 0xff, 0x2c, 0xe8, 0xe2, 0x72, 0x52, 0x12, 0x00, 0x00,
+	// 1231 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x57, 0xcf, 0x6f, 0x1b, 0xc5,
+	0x17, 0xcf, 0xda, 0x6b, 0x7b, 0xfd, 0xec, 0xe6, 0xeb, 0xee, 0x37, 0xd0, 0x8d, 0x5b, 0xb9, 0xae,
+	0xd5, 0xb4, 0xa1, 0x50, 0x5b, 0x49, 0xa5, 0x56, 0x2a, 0x17, 0x9a, 0x22, 0xa1, 0x46, 0x18, 0xa2,
+	0x2d, 0x3f, 0x24, 0x24, 0x14, 0xb6, 0xbb, 0x93, 0xf5, 0x2a, 0xbb, 0x3b, 0xab, 0x9d, 0xb1, 0xdb,
+	0xde, 0x10, 0x47, 0x4e, 0x88, 0x03, 0x7f, 0x03, 0xc7, 0x1c, 0x38, 0xf1, 0x17, 0x14, 0xc4, 0xa1,
+	0xe2, 0xc4, 0x09, 0xa1, 0xf6, 0x90, 0x3f, 0x02, 0x21, 0xd0, 0xfc, 0xd8, 0x1f, 0xde, 0x24, 0x8e,
+	0x49, 0x02, 0xe2, 0x62, 0x79, 0xde, 0x7c, 0x66, 0xde, 0xbc, 0xcf, 0xe7, 0xbd, 0x37, 0xb3, 0x70,
+	0x05, 0x59, 0x31, 0x1d, 0x0d, 0xc8, 0xc8, 0x43, 0xbe, 0x83, 0x1c, 0x42, 0xad, 0x5d, 0x2f, 0x74,
+	0x07, 0x93, 0xb5, 0x01, 0x7d, 0xd2, 0x8f, 0x62, 0x4c, 0xb1, 0x6e, 0x70, 0x48, 0xbf, 0x00, 0xe9,
+	0x4f, 0xd6, 0xda, 0xe7, 0xad, 0xc0, 0x0b, 0xf1, 0x80, 0xff, 0x0a, 0x70, 0xfb, 0x82, 0x8d, 0x49,
+	0x80, 0xc9, 0xc0, 0xc5, 0x13, 0xb6, 0x89, 0x8b, 0x27, 0x85, 0x89, 0x80, 0xf0, 0xdd, 0x03, 0xe2,
+	0xca, 0x89, 0x65, 0x31, 0xb1, 0xcd, 0x47, 0x03, 0x31, 0x90, 0x53, 0x57, 0xc5, 0xe1, 0x2c, 0xdf,
+	0xc7, 0xb6, 0x45, 0x3d, 0x1c, 0xb2, 0x95, 0xd9, 0x48, 0xa2, 0xba, 0xd3, 0x21, 0x30, 0x4c, 0xf2,
+	0x5f, 0x22, 0x56, 0x8e, 0x0c, 0x32, 0xb2, 0x62, 0x2b, 0x48, 0xdc, 0x2d, 0xb9, 0xd8, 0xc5, 0xe2,
+	0x18, 0xec, 0x9f, 0xb0, 0xf6, 0x7e, 0x54, 0xe0, 0x7f, 0x43, 0xe2, 0x7e, 0x18, 0x39, 0x16, 0x45,
+	0x5b, 0x1c, 0xaf, 0xdf, 0x86, 0xba, 0x35, 0xa6, 0x23, 0x1c, 0x7b, 0xf4, 0xa9, 0xa1, 0x74, 0x95,
+	0xd5, 0xfa, 0x86, 0xf1, 0xf3, 0x77, 0x37, 0x97, 0xe4, 0xe9, 0xef, 0x39, 0x4e, 0x8c, 0x08, 0x79,
+	0x48, 0x63, 0x2f, 0x74, 0xcd, 0x0c, 0xaa, 0xdf, 0x87, 0xaa, 0xf0, 0x68, 0x94, 0xba, 0xca, 0x6a,
+	0x63, 0xbd, 0xdb, 0x3f, 0x8a, 0xdb, 0xbe, 0xf0, 0xb4, 0x51, 0x7f, 0xf6, 0xeb, 0xe5, 0x85, 0x6f,
+	0xf7, 0xf7, 0x6e, 0x28, 0xa6, 0x5c, 0x7a, 0xf7, 0xee, 0x17, 0xfb, 0x7b, 0x37, 0xb2, 0x4d, 0xbf,
+	0xdc, 0xdf, 0xbb, 0x71, 0x5d, 0x04, 0xf8, 0xe4, 0x40, 0x88, 0x85, 0x83, 0xf7, 0x96, 0xe1, 0x42,
+	0xc1, 0x64, 0x22, 0x12, 0xe1, 0x90, 0xa0, 0xde, 0x1f, 0x0a, 0xc0, 0x43, 0x6a, 0xed, 0xa2, 0xad,
+	0x18, 0xe3, 0x1d, 0x7d, 0x09, 0x2a, 0x11, 0xfb, 0xc3, 0xc3, 0x6b, 0x9a, 0x62, 0xa0, 0xbf, 0x0a,
+	0x55, 0x2b, 0xb4, 0x47, 0x38, 0xe6, 0x01, 0x34, 0x4d, 0x39, 0xd2, 0x3b, 0x00, 0xe1, 0xd8, 0xf7,
+	0xbd, 0x1d, 0x0f, 0xc5, 0xc4, 0x28, 0x77, 0xcb, 0xab, 0x4d, 0x33, 0x67, 0xd1, 0xbb, 0xd0, 0xb0,
+	0x71, 0x10, 0x78, 0x34, 0x40, 0x21, 0x25, 0x86, 0xca, 0x01, 0x79, 0x13, 0x47, 0x78, 0xd1, 0x08,
+	0xc5, 0x14, 0x3d, 0xa1, 0xc4, 0xa8, 0x48, 0x44, 0x66, 0xd2, 0x97, 0x41, 0x23, 0x91, 0xbd, 0x1d,
+	0x78, 0x21, 0x35, 0xaa, 0xdc, 0x7b, 0x8d, 0x44, 0xf6, 0xd0, 0x0b, 0xa9, 0x7e, 0x11, 0xea, 0xf8,
+	0x71, 0x88, 0xe2, 0x6d, 0x6a, 0xb9, 0x46, 0x8d, 0xcf, 0x69, 0xdc, 0xf0, 0x81, 0xe5, 0xea, 0x2b,
+	0xb0, 0xc8, 0xd6, 0x65, 0x5b, 0x19, 0x1a, 0x47, 0x9c, 0x23, 0x91, 0x7d, 0x3f, 0x35, 0xf6, 0x7e,
+	0x50, 0xa0, 0x31, 0x24, 0xee, 0xdb, 0xc8, 0x47, 0xae, 0x45, 0x91, 0x7e, 0x07, 0xaa, 0x8f, 0xc6,
+	0xa1, 0xe3, 0x23, 0xce, 0x40, 0x63, 0x7d, 0xb9, 0xa0, 0x15, 0x13, 0x69, 0x83, 0x03, 0x36, 0x54,
+	0x26, 0x92, 0x29, 0xe1, 0xfa, 0x25, 0xa8, 0x4f, 0x2c, 0xdf, 0x73, 0x2c, 0x2a, 0x69, 0xaa, 0x9b,
+	0x99, 0x41, 0x7f, 0x0b, 0x2a, 0x4c, 0x1c, 0x64, 0xa8, 0x7c, 0xd7, 0xab, 0x47, 0x67, 0x40, 0x26,
+	0x86, 0x74, 0x20, 0x16, 0x72, 0x0d, 0x02, 0x3c, 0x0e, 0xa9, 0x51, 0xe9, 0x2a, 0xab, 0xaa, 0x29,
+	0x47, 0x9b, 0xaa, 0x56, 0x6e, 0xa9, 0x66, 0x79, 0x07, 0xa1, 0xde, 0x3b, 0xf0, 0xff, 0x5c, 0x28,
+	0x89, 0xc4, 0x4c, 0x53, 0x07, 0xc5, 0x74, 0xc4, 0x23, 0x52, 0x4d, 0x31, 0xd0, 0xdb, 0xa0, 0x45,
+	0x98, 0x78, 0xac, 0xa2, 0xf8, 0x71, 0x55, 0x33, 0x1d, 0xf7, 0xf6, 0x14, 0x80, 0x21, 0x71, 0x4d,
+	0x24, 0x5c, 0xff, 0x57, 0x39, 0xc9, 0xc7, 0xbe, 0x0e, 0x7a, 0x76, 0xe2, 0x34, 0xf4, 0x4b, 0x50,
+	0x4f, 0x82, 0x22, 0x86, 0xd2, 0x2d, 0xaf, 0xaa, 0x66, 0x66, 0xe8, 0xfd, 0xae, 0xc0, 0x39, 0x56,
+	0x17, 0xa1, 0xf3, 0x0f, 0xab, 0x9f, 0x69, 0x57, 0xce, 0x6b, 0x97, 0x31, 0x50, 0x39, 0x69, 0x56,
+	0x2c, 0x42, 0x29, 0xb2, 0x65, 0x5d, 0x94, 0x22, 0x9b, 0x55, 0x64, 0x2e, 0xe3, 0x45, 0x4d, 0xe4,
+	0x2c, 0x9b, 0xaa, 0xa6, 0xb6, 0x2a, 0x82, 0x31, 0x17, 0x5e, 0x99, 0x0a, 0x3e, 0x9f, 0x2f, 0x13,
+	0xcb, 0x1f, 0x23, 0x99, 0x16, 0x62, 0xc0, 0x8a, 0x2d, 0xb2, 0x9e, 0xe2, 0x31, 0xdd, 0xf6, 0x1c,
+	0xae, 0x18, 0x4b, 0x18, 0x6e, 0x78, 0xe0, 0x6c, 0xaa, 0x9a, 0xd2, 0x2a, 0x49, 0x39, 0x2a, 0x0e,
+	0x0a, 0x71, 0x90, 0xcf, 0xa6, 0x12, 0x34, 0x87, 0xc4, 0xe5, 0x21, 0x7c, 0x84, 0x4f, 0xc3, 0xf2,
+	0x65, 0x68, 0x44, 0x31, 0x8e, 0x30, 0xb1, 0x7c, 0x76, 0x0a, 0x71, 0x3e, 0x48, 0x4c, 0x0f, 0x9c,
+	0x69, 0x19, 0xca, 0x45, 0x19, 0xde, 0x84, 0x1a, 0x8e, 0x44, 0x2e, 0xb0, 0x56, 0xd4, 0x58, 0xbf,
+	0xd2, 0x97, 0xad, 0x9b, 0x5d, 0x58, 0x93, 0xb5, 0xfe, 0xc7, 0xc8, 0x73, 0x47, 0x14, 0x39, 0xec,
+	0x94, 0xef, 0x73, 0xa4, 0x99, 0xac, 0x60, 0x1a, 0x3e, 0xe6, 0xd3, 0x49, 0xfd, 0x89, 0x51, 0xd6,
+	0x31, 0xb5, 0x7c, 0xc7, 0x5c, 0x81, 0xc5, 0x09, 0xa6, 0x68, 0x3b, 0x6d, 0x86, 0x46, 0x5d, 0x74,
+	0x1f, 0x66, 0x7d, 0x2f, 0x31, 0x6e, 0xaa, 0x5a, 0xb5, 0x55, 0xdb, 0x54, 0xb5, 0x5a, 0x4b, 0xe3,
+	0xa2, 0x48, 0x59, 0x7b, 0xd7, 0x60, 0x29, 0xcf, 0x58, 0x22, 0x8d, 0xe0, 0x39, 0x47, 0xed, 0xd7,
+	0x25, 0x7e, 0x4b, 0xbd, 0x8b, 0xed, 0xdd, 0x2d, 0x69, 0xfb, 0xb7, 0x73, 0xf8, 0x3e, 0x54, 0x49,
+	0xe4, 0x7b, 0x34, 0xe1, 0x74, 0x45, 0xba, 0xcb, 0x5d, 0xd8, 0x93, 0xb5, 0xfe, 0xbd, 0x74, 0x24,
+	0x38, 0x4e, 0x5c, 0x8b, 0xa5, 0x59, 0x21, 0x54, 0x4f, 0xde, 0x0a, 0x2a, 0xad, 0xaa, 0x48, 0xec,
+	0xbb, 0xfc, 0xb6, 0xcb, 0x73, 0x92, 0xa6, 0x36, 0x4b, 0x20, 0x69, 0x63, 0x09, 0xa4, 0xc8, 0x04,
+	0x92, 0xa6, 0x07, 0x4e, 0xef, 0x4f, 0x05, 0xce, 0x67, 0x57, 0xe5, 0xa9, 0x29, 0x2d, 0xf8, 0x2b,
+	0x15, 0xfd, 0xe5, 0xd8, 0x2b, 0x9f, 0x01, 0x7b, 0x95, 0x93, 0xb3, 0x97, 0xb6, 0x85, 0x8b, 0xb0,
+	0x7c, 0x80, 0x80, 0xf4, 0xb5, 0xf0, 0xbd, 0xa4, 0x27, 0xf4, 0xcf, 0x24, 0xe3, 0x8e, 0xa5, 0xe7,
+	0x4c, 0xaf, 0x88, 0x3b, 0x22, 0xb2, 0xa9, 0xb3, 0xa7, 0x99, 0x91, 0xbf, 0x0e, 0x95, 0xc2, 0x75,
+	0xf8, 0x8d, 0xa8, 0xb2, 0x64, 0xcd, 0xe9, 0x7b, 0xd8, 0xcc, 0x98, 0x0b, 0x4d, 0xae, 0x7c, 0xa0,
+	0xc9, 0x9d, 0xaa, 0x8d, 0x9d, 0x69, 0xa5, 0x89, 0x77, 0x65, 0x9e, 0x97, 0x84, 0xcf, 0xf5, 0x9f,
+	0x6a, 0x50, 0x1e, 0x12, 0x57, 0xf7, 0xa1, 0x39, 0xf5, 0x86, 0x7e, 0xed, 0x68, 0x87, 0x85, 0x27,
+	0x6a, 0x7b, 0x6d, 0x6e, 0x68, 0xaa, 0xe2, 0x67, 0xa0, 0xa5, 0x2f, 0xb9, 0x95, 0x99, 0xcb, 0x13,
+	0x58, 0xfb, 0xe6, 0x5c, 0xb0, 0xd4, 0xc3, 0xa7, 0x50, 0x4b, 0x9e, 0x45, 0x57, 0x67, 0xae, 0x94,
+	0xa8, 0xf6, 0x1b, 0xf3, 0xa0, 0xd2, 0xed, 0x77, 0x00, 0x72, 0xcf, 0x91, 0xeb, 0xb3, 0x19, 0x48,
+	0x81, 0xed, 0xc1, 0x9c, 0xc0, 0xd4, 0x8f, 0x0d, 0xf5, 0xec, 0x3e, 0xbe, 0x36, 0x73, 0x75, 0x8a,
+	0x6b, 0xf7, 0xe7, 0xc3, 0xa5, 0x4e, 0x7c, 0x68, 0x4e, 0xdd, 0x4c, 0xb3, 0xb5, 0xcf, 0x43, 0x8f,
+	0xd1, 0xfe, 0xd0, 0xde, 0x1e, 0xc3, 0x62, 0xa1, 0x6d, 0xbf, 0x3e, 0x4f, 0x02, 0x25, 0x1e, 0x6f,
+	0xfd, 0x0d, 0xf0, 0x94, 0xcf, 0xe9, 0x5e, 0x78, 0x8c, 0xcf, 0x29, 0xf0, 0x71, 0x3e, 0x0f, 0xef,
+	0x54, 0x3e, 0x34, 0xa7, 0x3a, 0xd1, 0x6c, 0x56, 0xf3, 0xd0, 0x63, 0x58, 0x3d, 0xac, 0x8e, 0xdb,
+	0x95, 0xcf, 0xd9, 0x57, 0xe8, 0xc6, 0xd6, 0xb3, 0x17, 0x1d, 0xe5, 0xf9, 0x8b, 0x8e, 0xf2, 0xdb,
+	0x8b, 0x8e, 0xf2, 0xd5, 0xcb, 0xce, 0xc2, 0xf3, 0x97, 0x9d, 0x85, 0x5f, 0x5e, 0x76, 0x16, 0x3e,
+	0xb9, 0xed, 0x7a, 0x74, 0x34, 0x7e, 0xd4, 0xb7, 0x71, 0x30, 0xe0, 0xbb, 0xdf, 0x0c, 0x11, 0x7d,
+	0x8c, 0xe3, 0xdd, 0xc1, 0x51, 0x5f, 0xa7, 0xf4, 0x69, 0x84, 0xc8, 0xa3, 0x2a, 0xff, 0xce, 0xbe,
+	0xf5, 0x57, 0x00, 0x00, 0x00, 0xff, 0xff, 0x58, 0x9b, 0x36, 0xd9, 0x8b, 0x10, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -1536,11 +1381,12 @@ type MsgClient interface {
 	Delegate(ctx context.Context, in *MsgDelegate, opts ...grpc.CallOption) (*MsgDelegateResponse, error)
 	// Restake merges or splits stake notes of one owner.
 	Restake(ctx context.Context, in *MsgRestake, opts ...grpc.CallOption) (*MsgRestakeResponse, error)
-	// Undelegate turns derth into an owner-locked unbonding claim.
+	// Undelegate unbonds derth; the chain pays its ERTH value out as notes
+	// at maturity.
 	Undelegate(ctx context.Context, in *MsgUndelegate, opts ...grpc.CallOption) (*MsgUndelegateResponse, error)
-	// ClaimUnbonding turns a matured unbonding claim into an ERTH note.
-	ClaimUnbonding(ctx context.Context, in *MsgClaimUnbonding, opts ...grpc.CallOption) (*MsgClaimUnbondingResponse, error)
-	// StakeVote votes stake notes on an x/gov proposal.
+	// ClaimUnbonding (retired): undelegations pay out by themselves.
+	// StakeVote votes up to four stake notes of one owner at one validator on
+	// an x/gov proposal, with one weight.
 	StakeVote(ctx context.Context, in *MsgStakeVote, opts ...grpc.CallOption) (*MsgStakeVoteResponse, error)
 	// LockPosition locks derth into a Groundworks position.
 	LockPosition(ctx context.Context, in *MsgLockPosition, opts ...grpc.CallOption) (*MsgLockPositionResponse, error)
@@ -1591,15 +1437,6 @@ func (c *msgClient) Restake(ctx context.Context, in *MsgRestake, opts ...grpc.Ca
 func (c *msgClient) Undelegate(ctx context.Context, in *MsgUndelegate, opts ...grpc.CallOption) (*MsgUndelegateResponse, error) {
 	out := new(MsgUndelegateResponse)
 	err := c.cc.Invoke(ctx, "/earth.shieldedstaking.v1.Msg/Undelegate", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) ClaimUnbonding(ctx context.Context, in *MsgClaimUnbonding, opts ...grpc.CallOption) (*MsgClaimUnbondingResponse, error) {
-	out := new(MsgClaimUnbondingResponse)
-	err := c.cc.Invoke(ctx, "/earth.shieldedstaking.v1.Msg/ClaimUnbonding", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1659,11 +1496,12 @@ type MsgServer interface {
 	Delegate(context.Context, *MsgDelegate) (*MsgDelegateResponse, error)
 	// Restake merges or splits stake notes of one owner.
 	Restake(context.Context, *MsgRestake) (*MsgRestakeResponse, error)
-	// Undelegate turns derth into an owner-locked unbonding claim.
+	// Undelegate unbonds derth; the chain pays its ERTH value out as notes
+	// at maturity.
 	Undelegate(context.Context, *MsgUndelegate) (*MsgUndelegateResponse, error)
-	// ClaimUnbonding turns a matured unbonding claim into an ERTH note.
-	ClaimUnbonding(context.Context, *MsgClaimUnbonding) (*MsgClaimUnbondingResponse, error)
-	// StakeVote votes stake notes on an x/gov proposal.
+	// ClaimUnbonding (retired): undelegations pay out by themselves.
+	// StakeVote votes up to four stake notes of one owner at one validator on
+	// an x/gov proposal, with one weight.
 	StakeVote(context.Context, *MsgStakeVote) (*MsgStakeVoteResponse, error)
 	// LockPosition locks derth into a Groundworks position.
 	LockPosition(context.Context, *MsgLockPosition) (*MsgLockPositionResponse, error)
@@ -1691,9 +1529,6 @@ func (*UnimplementedMsgServer) Restake(ctx context.Context, req *MsgRestake) (*M
 }
 func (*UnimplementedMsgServer) Undelegate(ctx context.Context, req *MsgUndelegate) (*MsgUndelegateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Undelegate not implemented")
-}
-func (*UnimplementedMsgServer) ClaimUnbonding(ctx context.Context, req *MsgClaimUnbonding) (*MsgClaimUnbondingResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ClaimUnbonding not implemented")
 }
 func (*UnimplementedMsgServer) StakeVote(ctx context.Context, req *MsgStakeVote) (*MsgStakeVoteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StakeVote not implemented")
@@ -1783,24 +1618,6 @@ func _Msg_Undelegate_Handler(srv interface{}, ctx context.Context, dec func(inte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).Undelegate(ctx, req.(*MsgUndelegate))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_ClaimUnbonding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgClaimUnbonding)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).ClaimUnbonding(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/earth.shieldedstaking.v1.Msg/ClaimUnbonding",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).ClaimUnbonding(ctx, req.(*MsgClaimUnbonding))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1915,10 +1732,6 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Undelegate",
 			Handler:    _Msg_Undelegate_Handler,
-		},
-		{
-			MethodName: "ClaimUnbonding",
-			Handler:    _Msg_ClaimUnbonding_Handler,
 		},
 		{
 			MethodName: "StakeVote",
@@ -2292,6 +2105,20 @@ func (m *MsgUndelegate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.Ciphertext) > 0 {
+		i -= len(m.Ciphertext)
+		copy(dAtA[i:], m.Ciphertext)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
+		i--
+		dAtA[i] = 0x3a
+	}
+	if len(m.Pc) > 0 {
+		i -= len(m.Pc)
+		copy(dAtA[i:], m.Pc)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
+		i--
+		dAtA[i] = 0x32
+	}
 	{
 		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
@@ -2347,136 +2174,15 @@ func (m *MsgUndelegateResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if m.Position != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.Position))
+	if m.PayoutId != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PayoutId))
 		i--
-		dAtA[i] = 0x18
+		dAtA[i] = 0x20
 	}
 	if m.Value != 0 {
 		i = encodeVarintTx(dAtA, i, uint64(m.Value))
 		i--
 		dAtA[i] = 0x10
-	}
-	if len(m.Denom) > 0 {
-		i -= len(m.Denom)
-		copy(dAtA[i:], m.Denom)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Denom)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *MsgClaimUnbonding) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *MsgClaimUnbonding) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *MsgClaimUnbonding) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	{
-		size, err := m.Stake.MarshalToSizedBuffer(dAtA[:i])
-		if err != nil {
-			return 0, err
-		}
-		i -= size
-		i = encodeVarintTx(dAtA, i, uint64(size))
-	}
-	i--
-	dAtA[i] = 0x4a
-	if m.FeeFromOutput != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.FeeFromOutput))
-		i--
-		dAtA[i] = 0x38
-	}
-	if len(m.Ciphertext) > 0 {
-		i -= len(m.Ciphertext)
-		copy(dAtA[i:], m.Ciphertext)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Ciphertext)))
-		i--
-		dAtA[i] = 0x32
-	}
-	if len(m.Pc) > 0 {
-		i -= len(m.Pc)
-		copy(dAtA[i:], m.Pc)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Pc)))
-		i--
-		dAtA[i] = 0x2a
-	}
-	if m.Amount != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.Amount))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.Epoch != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.Epoch))
-		i--
-		dAtA[i] = 0x18
-	}
-	if len(m.Validator) > 0 {
-		i -= len(m.Validator)
-		copy(dAtA[i:], m.Validator)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Validator)))
-		i--
-		dAtA[i] = 0x12
-	}
-	if m.Bundle != nil {
-		{
-			size, err := m.Bundle.MarshalToSizedBuffer(dAtA[:i])
-			if err != nil {
-				return 0, err
-			}
-			i -= size
-			i = encodeVarintTx(dAtA, i, uint64(size))
-		}
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *MsgClaimUnbondingResponse) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *MsgClaimUnbondingResponse) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *MsgClaimUnbondingResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.Position != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.Position))
-		i--
-		dAtA[i] = 0x10
-	}
-	if m.Amount != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.Amount))
-		i--
-		dAtA[i] = 0x8
 	}
 	return len(dAtA) - i, nil
 }
@@ -3097,6 +2803,14 @@ func (m *MsgUndelegate) Size() (n int) {
 	}
 	l = m.Stake.Size()
 	n += 1 + l + sovTx(uint64(l))
+	l = len(m.Pc)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Ciphertext)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
 	return n
 }
 
@@ -3106,66 +2820,11 @@ func (m *MsgUndelegateResponse) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.Denom)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
 	if m.Value != 0 {
 		n += 1 + sovTx(uint64(m.Value))
 	}
-	if m.Position != 0 {
-		n += 1 + sovTx(uint64(m.Position))
-	}
-	return n
-}
-
-func (m *MsgClaimUnbonding) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.Bundle != nil {
-		l = m.Bundle.Size()
-		n += 1 + l + sovTx(uint64(l))
-	}
-	l = len(m.Validator)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	if m.Epoch != 0 {
-		n += 1 + sovTx(uint64(m.Epoch))
-	}
-	if m.Amount != 0 {
-		n += 1 + sovTx(uint64(m.Amount))
-	}
-	l = len(m.Pc)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	l = len(m.Ciphertext)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	if m.FeeFromOutput != 0 {
-		n += 1 + sovTx(uint64(m.FeeFromOutput))
-	}
-	l = m.Stake.Size()
-	n += 1 + l + sovTx(uint64(l))
-	return n
-}
-
-func (m *MsgClaimUnbondingResponse) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.Amount != 0 {
-		n += 1 + sovTx(uint64(m.Amount))
-	}
-	if m.Position != 0 {
-		n += 1 + sovTx(uint64(m.Position))
+	if m.PayoutId != 0 {
+		n += 1 + sovTx(uint64(m.PayoutId))
 	}
 	return n
 }
@@ -4507,6 +4166,74 @@ func (m *MsgUndelegate) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
+			if m.Pc == nil {
+				m.Pc = []byte{}
+			}
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
+			if m.Ciphertext == nil {
+				m.Ciphertext = []byte{}
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -4557,38 +4284,6 @@ func (m *MsgUndelegateResponse) Unmarshal(dAtA []byte) error {
 			return fmt.Errorf("proto: MsgUndelegateResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Denom", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Denom = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Value", wireType)
@@ -4608,167 +4303,11 @@ func (m *MsgUndelegateResponse) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Position", wireType)
-			}
-			m.Position = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Position |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipTx(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthTx
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowTx
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: MsgClaimUnbonding: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MsgClaimUnbonding: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Bundle", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if m.Bundle == nil {
-				m.Bundle = &types.Bundle{}
-			}
-			if err := m.Bundle.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Validator", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Validator = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Epoch", wireType)
-			}
-			m.Epoch = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Epoch |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
 		case 4:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field PayoutId", wireType)
 			}
-			m.Amount = 0
+			m.PayoutId = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowTx
@@ -4778,215 +4317,7 @@ func (m *MsgClaimUnbonding) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Amount |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 5:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Pc", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Pc = append(m.Pc[:0], dAtA[iNdEx:postIndex]...)
-			if m.Pc == nil {
-				m.Pc = []byte{}
-			}
-			iNdEx = postIndex
-		case 6:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Ciphertext", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Ciphertext = append(m.Ciphertext[:0], dAtA[iNdEx:postIndex]...)
-			if m.Ciphertext == nil {
-				m.Ciphertext = []byte{}
-			}
-			iNdEx = postIndex
-		case 7:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FeeFromOutput", wireType)
-			}
-			m.FeeFromOutput = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.FeeFromOutput |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 9:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Stake", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if err := m.Stake.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipTx(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthTx
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *MsgClaimUnbondingResponse) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowTx
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: MsgClaimUnbondingResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MsgClaimUnbondingResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
-			}
-			m.Amount = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Amount |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Position", wireType)
-			}
-			m.Position = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Position |= uint64(b&0x7F) << shift
+				m.PayoutId |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

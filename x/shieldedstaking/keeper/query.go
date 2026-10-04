@@ -69,6 +69,21 @@ func (q queryServer) UnbondRecord(ctx context.Context, req *types.QueryUnbondRec
 	return &types.QueryUnbondRecordResponse{Record: r}, nil
 }
 
+func (q queryServer) UnbondPayout(ctx context.Context, req *types.QueryUnbondPayoutRequest) (*types.QueryUnbondPayoutResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+	p, err := q.k.UnbondPayouts.Get(ctx, req.Id)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	r, err := q.k.UnbondRecords.Get(ctx, collections.Join(p.Validator, p.Epoch))
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QueryUnbondPayoutResponse{Payout: p, Record: r}, nil
+}
+
 func (q queryServer) Position(ctx context.Context, req *types.QueryPositionRequest) (*types.QueryPositionResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")

@@ -41,7 +41,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{RpcMethod: "UpdateParams", Skip: true},
 				{RpcMethod: "Delegate", Skip: true},
 				{RpcMethod: "Undelegate", Skip: true},
-				{RpcMethod: "ClaimUnbonding", Skip: true},
 				{RpcMethod: "StakeVote", Skip: true},
 				{RpcMethod: "LockPosition", Skip: true},
 				{RpcMethod: "UpdatePosition", Skip: true},

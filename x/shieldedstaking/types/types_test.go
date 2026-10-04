@@ -13,7 +13,7 @@ import (
 
 func TestTypeURLs(t *testing.T) {
 	for want, m := range map[string]sdk.Msg{
-		TypeMsgDelegate: &MsgDelegate{}, TypeMsgUndelegate: &MsgUndelegate{}, TypeMsgClaimUnbonding: &MsgClaimUnbonding{},
+		TypeMsgDelegate: &MsgDelegate{}, TypeMsgUndelegate: &MsgUndelegate{},
 		TypeMsgStakeVote: &MsgStakeVote{}, TypeMsgLockPosition: &MsgLockPosition{}, TypeMsgUpdatePosition: &MsgUpdatePosition{},
 		TypeMsgUnlockPosition: &MsgUnlockPosition{}, TypeMsgPositionVote: &MsgPositionVote{},
 	} {
@@ -22,11 +22,7 @@ func TestTypeURLs(t *testing.T) {
 }
 
 func TestDenoms(t *testing.T) {
-	v, e, ok := ParseUnbondDenom(UnbondDenom("earthvaloper1abc", 42))
-	require.True(t, ok)
-	require.Equal(t, "earthvaloper1abc", v)
-	require.EqualValues(t, 42, e)
-	v, ok = ParseDerthDenom(DerthDenom("earthvaloper1abc"))
+	v, ok := ParseDerthDenom(DerthDenom("earthvaloper1abc"))
 	require.True(t, ok)
 	require.Equal(t, "earthvaloper1abc", v)
 	_, ok = ParseDerthDenom("derth/a/b")
@@ -37,7 +33,6 @@ func TestDenoms(t *testing.T) {
 	require.True(t, IsValidatorVoterKey(ValidatorVoterKey(make([]byte, 32))))
 	require.False(t, IsValidatorVoterKey(make([]byte, 20)))
 	require.False(t, IsValidatorVoterKey(make([]byte, 32)))
-	require.NoError(t, sdk.ValidateDenom(UnbondDenom("earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", ^uint64(0))))
 }
 
 func TestCanonicalValoper(t *testing.T) {

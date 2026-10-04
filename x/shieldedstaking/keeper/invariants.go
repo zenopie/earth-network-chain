@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -19,9 +20,9 @@ import (
 // tests and genesis run it directly.
 //
 //  1. ERTH: the module's uerth balance == sum of queued delegations + the
-//     matured, unclaimed payouts. Exact: every uerth the module receives is
+//     matured records' payouts not yet made (payout - paid). Exact: every uerth the module receives is
 //     booked in the same call (rewards are booked from balance deltas).
-//  2. derth and unbond claims are never coins (the module holds none), and
+//  2. derth is never a coin (the module holds none), and
 //     the derth locked in v's positions is at most derth_supply_v (the rest
 //     is in stake notes, whose amounts are hidden).
 //  3. Unbonding: per validator, the UNBONDING records' undelegated sum ==
@@ -41,6 +42,11 @@ import (
 //     == the sum of derth x percent over the validator's live positions.
 //  7. Stake nullifier tree (O(1)): its size is 0, or 1 + its last value's
 //     leaf index; the recorded latest size is at most the size.
+//  8. Payouts: each record's queued payouts sum to its outstanding (and a
+//     record with undelegations is never without them); every payout is in
+//     exactly one queue: untried under its record, or failed under its
+//     retry time; every MATURED record with untried payouts is marked for
+//     the sweep.
 func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertERTH(ctx); err != nil {
 		return err
@@ -58,6 +64,9 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 		return err
 	}
 	if err := k.assertNfTree(ctx); err != nil {
+		return err
+	}
+	if err := k.assertPayouts(ctx); err != nil {
 		return err
 	}
 	return k.assertEscrows(ctx)
@@ -218,10 +227,10 @@ func sortedKeys(m map[string]bool) []string {
 }
 
 func (k Keeper) assertDenoms(ctx context.Context) error {
-	// derth and unbond claims are stake notes and book entries, never coins:
-	// no account may hold one (none can be minted).
+	// derth is stake notes and book entries, never a coin: no account may
+	// hold one (none can be minted).
 	for _, c := range k.bank.GetAllBalances(ctx, k.modAddr) {
-		if strings.HasPrefix(c.Denom, types.UnbondPrefix) || strings.HasPrefix(c.Denom, types.DerthPrefix) {
+		if strings.HasPrefix(c.Denom, types.DerthPrefix) {
 			return types.ErrInvariant.Wrapf("module holds %s", c)
 		}
 	}
@@ -340,4 +349,89 @@ func (k Keeper) assertRates(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (k Keeper) assertPayouts(ctx context.Context) error {
+	// Keyed by validator/epoch: collections.Pair holds pointers.
+	owed := map[string]math.Int{}
+	if err := k.UnbondPayouts.Walk(ctx, nil, func(id uint64, p types.UnbondPayout) (bool, error) {
+		rec := fmt.Sprintf("%s/%d", p.Validator, p.Epoch)
+		if cur, ok := owed[rec]; ok {
+			owed[rec] = cur.Add(p.Value)
+		} else {
+			owed[rec] = p.Value
+		}
+		first, err := k.PayoutsByRecord.Has(ctx, collections.Join3(p.Validator, p.Epoch, id))
+		if err != nil {
+			return true, err
+		}
+		retry, err := k.PayoutRetries.Has(ctx, collections.Join(p.RetryAt, id))
+		if err != nil {
+			return true, err
+		}
+		if first == retry || first != (p.RetryAt == 0) {
+			return true, types.ErrInvariant.Wrapf("payout %d: queued untried %v, for retry %v (retry_at %d)", id, first, retry, p.RetryAt)
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	n := 0
+	if err := k.PayoutsByRecord.Walk(ctx, nil, func(key collections.Triple[string, uint64, uint64]) (bool, error) {
+		n++
+		p, err := k.UnbondPayouts.Get(ctx, key.K3())
+		if err != nil {
+			return true, types.ErrInvariant.Wrapf("queued payout %d: %v", key.K3(), err)
+		}
+		if p.Validator != key.K1() || p.Epoch != key.K2() {
+			return true, types.ErrInvariant.Wrapf("payout %d queued under %s/%d", key.K3(), key.K1(), key.K2())
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	if err := k.PayoutRetries.Walk(ctx, nil, func(key collections.Pair[int64, uint64]) (bool, error) {
+		n++
+		if ok, err := k.UnbondPayouts.Has(ctx, key.K2()); err != nil || !ok {
+			return true, types.ErrInvariant.Wrapf("retry of payout %d with no payout", key.K2())
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	total := 0
+	if err := k.UnbondPayouts.Walk(ctx, nil, func(uint64, types.UnbondPayout) (bool, error) {
+		total++
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	if n != total {
+		return types.ErrInvariant.Wrapf("%d payout queue entries for %d payouts", n, total)
+	}
+	return k.UnbondRecords.Walk(ctx, nil, func(key collections.Pair[string, uint64], r types.UnbondRecord) (bool, error) {
+		o, ok := owed[fmt.Sprintf("%s/%d", key.K1(), key.K2())]
+		if !ok {
+			o = math.ZeroInt()
+		}
+		if r.Requested.IsPositive() && !o.Equal(r.Outstanding) {
+			return true, types.ErrInvariant.Wrapf("record %s/%d: outstanding %s, payouts %s", key.K1(), key.K2(), r.Outstanding, o)
+		}
+		if r.Status == types.UNBOND_STATUS_MATURED {
+			untried := false
+			if err := k.PayoutsByRecord.Walk(ctx, collections.NewSuperPrefixedTripleRange[string, uint64, uint64](key.K1(), key.K2()),
+				func(collections.Triple[string, uint64, uint64]) (bool, error) {
+					untried = true
+					return true, nil
+				}); err != nil {
+				return true, err
+			}
+			if marked, err := k.MaturedRecords.Has(ctx, key); err != nil {
+				return true, err
+			} else if untried && !marked {
+				return true, types.ErrInvariant.Wrapf("matured record %s/%d has untried payouts but is not marked", key.K1(), key.K2())
+			}
+		}
+		return false, nil
+	})
 }

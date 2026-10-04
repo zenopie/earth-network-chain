@@ -12,8 +12,6 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
-	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
@@ -95,8 +93,9 @@ func (k msgServer) Restake(goCtx context.Context, m *types.MsgRestake) (*types.M
 }
 
 // Undelegate: amount of derth/v leaves the owner's notes (any change back to
-// them) and an owner-locked unbond/v/e claim of its live value is minted to
-// the proof's spc_mint; the value joins this epoch's undelegation for v.
+// them); its live value joins this epoch's undelegation for v, and a payout
+// of it to the msg's pc is queued (payouts.go): the chain mints it at
+// maturity, by itself.
 func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*types.MsgUndelegateResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -146,8 +145,7 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
-	denom := types.UnbondDenom(m.Validator, epoch.Number)
-	pos, err := k.mintStake(ctx, denom, u, m.Stake.SpcMint, m.Stake.SpcCiphertext)
+	id, err := k.queuePayout(ctx, m.Validator, epoch.Number, u, m.Pc, m.Ciphertext)
 	if err != nil {
 		return nil, err
 	}
@@ -155,78 +153,10 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 		sdk.NewAttribute(types.AttributeKeyValidator, m.Validator),
 		sdk.NewAttribute(types.AttributeKeyDerth, d.String()),
 		sdk.NewAttribute(types.AttributeKeyValue, u.String()),
-		sdk.NewAttribute(types.AttributeKeyDenom, denom),
+		sdk.NewAttribute(types.AttributeKeyEpoch, strconv.FormatUint(epoch.Number, 10)),
+		sdk.NewAttribute(types.AttributeKeyPayoutID, strconv.FormatUint(id, 10)),
 	))
-	return &types.MsgUndelegateResponse{Denom: denom, Value: u.Uint64(), Position: pos}, nil
-}
-
-// ClaimUnbonding returns the claim the private ante already executed
-// (executeClaim): a claim is atomic with its spend, so it can pay its fee
-// from what it claims.
-func (k msgServer) ClaimUnbonding(goCtx context.Context, m *types.MsgClaimUnbonding) (*types.MsgClaimUnbondingResponse, error) {
-	res, executed, err := shieldedkeeper.AuthorizedResult(goCtx, m)
-	if err != nil {
-		return nil, err
-	}
-	r, ok := res.(*types.MsgClaimUnbondingResponse)
-	if !executed || !ok {
-		return nil, shieldedtypes.ErrUnauthorized.Wrap("the claim was not executed by the private ante")
-	}
-	return r, nil
-}
-
-// executeClaim: amount of the owner's unbond/v/e claim notes is spent (any
-// change back to them) and ERTH = amount x payout / requested is paid, so a
-// slash of the unbonding entry reaches every claimant pro rata:
-// fee_from_output to fee_collector, the rest minted as an ordinary note to pc
-// in the shielded pool. Runs in the private ante; any error fails the whole
-// tx.
-func (k Keeper) executeClaim(ctx sdk.Context, m *types.MsgClaimUnbonding) (*types.MsgClaimUnbondingResponse, error) {
-	r, pay, err := k.checkClaim(ctx, m)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
-		return nil, err
-	}
-	claimed := math.NewIntFromUint64(m.Amount)
-	r.Outstanding = r.Outstanding.Sub(claimed)
-	r.Paid = r.Paid.Add(pay)
-	note := pay
-	if m.FeeFromOutput > 0 {
-		fee := math.NewIntFromUint64(m.FeeFromOutput)
-		if err := k.shielded.PayFeeFromModule(ctx, types.ModuleName, fee); err != nil {
-			return nil, err
-		}
-		note = pay.Sub(fee)
-	}
-	var pos uint64
-	if note.IsPositive() {
-		if pos, _, err = k.shielded.MintNote(ctx, types.ModuleName, sdk.NewCoin(types.BondDenom, note), m.Pc, m.Ciphertext); err != nil {
-			return nil, err
-		}
-	}
-	key := collections.Join(m.Validator, m.Epoch)
-	if r.Outstanding.IsZero() {
-		// Every claim is in: the floor division's dust goes to the community
-		// pool, and the record is done.
-		if dust := r.Payout.Sub(r.Paid); dust.IsPositive() {
-			if err := k.distr.FundCommunityPool(ctx, sdk.NewCoins(sdk.NewCoin(types.BondDenom, dust)), k.modAddr); err != nil {
-				return nil, err
-			}
-		}
-		if err := k.UnbondRecords.Remove(ctx, key); err != nil {
-			return nil, err
-		}
-	} else if err := k.UnbondRecords.Set(ctx, key, r); err != nil {
-		return nil, err
-	}
-	ctx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeClaim,
-		sdk.NewAttribute(types.AttributeKeyDenom, m.StakeDenom()),
-		sdk.NewAttribute(types.AttributeKeyValue, claimed.String()),
-		sdk.NewAttribute(types.AttributeKeyAmount, pay.String()),
-	))
-	return &types.MsgClaimUnbondingResponse{Amount: note.Uint64(), Position: pos}, nil
+	return &types.MsgUndelegateResponse{Value: u.Uint64(), PayoutId: id}, nil
 }
 
 // StakeVote records a stake note's vote. Nothing is spent or minted: the

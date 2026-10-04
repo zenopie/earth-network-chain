@@ -20,7 +20,6 @@ const (
 	TypeMsgDelegate       = "/earth.shieldedstaking.v1.MsgDelegate"
 	TypeMsgRestake        = "/earth.shieldedstaking.v1.MsgRestake"
 	TypeMsgUndelegate     = "/earth.shieldedstaking.v1.MsgUndelegate"
-	TypeMsgClaimUnbonding = "/earth.shieldedstaking.v1.MsgClaimUnbonding"
 	TypeMsgStakeVote      = "/earth.shieldedstaking.v1.MsgStakeVote"
 	TypeMsgLockPosition   = "/earth.shieldedstaking.v1.MsgLockPosition"
 	TypeMsgUpdatePosition = "/earth.shieldedstaking.v1.MsgUpdatePosition"
@@ -32,14 +31,11 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgDelegate)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgRestake)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgUndelegate)(nil)
-	_ shieldedtypes.PrivateMsg = (*MsgClaimUnbonding)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgStakeVote)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgLockPosition)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgUpdatePosition)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgUnlockPosition)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgPositionVote)(nil)
-
-	_ shieldedtypes.FeeFromOutputMsg = (*MsgClaimUnbonding)(nil)
 )
 
 // ---- field encodings the sighashes and position signatures bind ----------
@@ -354,7 +350,6 @@ var (
 	_ StakeMsg = (*MsgDelegate)(nil)
 	_ StakeMsg = (*MsgRestake)(nil)
 	_ StakeMsg = (*MsgUndelegate)(nil)
-	_ StakeMsg = (*MsgClaimUnbonding)(nil)
 	_ StakeMsg = (*MsgLockPosition)(nil)
 	_ StakeMsg = (*MsgUpdatePosition)(nil)
 	_ StakeMsg = (*MsgUnlockPosition)(nil)
@@ -476,13 +471,21 @@ func (m *MsgUndelegate) StakeProofOf() *StakeProof               { return &m.Sta
 func (m *MsgUndelegate) StakeDenom() string                      { return DerthDenom(m.Validator) }
 func (m *MsgUndelegate) VOut() uint64                            { return m.Amount }
 
-// SighashFields: StakeFields, Bytes(validator), amount.
+// SighashFields: StakeFields, Bytes(validator), amount, pc,
+// Bytes(ciphertext).
 func (m *MsgUndelegate) SighashFields(address.Codec) ([]fr.Element, error) {
-	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount)), nil
+	pc, err := field("pc", m.Pc)
+	if err != nil {
+		return nil, err
+	}
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount), pc,
+		privacy.Bytes(m.Ciphertext)), nil
 }
 
+// ValidateBasic: the proof spends derth and may return change; no stake note
+// is minted (spc_ciphertext empty); pc and ciphertext name the payout notes.
 func (m *MsgUndelegate) ValidateBasic() error {
-	if err := m.Stake.mints(true); err != nil {
+	if err := m.Stake.mints(false); err != nil {
 		return err
 	}
 	if err := checkValidator(m.Validator); err != nil {
@@ -494,58 +497,10 @@ func (m *MsgUndelegate) ValidateBasic() error {
 	if err := checkMoves(m, "", 0); err != nil {
 		return err
 	}
+	if err := checkNoteOut(m.Pc, m.Ciphertext); err != nil {
+		return err
+	}
 	return m.Stake.shape(1, true)
-}
-
-// ---- MsgClaimUnbonding ----------------------------------------------------
-
-// PrivateBundles is the fee bundle, none with fee_from_output.
-func (m *MsgClaimUnbonding) PrivateBundles() []*shieldedtypes.Bundle {
-	if m.Bundle == nil {
-		return nil
-	}
-	return bundle(m.Bundle)
-}
-
-func (m *MsgClaimUnbonding) PrivateFee() uint64        { return shieldedtypes.FeeAfter(m, 0) }
-func (m *MsgClaimUnbonding) StakeProofOf() *StakeProof { return &m.Stake }
-func (m *MsgClaimUnbonding) StakeDenom() string        { return UnbondDenom(m.Validator, m.Epoch) }
-func (m *MsgClaimUnbonding) VOut() uint64              { return m.Amount }
-
-// OutputFee implements x/shielded's FeeFromOutputMsg.
-func (m *MsgClaimUnbonding) OutputFee() uint64 { return m.FeeFromOutput }
-
-// SighashFields: StakeFields, Bytes(validator), epoch, amount, pc,
-// Bytes(ciphertext), fee_from_output.
-func (m *MsgClaimUnbonding) SighashFields(address.Codec) ([]fr.Element, error) {
-	pc, err := field("pc", m.Pc)
-	if err != nil {
-		return nil, err
-	}
-	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Epoch), privacy.U64(m.Amount), pc,
-		privacy.Bytes(m.Ciphertext), privacy.U64(m.FeeFromOutput)), nil
-}
-
-func (m *MsgClaimUnbonding) ValidateBasic() error {
-	if err := m.Stake.mints(false); err != nil {
-		return err
-	}
-	if err := checkValidator(m.Validator); err != nil {
-		return err
-	}
-	if err := positive("amount", m.Amount); err != nil {
-		return err
-	}
-	if (m.Bundle == nil) != (m.FeeFromOutput > 0) {
-		return errorsmod.Wrap(ErrInvalidMsg, "a claim carries a fee bundle exactly when it pays no fee from its output")
-	}
-	if err := checkMoves(m, "", m.FeeFromOutput); err != nil {
-		return err
-	}
-	if err := m.Stake.shape(1, true); err != nil {
-		return err
-	}
-	return checkNoteOut(m.Pc, m.Ciphertext)
 }
 
 // ---- MsgStakeVote ---------------------------------------------------------

@@ -11,8 +11,8 @@ option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
 
 // Epoch is the epoch in progress.
 message Epoch {
-  // number of the epoch in progress; unbond/<valoper>/<number> notes minted
-  // now are executed at its end.
+  // number of the epoch in progress; undelegations made now are executed at
+  // its end.
   uint64 number = 1;
   // start_time and end_time, unix seconds. The epoch ends in the first block
   // whose time is at or after end_time.
@@ -33,8 +33,8 @@ message ValidatorState {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
-  // pending_undelegation is the ERTH value of unbond notes minted and not yet
-  // undelegated (sum of the PENDING records' target).
+  // pending_undelegation is the ERTH value undelegated privately and not yet
+  // undelegated from x/staking (sum of the PENDING records' target).
   string pending_undelegation = 3 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
@@ -98,20 +98,24 @@ message EpochSweep {
 // UnbondStatus is where an epoch's undelegation for one validator stands.
 enum UnbondStatus {
   option (gogoproto.goproto_enum_prefix) = false;
-  // UNBOND_STATUS_PENDING: notes minted, SDK undelegation not yet made.
+  // UNBOND_STATUS_PENDING: undelegations booked, SDK undelegation not yet
+  // made.
   UNBOND_STATUS_PENDING = 0;
   // UNBOND_STATUS_UNBONDING: an SDK unbonding entry exists.
   UNBOND_STATUS_UNBONDING = 1;
-  // UNBOND_STATUS_MATURED: the entry paid out; notes can be claimed.
+  // UNBOND_STATUS_MATURED: the entry paid out; the record's payouts are
+  // minted, a bounded number a block.
   UNBOND_STATUS_MATURED = 2;
 }
 
-// UnbondRecord backs the unbond/<validator>/<epoch> stake notes (claims).
+// UnbondRecord is one epoch's private undelegation from one validator: the
+// UnbondPayouts queued against it share its payout pro rata.
 message UnbondRecord {
   string validator = 1;
   uint64 epoch = 2;
   UnbondStatus status = 3;
-  // requested is the total value of the claim notes minted.
+  // requested is the total ERTH value of the undelegations booked (the sum
+  // of its payouts' values).
   string requested = 4 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
@@ -145,20 +149,45 @@ message UnbondRecord {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
-  // outstanding is the note value not yet claimed.
+  // outstanding is the value of its payouts not yet paid.
   string outstanding = 10 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
-  // paid is the ERTH claimed so far.
+  // paid is the ERTH paid out so far.
   string paid = 11 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+}
+
+// UnbondPayout is one private undelegation's queued payout. At its record's
+// maturity the chain mints value x record.payout / record.requested ERTH as
+// notes to pc with ciphertext (several notes of at most 2^63-1 each when it
+// is above that). A payout that fails is kept and retried, never dropped.
+message UnbondPayout {
+  // id is unique and increasing (MsgUndelegateResponse.payout_id).
+  uint64 id = 1;
+  string validator = 2;
+  uint64 epoch = 3;
+  // value is the ERTH value booked at undelegation (its share of
+  // record.requested).
+  string value = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  bytes pc = 5;
+  bytes ciphertext = 6;
+  // payout_attempts is how many times paying it failed; retry_at (unix
+  // seconds) is when it is tried again, 0 until it first fails.
+  uint32 payout_attempts = 7;
+  int64 retry_at = 8;
 }
 
 // Position is a Groundworks position: derth locked in the module, its owner

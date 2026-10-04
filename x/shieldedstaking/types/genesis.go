@@ -72,6 +72,9 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("unbond record %s is inconsistent", key)
 		}
 	}
+	if err := gs.validatePayouts(); err != nil {
+		return err
+	}
 	ids := map[uint64]bool{}
 	for _, p := range gs.Positions {
 		if ids[p.Id] || p.Id >= gs.NextPositionId {
@@ -199,6 +202,61 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("retiring escrow %x is malformed or repeated", r.Validator)
 		}
 		retiring[string(r.Validator)] = true
+	}
+	return nil
+}
+
+// validatePayouts checks the queued undelegation payouts: unique ids below
+// next_unbond_payout_id, each against an existing record that has
+// undelegations (not an orphan), a value of 1..2^63-1 (what an undelegation
+// books), a pc and a blind ciphertext, retry_at set exactly when it failed
+// before; and per record, the unpaid payouts sum to its outstanding.
+func (gs GenesisState) validatePayouts() error {
+	records := map[string]UnbondRecord{}
+	for _, r := range gs.UnbondRecords {
+		records[fmt.Sprintf("%s/%d", r.Validator, r.Epoch)] = r
+	}
+	ids := map[uint64]bool{}
+	owed := map[string]math.Int{}
+	for _, p := range gs.UnbondPayouts {
+		if ids[p.Id] || p.Id >= gs.NextUnbondPayoutId {
+			return fmt.Errorf("unbond payout %d duplicated or not below next_unbond_payout_id", p.Id)
+		}
+		ids[p.Id] = true
+		key := fmt.Sprintf("%s/%d", p.Validator, p.Epoch)
+		r, ok := records[key]
+		if !ok || !r.Requested.IsPositive() {
+			return fmt.Errorf("unbond payout %d: no unbond record %s with undelegations", p.Id, key)
+		}
+		if p.Value.IsNil() || !shieldedtypes.FitsNote(p.Value) {
+			return fmt.Errorf("unbond payout %d: value must be 1..2^63-1", p.Id)
+		}
+		if _, err := privacy.FieldFromBytes(p.Pc); err != nil {
+			return fmt.Errorf("unbond payout %d pc: %w", p.Id, err)
+		}
+		if err := shieldedtypes.CheckBlindCiphertext("ciphertext", p.Ciphertext); err != nil {
+			return fmt.Errorf("unbond payout %d: %w", p.Id, err)
+		}
+		if p.RetryAt < 0 || (p.RetryAt > 0) != (p.PayoutAttempts > 0) {
+			return fmt.Errorf("unbond payout %d: retry_at %d with %d attempts", p.Id, p.RetryAt, p.PayoutAttempts)
+		}
+		if cur, ok := owed[key]; ok {
+			owed[key] = cur.Add(p.Value)
+		} else {
+			owed[key] = p.Value
+		}
+	}
+	for key, r := range records {
+		if !r.Requested.IsPositive() {
+			continue
+		}
+		o, ok := owed[key]
+		if !ok {
+			o = math.ZeroInt()
+		}
+		if !o.Equal(r.Outstanding) {
+			return fmt.Errorf("unbond record %s: outstanding %s, its payouts sum to %s", key, r.Outstanding, o)
+		}
 	}
 	return nil
 }

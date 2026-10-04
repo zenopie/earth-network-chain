@@ -87,6 +87,8 @@ type stakeEnv struct {
 	reserved []*wnote
 	// proofDir is where this suite's proofs are cached.
 	proofDir string
+	// events are every block's FinalizeBlock and tx events, oldest first.
+	events []abci.Event
 }
 
 // initStakeEnv boots the launch genesis for ssChainID: one genesis validator
@@ -249,6 +251,10 @@ func (e *stakeEnv) block(dt time.Duration, mis []abci.Misbehavior, txs ...[]byte
 	require.NoError(e.t, err)
 	_, err = e.app.Commit()
 	require.NoError(e.t, err)
+	for _, r := range res.TxResults {
+		e.events = append(e.events, r.Events...)
+	}
+	e.events = append(e.events, res.Events...)
 	e.w.scan(e)
 	e.scanStake()
 	return res

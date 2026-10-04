@@ -1,12 +1,10 @@
 // Package types defines private staking: the module as the sole non-self
-// delegator, derth/<valoper> and unbond/<valoper>/<epoch> owner-locked stake
-// notes in the module's own stake note tree, epochs, stake votes and
-// Groundworks positions.
+// delegator, derth/<valoper> owner-locked stake notes in the module's own
+// stake note tree, epochs, undelegation payouts, stake votes and Groundworks
+// positions.
 package types
 
 import (
-	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,11 +24,10 @@ const (
 	// BondDenom is the staking coin; the module accepts nothing else.
 	BondDenom = "uerth"
 
-	// DerthPrefix and UnbondPrefix start this module's stake denoms. They name
-	// stake note assets (zk/privacy.AssetID of the denom) and are never coins,
+	// DerthPrefix starts this module's stake denoms. They name stake note
+	// assets (zk/privacy.AssetID of the denom) and are never coins,
 	// shielded-pool assets or dex tokens.
-	DerthPrefix  = "derth/"
-	UnbondPrefix = "unbond/"
+	DerthPrefix = "derth/"
 
 	// MaxOptionsPerVote bounds a stake vote's weighted options (x/gov has four).
 	MaxOptionsPerVote = 4
@@ -63,6 +60,21 @@ const (
 
 	// SnapshotSweepLimit caps how many finished proposals one block forgets.
 	SnapshotSweepLimit = 20
+
+	// UnbondPayoutSweepLimit caps how many undelegation payouts one block
+	// tries (due retries first, then matured records' payouts in order);
+	// UnbondPayoutNoteBudget caps the notes one block mints for them. A
+	// payout whose notes would pass the budget waits for the next block,
+	// unless it is the block's first (one payout mints at most
+	// MaxSplitNotes = 128).
+	UnbondPayoutSweepLimit = 50
+	UnbondPayoutNoteBudget = 256
+
+	// UnbondPayoutRetryBaseSeconds and UnbondPayoutRetryMaxShift: a payout
+	// that fails is retried, never dropped, at now + base << min(attempts-1,
+	// max shift): 1h, 2h, 4h, ... capped at 256h (as x/dex's LP payouts).
+	UnbondPayoutRetryBaseSeconds = 3600
+	UnbondPayoutRetryMaxShift    = 8
 
 	// ValidatorVoterPrefix starts a validator's Groundworks voter key in
 	// x/allocation (ValidatorVoterKey).
@@ -143,37 +155,36 @@ var (
 	// RootsStaleKey: set when recording the stake roots at a block's end
 	// failed, cleared by the next success (audit 6 C-L4).
 	RootsStaleKey = collections.NewPrefix(38)
+	// Undelegation payouts (payouts.go): by id; the not-yet-tried ones by
+	// (validator, epoch, id); the failed ones by (retry_at, id); the
+	// MATURED records with payouts left; the id sequence.
+	UnbondPayoutsKey   = collections.NewPrefix(39)
+	PayoutsByRecordKey = collections.NewPrefix(40)
+	PayoutRetriesKey   = collections.NewPrefix(41)
+	MaturedRecordsKey  = collections.NewPrefix(42)
+	UnbondPayoutSeqKey = collections.NewPrefix(43)
 )
+
+// UnbondPayoutRetryDelay is how long after its attempts-th failure a payout
+// is retried.
+func UnbondPayoutRetryDelay(attempts uint32) int64 {
+	shift := uint32(0)
+	if attempts > 1 {
+		shift = attempts - 1
+	}
+	if shift > UnbondPayoutRetryMaxShift {
+		shift = UnbondPayoutRetryMaxShift
+	}
+	return int64(UnbondPayoutRetryBaseSeconds) << shift
+}
 
 // DerthDenom is validator's delegation token.
 func DerthDenom(valoper string) string { return DerthPrefix + valoper }
-
-// UnbondDenom is validator's unbonding claim for epoch.
-func UnbondDenom(valoper string, epoch uint64) string {
-	return fmt.Sprintf("%s%s/%d", UnbondPrefix, valoper, epoch)
-}
 
 // ParseDerthDenom returns the validator of a derth denom.
 func ParseDerthDenom(denom string) (string, bool) {
 	v, ok := strings.CutPrefix(denom, DerthPrefix)
 	return v, ok && v != "" && !strings.Contains(v, "/")
-}
-
-// ParseUnbondDenom returns the validator and epoch of an unbond denom.
-func ParseUnbondDenom(denom string) (string, uint64, bool) {
-	rest, ok := strings.CutPrefix(denom, UnbondPrefix)
-	if !ok {
-		return "", 0, false
-	}
-	i := strings.LastIndexByte(rest, '/')
-	if i <= 0 {
-		return "", 0, false
-	}
-	e, err := strconv.ParseUint(rest[i+1:], 10, 64)
-	if err != nil {
-		return "", 0, false
-	}
-	return rest[:i], e, true
 }
 
 // ValidatorVoterKey is the Groundworks voter key under which x/allocation

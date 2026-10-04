@@ -22,7 +22,7 @@ import (
 //	D_v  the module's delegation to v, in tokens (truncated)
 //	W_v  its unwithdrawn uerth rewards at v (truncated)
 //	P_v  ERTH queued to delegate to v (ValidatorState.pending_delegation)
-//	U_v  unbond notes minted against v and not yet undelegated
+//	U_v  private undelegations booked against v and not yet undelegated
 //	     (ValidatorState.pending_undelegation)
 //	S_v  the derth/v outstanding (ValidatorState.derth_supply: stake notes
 //	     and positions; derth is never a coin)

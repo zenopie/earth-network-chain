@@ -42,8 +42,10 @@ type PrivateMsg interface {
 }
 
 // FeeFromOutputMsg is a PrivateMsg that pays (part of) its fee out of the
-// uerth its action produces (an unbonding claim, a swap into uerth) instead of
-// from a bundle balance. OutputFee is that fee, bound by the sighash.
+// uerth its action produces instead of from a bundle balance. OutputFee is
+// that fee, bound by the sighash. No msg implements it today: its only user,
+// x/shieldedstaking's MsgClaimUnbonding, is retired (undelegations pay out
+// by themselves); the path stays generic and tested.
 //
 // The private ante charges it exactly like a bundle fee (the same floor, the
 // same min gas price) and requires it paid in full before it writes
@@ -91,7 +93,7 @@ func Sighash(msg PrivateMsg, chainID string, tx TxFields, ac address.Codec) (fr.
 
 // ValidateBundles checks a private msg's bundles together: 1..MaxBundlesPerMsg
 // of them (0 for a msg paying its whole fee from its output, whose action
-// carries its own proof and nullifiers: an unbonding claim), each one's
+// carries its own proof and nullifiers; none today), each one's
 // ValidateBasic, nullifiers distinct across all of them, and the release map
 // (Remainders) well formed.
 func ValidateBundles(msg PrivateMsg) error {

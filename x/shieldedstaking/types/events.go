@@ -4,7 +4,6 @@ package types
 const (
 	EventTypeDelegate       = "shieldedstaking_delegate"
 	EventTypeUndelegate     = "shieldedstaking_undelegate"
-	EventTypeClaim          = "shieldedstaking_claim"
 	EventTypeEpoch          = "shieldedstaking_epoch"
 	EventTypeEpochValidator = "shieldedstaking_epoch_validator"
 	EventTypeEpochFailure   = "shieldedstaking_epoch_failure"
@@ -12,11 +11,17 @@ const (
 	// undelegation for the next one, its max_entries being full.
 	EventTypeUnbondingDeferred = "shieldedstaking_unbonding_deferred"
 	EventTypeMatured           = "shieldedstaking_matured"
-	EventTypeSlashHaircut      = "shieldedstaking_slash_haircut"
-	EventTypeStakeVote         = "shieldedstaking_stake_vote"
-	EventTypeSnapshot          = "shieldedstaking_snapshot"
-	EventTypePosition          = "shieldedstaking_position"
-	EventTypeInvariant         = "shieldedstaking_invariant_broken"
+	// EventTypeUnbondPayout: a private undelegation was paid out as notes
+	// (their shielded_mint events, with the payout's pc's ciphertext,
+	// precede it); EventTypeUnbondPayoutFailed: paying it failed, it is
+	// kept and retried at retry_at.
+	EventTypeUnbondPayout       = "shieldedstaking_unbond_payout"
+	EventTypeUnbondPayoutFailed = "shieldedstaking_unbond_payout_failed"
+	EventTypeSlashHaircut       = "shieldedstaking_slash_haircut"
+	EventTypeStakeVote          = "shieldedstaking_stake_vote"
+	EventTypeSnapshot           = "shieldedstaking_snapshot"
+	EventTypePosition           = "shieldedstaking_position"
+	EventTypeInvariant          = "shieldedstaking_invariant_broken"
 	// EventTypeOrphan: uerth at a validator that no derth and no record owns
 	// went to the community pool.
 	EventTypeOrphan   = "shieldedstaking_orphan_to_community_pool"
@@ -65,4 +70,9 @@ const (
 	AttributeKeyNfRoot       = "nf_root"
 	AttributeKeyNfSize       = "nf_size"
 	AttributeKeyVoteNF       = "vote_nullifier"
+	AttributeKeyPayoutID     = "payout_id"
+	AttributeKeyNotes        = "notes"
+	AttributeKeyPositions    = "positions"
+	AttributeKeyAttempts     = "attempts"
+	AttributeKeyRetryAt      = "retry_at"
 )

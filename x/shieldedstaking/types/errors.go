@@ -8,7 +8,7 @@ var (
 	ErrInvalidMsg          = errors.Register(ModuleName, 1101, "invalid private staking msg")
 	ErrValidator           = errors.Register(ModuleName, 1102, "validator cannot take private delegations")
 	ErrAmount              = errors.Register(ModuleName, 1103, "amount converts to nothing or overflows a note")
-	ErrNotMatured          = errors.Register(ModuleName, 1104, "unbonding claim has not matured")
+	ErrNotMatured          = errors.Register(ModuleName, 1104, "unbonding record is not open")
 	ErrUnknownRecord       = errors.Register(ModuleName, 1105, "no such unbonding record")
 	ErrNoVoting            = errors.Register(ModuleName, 1106, "proposal is not open to stake votes")
 	ErrPosition            = errors.Register(ModuleName, 1108, "invalid position")

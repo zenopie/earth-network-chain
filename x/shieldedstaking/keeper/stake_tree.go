@@ -20,8 +20,8 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// The stake note tree. Delegated stake (derth/<valoper>) and unbonding
-// claims (unbond/<valoper>/<epoch>) exist only as notes here: an
+// The stake note tree. Delegated stake (derth/<valoper>) exists only as
+// notes here: an
 // append-only depth-32 Poseidon2 tree like the shielded pool's, with its own
 // nullifier set and root window, proven against by circuits/stake. Its notes
 // are owner-locked (see the circuit): a stake note can be merged, split,
@@ -31,7 +31,7 @@ import (
 //	nf  = H(TAG_SNF, nk, rho, position)     asset = AssetID(stake denom)
 //
 // Notes a msg's proof creates carry hidden amounts; notes the chain mints
-// (a delegation's derth, an undelegation's claim, an unlocked position) carry public ones, emitted with the stake pc.
+// (a delegation's derth, an unlocked position) carry public ones, emitted with the stake pc.
 
 // stakeNodeStore backs zk/merkle's tree with StakeTreeNodes.
 type stakeNodeStore struct {

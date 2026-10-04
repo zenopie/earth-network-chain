@@ -156,7 +156,7 @@ func TestEpochEndDefersUndelegationPastMaxEntries(t *testing.T) {
 	un1 := e.undelegate(vB, dn, uint64(500*ssErth))
 	dn = e.unspentStake(dn.denom)
 	e.days(1)
-	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, epochOf(t, un1.denom)).Status)
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, un1.epoch).Status)
 
 	sp, err := e.app.StakingKeeper.GetParams(e.ctx())
 	require.NoError(t, err)
@@ -176,10 +176,10 @@ func TestEpochEndDefersUndelegationPastMaxEntries(t *testing.T) {
 		floor = floor || ev[sstypes.AttributeKeyStage] == "unbonding_floor"
 	}
 	require.True(t, floor, "floor violation reported")
-	require.Equal(t, sstypes.UNBOND_STATUS_PENDING, e.record(vB, epochOf(t, un2.denom)).Status)
+	require.Equal(t, sstypes.UNBOND_STATUS_PENDING, e.record(vB, un2.epoch).Status)
 
 	sp.MaxEntries = old
 	require.NoError(t, e.app.StakingKeeper.SetParams(e.ctx(), sp))
 	e.days(1)
-	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, epochOf(t, un2.denom)).Status)
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, un2.epoch).Status)
 }

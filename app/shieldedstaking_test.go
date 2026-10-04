@@ -19,7 +19,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/cosmos/cosmos-sdk/x/authz"
 	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
@@ -67,76 +66,99 @@ func (e *stakeEnv) delegate(val sdk.ValAddress, amount uint64) *snote {
 	return e.mintedStake(res, dn)
 }
 
+// unbonding is a private undelegation the test wallet made: its payout id,
+// epoch, booked ERTH value, and the pool note its payout is minted to.
+type unbonding struct {
+	id    uint64
+	epoch uint64
+	value uint64
+	out   *wnote
+}
+
 // undelegateMsg undelegates amount of the stake note in, its change back as
-// a new stake note; the claim is minted to a fresh stake note.
-func (e *stakeEnv) undelegateMsg(val sdk.ValAddress, in *snote, amount uint64) (*sstypes.MsgUndelegate, *pendingBundle, *stakePlan, *snote) {
-	epoch, err := e.app.ShieldedStakingKeeper.Epoch.Get(e.ctx())
-	require.NoError(e.t, err)
+// a new stake note; the payout goes to a fresh pool note of the wallet.
+func (e *stakeEnv) undelegateMsg(val sdk.ValAddress, in *snote, amount uint64) (*sstypes.MsgUndelegate, *pendingBundle, *stakePlan, *wnote) {
 	p := e.feeOnly()
 	v := e.valoper(val)
-	un := e.freshStake(sstypes.UnbondDenom(v, epoch.Number), 0)
-	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, outs: []*snote{e.freshStake(in.denom, in.amount-amount)},
-		vOut: amount, mint: un})
-	m := &sstypes.MsgUndelegate{Bundle: p.b, Validator: v, Amount: amount, Stake: sp.proof}
-	e.prove(m, p)
-	e.proveStake(m, sp)
-	return m, p, sp, un
-}
-
-// undelegate turns amount of a derth stake note into an unbond claim note.
-func (e *stakeEnv) undelegate(val sdk.ValAddress, in *snote, amount uint64) *snote {
-	e.t.Helper()
-	m, p, sp, un := e.undelegateMsg(val, in, amount)
-	res := e.run(e.privateTx(m))
-	require.Equal(e.t, uint32(0), res.Code, res.Log)
-	e.settle(p)
-	e.settleStake(sp)
-	return e.mintedStake(res, un)
-}
-
-func (e *stakeEnv) claimMsg(in *snote) (*sstypes.MsgClaimUnbonding, *pendingBundle, *stakePlan, *wnote) {
-	return e.claimMsgFee(in, 0, true)
-}
-
-// claimMsgFee is a claim of all of in paying feeFromOutput out of what it
-// claims (no bundle), or a fee bundle when it is 0.
-func (e *stakeEnv) claimMsgFee(in *snote, feeFromOutput uint64, prove bool) (*sstypes.MsgClaimUnbonding, *pendingBundle, *stakePlan, *wnote) {
-	v, epoch, ok := sstypes.ParseUnbondDenom(in.denom)
-	require.True(e.t, ok)
 	out := e.w.fresh("uerth", 0)
-	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, vOut: in.amount})
-	m := &sstypes.MsgClaimUnbonding{Validator: v, Epoch: epoch, Amount: in.amount, Pc: privacy.FieldBytes(e.w.pc(out)),
-		Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("claim/%d", e.w.seq)), FeeFromOutput: feeFromOutput, Stake: sp.proof}
-	var p *pendingBundle
-	if feeFromOutput == 0 {
-		p = e.feeOnly()
-		m.Bundle = &p.b
-	}
-	if !prove {
-		unproven(m)
-		return m, p, sp, out
-	}
-	if p != nil {
-		e.prove(m, p)
-	}
+	sp := e.stake(&stakePlan{denom: in.denom, ins: []*snote{in}, outs: []*snote{e.freshStake(in.denom, in.amount-amount)},
+		vOut: amount})
+	m := &sstypes.MsgUndelegate{Bundle: p.b, Validator: v, Amount: amount, Stake: sp.proof,
+		Pc: privacy.FieldBytes(e.w.pc(out)), Ciphertext: shieldedtest.BlindCT(fmt.Sprintf("payout/%d", e.w.seq))}
+	e.prove(m, p)
 	e.proveStake(m, sp)
 	return m, p, sp, out
 }
 
-// claim spends an unbond note and returns the ERTH note (nil if it paid 0).
-func (e *stakeEnv) claim(in *snote) *wnote {
+// undelegate undelegates amount of a derth stake note: its value is booked
+// and its payout queued.
+func (e *stakeEnv) undelegate(val sdk.ValAddress, in *snote, amount uint64) *unbonding {
 	e.t.Helper()
-	m, p, sp, out := e.claimMsg(in)
+	m, p, sp, out := e.undelegateMsg(val, in, amount)
 	res := e.run(e.privateTx(m))
 	require.Equal(e.t, uint32(0), res.Code, res.Log)
 	e.settle(p)
 	e.settleStake(sp)
-	for _, ev := range eventsOf(res.Events, sstypes.EventTypeClaim) {
-		if ev["amount"] == "0" {
-			return nil
-		}
+	evs := eventsOf(res.Events, sstypes.EventTypeUndelegate)
+	require.Len(e.t, evs, 1)
+	un := &unbonding{out: out}
+	for k, dst := range map[string]*uint64{"payout_id": &un.id, "epoch": &un.epoch, "value": &un.value} {
+		v, err := strconv.ParseUint(evs[0][k], 10, 64)
+		require.NoError(e.t, err, k)
+		*dst = v
 	}
-	return e.minted(res, out)
+	_, err := e.app.ShieldedStakingKeeper.UnbondPayouts.Get(e.ctx(), un.id)
+	require.NoError(e.t, err, "payout queued")
+	return un
+}
+
+// payout is un's payout: the pool note the chain minted for it (nil if it
+// paid 0), waiting up to three blocks for it. The note is the wallet's: it
+// is tracked.
+func (e *stakeEnv) payout(un *unbonding) *wnote {
+	e.t.Helper()
+	id := strconv.FormatUint(un.id, 10)
+	for tries := 0; ; tries++ {
+		for _, ev := range eventsOf(e.events, sstypes.EventTypeUnbondPayout) {
+			if ev["payout_id"] != id {
+				continue
+			}
+			if ev["amount"] == "0" {
+				require.Equal(e.t, "0", ev["notes"])
+				return nil
+			}
+			require.Equal(e.t, "1", ev["notes"])
+			v, err := strconv.ParseUint(ev["amount"], 10, 64)
+			require.NoError(e.t, err)
+			un.out.value = v
+			e.w.track(un.out)
+			e.w.scan(e)
+			require.True(e.t, un.out.known, "payout note not found in the tree")
+			require.Equal(e.t, ev["positions"], strconv.FormatUint(un.out.pos, 10))
+			return un.out
+		}
+		require.Less(e.t, tries, 3, "payout %d not made", un.id)
+		e.next(5 * time.Second)
+	}
+}
+
+// matured is what the (validator, epoch) record matured with: requested and
+// payout, from its shieldedstaking_matured event.
+func (e *stakeEnv) matured(val sdk.ValAddress, epoch uint64) (requested, payout math.Int) {
+	e.t.Helper()
+	for _, ev := range eventsOf(e.events, sstypes.EventTypeMatured) {
+		if ev["validator"] != e.valoper(val) || ev["epoch"] != strconv.FormatUint(epoch, 10) {
+			continue
+		}
+		var ok bool
+		requested, ok = math.NewIntFromString(ev["value"])
+		require.True(e.t, ok)
+		payout, ok = math.NewIntFromString(ev["payout"])
+		require.True(e.t, ok)
+		return requested, payout
+	}
+	e.t.Fatalf("record %s/%d has not matured", e.valoper(val), epoch)
+	return
 }
 
 func (e *stakeEnv) feeOnly() *pendingBundle { return e.build(spend{denom: "uerth"}) }
@@ -178,12 +200,6 @@ func (e *stakeEnv) record(val sdk.ValAddress, epoch uint64) sstypes.UnbondRecord
 	return r
 }
 
-func epochOf(t *testing.T, denom string) uint64 {
-	_, ep, ok := sstypes.ParseUnbondDenom(denom)
-	require.True(t, ok)
-	return ep
-}
-
 // Delegate -> epoch -> rewards raise the rate -> undelegate -> epoch ->
 // 21 days -> claim, on the real genesis path, with real proofs.
 func TestPrivateStakingLifecycle(t *testing.T) {
@@ -222,29 +238,29 @@ func TestPrivateStakingLifecycle(t *testing.T) {
 	require.True(t, epochRate.GT(live), "epoch rate %s", epochRate)
 	e.invariants()
 
-	// --- undelegate 1,000 derth: its value at the live rate.
+	// --- undelegate 1,000 derth: its value at the live rate, booked, and its
+	// payout queued to the wallet's pool note.
 	rateNow := e.rate(vB)
 	un := e.undelegate(vB, dn, uint64(1_000*ssErth))
 	// Worth d x the live rate at execution (one 5 s block of rewards after
 	// rateNow was read).
 	atRead := rateNow.MulInt64(1_000 * ssErth).TruncateInt().Int64()
-	require.GreaterOrEqual(t, int64(un.amount), atRead)
-	require.InEpsilon(t, atRead, int64(un.amount), 1e-3)
-	ep := epochOf(t, un.denom)
-	require.Equal(t, sstypes.UNBOND_STATUS_PENDING, e.record(vB, ep).Status)
-	// The remaining 1,000 derth stays a stake note (change of the
-	// undelegate), the owner's own.
+	require.GreaterOrEqual(t, int64(un.value), atRead)
+	require.InEpsilon(t, atRead, int64(un.value), 1e-3)
+	require.Equal(t, sstypes.UNBOND_STATUS_PENDING, e.record(vB, un.epoch).Status)
+	q, err := sskeeper.NewQueryServerImpl(e.app.ShieldedStakingKeeper).UnbondPayout(e.ctx(), &sstypes.QueryUnbondPayoutRequest{Id: un.id})
+	require.NoError(t, err)
+	require.Equal(t, math.NewIntFromUint64(un.value), q.Payout.Value)
+	require.Equal(t, privacy.FieldBytes(e.w.pc(un.out)), q.Payout.Pc)
+	require.Equal(t, sstypes.UNBOND_STATUS_PENDING, q.Record.Status)
+	// No stake note is minted for an undelegation: the remaining 1,000
+	// derth (the change) is the wallet's only stake.
 	require.Equal(t, uint64(1_000*ssErth), e.stakeBalance(sstypes.DerthDenom(e.valoper(vB))))
 	e.invariants()
 
-	// A claim before maturity is refused before anything is spent.
-	cm, _, _, _ := e.claimMsg(un)
-	res := e.checkTx(e.privateTx(cm))
-	require.Equal(t, sstypes.ErrNotMatured.ABCICode(), res.Code, res.Log)
-
 	// --- epoch end: one SDK undelegation, the amount it returned recorded.
 	e.days(1)
-	r := e.record(vB, ep)
+	r := e.record(vB, un.epoch)
 	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, r.Status)
 	require.True(t, r.Undelegated.Sub(r.Requested).Abs().LTE(math.NewInt(2)), "undelegated %s requested %s", r.Undelegated, r.Requested)
 	ubd, err := e.app.StakingKeeper.GetUnbondingDelegation(e.ctx(), mod, vB)
@@ -253,48 +269,23 @@ func TestPrivateStakingLifecycle(t *testing.T) {
 	require.Equal(t, r.Undelegated, ubd.Entries[0].InitialBalance)
 	e.invariants()
 
-	// --- 21 days: matured. The payout was read before x/staking paid it.
-	e.days(21)
-	r = e.record(vB, ep)
-	require.Equal(t, sstypes.UNBOND_STATUS_MATURED, r.Status)
-	require.Equal(t, r.Undelegated, r.Payout, "no slash: the entry paid in full")
-	e.invariants()
-
-	// --- claim: value x payout / requested, paying its fee from what it
-	// claims (fee_from_output): no fee note is spent, the note holds the
-	// rest, and fee_collector got the whole fee.
-	want := math.NewIntFromUint64(un.amount).Mul(r.Payout).Quo(r.Requested)
-	// A fee from output must leave something to mint, and must clear the
-	// fee floor like any other: both refused before anything is spent.
-	big, _, _, _ := e.claimMsgFee(un, want.Uint64(), false)
-	res = e.checkTx(e.privateTx(big))
-	require.Equal(t, sstypes.ErrAmount.ABCICode(), res.Code, res.Log)
-	tiny, _, _, _ := e.claimMsgFee(un, 1, false)
-	res = e.checkTx(e.privateTx(tiny))
-	require.Equal(t, sdkerrors.ErrInsufficientFee.ABCICode(), res.Code, res.Log)
+	// --- 21 days: matured (the payout read before x/staking paid it), and
+	// paid out by the chain in a later block: value x payout / requested, to
+	// the wallet's pc, with no tx and no fee from the wallet.
 	before := e.w.balance("uerth")
-	fm, _, fsp, out := e.claimMsgFee(un, ssFee, true)
-	require.Empty(t, fm.PrivateBundles(), "a claim paying from its output carries no bundle")
-	cres := e.run(e.privateTx(fm))
-	require.Equal(t, uint32(0), cres.Code, cres.Log)
-	e.settleStake(fsp)
-	out = e.minted(cres, out)
-	require.Equal(t, want.Uint64()-ssFee, out.value)
-	require.Equal(t, before+out.value, e.w.balance("uerth"), "no fee note spent")
-	var feeEvents int
-	for _, ev := range eventsOf(cres.Events, shieldedtypes.EventTypeFee) {
-		require.Equal(t, fmt.Sprintf("%duerth", ssFee), ev["amount"])
-		require.Equal(t, sstypes.ModuleName, ev["module"])
-		feeEvents++
-	}
-	require.Equal(t, 1, feeEvents)
-	_, err = e.app.ShieldedStakingKeeper.UnbondRecords.Get(e.ctx(), collections.Join(e.valoper(vB), ep))
-	require.ErrorIs(t, err, collections.ErrNotFound, "fully claimed records are removed")
+	e.days(21)
+	requested, payout := e.matured(vB, un.epoch)
+	require.Equal(t, r.Undelegated, payout, "no slash: the entry paid in full")
+	want := math.NewIntFromUint64(un.value).Mul(payout).Quo(requested)
+	out := e.payout(un)
+	require.NotNil(t, out)
+	require.Equal(t, want.Uint64(), out.value)
+	require.Equal(t, before+out.value, e.w.balance("uerth"), "nothing spent from the wallet")
+	_, err = e.app.ShieldedStakingKeeper.UnbondRecords.Get(e.ctx(), collections.Join(e.valoper(vB), un.epoch))
+	require.ErrorIs(t, err, collections.ErrNotFound, "fully paid records are removed")
+	_, err = e.app.ShieldedStakingKeeper.UnbondPayouts.Get(e.ctx(), un.id)
+	require.ErrorIs(t, err, collections.ErrNotFound, "the payout is done")
 	e.invariants()
-
-	// The same unbond note cannot be claimed twice (its nullifier is spent).
-	res = e.checkTx(e.privateTx(cm))
-	require.NotEqual(t, uint32(0), res.Code)
 }
 
 // A slash reaches private stakers three ways: through the delegation (the
@@ -316,7 +307,7 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 	un1 := e.undelegate(vB, dn, uint64(500*ssErth))
 	dn = e.unspentStake(dn.denom)
 	e.days(1)
-	r1 := e.record(vB, epochOf(t, un1.denom))
+	r1 := e.record(vB, un1.epoch)
 	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, r1.Status)
 
 	// The infraction: x/evidence slashes entries created at or after
@@ -335,13 +326,13 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 	un2 := e.undelegate(vB, dn, uint64(500*ssErth))
 	dn = e.unspentStake(dn.denom)
 	e.days(1)
-	r2 := e.record(vB, epochOf(t, un2.denom))
+	r2 := e.record(vB, un2.epoch)
 	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, r2.Status)
 	require.Greater(t, r2.CreationHeight, infraction)
 
 	// E3: pending in the current epoch when the evidence lands.
 	un3 := e.undelegate(vB, dn, uint64(300*ssErth))
-	r3 := e.record(vB, epochOf(t, un3.denom))
+	r3 := e.record(vB, un3.epoch)
 	require.Equal(t, sstypes.UNBOND_STATUS_PENDING, r3.Status)
 
 	delBefore := e.modDelegation(vB)
@@ -384,7 +375,7 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 		}
 	}
 	// Pending: its target cut by the same fraction.
-	r3 = e.record(vB, epochOf(t, un3.denom))
+	r3 = e.record(vB, un3.epoch)
 	require.InEpsilon(t, keep.MulInt(r3.Requested).TruncateInt64(), r3.Target.Int64(), 1e-6)
 	require.Equal(t, r3.Target, e.state(vB).PendingUndelegation)
 	e.invariants()
@@ -405,22 +396,19 @@ func TestPrivateStakingSlashPassThrough(t *testing.T) {
 	// Epoch end: the pending record undelegates its reduced target (the
 	// jailed validator still releases stake). Then everything matures.
 	e.days(1)
-	r3 = e.record(vB, epochOf(t, un3.denom))
+	r3 = e.record(vB, un3.epoch)
 	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, r3.Status)
 	e.invariants()
 	e.days(22)
-	for _, un := range []*snote{un1, un2, un3} {
-		require.Equal(t, sstypes.UNBOND_STATUS_MATURED, e.record(vB, epochOf(t, un.denom)).Status)
-	}
 	e.invariants()
 
-	// Claims: E1 in full, E2 at 95%, E3 at 1 - f.
-	for i, un := range []*snote{un1, un2, un3} {
-		out := e.claim(un)
+	// Payouts, made by the chain: E1 in full, E2 at 95%, E3 at 1 - f.
+	for i, un := range []*unbonding{un1, un2, un3} {
+		out := e.payout(un)
 		require.NotNil(t, out)
-		ratio := math.LegacyNewDec(int64(out.value)).QuoInt64(int64(un.amount))
+		ratio := math.LegacyNewDec(int64(out.value)).QuoInt64(int64(un.value))
 		want := []math.LegacyDec{math.LegacyOneDec(), math.LegacyNewDecWithPrec(95, 2), keep}[i]
-		require.True(t, ratio.Sub(want).Abs().LT(math.LegacyNewDecWithPrec(1, 4)), "claim %d paid %s of its value", i, ratio)
+		require.True(t, ratio.Sub(want).Abs().LT(math.LegacyNewDecWithPrec(1, 4)), "payout %d paid %s of its value", i, ratio)
 	}
 	e.invariants()
 }
@@ -457,10 +445,10 @@ func TestPrivateStakingEpochBatchingAndHaltSafety(t *testing.T) {
 	un1 := e.undelegate(vB, dn, uint64(100*ssErth))
 	dn = e.unspentStake(dn.denom)
 	un2 := e.undelegate(vB, dn, uint64(100*ssErth))
-	require.Equal(t, un1.denom, un2.denom)
+	require.Equal(t, un1.epoch, un2.epoch)
 	e.days(1)
-	r := e.record(vB, epochOf(t, un1.denom))
-	require.Equal(t, math.NewIntFromUint64(un1.amount+un2.amount), r.Requested)
+	r := e.record(vB, un1.epoch)
+	require.Equal(t, math.NewIntFromUint64(un1.value+un2.value), r.Requested)
 	mod := e.app.ShieldedStakingKeeper.ModuleAddress()
 	ubd, err := e.app.StakingKeeper.GetUnbondingDelegation(e.ctx(), mod, vB)
 	require.NoError(t, err)
@@ -473,7 +461,8 @@ func TestPrivateStakingEpochBatchingAndHaltSafety(t *testing.T) {
 	for d := 0; d < 30; d++ {
 		m := &sstypes.MsgUndelegate{
 			Validator: e.valoper(vB), Amount: uint64(ssErth),
-			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("fakepc", uint64(d))), SpcCiphertext: shieldedtest.BlindCT("spc")},
+			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("fakepc", uint64(d)))},
+			Pc:    privacy.FieldBytes(ssDet("fakepc", uint64(d))), Ciphertext: shieldedtest.BlindCT("payout"),
 		}
 		_, err := srv.Undelegate(e.fakeAuthorized(m), m)
 		require.NoError(t, err, "day %d", d)
@@ -502,7 +491,7 @@ func TestPrivateStakingEpochBatchingAndHaltSafety(t *testing.T) {
 	require.Len(t, fails, 1)
 	require.Equal(t, e.valoper(vB), fails[0]["validator"])
 	require.Len(t, eventsOf(res.Events, sstypes.EventTypeInvariant), 1)
-	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vC, epochOf(t, un3.denom)).Status, "vC processed")
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vC, un3.epoch).Status, "vC processed")
 	// vB's work was rolled back whole: nothing half-done.
 	st, err := e.app.ShieldedStakingKeeper.Validators.Get(e.ctx(), e.valoper(vB))
 	require.NoError(t, err)
@@ -586,20 +575,18 @@ func TestTransparentStakingBlocked(t *testing.T) {
 	z := make([]byte, 32)
 	st := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{privacy.FieldBytes(ssDet("bypass-snf", 0)), z},
 		Commitments: [][]byte{z, z}, Ciphertexts: [][]byte{nil, nil}, SpcMint: pc, OwnerTag: pc}
-	claimFee := tr("c", "", 0, ssFee)
 	none := sstypes.StakeProof{Proof: make([]byte, shieldedtypes.ProofBytes), Anchor: z, Nullifiers: [][]byte{z, z}, Commitments: [][]byte{z, z}, Ciphertexts: [][]byte{nil, nil}, SpcMint: pc, OwnerTag: pc}
 	restake := st
 	restake.Commitments = [][]byte{pc, z}
 	restake.Ciphertexts = [][]byte{shieldedtest.StakeCT("restake"), nil}
 	// The msgs that mint a stake note carry its blind ciphertext.
-	stMint, noneMint := st, none
-	stMint.SpcCiphertext, noneMint.SpcCiphertext = shieldedtest.BlindCT("m"), shieldedtest.BlindCT("m")
+	noneMint := none
+	noneMint.SpcCiphertext = shieldedtest.BlindCT("m")
 	for _, m := range []sdk.Msg{
 		&sstypes.MsgDelegate{Bundle: tr("d", "uerth", 0, ssFee+1), Amount: 1, Validator: valoper, Stake: noneMint},
 		&sstypes.MsgRestake{Bundle: tr("r", "", 0, ssFee), Validator: valoper, Stake: restake},
-		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: stMint},
-		&sstypes.MsgClaimUnbonding{Bundle: &claimFee, Validator: valoper, Epoch: 1, Amount: 1, Pc: pc,
-			Ciphertext: shieldedtest.BlindCT("c"), Stake: st},
+		&sstypes.MsgUndelegate{Bundle: tr("u", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st,
+			Pc: pc, Ciphertext: shieldedtest.BlindCT("u")},
 		&sstypes.MsgStakeVote{Bundle: tr("v", "", 0, ssFee), ProposalId: 1, Validator: valoper, Options: opts,
 			Weight: 1, Proof: make([]byte, shieldedtypes.ProofBytes), VoteNullifier: pc},
 		&sstypes.MsgLockPosition{Bundle: tr("l", "", 0, ssFee), Validator: valoper, Amount: 1, Stake: st},
@@ -815,8 +802,8 @@ func TestStakeVoteTally(t *testing.T) {
 	oldFee := e.feeOnly()
 	oldPlan := e.stake(&stakePlan{denom: n2.denom, ins: []*snote{n2}, outs: []*snote{e.freshStake(n2.denom, n2.amount-1)},
 		vOut: 1, atSize: snap.TreeSize})
-	oldPlan.proof.SpcCiphertext = shieldedtest.BlindCT("old")
-	old := &sstypes.MsgUndelegate{Bundle: oldFee.b, Validator: e.valoper(vB), Amount: 1, Stake: oldPlan.proof}
+	old := &sstypes.MsgUndelegate{Bundle: oldFee.b, Validator: e.valoper(vB), Amount: 1, Stake: oldPlan.proof,
+		Pc: privacy.FieldBytes(ssDet("old-pc", 0)), Ciphertext: shieldedtest.BlindCT("old")}
 	unproven(old)
 	res = e.checkTx(e.privateTx(old))
 	require.Equal(t, sstypes.ErrStakeTree.ABCICode(), res.Code, res.Log)

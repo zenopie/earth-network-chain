@@ -28,7 +28,7 @@ func init() {
 	appconfig.Register(
 		&types.Module{},
 		appconfig.Provide(ProvideModule,
-			types.ProvideDelegateGetSigners, types.ProvideRestakeGetSigners, types.ProvideUndelegateGetSigners, types.ProvideClaimGetSigners,
+			types.ProvideDelegateGetSigners, types.ProvideRestakeGetSigners, types.ProvideUndelegateGetSigners,
 			types.ProvideStakeVoteGetSigners, types.ProvideLockPositionGetSigners, types.ProvideUpdatePositionGetSigners,
 			types.ProvideUnlockPositionGetSigners, types.ProvidePositionVoteGetSigners),
 	)
@@ -80,13 +80,11 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.ShieldedKeeper, in.AllocationKeeper)
 
 	keeper.RegisterPrivateActions(in.ShieldedKeeper.RegisterPrivateAction, keeper.NewActionHandler(k))
-	// derth and unbond claims live in this module's stake note tree: never
-	// a shielded-pool asset, never a coin an account or the dex may hold
-	// (shielded-only, so every transparent path refuses them by name).
+	// derth lives in this module's stake note tree: never a shielded-pool
+	// asset, never a coin an account or the dex may hold (shielded-only, so
+	// every transparent path refuses it by name).
 	in.ShieldedKeeper.ExcludeAssetPrefix(types.DerthPrefix)
-	in.ShieldedKeeper.ExcludeAssetPrefix(types.UnbondPrefix)
 	in.ShieldedKeeper.RegisterShieldedOnlyPrefix(types.DerthPrefix, types.ModuleName)
-	in.ShieldedKeeper.RegisterShieldedOnlyPrefix(types.UnbondPrefix, types.ModuleName)
 	// Groundworks weight is a position's derth x rate; an account's bonded
 	// stake no longer says anything (this module is the only delegator).
 	in.AllocationKeeper.RegisterWeightSource(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewPositionWeightSource(k))

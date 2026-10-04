@@ -47,7 +47,6 @@ const (
 	gasDelegate   uint64 = 400_000
 	gasRestake    uint64 = 100_000
 	gasUndelegate uint64 = 400_000
-	gasClaim      uint64 = 250_000
 	gasVote       uint64 = 250_000
 	gasLock       uint64 = 400_000
 	gasUpdate     uint64 = 300_000
@@ -80,7 +79,7 @@ func NewActionHandler(k Keeper) ActionHandler { return ActionHandler{k: k} }
 // RegisterPrivateActions registers h for each of this module's private msgs.
 func RegisterPrivateActions(register func(string, shieldedtypes.PrivateActionHandler), h ActionHandler) {
 	for _, t := range []string{
-		types.TypeMsgDelegate, types.TypeMsgRestake, types.TypeMsgUndelegate, types.TypeMsgClaimUnbonding,
+		types.TypeMsgDelegate, types.TypeMsgRestake, types.TypeMsgUndelegate,
 		types.TypeMsgStakeVote, types.TypeMsgLockPosition, types.TypeMsgUpdatePosition, types.TypeMsgUnlockPosition,
 		types.TypeMsgPositionVote,
 	} {
@@ -113,7 +112,8 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	}
 	// The proof, two writes per nullifier slot (an insert into the indexed
 	// nullifier tree rewrites two paths: the low leaf's and the new leaf's),
-	// one per output, plus one for a note the chain mints.
+	// one per output, plus one for a note the chain mints (an undelegation's
+	// queued payout, which mints its pool note later, for free).
 	writes := uint64(2*len(sm.StakeProofOf().Nullifiers)+len(sm.StakeProofOf().Commitments)) + 1
 	var base uint64
 	switch msg.(type) {
@@ -123,8 +123,6 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 		base = gasRestake
 	case *types.MsgUndelegate:
 		base = gasUndelegate
-	case *types.MsgClaimUnbonding:
-		base = gasClaim
 	case *types.MsgLockPosition:
 		base = gasLock
 	case *types.MsgUpdatePosition:
@@ -164,8 +162,6 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 		_, err = k.valAddr(m.Validator)
 	case *types.MsgUndelegate:
 		_, err = k.checkUndelegate(ctx, m)
-	case *types.MsgClaimUnbonding:
-		_, _, err = k.checkClaim(ctx, m)
 	case *types.MsgLockPosition:
 		err = k.checkLock(ctx, m)
 	case *types.MsgUpdatePosition:
@@ -217,23 +213,6 @@ func (h ActionHandler) VerifyPrivateAction(ctx context.Context, msg shieldedtype
 		return errorsmod.Wrap(types.ErrInvalidStakeProof, err.Error())
 	}
 	return nil
-}
-
-// ExecutesInAnte: a claim runs in the ante, atomically with its spend, so it
-// can pay its fee from the ERTH it claims (see
-// x/shielded/types.PrivateActionExecutor). One path whether or not it does.
-func (h ActionHandler) ExecutesInAnte(msg shieldedtypes.PrivateMsg) bool {
-	_, ok := msg.(*types.MsgClaimUnbonding)
-	return ok
-}
-
-// ExecutePrivateAction runs a claim for the ante.
-func (h ActionHandler) ExecutePrivateAction(ctx sdk.Context, msg shieldedtypes.PrivateMsg, _ any) (any, error) {
-	m, ok := msg.(*types.MsgClaimUnbonding)
-	if !ok {
-		return nil, errorsmod.Wrapf(types.ErrInvalidMsg, "%T does not run in the ante", msg)
-	}
-	return h.k.executeClaim(ctx, m)
 }
 
 // authorized is the handlers' gate: the ante checked this very msg's action
@@ -296,7 +275,7 @@ func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) (math.I
 	return d, nil
 }
 
-// checkUndelegate returns the claim's value.
+// checkUndelegate returns the undelegation's ERTH value.
 func (k Keeper) checkUndelegate(ctx context.Context, m *types.MsgUndelegate) (math.Int, error) {
 	if _, err := k.valAddr(m.Validator); err != nil {
 		return math.Int{}, err
@@ -319,38 +298,17 @@ func (k Keeper) checkUndelegate(ctx context.Context, m *types.MsgUndelegate) (ma
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "more derth than exists")
 	}
 	u := valueOf(d, b, s)
+	// At most one note's worth when it starts (a slash only lowers the
+	// payout; MintNoteSplit would pay more as several notes anyway).
 	if err := fitsNote(u); err != nil {
 		return math.Int{}, err
 	}
-	return u, nil
-}
-
-// checkClaim returns the record and the ERTH the claim pays.
-func (k Keeper) checkClaim(ctx context.Context, m *types.MsgClaimUnbonding) (types.UnbondRecord, math.Int, error) {
-	if _, err := k.valAddr(m.Validator); err != nil {
-		return types.UnbondRecord{}, math.Int{}, err
-	}
-	r, err := k.UnbondRecords.Get(ctx, collections.Join(m.Validator, m.Epoch))
-	if errors.Is(err, collections.ErrNotFound) {
-		return r, math.Int{}, types.ErrUnknownRecord.Wrapf("%s/%d", m.Validator, m.Epoch)
-	} else if err != nil {
-		return r, math.Int{}, err
-	}
-	if r.Status != types.UNBOND_STATUS_MATURED {
-		return r, math.Int{}, types.ErrNotMatured.Wrapf("%s/%d is %s", m.Validator, m.Epoch, r.Status)
-	}
-	v := math.NewIntFromUint64(m.Amount)
-	if v.GT(r.Outstanding) {
-		return r, math.Int{}, errorsmod.Wrap(types.ErrAmount, "claim exceeds the record's outstanding notes")
-	}
-	pay := v.Mul(r.Payout).Quo(r.Requested)
-	if m.FeeFromOutput > 0 && !pay.GT(math.NewIntFromUint64(m.FeeFromOutput)) {
-		return r, math.Int{}, errorsmod.Wrapf(types.ErrAmount, "claim pays %s%s, not more than its fee %d", pay, types.BondDenom, m.FeeFromOutput)
-	}
+	// The payout's pc and ciphertext, and room in the pool's tree (checked
+	// again when it is paid).
 	if err := k.shielded.CheckMint(ctx, m.Pc, m.Ciphertext); err != nil {
-		return r, math.Int{}, err
+		return math.Int{}, err
 	}
-	return r, pay, nil
+	return u, nil
 }
 
 // checkStakeVote: the proposal is open to stake votes with both snapshot

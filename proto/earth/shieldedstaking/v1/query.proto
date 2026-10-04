@@ -26,9 +26,13 @@ service Query {
   rpc Validator(QueryValidatorRequest) returns (QueryValidatorResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/validators/{validator}";
   }
-  // UnbondRecord is the record behind unbond/<validator>/<epoch>.
+  // UnbondRecord is one epoch's private undelegation from a validator.
   rpc UnbondRecord(QueryUnbondRecordRequest) returns (QueryUnbondRecordResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/unbond/{validator}/{epoch}";
+  }
+  // UnbondPayout is a queued undelegation payout (not found once paid).
+  rpc UnbondPayout(QueryUnbondPayoutRequest) returns (QueryUnbondPayoutResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/unbond_payouts/{id}";
   }
   // Position is one Groundworks position.
   rpc Position(QueryPositionRequest) returns (QueryPositionResponse) {
@@ -119,6 +123,19 @@ message QueryUnbondRecordRequest {
 // QueryUnbondRecordResponse is the response type for Query/UnbondRecord.
 message QueryUnbondRecordResponse {
   UnbondRecord record = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryUnbondPayoutRequest is the request type for Query/UnbondPayout.
+message QueryUnbondPayoutRequest {
+  uint64 id = 1;
+}
+
+// QueryUnbondPayoutResponse is the payout and its record (status,
+// requested, payout: what it will pay is value x payout / requested once
+// the record is MATURED).
+message QueryUnbondPayoutResponse {
+  UnbondPayout payout = 1 [(gogoproto.nullable) = false];
+  UnbondRecord record = 2 [(gogoproto.nullable) = false];
 }
 
 // QueryPositionRequest is the request type for Query/Position.

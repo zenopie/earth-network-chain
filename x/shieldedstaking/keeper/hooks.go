@@ -27,7 +27,7 @@ import (
 // this is the check nothing can route around.
 //
 // And they pass a slash through to the epoch's pending undelegations
-// (BeforeValidatorSlashed): unbond notes minted this epoch are still bonded
+// (BeforeValidatorSlashed): undelegations booked this epoch are still bonded
 // until the epoch ends, so their target shrinks by the fraction the slash
 // takes from the validator's tokens.
 type StakingHooks struct{ k Keeper }

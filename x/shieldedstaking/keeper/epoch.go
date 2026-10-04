@@ -28,12 +28,14 @@ import (
 //
 //  0. slashed: validators slashed this block take their live (post-slash)
 //     rate as their epoch rate, and their positions re-weigh at it;
-//  1. mature: records whose SDK unbonding entry completes in this block read
+//  1. payouts: mint the payouts of records matured in earlier blocks
+//     (payouts.go), bounded;
+//     mature: records whose SDK unbonding entry completes in this block read
 //     the entry's balance now — x/staking's EndBlocker, next, pays and deletes
-//     it.
+//     it (so their payouts wait for the next block).
 //  2. epoch end, once end_time has passed: per validator withdraw rewards,
-//     delegate the queue plus the rewards, undelegate the epoch's unbond
-//     notes; compound every active validator's self-bond rewards and
+//     delegate the queue plus the rewards, undelegate the epoch's private
+//     undelegations; compound every active validator's self-bond rewards and
 //     commission into its self-bond;
 //     re-weigh positions; sweep non-ERTH rewards to the community pool.
 //  3. forget proposals whose voting has ended (x/gov has tallied them).
@@ -66,6 +68,7 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		k.failure(ctx, "stake_roots_stale", "", err)
 	}
 	k.reweighSlashed(ctx)
+	k.sweepPayouts(ctx)
 	k.matureRecords(ctx)
 	epoch, err := k.Epoch.Get(ctx)
 	if err != nil {
@@ -228,6 +231,13 @@ func (k Keeper) reportInvariants(ctx context.Context) {
 	if n <= types.InvariantBookLimit {
 		_ = k.UnbondRecords.Walk(ctx, nil, func(collections.Pair[string, uint64], types.UnbondRecord) (bool, error) {
 			n++
+			return n > types.InvariantBookLimit, nil
+		})
+	}
+	if n <= types.InvariantBookLimit {
+		// Payouts are walked twice (invariant 8).
+		_ = k.UnbondPayouts.Walk(ctx, nil, func(uint64, types.UnbondPayout) (bool, error) {
+			n += 2
 			return n > types.InvariantBookLimit, nil
 		})
 	}
@@ -465,7 +475,7 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 		return err
 	}
 
-	// Undelegate the ended epochs' unbond notes (and any a failed epoch left).
+	// Undelegate the ended epochs' undelegations (and any a failed epoch left).
 	records, err := k.pendingRecordsUpTo(ctx, valoper, maxEpoch)
 	if err != nil {
 		return err
@@ -594,7 +604,7 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 // orphanUnbonding undelegates shares that back no derth and no record (a
 // book left with a delegation and no derth, as books could be before audit
 // F5's fix) into an orphan record: requested and outstanding zero, so no
-// note can claim it; sweepOrphanRecords sends its payout to the community
+// payout is queued against it; sweepOrphanRecords sends its payout to the community
 // pool once it matures. Skipped (left for a later epoch) if v already has a
 // record for maxEpoch.
 func (k Keeper) orphanUnbonding(ctx context.Context, valoper string, maxEpoch uint64, val sdk.ValAddress, shares math.LegacyDec) error {
@@ -622,7 +632,7 @@ func (k Keeper) orphanUnbonding(ctx context.Context, valoper string, maxEpoch ui
 }
 
 // hasOrphanRecords reads the orphan index, never v's whole record list (which
-// grows with every matured record nobody has claimed yet: audit 3 D).
+// grows with every matured record whose payouts are not all made: audit 3 D).
 func (k Keeper) hasOrphanRecords(ctx context.Context, valoper string) (bool, error) {
 	found := false
 	err := k.OrphanRecords.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](valoper),
@@ -724,7 +734,7 @@ func (k Keeper) startUnbonding(ctx context.Context, records []types.UnbondRecord
 }
 
 // matureFromQueue settles records with no bonded stake behind them out of the
-// validator's queued ERTH.
+// validator's queued ERTH. Their payouts are minted from the next block.
 func (k Keeper) matureFromQueue(ctx context.Context, records []types.UnbondRecord, _ math.Int, paid math.Int) error {
 	parts := share(paid, targets(records))
 	for i, r := range records {
@@ -736,6 +746,9 @@ func (k Keeper) matureFromQueue(ctx context.Context, records []types.UnbondRecor
 			return err
 		}
 		if err := k.PendingRecords.Remove(ctx, key); err != nil {
+			return err
+		}
+		if err := k.markMatured(ctx, r); err != nil {
 			return err
 		}
 	}
@@ -830,8 +843,12 @@ func (k Keeper) matureGroup(ctx context.Context, valoper string, height int64, k
 		if err := k.UnbondRecords.Set(ctx, keys[i], r); err != nil {
 			return err
 		}
+		if err := k.markMatured(ctx, r); err != nil {
+			return err
+		}
 		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeMatured,
-			sdk.NewAttribute(types.AttributeKeyDenom, types.UnbondDenom(r.Validator, r.Epoch)),
+			sdk.NewAttribute(types.AttributeKeyValidator, r.Validator),
+			sdk.NewAttribute(types.AttributeKeyEpoch, strconv.FormatUint(r.Epoch, 10)),
 			sdk.NewAttribute(types.AttributeKeyValue, r.Requested.String()),
 			sdk.NewAttribute(types.AttributeKeyPayout, r.Payout.String()),
 		))
@@ -845,7 +862,7 @@ func (k Keeper) matureGroup(ctx context.Context, valoper string, height int64, k
 func (k Keeper) sweepForeignRewards(ctx context.Context) error {
 	var sweep sdk.Coins
 	for _, c := range k.bank.GetAllBalances(ctx, k.modAddr) {
-		if c.Denom == types.BondDenom || strings.HasPrefix(c.Denom, types.DerthPrefix) || strings.HasPrefix(c.Denom, types.UnbondPrefix) {
+		if c.Denom == types.BondDenom || strings.HasPrefix(c.Denom, types.DerthPrefix) {
 			continue
 		}
 		sweep = append(sweep, c)

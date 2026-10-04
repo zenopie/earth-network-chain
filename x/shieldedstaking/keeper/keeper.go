@@ -23,9 +23,10 @@ import (
 
 // Keeper is private staking. Its module account is the only delegator x/staking
 // has besides validators' own self-bonds: it holds ERTH queued for delegation
-// and matured unbondings not yet claimed. What a person owns here (derth,
-// unbonding claims) is an owner-locked note in this module's stake note tree;
-// positions hold derth on the books; nothing here is a coin but ERTH.
+// and matured unbondings not yet paid out. What a person owns here (derth) is
+// an owner-locked note in this module's stake note tree; positions hold derth
+// on the books; an undelegation is a queued payout to a pool pc; nothing here
+// is a coin but ERTH.
 type Keeper struct {
 	storeService corestore.KVStoreService
 	cdc          codec.Codec
@@ -54,7 +55,7 @@ type Keeper struct {
 
 	// Validators is the book per validator operator (bech32).
 	Validators collections.Map[string, types.ValidatorState]
-	// UnbondRecords backs unbond/<validator>/<epoch>.
+	// UnbondRecords is each (validator, epoch)'s private undelegation.
 	UnbondRecords collections.Map[collections.Pair[string, uint64], types.UnbondRecord]
 	// PendingRecords indexes the records still waiting for their SDK
 	// undelegation.
@@ -127,6 +128,16 @@ type Keeper struct {
 	// PendingReleaseCursor is where the next retry round of PendingReleases
 	// starts (after this entry; escrow.go).
 	PendingReleaseCursor collections.Item[[]byte]
+
+	// Undelegation payouts (payouts.go): every queued payout by id; those
+	// not yet tried by (validator, epoch, id); those that failed by
+	// (retry_at, id); the MATURED records that still have payouts to make;
+	// the id sequence.
+	UnbondPayouts   collections.Map[uint64, types.UnbondPayout]
+	PayoutsByRecord collections.KeySet[collections.Triple[string, uint64, uint64]]
+	PayoutRetries   collections.KeySet[collections.Pair[int64, uint64]]
+	MaturedRecords  collections.KeySet[collections.Pair[string, uint64]]
+	UnbondPayoutSeq collections.Sequence
 }
 
 type govRef struct{ k *govkeeper.Keeper }
@@ -225,6 +236,15 @@ func NewKeeper(
 		PendingReleases: collections.NewKeySet(sb, types.PendingReleasesKey, "pending_releases", collections.BytesKey),
 		PendingReleaseCursor: collections.NewItem(sb, types.PendingReleaseCursorKey, "pending_release_cursor",
 			collections.BytesValue),
+		UnbondPayouts: collections.NewMap(sb, types.UnbondPayoutsKey, "unbond_payouts", collections.Uint64Key,
+			codec.CollValue[types.UnbondPayout](cdc)),
+		PayoutsByRecord: collections.NewKeySet(sb, types.PayoutsByRecordKey, "payouts_by_record",
+			collections.TripleKeyCodec(collections.StringKey, collections.Uint64Key, collections.Uint64Key)),
+		PayoutRetries: collections.NewKeySet(sb, types.PayoutRetriesKey, "payout_retries",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
+		MaturedRecords: collections.NewKeySet(sb, types.MaturedRecordsKey, "matured_records",
+			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key)),
+		UnbondPayoutSeq: collections.NewSequence(sb, types.UnbondPayoutSeqKey, "unbond_payout_seq"),
 	}
 	schema, err := sb.Build()
 	if err != nil {

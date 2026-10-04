@@ -74,7 +74,7 @@ func (k Keeper) CheckMint(ctx context.Context, pc, ciphertext []byte) error {
 // MintNote moves coin out of fromModule's account into the pool and appends a
 // note of it to the owner behind pc. It is how other modules pay into the
 // pool: personhood's ANML and registration reward, a dex swap's output, an
-// unbonding claim.
+// undelegation's payout.
 //
 // The coins must already be in fromModule's account; a module issuing new
 // supply mints into its own account first and then calls this. MintNote

@@ -31,9 +31,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	earthtypes "github.com/earth-network/earth/x/earth/types"
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
-	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
 	"github.com/earth-network/earth/zk/privacy"
 )
@@ -91,7 +91,8 @@ func TestAuditValoperCaseAliasDrainsDelegation(t *testing.T) {
 		require.Error(t, err)
 
 		u := &sstypes.MsgUndelegate{Validator: alias, Amount: 1,
-			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("atk-pc", 1)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
+			Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("atk-pc", 1))},
+			Pc:    privacy.FieldBytes(ssDet("atk-pc", 1)), Ciphertext: shieldedtest.BlindCT("payout")}
 		require.Error(t, u.ValidateBasic())
 		_, err = srv.Undelegate(e.fakeAuthorized(u), u)
 		require.Error(t, err)
@@ -100,7 +101,7 @@ func TestAuditValoperCaseAliasDrainsDelegation(t *testing.T) {
 		require.Error(t, err)
 
 		for _, msg := range []interface{ ValidateBasic() error }{
-			&sstypes.MsgRestake{Validator: alias}, &sstypes.MsgClaimUnbonding{Validator: alias, Amount: 1},
+			&sstypes.MsgRestake{Validator: alias},
 			&sstypes.MsgStakeVote{Validator: alias, Weight: 1}, &sstypes.MsgLockPosition{Validator: alias, Amount: 1},
 		} {
 			require.Error(t, msg.ValidateBasic(), "%T", msg)
@@ -250,7 +251,8 @@ func TestAuditZeroHeightExportBreaksInvariants(t *testing.T) {
 	e.next(25 * time.Hour)
 	// an unbonding in flight across the export
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth / 4,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/z", 1)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/z", 1))},
+		Pc:    privacy.FieldBytes(ssDet("audit-pc/z", 1)), Ciphertext: shieldedtest.BlindCT("payout")}
 	_, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)
 	e.next(25 * time.Hour)
@@ -308,7 +310,8 @@ func TestAuditOrphanBackingNotCaptured(t *testing.T) {
 	e.next(25 * time.Hour)
 	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/o", 1)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/o", 1))},
+		Pc:    privacy.FieldBytes(ssDet("audit-pc/o", 1)), Ciphertext: shieldedtest.BlindCT("payout")}
 	ures, err := srv.Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
@@ -469,7 +472,8 @@ func TestAuditDonationInflationHarmless(t *testing.T) {
 	e.next(25 * time.Hour)
 	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth - 1,
-		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/atk", 1)), SpcCiphertext: shieldedtest.BlindCT("spc")}}
+		Stake: sstypes.StakeProof{SpcMint: privacy.FieldBytes(ssDet("audit-pc/atk", 1))},
+		Pc:    privacy.FieldBytes(ssDet("audit-pc/atk", 1)), Ciphertext: shieldedtest.BlindCT("payout")}
 	_, err := srv.Undelegate(e.fakeAuthorized(u), u)
 	require.NoError(t, err)
 	e.next(25 * time.Hour)

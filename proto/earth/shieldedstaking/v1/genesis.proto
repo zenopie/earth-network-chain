@@ -42,6 +42,10 @@ message GenesisState {
   // retiring_escrows are the scheduled retirements of operators that removed
   // their whole self-bond (escrow.go), kept at their original release time.
   repeated RetiringEscrow retiring_escrows = 16 [(gogoproto.nullable) = false];
+  // unbond_payouts are the queued payouts of private undelegations, and
+  // next_unbond_payout_id the next id to issue.
+  repeated UnbondPayout unbond_payouts = 17 [(gogoproto.nullable) = false];
+  uint64 next_unbond_payout_id = 18;
 }
 
 // RetiringEscrow is a scheduled reward-escrow retirement: validator's escrow

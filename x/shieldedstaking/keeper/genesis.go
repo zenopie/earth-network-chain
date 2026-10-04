@@ -74,6 +74,34 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			}
 		}
 	}
+	// Payouts: untried ones under their record (a MATURED record with any is
+	// marked for the sweep), failed ones under their retry time.
+	for _, p := range gs.UnbondPayouts {
+		if err := k.UnbondPayouts.Set(ctx, p.Id, p); err != nil {
+			return err
+		}
+		if p.RetryAt > 0 {
+			if err := k.PayoutRetries.Set(ctx, collections.Join(p.RetryAt, p.Id)); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := k.PayoutsByRecord.Set(ctx, collections.Join3(p.Validator, p.Epoch, p.Id)); err != nil {
+			return err
+		}
+		r, err := k.UnbondRecords.Get(ctx, collections.Join(p.Validator, p.Epoch))
+		if err != nil {
+			return err
+		}
+		if r.Status == types.UNBOND_STATUS_MATURED {
+			if err := k.MaturedRecords.Set(ctx, collections.Join(p.Validator, p.Epoch)); err != nil {
+				return err
+			}
+		}
+	}
+	if err := k.UnbondPayoutSeq.Set(ctx, gs.NextUnbondPayoutId); err != nil {
+		return err
+	}
 	for _, p := range gs.Positions {
 		if err := k.setPosition(ctx, p); err != nil {
 			return err
@@ -420,6 +448,15 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		gs.UnbondRecords = append(gs.UnbondRecords, r)
 		return false, nil
 	}); err != nil {
+		return nil, err
+	}
+	if err := k.UnbondPayouts.Walk(ctx, nil, func(_ uint64, p types.UnbondPayout) (bool, error) {
+		gs.UnbondPayouts = append(gs.UnbondPayouts, p)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if gs.NextUnbondPayoutId, err = k.UnbondPayoutSeq.Peek(ctx); err != nil {
 		return nil, err
 	}
 	if err := k.Positions.Walk(ctx, nil, func(_ uint64, p types.Position) (bool, error) {

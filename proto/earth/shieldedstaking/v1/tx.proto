@@ -21,11 +21,11 @@ option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
 // values (StakeProof fields, see StakeFields), then the msg's own fields.
 // See x/shielded/ante and ORCHARD_DESIGN.md section 13.
 //
-// Delegated stake (derth/<valoper>) and unbonding claims
-// (unbond/<valoper>/<epoch>) exist only as stake notes, never in the shielded
-// pool or an account, and never change owner: every stake note a msg spends,
-// creates or has the chain mint belongs to the one owner_pk its stake proof
-// knows nk for.
+// Delegated stake (derth/<valoper>) exists only as stake notes, never in the
+// shielded pool or an account, and never changes owner: every stake note a
+// msg spends, creates or has the chain mint belongs to the one owner_pk its
+// stake proof knows nk for. An undelegation is paid out by the chain itself
+// at maturity, as ERTH notes in the shielded pool (no claim msg).
 service Msg {
   option (cosmos.msg.v1.service) = true;
 
@@ -35,11 +35,12 @@ service Msg {
   rpc Delegate(MsgDelegate) returns (MsgDelegateResponse);
   // Restake merges or splits stake notes of one owner.
   rpc Restake(MsgRestake) returns (MsgRestakeResponse);
-  // Undelegate turns derth into an owner-locked unbonding claim.
+  // Undelegate unbonds derth; the chain pays its ERTH value out as notes
+  // at maturity.
   rpc Undelegate(MsgUndelegate) returns (MsgUndelegateResponse);
-  // ClaimUnbonding turns a matured unbonding claim into an ERTH note.
-  rpc ClaimUnbonding(MsgClaimUnbonding) returns (MsgClaimUnbondingResponse);
-  // StakeVote votes stake notes on an x/gov proposal.
+  // ClaimUnbonding (retired): undelegations pay out by themselves.
+  // StakeVote votes up to four stake notes of one owner at one validator on
+  // an x/gov proposal, with one weight.
   rpc StakeVote(MsgStakeVote) returns (MsgStakeVoteResponse);
   // LockPosition locks derth into a Groundworks position.
   rpc LockPosition(MsgLockPosition) returns (MsgLockPositionResponse);
@@ -68,8 +69,8 @@ message MsgUpdateParams {
 message MsgUpdateParamsResponse {}
 
 // StakeProof is a stake circuit proof and its public values. The chain
-// supplies the rest of its public inputs: asset (the msg's derth or unbond
-// asset id), v_in (0), v_out (the msg's amount, or 0) and the sighash. Public
+// supplies the rest of its public inputs: asset (the msg's derth asset id,
+// 0 for a position msg), v_in (0), v_out (the msg's amount, or 0) and the sighash. Public
 // input order: anchor, asset, nf_0, nf_1, cm_out_0, cm_out_1, v_in, v_out,
 // spc_mint, owner_tag, sighash.
 message StakeProof {
@@ -96,8 +97,8 @@ message StakeProof {
   // spc_ciphertext is the amount-blind stake ciphertext (zk/privacy
   // EncryptBlindStakeNote: rho, rcm, memo of spc_mint's note), exactly 177
   // bytes, for the note the chain mints to spc_mint: required by the msgs
-  // that mint one (Delegate, Undelegate, UnlockPosition), empty
-  // otherwise. The owner recomputes spc and cm from the denom and amount the
+  // that mint one (Delegate, UnlockPosition), empty otherwise. spc_mint is
+  // proven for every msg but used only by those two. The owner recomputes spc and cm from the denom and amount the
   // chain publishes with the note.
   bytes spc_ciphertext = 8;
 }
@@ -146,11 +147,19 @@ message MsgRestakeResponse {
 }
 
 // MsgUndelegate: the proof spends derth/<validator> notes, amount of them
-// leaving (v_out), any change back to the owner; the chain mints an
-// owner-locked unbond/<validator>/<epoch> claim of the derth's live ERTH value
-// to stake.spc_mint. bundle pays the fee only.
+// leaving (v_out), any change back to the owner. The chain books the derth's
+// live ERTH value u into this epoch's undelegation for validator and queues
+// a payout of it to pc: once the epoch's SDK unbonding entry has matured
+// (about unbonding_time after the epoch end), the chain mints
+// u x payout / requested ERTH (the record's slash-adjusted payout, pro rata)
+// as ordinary transferable notes to pc in the shielded pool, with
+// ciphertext, by itself: no claim msg, no fee. A payout above 2^63-1 is
+// minted as several notes to the same pc and ciphertext. bundle pays the fee
+// only. stake.spc_mint is proven but unused (no stake note is minted);
+// stake.spc_ciphertext must be empty.
 //
-// sighash fields: StakeFields(stake), Bytes(validator), amount.
+// sighash fields: StakeFields(stake), Bytes(validator), amount, pc,
+// Bytes(ciphertext).
 message MsgUndelegate {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
@@ -159,49 +168,26 @@ message MsgUndelegate {
   reserved 4;
   reserved "fee";
   StakeProof stake = 5 [(gogoproto.nullable) = false];
+  // pc is the payout notes' owner commitment (32 bytes, a field element):
+  // PC(owner_pk, rho, rcm) of the wallet's own pool address, or anyone's.
+  bytes pc = 6;
+  // ciphertext is the payout notes' amount-blind v2 ciphertext (zk/privacy
+  // EncryptBlindNote, exactly 177 bytes), emitted with every payout note.
+  bytes ciphertext = 7;
 }
 
-// MsgUndelegateResponse returns the claim's denom, value and position.
+// MsgUndelegateResponse returns the ERTH value booked and the payout's id
+// (UnbondPayout.id; the shieldedstaking_unbond_payout event names it).
 message MsgUndelegateResponse {
-  string denom = 1;
+  // denom (1), position (3): the retired unbond claim note's.
+  reserved 1, 3;
+  reserved "denom", "position";
   uint64 value = 2;
-  uint64 position = 3;
+  uint64 payout_id = 4;
 }
 
-// MsgClaimUnbonding: once unbond/<validator>/<epoch> has matured, the proof
-// spends the owner's claim notes, amount of them leaving (v_out), any change
-// back; the chain mints ERTH = amount x payout / requested to pc in the
-// shielded pool (an ordinary, transferable note), less fee_from_output.
-//
-// With fee_from_output the msg carries no bundle: the fee comes out of the
-// claimed ERTH and the claim runs in the private ante, atomically with the
-// spend. Otherwise the bundle's uerth balance is the fee. A claim is the only
-// private msg that may pay from its output. ciphertext is the payout note's
-// amount-blind v2 ciphertext (177 bytes).
-//
-// sighash fields: StakeFields(stake), Bytes(validator), epoch, amount, pc,
-// Bytes(ciphertext), fee_from_output.
-message MsgClaimUnbonding {
-  // bundle is absent (no actions) when fee_from_output pays the fee.
-  earth.shielded.v1.Bundle bundle = 1;
-  string validator = 2;
-  uint64 epoch = 3;
-  uint64 amount = 4;
-  bytes pc = 5;
-  bytes ciphertext = 6;
-  uint64 fee_from_output = 7;
-  // fee (8): the fee is the bundle's uerth balance.
-  reserved 8;
-  reserved "fee";
-  StakeProof stake = 9 [(gogoproto.nullable) = false];
-}
-
-// MsgClaimUnbondingResponse returns the ERTH minted to pc (the claim less
-// fee_from_output; 0 if slashed away) and the note's position.
-message MsgClaimUnbondingResponse {
-  uint64 amount = 1;
-  uint64 position = 2;
-}
+// MsgClaimUnbonding and MsgClaimUnbondingResponse are retired (undelegations
+// pay out at maturity by themselves). Their type URLs are unregistered.
 
 // MsgStakeVote votes one derth/<validator> stake note on proposal_id without
 // spending it. proof (circuits/vote) shows, against the proposal's snapshot
