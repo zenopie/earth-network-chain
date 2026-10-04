@@ -181,8 +181,12 @@ var (
 		// goes through SendCoinsFromAccountToModule, which does not consult this
 		// list.
 		wasmtypes.ModuleName,
-		// We allow the following module accounts to receive funds:
-		// govtypes.ModuleName
+		// Blocked too (audit 7, D7-L1): x/gov's InitGenesis panics unless the
+		// gov account holds exactly the deposits, so 1uerth sent to it made
+		// every later export impossible to import. Deposits go in through
+		// SendCoinsFromAccountToModule and refunds come out of it, neither of
+		// which consults this list.
+		govtypes.ModuleName,
 	}
 
 	// application configuration (used by depinject)
