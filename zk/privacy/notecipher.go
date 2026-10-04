@@ -208,10 +208,6 @@ func (n BlindNote) bytes() []byte {
 	return append(b, n.Memo[:]...)
 }
 
-func blindNoteAEAD(shared, epk []byte) (cipher.AEAD, error) {
-	return blindAEAD(blindNoteSalt, shared, epk)
-}
-
 func blindAEAD(salt, shared, epk []byte) (cipher.AEAD, error) {
 	key := make([]byte, chacha20poly1305.KeySize)
 	if _, err := io.ReadFull(hkdf.New(sha256.New, shared, salt, epk), key); err != nil {

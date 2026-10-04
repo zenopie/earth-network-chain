@@ -18,11 +18,6 @@ func feeOf(amount math.Int, swapFee math.LegacyDec) math.Int {
 	return math.LegacyNewDecFromInt(amount).Mul(swapFee).Quo(oneHundredPercent).Ceil().TruncateInt()
 }
 
-// intSqrt returns the integer square root of a non-negative math.Int.
-func intSqrt(i math.Int) math.Int {
-	return math.NewIntFromBigInt(new(big.Int).Sqrt(i.BigInt()))
-}
-
 // initialShares returns the LP shares minted when a pool is first created.
 // It follows the Uniswap-v2 convention of sqrt(erth * token).
 //

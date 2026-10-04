@@ -2,14 +2,14 @@ package types
 
 import "cosmossdk.io/errors"
 
-// x/shieldedstaking sentinel errors
+// x/shieldedstaking sentinel errors. Codes 1105 and 1107 are retired: never
+// reuse them.
 var (
 	ErrInvalidSigner       = errors.Register(ModuleName, 1100, "expected gov account as only signer for proposal message")
 	ErrInvalidMsg          = errors.Register(ModuleName, 1101, "invalid private staking msg")
 	ErrValidator           = errors.Register(ModuleName, 1102, "validator cannot take private delegations")
 	ErrAmount              = errors.Register(ModuleName, 1103, "amount converts to nothing or overflows a note")
 	ErrNotMatured          = errors.Register(ModuleName, 1104, "unbonding record is not open")
-	ErrUnknownRecord       = errors.Register(ModuleName, 1105, "no such unbonding record")
 	ErrNoVoting            = errors.Register(ModuleName, 1106, "proposal is not open to stake votes")
 	ErrPosition            = errors.Register(ModuleName, 1108, "invalid position")
 	ErrSignature           = errors.Register(ModuleName, 1109, "not the position's owner")

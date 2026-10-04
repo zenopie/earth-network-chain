@@ -59,12 +59,6 @@ func init() {
 	R, RCounter = HashToPoint(TagCvR, fr.Element{})
 }
 
-// halfP is (p-1)/2: a coordinate y is canonical iff y <= halfP.
-var halfP = func() *big.Int {
-	h := new(big.Int).Sub(fr.Modulus(), big.NewInt(1))
-	return h.Rsh(h, 1)
-}()
-
 func toFp(e fr.Element) gfp.Element {
 	b := e.Bytes()
 	var out gfp.Element

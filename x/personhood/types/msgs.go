@@ -1,7 +1,6 @@
 package types
 
 import (
-	"fmt"
 	"math/big"
 
 	"cosmossdk.io/core/address"
@@ -137,21 +136,6 @@ func (m *MsgRegister) AffiliateField() (fr.Element, error) {
 		return fr.Element{}, errorsmod.Wrapf(ErrInvalidMsg, "affiliate_handle: %v", err)
 	}
 	return privacy.AffiliateField(m.AffiliateHandle), nil
-}
-
-// canonicalBytes decodes addr and requires it to be the canonical
-// (lowercase) encoding of its bytes. A proof binds the bytes, not the
-// string: an uppercase re-spelling by whoever relays the tx would otherwise
-// pass as the same tx under another hash and be stored as given.
-func canonicalBytes(ac address.Codec, addr string) ([]byte, error) {
-	bz, err := ac.StringToBytes(addr)
-	if err != nil {
-		return nil, err
-	}
-	if s, err := ac.BytesToString(bz); err != nil || s != addr {
-		return nil, fmt.Errorf("%q is not the canonical encoding of its address", addr)
-	}
-	return bz, nil
 }
 
 // Binding is the value the passport proof's address input must carry on

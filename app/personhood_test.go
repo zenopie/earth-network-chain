@@ -498,11 +498,6 @@ func (e *phEnv) mustDeliver(msg sdk.Msg) *abci.ResponseFinalizeBlock {
 	return fb
 }
 
-func (e *phEnv) deliverCode(msg sdk.Msg) *abci.ExecTxResult {
-	e.t.Helper()
-	return e.finalize(e.tx(msg)).TxResults[0]
-}
-
 func (e *phEnv) registration(name string) (personhoodtypes.Registration, bool) {
 	e.t.Helper()
 	reg, err := e.app.PersonhoodKeeper.Registrations.Get(e.ctx(), loadPassport(e.t, name).nf)

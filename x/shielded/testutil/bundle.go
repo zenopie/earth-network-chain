@@ -54,8 +54,6 @@ type Plan struct {
 	Actions []PlanAction
 	// DummyNK owns the dummy spends (any key will do).
 	DummyNK fr.Element
-
-	bundle *types.Bundle
 }
 
 func (p *Plan) det(label string, i int) fr.Element {

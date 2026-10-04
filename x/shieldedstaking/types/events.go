@@ -73,7 +73,6 @@ const (
 	AttributeKeyRoot         = "root"
 	AttributeKeyFraction     = "fraction"
 	AttributeKeyCommitment   = "commitment"
-	AttributeKeySpc          = "spc"
 	AttributeKeyNullifier    = "nullifier"
 	AttributeKeyCiphertext   = "ciphertext"
 	AttributeKeyTreeSize     = "tree_size"
