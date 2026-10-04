@@ -249,7 +249,7 @@ max_entries shared, griefable) is gone with change 4.
 | Per-validator book queries tied an IP to an intent | Query/Validators: every validator's quote inputs, paged | b7e77f8 |
 | Launch ceremony was manual and refused the launch key | scripts/ceremony.sh; TestLaunchCeremony with a pending path | 5343560 |
 | Docs: LP share transfer, handle renewal, fee split | Answered in ORCHARD_DESIGN (5.3, 6.2, 10) | a838682 |
-| A one-note stake vote showed a zero vnf | Unused slot carries a padding nullifier H(TAG_VPAD, nk, r, proposal_id); chain requires exactly 2 non-zero, distinct vnfs, all recorded | (this wave) |
+| A one-note stake vote showed a zero vnf | Unused slot carries a padding nullifier H(TAG_VPAD, nk, r, proposal_id); chain requires exactly 2 non-zero, distinct vnfs, all recorded | bbbcb92 |
 
 ## Known limits and open items
 
