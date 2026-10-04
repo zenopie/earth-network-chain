@@ -28,8 +28,11 @@ func (gs GenesisState) Validate() error {
 	seenLeaf := make(map[uint64]struct{}, len(gs.Registrations))
 
 	for _, reg := range gs.Registrations {
-		if len(reg.Nullifier) == 0 {
-			return fmt.Errorf("registration at leaf %d has no nullifier", reg.LeafIndex)
+		// 1..32 bytes, as passports_seen (which InitGenesis fills from
+		// these) requires: otherwise an import exports a file that fails
+		// this check (audit 6 B6-7).
+		if len(reg.Nullifier) == 0 || len(reg.Nullifier) > 32 {
+			return fmt.Errorf("registration at leaf %d: a nullifier is 1..32 bytes", reg.LeafIndex)
 		}
 		n := hex.EncodeToString(reg.Nullifier)
 		if _, dup := seenNullifier[n]; dup {

@@ -30,9 +30,9 @@ func TestExpirySweepZeroesTheLeaf(t *testing.T) {
 	gs := types.GenesisState{Params: params, IdentityTreeSize: 2,
 		Registrations: []types.Registration{genesisReg(0, 10_000), genesisReg(1, 10_600)}}
 	require.NoError(t, gs.Validate())
-	require.NoError(t, f.keeper.InitGenesis(f.ctx, gs))
+	require.NoError(t, f.keeper.InitGenesis(sdkCtx.WithBlockTime(time.Unix(10_600, 0).UTC()), gs))
 
-	live := sdkCtx.WithBlockTime(time.Unix(10_500, 0).UTC())
+	live := sdkCtx.WithBlockTime(time.Unix(10_600, 0).UTC())
 	require.NoError(t, f.keeper.BeginBlocker(live))
 	l, err := f.keeper.IdentityLeafAt(live, 0)
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestExpirySweepIsBounded(t *testing.T) {
 	for i := 0; i < cohort; i++ {
 		gs.Registrations = append(gs.Registrations, genesisReg(i, int64(10_000+i)))
 	}
-	require.NoError(t, f.keeper.InitGenesis(f.ctx, gs))
+	require.NoError(t, f.keeper.InitGenesis(sdkCtx.WithBlockTime(time.Unix(10_000+cohort, 0).UTC()), gs))
 
 	dead := sdkCtx.WithBlockTime(time.Unix(20_000, 0).UTC())
 	require.NoError(t, f.keeper.BeginBlocker(dead))

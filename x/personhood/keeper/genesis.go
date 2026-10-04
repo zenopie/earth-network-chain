@@ -39,6 +39,17 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	if err != nil {
 		return err
 	}
+	// No record may be dated after genesis (audit 6 B6-3): a registration
+	// registered in the future never expires (and registered_at + validity
+	// can overflow), and one activated in the future passes every activation
+	// bound late. Identity roots below are held to the same.
+	genesisTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	for _, reg := range genState.Registrations {
+		if reg.RegisteredAt > genesisTime || reg.ActivatedAt > genesisTime || reg.PredecessorAt > genesisTime {
+			return fmt.Errorf("registration %x: registered_at %d, activated_at %d or predecessor_at %d is after genesis time %d",
+				reg.Nullifier, reg.RegisteredAt, reg.ActivatedAt, reg.PredecessorAt, genesisTime)
+		}
+	}
 	for _, reg := range genState.Registrations {
 		leaf, err := IdentityLeaf(reg.Idc, reg.DscKey, reg.Country, reg.ActivatedAt, reg.PredecessorAt)
 		if err != nil {
@@ -59,7 +70,6 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	// must be the root of the rebuilt tree at its tree_size, and must not be
 	// dated after genesis (a future time keeps it inside the anchor window,
 	// and past pruning, for as long as it likes).
-	genesisTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
 	sizes := make(map[uint64]bool, len(genState.IdentityRoots))
 	for i, r := range genState.IdentityRoots {
 		if r.Time > genesisTime {
@@ -104,6 +114,19 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	if err := k.CaretakerCount.Set(ctx, uint64(len(genState.CaretakerVotes))); err != nil {
 		return err
 	}
+	// A handle's lease runs at most handle_lease_max past genesis: the claim
+	// bound (one live handle per passport) assumes no lease is longer
+	// (audit 6 B6-3).
+	leaseMax := genState.HandleLeaseMax
+	if l := genState.Params.HandleLeaseSecondsOrDefault(); l > leaseMax {
+		leaseMax = l
+	}
+	for _, h := range genState.Handles {
+		if h.ExpiresAt > genesisTime+leaseMax {
+			return fmt.Errorf("handle %q: expires_at %d is past genesis time %d + handle_lease_max %d",
+				h.Handle, h.ExpiresAt, genesisTime, leaseMax)
+		}
+	}
 	if err := k.importHandles(ctx, genState.Handles); err != nil {
 		return err
 	}
@@ -121,10 +144,6 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		if err := k.CaretakerMovedOut.Set(ctx, nf); err != nil {
 			return err
 		}
-	}
-	leaseMax := genState.HandleLeaseMax
-	if l := genState.Params.HandleLeaseSecondsOrDefault(); l > leaseMax {
-		leaseMax = l
 	}
 	if err := k.HandleLeaseMax.Set(ctx, leaseMax); err != nil {
 		return err

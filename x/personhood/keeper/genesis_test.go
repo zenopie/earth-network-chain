@@ -1,7 +1,9 @@
 package keeper_test
 
 import (
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -32,6 +34,7 @@ func TestGenesisRoundTripsPopulatedState(t *testing.T) {
 		CaretakerVotes:   []types.CaretakerVote{{Nullifier: privacy.FieldBytes(privacy.U64(6)), ExpiresAt: 1_700_100_000}},
 	}
 	require.NoError(t, original.Validate())
+	f.ctx = sdk.UnwrapSDKContext(f.ctx).WithBlockTime(time.Unix(1_700_000_500, 0).UTC())
 	require.NoError(t, f.keeper.InitGenesis(f.ctx, original))
 
 	count, err := f.keeper.RegCount.Get(f.ctx)

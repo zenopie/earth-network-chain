@@ -79,7 +79,7 @@ func realRootOf(t *testing.T, leaves ...fr.Element) []byte {
 // imports under the C3 check.
 func TestAudit4IdentityRootsRoundTripAfterZeroing(t *testing.T) {
 	f := initFixture(t)
-	sdkCtx := sdk.UnwrapSDKContext(f.ctx).WithBlockTime(time.Unix(10_000, 0).UTC())
+	sdkCtx := sdk.UnwrapSDKContext(f.ctx).WithBlockTime(time.Unix(10_600, 0).UTC())
 	params := types.DefaultParams()
 	params.RegistrationValiditySeconds = 1000
 	gs := types.GenesisState{Params: params, IdentityTreeSize: 2,
