@@ -42,7 +42,9 @@ import (
 //     never exceeds D_A - U_A: B_A >= u with W_A = 0 and P_A spent.
 //  4. B mints floor(arrived x S_B / B_B), arrived being the measured rise of
 //     B's backing (u, less x/staking's truncation): rounding favours the
-//     book on both sides.
+//     book on both sides. A value exceeding A's queue by at most
+//     bondedDust (0.001 ERTH) moves out of the queue alone, the excess left
+//     to A's book.
 //
 // It runs in the private ante, atomically with the spend (ExecutesInAnte):
 // anything x/staking refuses fails the tx before a note is spent or a fee
@@ -66,6 +68,13 @@ import (
 // every private staker: one redelegation into A blocks every redelegation
 // out of A's bonded stake until it matures, and max_entries bounds the
 // redelegations from A to B maturing at once (Query/Redelegation).
+
+// bondedDust is the most a redelegation's value may exceed the source's
+// queue by and still move out of the queue alone, the excess left to the
+// source's book: x/staking may return nothing for so few tokens of a
+// slashed validator (and would refuse the redelegation), and an entry for
+// it would take one of the pair's max_entries.
+var bondedDust = math.NewInt(1_000)
 
 // gasRedelegate is MsgRedelegate's base gas: two reward withdrawals, the
 // books, x/staking's BeginRedelegate (an unbond, a delegate, the entry and
@@ -99,15 +108,14 @@ func (k Keeper) checkRedelegationLimits(ctx context.Context, srcoper, dstoper st
 	if _, err := k.staking.GetValidator(ctx, src); err != nil {
 		return types.ErrRedelegation.Wrapf("%s: %v", srcoper, err)
 	}
+	// (When it lifts is Query/Redelegation's to say: finding it walks every
+	// redelegation of the module, too much for a refusal that costs the
+	// sender nothing.)
 	if recv, err := k.staking.HasReceivingRedelegation(ctx, k.modAddr, src); err != nil {
 		return err
 	} else if recv {
-		until, err := k.receivingUntil(ctx, src)
-		if err != nil {
-			return err
-		}
-		return types.ErrRedelegation.Wrapf("private stake redelegated to %s matures until %s: x/staking refuses a transitive redelegation out of it until then (undelegating is not affected)",
-			srcoper, time.Unix(0, until).UTC().Format(time.RFC3339))
+		return types.ErrRedelegation.Wrapf("private stake redelegated to %s is maturing: x/staking refuses a transitive redelegation out of it until it completes (Query/Redelegation: src_locked_until; undelegating is not affected)",
+			srcoper)
 	}
 	if full, err := k.staking.HasMaxRedelegationEntries(ctx, k.modAddr, src, dst); err != nil {
 		return err
@@ -225,7 +233,7 @@ func (k Keeper) checkRedelegate(ctx context.Context, m *types.MsgRedelegate) (ma
 	if err != nil {
 		return math.Int{}, err
 	}
-	if u.GT(liquid) {
+	if u.Sub(liquid).GT(bondedDust) {
 		if err := k.checkRedelegationLimits(ctx, m.SrcValidator, m.DstValidator, src, dst); err != nil {
 			return math.Int{}, err
 		}
@@ -295,6 +303,10 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 	}
 	queued := math.MinInt(u, vsA.PendingDelegation)
 	bonded := u.Sub(queued)
+	if bonded.IsPositive() && bonded.LTE(bondedDust) {
+		// Dust beyond the queue stays with the source's book.
+		u, bonded = queued, math.ZeroInt()
+	}
 
 	// 3. The rest moves bonded, with x/staking's redelegation.
 	var completion int64
