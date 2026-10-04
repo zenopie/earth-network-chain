@@ -145,7 +145,16 @@ func (k Keeper) refuseVestingOperator(ctx context.Context, val sdk.ValAddress) e
 	}
 	return nil
 }
-func (StakingHooks) BeforeValidatorModified(context.Context, sdk.ValAddress) error { return nil }
+
+// BeforeValidatorModified: x/staking calls it as a slash begins (and on
+// MsgEditValidator). If the module redelegated from val, the slash may take
+// from its redelegation entries, unbonding the module's delegation at their
+// destinations: prepareRedelegationSlash books the rewards that would pay
+// and re-weighs those destinations. Never fails.
+func (h StakingHooks) BeforeValidatorModified(ctx context.Context, val sdk.ValAddress) error {
+	h.k.prepareRedelegationSlash(ctx, val)
+	return nil
+}
 
 // AfterValidatorRemoved releases the removed validator's reward escrow to its
 // operator (escrow.go). x/staking calls it from its EndBlocker, so it never

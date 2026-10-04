@@ -22,5 +22,6 @@ var (
 	ErrOperatorWithdraw    = errors.Register(ModuleName, 1116, "withdraw addresses cannot be changed on Earth: validator rewards and commission auto-compound into self-bond")
 	ErrVoteNullifierUsed   = errors.Register(ModuleName, 1119, "this stake note already voted on this proposal")
 	ErrVestingOperator     = errors.Register(ModuleName, 1118, "a vesting account cannot operate a validator: compounding its rewards would unlock its vesting coins")
+	ErrRedelegation        = errors.Register(ModuleName, 1120, "redelegation refused")
 	ErrOperatorRewardClaim = errors.Register(ModuleName, 1117, "validator rewards and commission auto-compound into self-bond and cannot be withdrawn: to take them out, undelegate the self-bond (the unbonding period applies)")
 )

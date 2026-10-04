@@ -20,6 +20,7 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 		&MsgUpdatePosition{},
 		&MsgUnlockPosition{},
 		&MsgPositionVote{},
+		&MsgRedelegate{},
 	)
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)
 }
@@ -42,3 +43,4 @@ func ProvideLockPositionGetSigners() signing.CustomGetSigner   { return noSigner
 func ProvideUpdatePositionGetSigners() signing.CustomGetSigner { return noSigners("MsgUpdatePosition") }
 func ProvideUnlockPositionGetSigners() signing.CustomGetSigner { return noSigners("MsgUnlockPosition") }
 func ProvidePositionVoteGetSigners() signing.CustomGetSigner   { return noSigners("MsgPositionVote") }
+func ProvideRedelegateGetSigners() signing.CustomGetSigner     { return noSigners("MsgRedelegate") }

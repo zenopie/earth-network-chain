@@ -81,7 +81,7 @@ func RegisterPrivateActions(register func(string, shieldedtypes.PrivateActionHan
 	for _, t := range []string{
 		types.TypeMsgDelegate, types.TypeMsgRestake, types.TypeMsgUndelegate,
 		types.TypeMsgStakeVote, types.TypeMsgLockPosition, types.TypeMsgUpdatePosition, types.TypeMsgUnlockPosition,
-		types.TypeMsgPositionVote,
+		types.TypeMsgPositionVote, types.TypeMsgRedelegate,
 	} {
 		register(t, h)
 	}
@@ -113,7 +113,8 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	// The proof, two writes per nullifier slot (an insert into the indexed
 	// nullifier tree rewrites two paths: the low leaf's and the new leaf's),
 	// one per output, plus one for a note the chain mints (an undelegation's
-	// queued payout, which mints its pool note later, for free).
+	// queued payout, which mints its pool note later, for free; a
+	// redelegation's derth/<dst> note).
 	writes := uint64(2*len(sm.StakeProofOf().Nullifiers)+len(sm.StakeProofOf().Commitments)) + 1
 	var base uint64
 	switch msg.(type) {
@@ -131,6 +132,8 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 		base = gasUnlock
 	case *types.MsgPositionVote:
 		base = gasPosVote
+	case *types.MsgRedelegate:
+		base = gasRedelegate
 	default:
 		return 0, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
@@ -170,6 +173,8 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 		_, err = k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
 	case *types.MsgPositionVote:
 		_, _, err = k.checkPositionVote(ctx, m)
+	case *types.MsgRedelegate:
+		_, err = k.checkRedelegate(ctx, m)
 	}
 	if err != nil {
 		return nil, err

@@ -258,6 +258,13 @@ func (k Keeper) reportInvariants(ctx context.Context) {
 			return n > types.InvariantBookLimit, nil
 		})
 	}
+	if n <= types.InvariantBookLimit {
+		// Invariant 9 walks the module's redelegations.
+		_ = k.staking.IterateRedelegations(ctx, func(int64, stakingtypes.Redelegation) bool {
+			n++
+			return n > types.InvariantBookLimit
+		})
+	}
 	if n > types.InvariantBookLimit {
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeInvariant,
 			sdk.NewAttribute(types.AttributeKeyError, "skipped: too many books, unbond records and positions for one block")))

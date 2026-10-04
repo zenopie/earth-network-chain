@@ -47,6 +47,9 @@ import (
 //     exactly one queue: untried under its record, or failed under its
 //     retry time; every MATURED record with untried payouts is marked for
 //     the sweep.
+//  9. Redelegations: every x/staking redelegation is this module's,
+//     between two different validators, with 1..max_entries entries
+//     (checkRedelegationRecord, as at genesis).
 func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertERTH(ctx); err != nil {
 		return err
@@ -67,6 +70,9 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 		return err
 	}
 	if err := k.assertPayouts(ctx); err != nil {
+		return err
+	}
+	if err := k.assertRedelegations(ctx); err != nil {
 		return err
 	}
 	return k.assertEscrows(ctx)
@@ -434,4 +440,17 @@ func (k Keeper) assertPayouts(ctx context.Context) error {
 		}
 		return false, nil
 	})
+}
+
+func (k Keeper) assertRedelegations(ctx context.Context) error {
+	var bad error
+	if err := k.staking.IterateRedelegations(ctx, func(_ int64, r stakingtypes.Redelegation) bool {
+		if err := k.checkRedelegationRecord(ctx, r); err != nil {
+			bad = types.ErrInvariant.Wrap(err.Error())
+		}
+		return bad != nil
+	}); err != nil {
+		return err
+	}
+	return bad
 }

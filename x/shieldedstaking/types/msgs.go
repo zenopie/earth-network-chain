@@ -25,6 +25,7 @@ const (
 	TypeMsgUpdatePosition = "/earth.shieldedstaking.v1.MsgUpdatePosition"
 	TypeMsgUnlockPosition = "/earth.shieldedstaking.v1.MsgUnlockPosition"
 	TypeMsgPositionVote   = "/earth.shieldedstaking.v1.MsgPositionVote"
+	TypeMsgRedelegate     = "/earth.shieldedstaking.v1.MsgRedelegate"
 )
 
 var (
@@ -36,6 +37,7 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgUpdatePosition)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgUnlockPosition)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgPositionVote)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgRedelegate)(nil)
 )
 
 // ---- field encodings the sighashes and position signatures bind ----------
@@ -354,6 +356,7 @@ var (
 	_ StakeMsg = (*MsgUpdatePosition)(nil)
 	_ StakeMsg = (*MsgUnlockPosition)(nil)
 	_ StakeMsg = (*MsgPositionVote)(nil)
+	_ StakeMsg = (*MsgRedelegate)(nil)
 )
 
 func withStake(p *StakeProof, fields ...fr.Element) []fr.Element {
@@ -501,6 +504,46 @@ func (m *MsgUndelegate) ValidateBasic() error {
 		return err
 	}
 	return m.Stake.shape(1, true)
+}
+
+// ---- MsgRedelegate --------------------------------------------------------
+
+func (m *MsgRedelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgRedelegate) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
+func (m *MsgRedelegate) StakeProofOf() *StakeProof               { return &m.Stake }
+func (m *MsgRedelegate) StakeDenom() string                      { return DerthDenom(m.SrcValidator) }
+func (m *MsgRedelegate) VOut() uint64                            { return m.Amount }
+
+// SighashFields: StakeFields, Bytes(src_validator), Bytes(dst_validator),
+// amount.
+func (m *MsgRedelegate) SighashFields(address.Codec) ([]fr.Element, error) {
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.SrcValidator)), privacy.Bytes([]byte(m.DstValidator)),
+		privacy.U64(m.Amount)), nil
+}
+
+// ValidateBasic: two different canonical validators; the proof spends
+// derth/<src> (amount leaving, change back to the owner) and the chain mints
+// derth/<dst> to spc_mint (spc_ciphertext required).
+func (m *MsgRedelegate) ValidateBasic() error {
+	if err := checkValidator(m.SrcValidator); err != nil {
+		return err
+	}
+	if err := checkValidator(m.DstValidator); err != nil {
+		return err
+	}
+	if m.SrcValidator == m.DstValidator {
+		return errorsmod.Wrap(ErrRedelegation, "source and destination are the same validator")
+	}
+	if err := positive("amount", m.Amount); err != nil {
+		return err
+	}
+	if err := checkMoves(m, "", 0); err != nil {
+		return err
+	}
+	if err := m.Stake.shape(1, true); err != nil {
+		return err
+	}
+	return m.Stake.mints(true)
 }
 
 // ---- MsgStakeVote ---------------------------------------------------------

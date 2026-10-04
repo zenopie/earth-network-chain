@@ -30,6 +30,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{RpcMethod: "Positions", Use: "positions", Short: "List Groundworks positions"},
 				{
+					RpcMethod: "Redelegation", Use: "redelegation [src-valoper] [dst-valoper]",
+					Short:          "Show x/staking's limits on a private redelegation between two validators",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "src_validator"}, {ProtoField: "dst_validator"}},
+				},
+				{
 					RpcMethod: "Snapshot", Use: "snapshot [proposal-id]", Short: "Show a proposal's stake-vote snapshot",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "proposal_id"}},
 				},
@@ -46,6 +51,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{RpcMethod: "UpdatePosition", Skip: true},
 				{RpcMethod: "UnlockPosition", Skip: true},
 				{RpcMethod: "PositionVote", Skip: true},
+				{RpcMethod: "Redelegate", Skip: true},
 			},
 		},
 	}

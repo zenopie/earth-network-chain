@@ -557,8 +557,9 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 // checkGenesisDelegations enforces the delegation rule on what x/staking
 // loaded (it runs no hooks for an exported genesis): every delegation and
 // unbonding delegation is this module's or an operator's on its own
-// validator, and there is no redelegation at all (a self-bond moved to
-// another validator stops being one; the module never redelegates).
+// validator, and every redelegation is this module's (private
+// redelegations in flight; a self-bond moved to another validator would stop
+// being one, so an operator never redelegates).
 //
 // A delegation of this module's needs its validator's book (audit 6 C-I2):
 // without one, delegating there is refused as settling, and the sweep, which
@@ -600,13 +601,47 @@ func (k Keeper) checkGenesisDelegations(ctx context.Context, gs types.GenesisSta
 		return bad
 	}
 	if err := k.staking.IterateRedelegations(ctx, func(_ int64, r stakingtypes.Redelegation) bool {
-		bad = errorsmod.Wrapf(types.ErrTransparentStaking, "genesis redelegation %s: %s -> %s",
-			r.DelegatorAddress, r.ValidatorSrcAddress, r.ValidatorDstAddress)
-		return true
+		bad = k.checkRedelegationRecord(ctx, r)
+		return bad != nil
 	}); err != nil {
 		return err
 	}
 	return bad
+}
+
+// checkRedelegationRecord is the rule for an x/staking redelegation, at
+// genesis and in invariant 9: only this module redelegates (a private
+// redelegation; an operator's self-bond cannot move), between two different
+// canonical validators, with at most max_entries entries.
+func (k Keeper) checkRedelegationRecord(ctx context.Context, r stakingtypes.Redelegation) error {
+	del, err := k.addressCodec.StringToBytes(r.DelegatorAddress)
+	if err != nil {
+		return fmt.Errorf("redelegation delegator %q: %w", r.DelegatorAddress, err)
+	}
+	if !sdk.AccAddress(del).Equals(k.modAddr) {
+		return errorsmod.Wrapf(types.ErrTransparentStaking, "redelegation %s: %s -> %s (only private staking redelegates)",
+			r.DelegatorAddress, r.ValidatorSrcAddress, r.ValidatorDstAddress)
+	}
+	src, err := k.valAddr(r.ValidatorSrcAddress)
+	if err != nil {
+		return err
+	}
+	dst, err := k.valAddr(r.ValidatorDstAddress)
+	if err != nil {
+		return err
+	}
+	if src.Equals(dst) {
+		return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s -> itself", r.ValidatorSrcAddress)
+	}
+	maxEntries, err := k.staking.MaxEntries(ctx)
+	if err != nil {
+		return err
+	}
+	if len(r.Entries) == 0 || uint32(len(r.Entries)) > maxEntries {
+		return errorsmod.Wrapf(types.ErrRedelegation, "redelegation %s -> %s has %d entries (max_entries %d)",
+			r.ValidatorSrcAddress, r.ValidatorDstAddress, len(r.Entries), maxEntries)
+	}
+	return nil
 }
 
 func (k Keeper) delegationAddrs(del, val string) (sdk.AccAddress, sdk.ValAddress, error) {

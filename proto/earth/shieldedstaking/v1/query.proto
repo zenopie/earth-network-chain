@@ -61,6 +61,11 @@ service Query {
   rpc StakeNullifierTree(QueryStakeNullifierTreeRequest) returns (QueryStakeNullifierTreeResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/stake_nullifier_tree";
   }
+  // Redelegation reports what x/staking allows a private redelegation from
+  // src_validator to dst_validator right now (MsgRedelegate).
+  rpc Redelegation(QueryRedelegationRequest) returns (QueryRedelegationResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/redelegation/{src_validator}/{dst_validator}";
+  }
 }
 
 // QueryParamsRequest is the request type for Query/Params.
@@ -208,4 +213,37 @@ message QueryStakeNullifierTreeResponse {
   uint64 size = 2;
   bytes root = 3;
   bytes latest_root = 4;
+}
+
+// QueryRedelegationRequest is the request type for Query/Redelegation.
+message QueryRedelegationRequest {
+  string src_validator = 1;
+  string dst_validator = 2;
+}
+
+// QueryRedelegationResponse: x/staking's limits on the module's (one
+// delegator's) redelegations, shared by every private staker. A
+// redelegation's value moves out of src's delegation queue first (queue,
+// no x/staking entry); only the rest needs x/staking, which refuses it while
+// src_locked_until is in the future (stake redelegated to src is maturing:
+// no transitive redelegation) or while entries == max_entries.
+message QueryRedelegationResponse {
+  // src_locked_until: unix ns when the last maturing redelegation INTO
+  // src_validator completes; 0 when none matures.
+  int64 src_locked_until = 1;
+  // entries: maturing src -> dst redelegation entries; max_entries is
+  // x/staking's limit per pair.
+  uint32 entries = 2;
+  uint32 max_entries = 3;
+  // pair_frees_at: unix ns when the earliest src -> dst entry completes; 0
+  // when there is none.
+  int64 pair_frees_at = 4;
+  // queue: src's delegation queue (uerth): value that moves without
+  // x/staking.
+  string queue = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
 }

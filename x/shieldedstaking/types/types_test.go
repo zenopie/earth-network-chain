@@ -16,6 +16,7 @@ func TestTypeURLs(t *testing.T) {
 		TypeMsgDelegate: &MsgDelegate{}, TypeMsgUndelegate: &MsgUndelegate{},
 		TypeMsgStakeVote: &MsgStakeVote{}, TypeMsgLockPosition: &MsgLockPosition{}, TypeMsgUpdatePosition: &MsgUpdatePosition{},
 		TypeMsgUnlockPosition: &MsgUnlockPosition{}, TypeMsgPositionVote: &MsgPositionVote{},
+		TypeMsgRedelegate: &MsgRedelegate{},
 	} {
 		require.Equal(t, want, sdk.MsgTypeURL(m))
 	}
@@ -76,4 +77,37 @@ func TestStakeProofCiphertextShape(t *testing.T) {
 		mutate(&p)
 		require.Error(t, p.ValidateBasic(), name)
 	}
+}
+
+// MsgRedelegate's sighash binds the stake fields, then Bytes(src),
+// Bytes(dst), amount; its stake denom is the source's derth and v_out the
+// amount. Two of the same validator, or nothing to move, are refused before
+// the bundle is looked at.
+func TestMsgRedelegateFields(t *testing.T) {
+	hrp := sdk.GetConfig().GetBech32ValidatorAddrPrefix()
+	a, _ := bech32.ConvertAndEncode(hrp, make([]byte, 20))
+	b, _ := bech32.ConvertAndEncode(hrp, append(make([]byte, 19), 1))
+	z := make([]byte, 32)
+	m := &MsgRedelegate{SrcValidator: a, DstValidator: b, Amount: 7,
+		Stake: StakeProof{Anchor: z, SpcMint: z, OwnerTag: z, Nullifiers: [][]byte{z, z}, Commitments: [][]byte{z, z}}}
+	fs, err := m.SighashFields(nil)
+	require.NoError(t, err)
+	stake := m.Stake.StakeFields()
+	require.Len(t, fs, len(stake)+3)
+	require.Equal(t, stake, fs[:len(stake)])
+	require.Equal(t, privacy.Bytes([]byte(a)), fs[len(stake)])
+	require.Equal(t, privacy.Bytes([]byte(b)), fs[len(stake)+1])
+	require.Equal(t, privacy.U64(7), fs[len(stake)+2])
+	require.Equal(t, DerthDenom(a), m.StakeDenom())
+	require.Equal(t, uint64(7), m.VOut())
+
+	same := *m
+	same.DstValidator = a
+	require.ErrorIs(t, same.ValidateBasic(), ErrRedelegation)
+	zero := *m
+	zero.Amount = 0
+	require.ErrorContains(t, zero.ValidateBasic(), "amount must be positive")
+	upper := *m
+	upper.DstValidator = strings.ToUpper(b)
+	require.Error(t, upper.ValidateBasic())
 }

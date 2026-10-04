@@ -51,6 +51,9 @@ service Msg {
   // PositionVote votes a position's derth on an x/gov proposal (its owner
   // proves it).
   rpc PositionVote(MsgPositionVote) returns (MsgPositionVoteResponse);
+  // Redelegate moves derth from one validator to another with no unbonding
+  // gap: derth/<src> notes are spent, derth/<dst> is minted to their owner.
+  rpc Redelegate(MsgRedelegate) returns (MsgRedelegateResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -322,3 +325,41 @@ message MsgPositionVote {
 
 // MsgPositionVoteResponse is empty.
 message MsgPositionVoteResponse {}
+
+// MsgRedelegate moves amount of the owner's derth/<src_validator> to
+// dst_validator with no unbonding gap. The proof spends derth/<src> notes,
+// amount of them leaving (v_out), any change back to the owner as
+// derth/<src> notes; the chain moves their live ERTH value u from src's book
+// to dst's (out of src's delegation queue first, then the rest of the
+// module's bonded stake with x/staking's BeginRedelegate) and mints
+// derth/<dst> at dst's live rate, worth what arrived, as a stake note to
+// stake.spc_mint (the same owner's, as for a delegation), with
+// stake.spc_ciphertext (required). bundle pays the fee only.
+//
+// It runs in the private ante, atomically with the spend: a redelegation
+// x/staking refuses (a transitive one, while stake redelegated to
+// src_validator matures; one past max_entries for the pair) or that would
+// mint less than min_delegation derth fails the tx before anything is spent
+// or paid. A validator's operator cannot redelegate its self-bond.
+//
+// sighash fields: StakeFields(stake), Bytes(src_validator),
+// Bytes(dst_validator), amount.
+message MsgRedelegate {
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
+  string src_validator = 2;
+  string dst_validator = 3;
+  // amount is the derth/<src_validator> leaving the notes (v_out).
+  uint64 amount = 4;
+  StakeProof stake = 5 [(gogoproto.nullable) = false];
+}
+
+// MsgRedelegateResponse: the ERTH value moved, the derth/<dst_validator>
+// minted and its stake note's position, and when x/staking's redelegation
+// entry completes (unix ns; 0 when none was made: the value moved out of the
+// source's delegation queue alone, or the source was not bonded).
+message MsgRedelegateResponse {
+  uint64 value = 1;
+  uint64 derth = 2;
+  uint64 position = 3;
+  int64 completion_time = 4;
+}

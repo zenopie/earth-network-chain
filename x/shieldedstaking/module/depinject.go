@@ -30,7 +30,7 @@ func init() {
 		appconfig.Provide(ProvideModule,
 			types.ProvideDelegateGetSigners, types.ProvideRestakeGetSigners, types.ProvideUndelegateGetSigners,
 			types.ProvideStakeVoteGetSigners, types.ProvideLockPositionGetSigners, types.ProvideUpdatePositionGetSigners,
-			types.ProvideUnlockPositionGetSigners, types.ProvidePositionVoteGetSigners),
+			types.ProvideUnlockPositionGetSigners, types.ProvidePositionVoteGetSigners, types.ProvideRedelegateGetSigners),
 	)
 }
 

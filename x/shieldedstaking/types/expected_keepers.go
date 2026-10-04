@@ -64,6 +64,17 @@ type StakingKeeper interface {
 	GetAllDelegations(ctx context.Context) ([]stakingtypes.Delegation, error)
 	IterateRedelegations(ctx context.Context, fn func(index int64, red stakingtypes.Redelegation) (stop bool)) error
 	IterateUnbondingDelegations(ctx context.Context, fn func(index int64, ubd stakingtypes.UnbondingDelegation) (stop bool)) error
+	// Private redelegation (MsgRedelegate): the module moves its own stake
+	// between validators under x/staking's rules (no transitive
+	// redelegation, max_entries per pair); a slash of the source reaches
+	// the entries (GetRedelegationsFromSrcValidator).
+	BeginRedelegation(ctx context.Context, delAddr sdk.AccAddress, valSrcAddr, valDstAddr sdk.ValAddress,
+		sharesAmount math.LegacyDec) (completionTime time.Time, errorResult error)
+	HasReceivingRedelegation(ctx context.Context, delAddr sdk.AccAddress, valDstAddr sdk.ValAddress) (bool, error)
+	HasMaxRedelegationEntries(ctx context.Context, delegatorAddr sdk.AccAddress, validatorSrcAddr, validatorDstAddr sdk.ValAddress) (bool, error)
+	GetRedelegations(ctx context.Context, delegator sdk.AccAddress, maxRetrieve uint16) ([]stakingtypes.Redelegation, error)
+	GetRedelegation(ctx context.Context, delAddr sdk.AccAddress, valSrcAddr, valDstAddr sdk.ValAddress) (stakingtypes.Redelegation, error)
+	GetRedelegationsFromSrcValidator(ctx context.Context, valAddr sdk.ValAddress) ([]stakingtypes.Redelegation, error)
 }
 
 // DistrKeeper is x/distribution: rewards and the community pool.

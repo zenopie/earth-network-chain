@@ -2,8 +2,11 @@ package types
 
 // Events.
 const (
-	EventTypeDelegate       = "shieldedstaking_delegate"
-	EventTypeUndelegate     = "shieldedstaking_undelegate"
+	EventTypeDelegate   = "shieldedstaking_delegate"
+	EventTypeUndelegate = "shieldedstaking_undelegate"
+	// EventTypeRedelegate: derth moved between validators (the derth/<dst>
+	// stake note's own event carries its position, spc and ciphertext).
+	EventTypeRedelegate     = "shieldedstaking_redelegate"
 	EventTypeEpoch          = "shieldedstaking_epoch"
 	EventTypeEpochValidator = "shieldedstaking_epoch_validator"
 	EventTypeEpochFailure   = "shieldedstaking_epoch_failure"
@@ -75,4 +78,10 @@ const (
 	AttributeKeyPositions    = "positions"
 	AttributeKeyAttempts     = "attempts"
 	AttributeKeyRetryAt      = "retry_at"
+	AttributeKeySrcValidator = "src_validator"
+	AttributeKeyDstValidator = "dst_validator"
+	AttributeKeyMinted       = "minted"
+	AttributeKeyQueued       = "queued"
+	AttributeKeyBonded       = "bonded"
+	AttributeKeyCompletion   = "completion_time"
 )
