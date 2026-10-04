@@ -1,10 +1,11 @@
 package keeper
 
 import (
-	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	"path/filepath"
 	"testing"
 	"time"
+
+	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 
 	storetypes "cosmossdk.io/store/types"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"

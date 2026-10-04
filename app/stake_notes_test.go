@@ -1,14 +1,16 @@
-package app
-
 // The stake side of the private staking harness: the test wallet's
 // owner-locked stake notes (x/shieldedstaking's stake note tree), synced from
 // the chain like the shielded pool's notes, and stake circuit proofs built
 // for them. Proofs are cached by public inputs beside the action proofs
 // (stake-<hash>.proof), proven with nargo + bb when EARTH_CIRCUITS is set.
 
+package app
+
 import (
 	"fmt"
 	"strings"
+	"testing"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/stretchr/testify/require"
@@ -449,4 +451,50 @@ func (e *stakeEnv) settleStake(sp *stakePlan) {
 		e.trackStake(sp.credit.out)
 	}
 	e.scanStake()
+}
+
+// Audit 7, B L-1 / A7-L3: a stake proof whose clear_before was non-zero only
+// when it cleared a label marked the tx as clearing one, which the public
+// redelegations into that validator could link to its owner. Now
+// every stake proof must name the label window's current clear_before (the
+// block time less the window, within ClearBeforeSlackSeconds) and the
+// current debt root, whether it clears anything or not.
+func TestStakeNotesNameClearBefore(t *testing.T) {
+	e := initStakeEnv(t)
+	v, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(1_000 * ssErth))
+	e.shield(uint64(1_000 * ssErth))
+	k := e.app.ShieldedStakingKeeper
+	cb, err := k.ClearBefore(e.ctx())
+	require.NotZero(t, cb)
+	in := e.w.unspent("uerth", uint64(200*ssErth))
+	require.NotNil(t, in)
+	m, p, sp := e.delegateMsg(v, in, uint64(200*ssErth))
+	require.Equal(t, cb, m.Stake.ClearBefore, "a proof that clears nothing names it too")
+	root, _, err := k.DebtRoot(e.ctx())
+	require.NoError(t, err)
+	require.Equal(t, root, m.Stake.DebtRoot)
+	zero := make([]byte, 32)
+	for _, bad := range []struct {
+		cb   uint64
+		root []byte
+		why  string
+	}{
+		{0, zero, "clear_before"}, // the old encoding of "clears nothing"
+		{cb + 1_000, root, "clear_before"},
+		{cb - sstypes.ClearBeforeSlackSeconds - 1, root, "clear_before"},
+		{cb, privacy.FieldBytes(ssDet("stale-debt-root", 0)), "debt root"},
+	} {
+		mb := *m
+		mb.Stake.ClearBefore, mb.Stake.DebtRoot = bad.cb, bad.root
+		res := e.run(e.privateTx(&mb))
+		require.NotEqual(t, uint32(0), res.Code, "clear_before %d", bad.cb)
+		require.Contains(t, res.Log, bad.why)
+	}
+	res := e.run(e.privateTx(m))
+	require.Equal(t, uint32(0), res.Code, res.Log)
+	e.settle(p)
+	e.settleStake(sp)
+	e.invariants()
 }

@@ -1,35 +1,34 @@
+// x/shieldedstaking book rules. Most of these started as an auditor's proof
+// of concept and now assert the fail-safe outcome.
+
 package app
 
-// Regression tests for the 2026-10 x/shieldedstaking audit. Each started as
-// the auditor's proof of concept (which passed against bae86fa) and now
-// asserts the fail-safe outcome.
-
 import (
-	"cosmossdk.io/collections"
-	"cosmossdk.io/log"
-	storetypes "cosmossdk.io/store/types"
 	"encoding/json"
 	"fmt"
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
-	dbm "github.com/cosmos/cosmos-db"
-	"github.com/cosmos/cosmos-sdk/baseapp"
-	"github.com/cosmos/cosmos-sdk/client/flags"
-	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
-	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
-	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"cosmossdk.io/collections"
+	"cosmossdk.io/log"
 	"cosmossdk.io/math"
+	storetypes "cosmossdk.io/store/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	dbm "github.com/cosmos/cosmos-db"
+	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/stretchr/testify/require"
 
+	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
+	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	earthtypes "github.com/earth-network/earth/x/earth/types"
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
@@ -532,4 +531,117 @@ func TestAuditDonationInflationHarmless(t *testing.T) {
 	value := math.NewIntFromUint64(vr.Derth).Mul(b2).Quo(s2)
 	loss := math.NewIntFromUint64(big).Sub(value)
 	require.True(t, loss.MulRaw(ssErth).LTE(math.NewIntFromUint64(big)), "loss %s of %d", loss, big)
+}
+
+// AUDIT3 D: a validator's unbond records grow with every matured record
+// nobody has claimed yet, and the epoch end walked all of them twice per
+// validator (orphan sweep, orphan check). Orphans are indexed now: the epoch
+// end's cost does not grow with a validator's unclaimed records.
+func TestAudit3EpochEndCostIndependentOfUnclaimedRecords(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(5_000 * ssErth))
+	e.shield(uint64(100 * ssErth))
+	e.delegate(vB, uint64(2_000*ssErth))
+	e.days(1)
+	valoper := e.valoper(vB)
+
+	epochEndGas := func(n int) uint64 {
+		cc, _ := e.ctx().CacheContext()
+		for i := 0; i < n; i++ {
+			r := sstypes.UnbondRecord{
+				Validator: valoper, Epoch: 1_000_000 + uint64(i), Status: sstypes.UNBOND_STATUS_MATURED,
+				Requested: math.OneInt(), Target: math.OneInt(), Undelegated: math.OneInt(),
+				Payout: math.OneInt(), Outstanding: math.OneInt(), Paid: math.ZeroInt(),
+			}
+			require.NoError(t, e.app.ShieldedStakingKeeper.UnbondRecords.Set(cc, collections.Join(valoper, r.Epoch), r))
+		}
+		ep, err := e.app.ShieldedStakingKeeper.Epoch.Get(cc)
+		require.NoError(t, err)
+		ctx := cc.WithBlockTime(time.Unix(ep.EndTime, 0)).WithGasMeter(storetypes.NewGasMeter(1 << 60))
+		require.NoError(t, e.app.ShieldedStakingKeeper.EndBlocker(ctx))
+		return ctx.GasMeter().GasConsumed()
+	}
+	// Both past InvariantBookLimit, so the (bounded) invariant check costs
+	// the same in each.
+	few, many := epochEndGas(sstypes.InvariantBookLimit+100), epochEndGas(sstypes.InvariantBookLimit+5_100)
+	t.Logf("epoch end gas: %d unclaimed records %d, %d records %d", sstypes.InvariantBookLimit+100, few,
+		sstypes.InvariantBookLimit+5_100, many)
+	require.InDelta(t, float64(few), float64(many), 5_000)
+}
+
+// Audit 6 C-L2: a position holds at most 2^63-1 derth, as its unlock note and
+// genesis require; v_out is a public u64, so the bound is the chain's.
+func TestAudit6LockPositionNoteBound(t *testing.T) {
+	g := initGwEnv(t)
+	m := &sstypes.MsgLockPosition{Validator: g.valoper(g.v), Amount: ^uint64(0) - 1, Splits: g.split(100),
+		Stake: sstypes.StakeProof{OwnerTag: ownerTag(0)}}
+	_, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).LockPosition(g.fakeAuthorized(m), m)
+	require.ErrorIs(t, err, sstypes.ErrAmount)
+}
+
+// Audit 6 C-L1: a slash of a validator with no private stake writes no book.
+func TestAudit6SlashWithoutBookWritesNone(t *testing.T) {
+	e := initStakeEnv(t)
+	v, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	k := e.app.ShieldedStakingKeeper
+	has, err := k.Validators.Has(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	require.False(t, has)
+	val, err := e.app.StakingKeeper.GetValidator(e.ctx(), v)
+	require.NoError(t, err)
+	cons, err := val.GetConsAddr()
+	require.NoError(t, err)
+	power := val.ConsensusPower(e.app.StakingKeeper.PowerReduction(e.ctx()))
+	_, err = e.app.StakingKeeper.Slash(e.ctx(), cons, e.height, power, math.LegacyNewDecWithPrec(1, 2))
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	has, err = k.Validators.Has(e.ctx(), e.valoper(v))
+	require.NoError(t, err)
+	require.False(t, has, "no book for a validator with no private stake")
+}
+
+// Re-audit R8: x/staking's governance lowers max_entries under the floor the
+// module checked at genesis. The epoch end reports it, defers the
+// undelegation that would not fit (its record stays PENDING) instead of
+// failing the validator's whole book, and settles it once there is room.
+func TestEpochEndDefersUndelegationPastMaxEntries(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(5_000 * ssErth))
+	e.shield(uint64(100 * ssErth))
+	dn := e.delegate(vB, uint64(2_000*ssErth))
+	e.days(1)
+	un1 := e.undelegate(vB, dn, uint64(500*ssErth))
+	dn = e.unspentStake(dn.denom)
+	e.days(1)
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, un1.epoch).Status)
+
+	sp, err := e.app.StakingKeeper.GetParams(e.ctx())
+	require.NoError(t, err)
+	old := sp.MaxEntries
+	sp.MaxEntries = 1
+	require.NoError(t, e.app.StakingKeeper.SetParams(e.ctx(), sp))
+
+	un2 := e.undelegate(vB, dn, uint64(300*ssErth))
+	r := e.next(24 * time.Hour)
+	deferred := false
+	for _, ev := range eventsOf(r.Events, sstypes.EventTypeUnbondingDeferred) {
+		deferred = deferred || ev[sstypes.AttributeKeyValidator] == e.valoper(vB)
+	}
+	require.True(t, deferred, "undelegation deferred")
+	floor := false
+	for _, ev := range eventsOf(r.Events, sstypes.EventTypeEpochFailure) {
+		floor = floor || ev[sstypes.AttributeKeyStage] == "unbonding_floor"
+	}
+	require.True(t, floor, "floor violation reported")
+	require.Equal(t, sstypes.UNBOND_STATUS_PENDING, e.record(vB, un2.epoch).Status)
+
+	sp.MaxEntries = old
+	require.NoError(t, e.app.StakingKeeper.SetParams(e.ctx(), sp))
+	e.days(1)
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, un2.epoch).Status)
 }

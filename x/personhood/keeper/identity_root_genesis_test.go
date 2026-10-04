@@ -3,8 +3,9 @@ package keeper_test
 import (
 	"testing"
 
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"time"
+
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"

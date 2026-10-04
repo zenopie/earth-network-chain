@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
+	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	gfr "github.com/consensys/gnark-crypto/ecc/grumpkin/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/stretchr/testify/require"
 
@@ -254,4 +256,216 @@ func TestDexAuditReleaseMapMatchesHandler(t *testing.T) {
 	dm, _, _ := e.delegateMsg(e.genesisValidator(), in, uint64(ssErth))
 	_, err = e.app.ShieldedKeeper.CheckPrivateMsg(ctx, dm)
 	require.NoError(t, err)
+}
+
+// AUDIT3-B (F2): a private MsgSend unshield could name x/shieldedstaking's
+// (unblocked) module account as its receiver, putting unbooked uerth there:
+// invariant 1 broken for good and every later export refused at import.
+// checkUnshield now refuses any module account receiver.
+func TestAudit3UnshieldIntoStakingModuleRefused(t *testing.T) {
+	e := initShieldedEnv(t)
+	s := shieldedtest.Default()
+	e.shieldAll(s)
+	requireOK(t, e.finalize(e.sendTx(s, shieldedtest.Send2)).TxResults[0])
+	requireOK(t, e.finalize(e.sendTx(s, shieldedtest.Multi3)).TxResults[0])
+
+	ctx := e.ctx()
+	require.NoError(t, e.app.ShieldedStakingKeeper.AssertInvariants(ctx))
+	staking := authtypes.NewModuleAddress(sstypes.ModuleName)
+	before := e.app.BankKeeper.GetBalance(ctx, staking, "uerth").Amount
+	s.Sends[shieldedtest.Unshield2].Receiver = staking
+	m, err := s.Msg(shieldedtest.Unshield2, e.bech(staking),
+		shieldedtypes.TxFields{GasLimit: shGas(2)}, func(toml string, pub [][]byte) []byte {
+			return e.prover.Prove(t, toml, pub)
+		})
+	require.NoError(t, err)
+	tx := e.privateTx(shGas(2), nil, m)
+	ct := e.checkTx(tx)
+	require.NotZero(t, ct.Code)
+	require.Contains(t, ct.Log, "module account")
+	fb := e.finalize(tx)
+	require.NotZero(t, fb.TxResults[0].Code)
+	ctx = e.ctx()
+	require.True(t, before.Equal(e.app.BankKeeper.GetBalance(ctx, staking, "uerth").Amount))
+	require.NoError(t, e.app.ShieldedStakingKeeper.AssertInvariants(ctx))
+}
+
+// AUDIT3-B: private staking's send restriction accepted any transfer from
+// the shielded pool. It now accepts pool -> module only inside x/shielded's
+// ReleaseToModule (marked context), the path its own private msgs pay by.
+func TestAudit3PoolToStakingModuleNeedsRelease(t *testing.T) {
+	e := initStakeEnv(t)
+	ctx := e.ctx()
+	pool := authtypes.NewModuleAddress(shieldedtypes.ModuleName)
+	mod := authtypes.NewModuleAddress(sstypes.ModuleName)
+	require.NoError(t, e.app.ShieldedStakingKeeper.AssertInvariants(ctx))
+	one := sdk.NewCoins(sdk.NewInt64Coin("uerth", 1))
+
+	_, err := e.app.ShieldedStakingKeeper.SendRestriction(ctx, pool, mod, one)
+	require.ErrorIs(t, err, sstypes.ErrSendRestricted)
+	_, err = e.app.ShieldedStakingKeeper.SendRestriction(shieldedtypes.WithModuleRelease(ctx, "dex"), pool, mod, one)
+	require.ErrorIs(t, err, sstypes.ErrSendRestricted, "a release to another module does not count")
+	_, err = e.app.ShieldedStakingKeeper.SendRestriction(shieldedtypes.WithModuleRelease(ctx, sstypes.ModuleName), pool, mod, one)
+	require.NoError(t, err)
+
+	e.auditFundPool(10)
+	ctx = e.ctx()
+	require.ErrorIs(t, e.app.BankKeeper.SendCoins(ctx, pool, mod, one), sstypes.ErrSendRestricted)
+	require.NoError(t, e.app.ShieldedStakingKeeper.AssertInvariants(ctx))
+}
+
+// Audit 4 L1: a private tx whose timeout_height is at or below the last
+// committed height can only fail in the next block. CheckTx refuses it (the
+// SDK's rule admitted timeout == height), and PrepareProposal leaves out a
+// tx whose timeout is below the proposal's height before counting it toward
+// the private action cap.
+func TestAudit4ExpiredTimeoutHeight(t *testing.T) {
+	e := initShieldedEnv(t)
+	s := shieldedtest.Default()
+	requireOK(t, e.shieldAll(s).TxResults[0])
+	m := e.sendMsg(s, shieldedtest.Send2)
+	withTimeout := func(h uint64) []byte {
+		return e.privateTxFields(shieldedtypes.TxFields{TimeoutHeight: h, GasLimit: shGas(2)}, m)
+	}
+
+	expired := withTimeout(uint64(e.height))
+	res := e.checkTx(expired)
+	require.Equal(t, sdkerrors.ErrTxTimeoutHeight.ABCICode(), res.Code, res.Log)
+	// One past the committed height is not refused for its timeout (it fails
+	// later: the proof was made for other tx fields).
+	res = e.checkTx(withTimeout(uint64(e.height) + 1))
+	require.NotEqual(t, sdkerrors.ErrTxTimeoutHeight.ABCICode(), res.Code, res.Log)
+
+	live := e.sendTx(s, shieldedtest.Send2)
+	resp, err := e.app.PrepareProposal(&abci.RequestPrepareProposal{
+		Txs: [][]byte{expired, live, withTimeout(uint64(e.height) + 1)}, MaxTxBytes: 1 << 30, Height: e.height + 1, Time: e.now,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Txs, 2, "the expired tx is left out")
+	require.Equal(t, live, resp.Txs[0])
+}
+
+// Audit 6 A-L1: a private tx's gas_limit is the block space it claims, and
+// its gas use is known by the end of the private ante; a limit past
+// PrivateGasCeilingFactor x the use is refused, before anything else is
+// checked, in CheckTx and in a block. Within it, the tx goes on to its
+// checks (here its binding signature, which binds the limit it was proven
+// for).
+func TestAudit6PrivateGasLimitBounded(t *testing.T) {
+	e := initShieldedEnv(t)
+	s := shieldedtest.Default()
+	e.shieldAll(s)
+	tx := shieldedtypes.TxFields{GasLimit: shGas(2)}
+	m := e.sendMsgFor(s, shieldedtest.Send2, tx)
+
+	huge := e.privateTxFields(shieldedtypes.TxFields{GasLimit: 100_000_000}, m)
+	res := e.checkTx(huge)
+	require.Equal(t, sdkerrors.ErrInvalidRequest.ABCICode(), res.Code, res.Log)
+	require.Contains(t, res.Log, "exceeds what this private tx uses")
+	fb := e.finalize(huge)
+	require.Contains(t, fb.TxResults[0].Log, "exceeds what this private tx uses")
+
+	within := e.privateTxFields(shieldedtypes.TxFields{GasLimit: tx.GasLimit + 1_000}, m)
+	res = e.checkTx(within)
+	require.Equal(t, shieldedtypes.ErrInvalidBindingSig.ABCICode(), res.Code, res.Log)
+
+	good := e.privateTxFields(tx, m)
+	require.Equal(t, uint32(0), e.checkTx(good).Code)
+	requireOK(t, e.finalize(good).TxResults[0])
+}
+
+// Re-audit R7 ("one tx encoding"): a relayer re-spelling an unsigned private
+// tx without touching anything the sighash binds (a deprecated AuthInfo.tip,
+// a non-critical unknown field appended to the body, one inside the msg) is
+// refused, in CheckTx and in a block. Only the canonical encoding lands.
+func TestPrivateTxRespellingsRefused(t *testing.T) {
+	e := initDexEnv(t)
+	e.shield(uint64(10_000 * ssErth))
+	e.shield(uint64(100 * ssErth))
+	erth := e.w.unspent("uerth", uint64(1_000*ssErth))
+	anml, _ := e.noteSwap(erth, uint64(1_000*ssErth), "uanml", 1, 0)
+	_ = e.buildLegs(ssFee, leg{anml, 5})
+	in := e.w.unspent("uerth", uint64(ssErth))
+	dm, _, _ := e.delegateMsg(e.genesisValidator(), in, uint64(ssErth))
+	orig := e.privateTx(dm)
+
+	var raw txtypes.TxRaw
+	require.NoError(t, raw.Unmarshal(orig))
+	var ai txtypes.AuthInfo
+	require.NoError(t, ai.Unmarshal(raw.AuthInfoBytes))
+	ai.Tip = &txtypes.Tip{Tipper: "x"} //nolint:staticcheck
+	tipped := raw
+	tipped.AuthInfoBytes, _ = ai.Marshal()
+	tbz, _ := tipped.Marshal()
+
+	// field 1025, varint: tag (1025<<3)|0 = 0x88 0x40, value 1
+	padded := raw
+	padded.BodyBytes = append(append([]byte(nil), raw.BodyBytes...), 0x88, 0x40, 0x01)
+	pbz, _ := padded.Marshal()
+
+	// the same unknown field inside the msg's Any value
+	var body txtypes.TxBody
+	require.NoError(t, body.Unmarshal(raw.BodyBytes))
+	body.Messages[0].Value = append(append([]byte(nil), body.Messages[0].Value...), 0x88, 0x40, 0x01)
+	inner := raw
+	inner.BodyBytes, _ = body.Marshal()
+	ibz, _ := inner.Marshal()
+
+	for name, bz := range map[string][]byte{"tip": tbz, "body-noncritical": pbz, "msg-noncritical": ibz} {
+		res := e.checkTx(bz)
+		require.NotZero(t, res.Code, "%s: %s", name, res.Log)
+		require.Contains(t, []uint32{sdkerrors.ErrInvalidRequest.ABCICode(), sdkerrors.ErrTxDecode.ABCICode()}, res.Code, "%s: %s", name, res.Log)
+		r := e.run(bz)
+		require.NotZero(t, r.Code, "%s delivered: %s", name, r.Log)
+	}
+	res := e.checkTx(orig)
+	require.Zero(t, res.Code, res.Log)
+	r := e.run(orig)
+	require.Zero(t, r.Code, r.Log)
+}
+
+// Re-audit R2 (CheckTx bypass): a valid fee bundle (reusable: the tx never
+// lands, so its nullifiers stay unspent) next to a junk stake proof. The
+// msg's own proof is verified first, and proofs CheckTx saw verify are
+// remembered: each junk attempt costs one verification, however many actions
+// the bundles hold. The mirror image (a valid stake proof, a junk bundle
+// proof) costs at most one new verification per attempt too.
+func TestCheckTxValidBundleJunkActionProofCostsOne(t *testing.T) {
+	e := initDexEnv(t)
+	e.shield(uint64(10_000 * ssErth))
+	e.shield(uint64(100 * ssErth))
+	erth := e.w.unspent("uerth", uint64(1_000*ssErth))
+	anml, _ := e.noteSwap(erth, uint64(1_000*ssErth), "uanml", 1, 0)
+	_ = e.buildLegs(ssFee, leg{anml, 5})
+	in := e.w.unspent("uerth", uint64(ssErth))
+	dm, _, _ := e.delegateMsg(e.genesisValidator(), in, uint64(ssErth))
+	require.Greater(t, len(dm.Bundle.Actions), 1)
+	sk := e.app.ShieldedKeeper
+	for i := 0; i < 5; i++ {
+		m := *dm
+		m.Stake.Proof = append([]byte(nil), dm.Stake.Proof...)
+		m.Stake.Proof[100+i] ^= 0x01
+		before := sk.CheckTxVerifications()
+		res := e.checkTx(e.privateTx(&m))
+		require.Equal(t, sstypes.ErrInvalidStakeProof.ABCICode(), res.Code, res.Log)
+		require.Equal(t, uint64(1), sk.CheckTxVerifications()-before, "junk stake proof #%d", i)
+	}
+	for i := 0; i < 5; i++ {
+		m := *dm
+		m.Bundle.Actions = append([]shieldedtypes.Action(nil), dm.Bundle.Actions...)
+		last := len(m.Bundle.Actions) - 1
+		m.Bundle.Actions[last].Proof = append([]byte(nil), dm.Bundle.Actions[last].Proof...)
+		m.Bundle.Actions[last].Proof[100+i] ^= 0x01
+		before := sk.CheckTxVerifications()
+		res := e.checkTx(e.privateTx(&m))
+		require.NotZero(t, res.Code, res.Log)
+		// the stake proof (first time only) and the earlier bundle proofs
+		// (first time only), then the junk one
+		if i > 0 {
+			require.Equal(t, uint64(1), sk.CheckTxVerifications()-before, "junk bundle proof #%d", i)
+		}
+	}
+	// The honest tx still passes, and lands.
+	res := e.checkTx(e.privateTx(dm))
+	require.Zero(t, res.Code, res.Log)
 }

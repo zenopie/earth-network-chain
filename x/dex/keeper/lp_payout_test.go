@@ -32,10 +32,13 @@ type noteShielded struct {
 }
 
 func (*noteShielded) IsShieldedOnly(denom string) bool { return denom == "uanml" }
+
 func (*noteShielded) AssetID(context.Context, string) ([]byte, error) {
 	return privacy.FieldBytes(privacy.U64(1)), nil
 }
+
 func (*noteShielded) CheckMint(context.Context, []byte, []byte) error { return nil }
+
 func (s *noteShielded) MintNote(_ context.Context, _ string, c sdk.Coin, _, _ []byte) (uint64, []byte, error) {
 	if !shieldedtypes.FitsNote(c.Amount) {
 		return 0, nil, shieldedtypes.ErrInvalidNote.Wrapf("note value %s must be 1..2^63-1", c)
@@ -44,6 +47,7 @@ func (s *noteShielded) MintNote(_ context.Context, _ string, c sdk.Coin, _, _ []
 	s.bank.debit(sdk.NewCoins(c))
 	return uint64(len(s.notes) - 1), nil, nil
 }
+
 func (s *noteShielded) MintNoteSplit(ctx context.Context, from string, c sdk.Coin, pc, ct []byte) ([]uint64, error) {
 	values, err := shieldedtypes.SplitNoteValues(c.Amount)
 	if err != nil {
@@ -59,10 +63,13 @@ func (s *noteShielded) MintNoteSplit(ctx context.Context, from string, c sdk.Coi
 	}
 	return out, nil
 }
+
 func (*noteShielded) RegisterAsset(context.Context, string) ([]byte, error) { return nil, nil }
+
 func (*noteShielded) ReleaseToModule(context.Context, shieldedtypes.PrivateMsg, string, string) (sdk.Coin, error) {
 	return sdk.Coin{}, nil
 }
+
 func (*noteShielded) PrivateGasPrices(context.Context) (uint64, uint64, error) {
 	return 1, 1, nil
 }
@@ -266,4 +273,42 @@ func TestAudit5TwapAccumulatorExported(t *testing.T) {
 	at, err := k2.PriceObservedAt.Get(ctx2, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(777), at)
+}
+
+// Audit 6 D-L-D1: the sweep's note budget is checked against what each payout
+// would mint, before it mints: a payout that would pass it waits for the next
+// block, at the head of the queue and not as a failure.
+func TestAudit6LpUnbondNoteBudget(t *testing.T) {
+	k, ctx, bank, sh := initNoteFixture(t)
+	const id = 1
+	pool := types.Pool{PoolId: id, ReserveErth: sdk.NewCoin("uerth", bigInt("1000000000000")),
+		ReserveToken: sdk.NewCoin("ufoo", bigInt("1000000000000000000000000")), VolumeWeight: bigInt("0")}
+	require.NoError(t, k.SetPool(ctx, id, pool))
+	require.NoError(t, k.PoolByToken.Set(ctx, "ufoo", id))
+	bank.fundModule(pool.ReserveErth, pool.ReserveToken)
+	bank.setSupply(types.LPShareDenom(id), bigInt("1000000000000000000"))
+	// Each: a token leg of ~9e20 (98 notes) and an ERTH leg (1 note).
+	for i := byte(0); i < 3; i++ {
+		shares := sdk.NewCoin(types.LPShareDenom(id), bigInt("900000000000000"))
+		bank.fundModule(shares)
+		entry := types.LpUnbonding{PoolId: id, Shares: shares, CompletionTime: ctx.BlockTime().Unix(),
+			Pc: []byte{1}, Ciphertext: []byte{2}, ErthPc: []byte{3}, ErthCiphertext: []byte{4}, WithdrawalId: []byte{0, 9, i}}
+		key, err := k.LpUnbondingKey(entry)
+		require.NoError(t, err)
+		require.NoError(t, k.LpUnbondings.Set(ctx, key, entry))
+	}
+
+	require.NoError(t, k.SweepMaturedUnbondings(ctx))
+	require.LessOrEqual(t, len(sh.notes), types.LpUnbondNoteBudget)
+	require.Equal(t, 2*99, len(sh.notes), "two payouts fit the budget, the third waits")
+	left := 0
+	require.NoError(t, k.LpUnbondings.Walk(ctx, nil, func(_ collections.Triple[int64, uint64, []byte], e types.LpUnbonding) (bool, error) {
+		left++
+		require.Zero(t, e.PayoutAttempts, "deferred, not failed")
+		return false, nil
+	}))
+	require.Equal(t, 1, left)
+
+	require.NoError(t, k.SweepMaturedUnbondings(ctx))
+	require.Equal(t, 3*99, len(sh.notes))
 }

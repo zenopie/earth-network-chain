@@ -1,5 +1,3 @@
-package app
-
 // The stake vote side of the private staking harness: a stake note's vote on
 // a proposal without spending it (circuits/vote), proven against the
 // proposal's snapshot roots. The wallet rebuilds the stake nullifier indexed
@@ -7,6 +5,8 @@ package app
 // up to the snapshot's nf_size, as a real wallet does, and takes its note's
 // low-leaf witness there. Proofs are cached beside the stake proofs
 // (vote-<hash>.proof).
+
+package app
 
 import (
 	"encoding/json"
@@ -19,12 +19,11 @@ import (
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
-
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/stretchr/testify/require"
 
@@ -595,4 +594,33 @@ func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 		}
 	}
 	require.ErrorContains(t, bad.Validate(), "used twice")
+}
+
+// Audit 6 C-L4: when the last end-of-block recording of the stake roots
+// failed, a proposal entering voting takes no roots (no note votes; a stale
+// nf root would let a note spent into a position since vote twice), and the
+// next successful recording clears the condition.
+func TestAudit6SnapshotSkipsStaleRoots(t *testing.T) {
+	e := initStakeEnv(t)
+	k := e.app.ShieldedStakingKeeper
+
+	fresh := e.submitProposal()
+	snap, err := k.Snapshots.Get(e.ctx(), fresh)
+	require.NoError(t, err)
+	require.NotEmpty(t, snap.NfRoot, "a healthy snapshot has its roots")
+
+	require.NoError(t, k.RootsStale.Set(e.ctx(), true)) // as a failed recording leaves it
+	stale := e.submitProposal()
+	snap, err = k.Snapshots.Get(e.ctx(), stale)
+	require.NoError(t, err)
+	require.Empty(t, snap.Root)
+	require.Empty(t, snap.NfRoot)
+	has, err := k.RootsStale.Has(e.ctx())
+	require.NoError(t, err)
+	require.False(t, has, "the block's own recording succeeded and cleared it")
+
+	again := e.submitProposal()
+	snap, err = k.Snapshots.Get(e.ctx(), again)
+	require.NoError(t, err)
+	require.NotEmpty(t, snap.NfRoot)
 }

@@ -1,11 +1,15 @@
 package app
 
 import (
+	"context"
 	"testing"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	assemblymodule "github.com/earth-network/earth/x/assembly/module"
+	assemblytypes "github.com/earth-network/earth/x/assembly/types"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
 
 // TestAbsentAssemblySectionValidates is an operator-facing guard, not a unit
@@ -27,4 +31,22 @@ func TestAbsentAssemblySectionValidates(t *testing.T) {
 	var module assemblymodule.AppModule
 	require.NoError(t, module.ValidateGenesis(nil, nil, nil),
 		"an absent section must validate as an empty chamber")
+}
+
+type allTripped struct{}
+
+func (allTripped) IsAllowed(context.Context, string) (bool, error) { return false, nil }
+
+// Audit 5 L-AS2: a tripped breaker never stops the chamber's votes (every gov
+// proposal needs them), and still stops everything else.
+func TestAudit5ChamberVotesPassTheBreaker(t *testing.T) {
+	b := chamberExemptBreaker{allTripped{}}
+	for _, m := range []sdk.Msg{&assemblytypes.MsgVoteProposal{}, &assemblytypes.MsgVoteRemoval{}} {
+		ok, err := b.IsAllowed(context.Background(), sdk.MsgTypeURL(m))
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+	ok, err := b.IsAllowed(context.Background(), sdk.MsgTypeURL(&shieldedtypes.MsgSend{}))
+	require.NoError(t, err)
+	require.False(t, ok)
 }
