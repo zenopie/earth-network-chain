@@ -117,7 +117,7 @@ message MsgRegister {
   bytes proof = 2;
   // public_signals are the circuit public inputs as decimal strings.
   repeated string public_signals = 3;
-  // signature_algorithm selects the verifying key (e.g. "lean_poa").
+  // signature_algorithm selects the verifying key (e.g. "lean_poa_rsa2048_sha256").
   string signature_algorithm = 4;
   // dsc_der is the DER-encoded Document Signer certificate.
   bytes dsc_der = 5;

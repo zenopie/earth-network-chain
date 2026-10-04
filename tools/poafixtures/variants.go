@@ -34,13 +34,8 @@ type rsaSpec struct {
 
 func variants() map[string]variant {
 	return map[string]variant{
-		"lean_poa":              {name: "lean_poa", ec: &ecSpec{curve: p256(), coordLen: 32, combinedSig: true}},
-		"lean_poa_p384":         {name: "lean_poa_p384", ec: &ecSpec{curve: p384(), coordLen: 48}},
-		"lean_poa_brainpool256": {name: "lean_poa_brainpool256", ec: &ecSpec{curve: brainpoolP256r1(), coordLen: 32}},
-		"lean_poa_brainpool384": {name: "lean_poa_brainpool384", ec: &ecSpec{curve: brainpoolP384r1(), coordLen: 48}},
-		"lean_poa_brainpool512": {name: "lean_poa_brainpool512", ec: &ecSpec{curve: brainpoolP512r1(), coordLen: 64}},
-		"lean_poa_rsa2048":      {name: "lean_poa_rsa2048", rsa: &rsaSpec{bits: 2048, limbs: 18}},
-		"lean_poa_rsa4096":      {name: "lean_poa_rsa4096", rsa: &rsaSpec{bits: 4096, limbs: 35}},
+		"lean_poa_p256_sha256":    {name: "lean_poa_p256_sha256", ec: &ecSpec{curve: p256(), coordLen: 32, combinedSig: true}},
+		"lean_poa_rsa2048_sha256": {name: "lean_poa_rsa2048_sha256", rsa: &rsaSpec{bits: 2048, limbs: 18}},
 	}
 }
 
@@ -299,8 +294,5 @@ func ecdsaKeyFor(c *weierstrass, d *big.Int, pub point) (*ecdsa.PrivateKey, *ecd
 // the chain and the circuits agree, and a second copy of the table is a second
 // thing that can drift from the circuits.
 func (v variant) curveTag() (certs.CurveTag, error) {
-	if v.rsa != nil {
-		return certs.TagRSA, nil
-	}
 	return certs.CurveTagByName(v.ec.curve.name)
 }

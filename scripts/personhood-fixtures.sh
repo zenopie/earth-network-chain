@@ -4,7 +4,7 @@
 #
 #   ./scripts/personhood-fixtures.sh [path-to-earth-network-mobile circuits dir] [passports|app|all]
 #
-# passports: one lean_poa passport proof per x/personhood/testutil
+# passports: one lean_poa_p256_sha256 passport proof per x/personhood/testutil
 #   Registration, bound (address input) to its RegistrationBinding, for its
 #   document number and current_date; each with its own fresh CSCA and DSC,
 #   except A2 (A's identity switch: a re-proof of A1's passport), which is
@@ -31,7 +31,7 @@ export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 for bin in nargo bb; do
   command -v "$bin" >/dev/null || { echo "error: $bin not on PATH" >&2; exit 1; }
 done
-for c in lean_poa membership action; do
+for c in lean_poa_p256_sha256 membership action; do
   [ -d "$CIRCUITS_SRC/$c" ] || { echo "error: no $c circuit under $CIRCUITS_SRC" >&2; exit 1; }
 done
 
@@ -41,8 +41,8 @@ if [ "$WHAT" = all ] || [ "$WHAT" = passports ]; then
   cp -R "$CIRCUITS_SRC" "$WORK/circuits"
   rm -rf "$WORK/circuits/target"
   C="$WORK/circuits"
-  ( cd "$C" && nargo compile --package lean_poa >/dev/null \
-      && bb write_vk -b target/lean_poa.json -o "$WORK/vk" -t noir-recursive >/dev/null 2>&1 )
+  ( cd "$C" && nargo compile --package lean_poa_p256_sha256 >/dev/null \
+      && bb write_vk -b target/lean_poa_p256_sha256.json -o "$WORK/vk" -t noir-recursive >/dev/null 2>&1 )
   DST="$CHAIN_DIR/x/personhood/testdata/passports"
   rm -rf "$DST"
   for name in A1 A2 B C1 C2 D1; do
@@ -51,11 +51,11 @@ if [ "$WHAT" = all ] || [ "$WHAT" = passports ]; then
     signer=""
     [ "$name" = A2 ] && signer="signer=$WORK/A1"
     # shellcheck disable=SC2046
-    ( cd "$CHAIN_DIR" && go run ./tools/poafixtures lean_poa "$out" \
+    ( cd "$CHAIN_DIR" && go run ./tools/poafixtures lean_poa_p256_sha256 "$out" \
         $(go run ./tools/privacyfixtures passport "$name") $signer >/dev/null )
-    cp "$out/Prover.toml" "$C/lean_poa/Prover.toml"
-    ( cd "$C" && nargo execute --package lean_poa >/dev/null \
-        && bb prove -b target/lean_poa.json -w target/lean_poa.gz -k "$WORK/vk/vk" \
+    cp "$out/Prover.toml" "$C/lean_poa_p256_sha256/Prover.toml"
+    ( cd "$C" && nargo execute --package lean_poa_p256_sha256 >/dev/null \
+        && bb prove -b target/lean_poa_p256_sha256.json -w target/lean_poa_p256_sha256.gz -k "$WORK/vk/vk" \
              -o "$out/proof" -t noir-recursive >/dev/null 2>&1 \
         && bb verify -k "$WORK/vk/vk" -p "$out/proof/proof" -i "$out/proof/public_inputs" \
              -t noir-recursive >/dev/null 2>&1 )
@@ -63,7 +63,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = passports ]; then
     cp "$out/proof/proof" "$out/proof/public_inputs" "$DST/$name/"
     cp "$out/csca.der" "$out/dsc.der" "$out/expected_dsc_key" "$out/expected_nullifier" "$DST/$name/"
   done
-  cp "$WORK/vk/vk" "$DST/lean_poa.vk"
+  cp "$WORK/vk/vk" "$DST/lean_poa_p256_sha256.vk"
 fi
 
 if [ "$WHAT" = all ] || [ "$WHAT" = app ]; then

@@ -174,7 +174,7 @@ type MsgRegister struct {
 	Proof []byte `protobuf:"bytes,2,opt,name=proof,proto3" json:"proof,omitempty"`
 	// public_signals are the circuit public inputs as decimal strings.
 	PublicSignals []string `protobuf:"bytes,3,rep,name=public_signals,json=publicSignals,proto3" json:"public_signals,omitempty"`
-	// signature_algorithm selects the verifying key (e.g. "lean_poa").
+	// signature_algorithm selects the verifying key (e.g. "lean_poa_rsa2048_sha256").
 	SignatureAlgorithm string `protobuf:"bytes,4,opt,name=signature_algorithm,json=signatureAlgorithm,proto3" json:"signature_algorithm,omitempty"`
 	// dsc_der is the DER-encoded Document Signer certificate.
 	DscDer []byte `protobuf:"bytes,5,opt,name=dsc_der,json=dscDer,proto3" json:"dsc_der,omitempty"`

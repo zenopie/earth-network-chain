@@ -9,6 +9,10 @@
 // witness here — with the chain's own Poseidon2 and certificate parser — makes a
 // mismatch fail loudly at fixture time instead of silently at registration.
 //
+// Only the two SHA-256 variants x/personhood's tests need are here; the
+// fixtures for every variant are generated with the circuits themselves
+// (earth-network-mobile circuits/tools/variants.py, scripts/regen-poa-fixtures.sh).
+//
 //	go run ./tools/poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>] [signer=<dir>]
 //
 // address is the circuit's `address` input (default FixtureAddress as a field;
@@ -53,10 +57,12 @@ import (
 	"github.com/earth-network/earth/zk/poseidon2"
 )
 
+// The buffer sizes of the SHA-256 variants (circuits/variants.json
+// hash_limits.sha256): the witness arrays must be exactly these lengths.
 const (
 	dg1Max         = 95
-	eContentMax    = 200
-	signedAttrsMax = 200
+	eContentMax    = 695
+	signedAttrsMax = 256
 )
 
 var (
@@ -115,10 +121,10 @@ func run(v variant, outDir string) error {
 	// which is what ties the signature to this exact DG1. Each hash sits behind
 	// the DER the circuit requires ahead of it, inside the hashed length.
 	dg1Hash := sha256.Sum256(dg1[:dg1Len])
-	eContent, eContentLen, dg1HashOffset := embed(dg1Hash[:], dg1HashPrefix, 40)
+	eContent, eContentLen, dg1HashOffset := embed(dg1Hash[:], dg1HashPrefix, 40, eContentMax)
 
 	eContentHash := sha256.Sum256(eContent[:eContentLen])
-	signedAttrs, signedAttrsLen, eContentHashOffset := embed(eContentHash[:], messageDigestPrefix, 24)
+	signedAttrs, signedAttrsLen, eContentHashOffset := embed(eContentHash[:], messageDigestPrefix, 24, signedAttrsMax)
 
 	msgHash := sha256.Sum256(signedAttrs[:signedAttrsLen])
 
@@ -130,6 +136,7 @@ func run(v variant, outDir string) error {
 
 	keyInputs := map[string][]string{}
 	var canonical []byte
+	var rsaExponent uint64
 	var certPub any
 	var certKey any
 
@@ -187,16 +194,22 @@ func run(v variant, outDir string) error {
 		keyInputs["dsc_modulus"] = limbs(n, v.rsa.limbs)
 		keyInputs["dsc_redc"] = limbs(barrettRedc(n, v.rsa.bits), v.rsa.limbs)
 		keyInputs["sod_signature"] = limbs(new(big.Int).SetBytes(sig), v.rsa.limbs)
+		rsaExponent = uint64(key.E)
 		certKey, certPub = key, &key.PublicKey
 	}
 
 	// Tagged exactly as the chain tags it, from the same table, so a fixture
 	// cannot silently encode a different commitment format than production.
-	tag, err := v.curveTag()
-	if err != nil {
-		return err
+	var dscKey fr.Element
+	if v.rsa != nil {
+		dscKey = certs.DscCommitmentRSA(rsaExponent, canonical)
+	} else {
+		tag, err := v.curveTag()
+		if err != nil {
+			return err
+		}
+		dscKey = certs.DscCommitment(tag, canonical)
 	}
-	dscKey := certs.DscCommitment(tag, canonical)
 
 	// --- certificates --------------------------------------------------------
 
@@ -257,6 +270,9 @@ func run(v variant, outDir string) error {
 	fmt.Fprintf(&b, "econtent_hash_offset = \"%d\"\n", eContentHashOffset)
 	for _, k := range sortedKeys(keyInputs) {
 		fmt.Fprintf(&b, "%s = [%s]\n", k, strings.Join(keyInputs[k], ", "))
+	}
+	if v.rsa != nil {
+		fmt.Fprintf(&b, "dsc_exponent = \"%d\"\n", rsaExponent)
 	}
 	fmt.Fprintf(&b, "current_date = \"%s\"\n", currentDate)
 	// The account the proof is bound to. A proof only verifies against the
@@ -335,8 +351,8 @@ var (
 // fixed-size buffer of otherwise arbitrary bytes, returning the buffer, its
 // logical length and the offset — mirroring how a real SOD carries the hash
 // inside DER structure.
-func embed(hash, prefix []byte, offset int) ([signedAttrsMax]byte, int, int) {
-	var buf [signedAttrsMax]byte
+func embed(hash, prefix []byte, offset, size int) ([]byte, int, int) {
+	buf := make([]byte, size)
 	for i := range buf {
 		buf[i] = byte(i * 7) // deterministic filler
 	}

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# The privacy circuits' verifying keys, regenerated from the circuits.
+# The privacy circuits' and the passport register circuits' verifying keys,
+# regenerated from the circuits.
 #
 # x/shielded verifies every private tx against four UltraHonk keys: action
 # (every action of every shielded bundle: spends, outputs, fees), membership
@@ -16,6 +17,12 @@
 #   x/personhood/testdata/app/membership.vk                       tests (raw)
 #   x/shieldedstaking/testdata/stake.vk                           tests (raw)
 #   x/shieldedstaking/testdata/vote.vk                            tests (raw)
+#
+# and every passport register circuit in circuits/variants.json (one per DSC
+# key type, signature scheme and hash profile; PASSPORT_COVERAGE.md):
+#
+#   networks/genesis/verifying-keys/<variant>.vk.b64              launch genesis source
+#   config.yml  genesis.app_state.personhood.params.verifying_keys  dev chain
 #
 #   ./scripts/privacy-vks.sh [--check] [path-to-earth-network-mobile/circuits]
 #
@@ -42,11 +49,18 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cp -R "$CIRCUITS_SRC" "$WORK/circuits"
 rm -rf "$WORK/circuits/target"
+( cd "$WORK/circuits" && nargo compile --workspace >/dev/null )
 for c in action membership stake vote; do
-  ( cd "$WORK/circuits" && nargo compile --package "$c" >/dev/null \
-      && bb write_vk -b "target/$c.json" -o "$WORK/vk-$c" -t noir-recursive >/dev/null 2>&1 )
+  bb write_vk -b "$WORK/circuits/target/$c.json" -o "$WORK/vk-$c" -t noir-recursive >/dev/null 2>&1
   base64 < "$WORK/vk-$c/vk" | tr -d '\n' > "$WORK/$c.vk.b64"
 done
+VARIANTS=$(python3 -c 'import json,sys; print(" ".join(v["id"] for v in json.load(open(sys.argv[1]))["variants"]))' "$WORK/circuits/variants.json")
+mkdir -p "$WORK/register"
+for v in $VARIANTS; do
+  bb write_vk -b "$WORK/circuits/target/$v.json" -o "$WORK/vk-$v" -t noir-recursive >/dev/null 2>&1
+  base64 < "$WORK/vk-$v/vk" | tr -d '\n' > "$WORK/register/$v.vk.b64"
+done
+REG="$CHAIN_DIR/networks/genesis/verifying-keys"
 
 GEN="$CHAIN_DIR/networks/genesis/shielded-verifying-keys"
 raw_targets() {
@@ -72,6 +86,21 @@ bad = [c for c in ('action', 'membership', 'stake', 'vote') if vks.get(c) != ope
 if bad:
     sys.exit('stale: config.yml shielded verifying_keys: ' + ', '.join(bad))
 PY
+  # Register circuits: exactly the manifest's variants, each with its key.
+  for v in $VARIANTS; do
+    cmp -s "$WORK/register/$v.vk.b64" "$REG/$v.vk.b64" || { echo "stale: $REG/$v.vk.b64" >&2; fail=1; }
+  done
+  for f in "$REG"/*.vk.b64; do
+    [ -f "$WORK/register/$(basename "$f")" ] || { echo "not a variant: $f" >&2; fail=1; }
+  done
+  python3 - "$CHAIN_DIR/config.yml" "$WORK/register" <<'PY' || fail=1
+import os, sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1]))
+vks = cfg['genesis']['app_state']['personhood']['params']['verifying_keys']
+want = {f[:-len('.vk.b64')]: open(os.path.join(sys.argv[2], f)).read() for f in os.listdir(sys.argv[2])}
+if vks != want:
+    sys.exit('stale: config.yml personhood verifying_keys')
+PY
   [ "$fail" -eq 0 ] || { echo "verifying keys do not match the circuits: run scripts/privacy-vks.sh" >&2; exit 1; }
   echo "verifying keys match the circuits"
   exit 0
@@ -96,6 +125,21 @@ if pat.search(s):
 else:
     i = s.index('    personhood:\n')
     s = s[:i] + block + s[i:]
+open(path, 'w').write(s)
+PY
+rm -f "$REG"/*.vk.b64
+mkdir -p "$REG"
+cp "$WORK"/register/*.vk.b64 "$REG/"
+python3 - "$CHAIN_DIR/config.yml" "$WORK/register" <<'PY'
+import os, re, sys
+path, d = sys.argv[1], sys.argv[2]
+s = open(path).read()
+keys = sorted(f[:-len('.vk.b64')] for f in os.listdir(d))
+body = ''.join(f'          {k}: "{open(os.path.join(d, k + ".vk.b64")).read()}"\n' for k in keys)
+pat = re.compile(r'(\n    personhood:\n      params:\n(?:        #[^\n]*\n)*        verifying_keys:\n)(?:          [^\n]*\n)+', re.S)
+if not pat.search(s):
+    sys.exit('config.yml: personhood verifying_keys block not found')
+s = pat.sub(lambda m: m.group(1) + body, s, count=1)
 open(path, 'w').write(s)
 PY
 echo "wrote verifying keys; now: make genesis"
