@@ -70,3 +70,14 @@ ORCHARD_DESIGN.md section 16.
   FitsNote), pool_test.go (MintNote/MintOpenNote 2^63), types_test.go
   (MsgShield 2^63), audit5_genesis_test.go (derth 2^63). Fixtures
   unchanged; genesis unchanged (sha256 67a6ed4a...3212).
+- [x] Circuit note bound (was deferred above): privacy_core NOTE_VALUE_BITS
+  = 63 in note_cm/stake_cm (mobile 810c38d), so action (spend and output),
+  stake (inputs and outputs) and vote (the note's amount) refuse a value
+  above 2^63-1. Gates: action 8,120 -> 8,098, stake 9,647 -> 9,672, vote
+  9,046 -> 9,072, membership 5,659 unchanged. New action/stake/vote VKs
+  (2202ba3); genesis sha256
+  77af758697b293eb95d1f9f08a8f49b35bef648fd931ae1448cc3d0f2ddd652d.
+  Fixtures: orchard bundles (e0f955f), shielded/staking/dex/personhood
+  action, stake and vote proofs (d9d2366; membership proofs kept).
+  Negative test TestOrchardOutputAboveNoteMax (d47e5cb). go test ./...
+  passes.

@@ -54,10 +54,11 @@ in-circuit Brillig hint and constrains `x = H(TAG_GEN, asset, ctr)`,
 ## 3. Action circuit (`circuits/action`)
 
 Private: `nk, s_asset, s_value: u64, s_rho, s_rcm, s_pos: u32, s_path[32],
-o_asset, o_value: u64, o_pc, rcv`.
+o_asset, o_value: u64, o_pc, rcv`; both values at most 2^63-1 (section 16).
 Public, in order: **`anchor, nf, cm_out, cv_x, cv_y, sighash`**.
 
     owner_pk = H(TAG_OWNER, nk);  pc = H(TAG_PC, owner_pk, s_rho, s_rcm)
+    s_value, o_value < 2^63                             (note_cm, section 16)
     cm_in    = H(TAG_CM, s_asset, s_value, pc)
     s_value ≠ 0  ⇒  merkle_root(cm_in, s_pos, s_path) == anchor
     nf       = H(TAG_NF, nk, s_rho, s_pos)              always (dummies too)
@@ -79,12 +80,13 @@ from_field`; the bias against uniform mod n is ~2^-127.
   throwaway key (as today).
 - Neither needs a flag: a value-0 term adds nothing to cv.
 
-Tests: 26 in `action` (positive: same/mixed asset, spend-only, output-only,
-both dummy, u64 max, rcv 0 and −1, additivity; negative: −G on the output
+Tests: 26 in `action`, 41 today (positive: same/mixed asset, spend-only,
+output-only, both dummy, 2^63-1 max (u64 max before section 16), rcv 0 and −1, additivity; negative: −G on the output
 and on the spend, another asset's base, an arbitrary y, cv for another
 asset, cv under/overstating either value, wrong rcv, inflated spend, spend
 asset swapped, wrong anchor/nk/nullifier, dummy nullifier still bound, u64
-overflow). 9 in `privacy_core` incl. Go-pinned R, bases and three point
+overflow, an output of 2^63 or 2^64-1 and a spend of 2^63). 9 in
+`privacy_core` (12 today) incl. Go-pinned R, bases and three point
 arithmetic vectors.
 
 Known lint: nargo's "Brillig call isn't properly covered" fires on the two
@@ -145,7 +147,7 @@ every asset a, Σ spent notes of a = Σ created notes of a + public value_a.
    value_a for the least-ctr base of each balance and 0 otherwise. The bases
    and R are independent random-oracle points (distinct Poseidon2 inputs,
    distinct tags), so under discrete log every coefficient is 0 mod n. Each
-   |Σ α| ≤ 32·2⁶⁴ ≪ n/2 (u64 range checks, `MaxActions = 32`), so they are 0
+   |Σ α| ≤ 32·2⁶³ ≪ n/2 (63-bit range checks, `MaxActions = 32`), so they are 0
    over the integers: per base, spent = created + public.
 3. **Per base ⇒ per asset.** A base is bound to one asset (the asset is
    hashed into x, and the circuit uses the same asset for the note
@@ -227,14 +229,14 @@ Circuit sizes (`bb gates`, noir-recursive):
 | Circuit | Gates | Dyadic |
 | --- | --- | --- |
 | transfer (today, 3-in/3-out) | 12,245 | 2^14 |
-| **action** (mixed assets, h2c) | **8,120** | 2^13 |
+| **action** (mixed assets, h2c) | **8,120** (8,098 with the 2^63-1 note bound, section 16) | 2^13 |
 | action, single asset per action | 7,933 | 2^13 |
 | action, generator tree depth 16 instead of h2c | 10,552 | 2^14 |
 | action without cv (Merkle + nf + cm only) | 6,000 | |
 | 2 actions in one proof (option, section 9) | 13,385 | 2^14 |
 
-8,120 leaves 72 gates of headroom under 2^13; anything added doubles prove
-time.
+8,120 left 72 gates of headroom under 2^13 (8,098 now leaves 94); anything
+added doubles prove time.
 
 Prove (`bb prove`, wall clock incl. process start), per proof:
 
@@ -377,7 +379,8 @@ proposal snapshot roots. Supply is a book entry
     otag = H(TAG_OTAG, owner_pk, salt)
     TAG_STAKE "earth.stake", TAG_SPC "earth.spc", TAG_SNF "earth.snf", TAG_OTAG "earth.otag"
 
-Circuit `stake` (mobile 2253c48, 9,647 gates, 2^14, 19 tests): up to two
+Circuit `stake` (mobile 2253c48, 9,647 gates, 2^14, 19 tests; 9,672 with
+the 2^63-1 note bound on every input and output, section 16): up to two
 inputs under `anchor` (amount 0 = none: nf 0, no path), up to two outputs
 (amount 0 = none: cm 0), one asset, `in0 + in1 + v_in == out0 + out1 +
 v_out`, and `spc_mint`/`otag` of the SAME owner_pk; binds the sighash.
@@ -627,7 +630,8 @@ them, so they describe one moment. A note under `root` is unspent then iff
 its nullifier is absent under `nf_root`.
 
 **Circuit `vote`** (mobile circuits/vote, 9,046 gates, 2^14, 23 tests incl. Go
-parity; privacy_core `nf_leaf`, `vote_nf`, `assert_not_in_indexed`).
+parity; 9,072 with the 2^63-1 bound on the note's amount, section 16;
+privacy_core `nf_leaf`, `vote_nf`, `assert_not_in_indexed`).
 
     private  nk, amount, rho, rcm, pos (u32), path[32],
              low_value, low_next_value, low_next_index (u32), low_index (u32), low_path[32]
@@ -794,17 +798,40 @@ ANML).
 note mint (`mintStake`, and `fitsNote` on a delegation's derth and an
 undelegation's claim) refuse a value above 2^63-1 (`types.FitsNote`); a
 genesis position's derth must be 1..2^63-1, so unlocking it can always
-mint its stake note. Not capped: **bundle outputs.** The action circuit
-range-checks `o_value` as a u64 (section 3), so a bundle may create a note
-of up to 2^64-1. The chain cannot refuse it: the value is private, and the
-public inputs (`cm_out`, a hash; `cv`, blinded by `rcv`) do not reveal it.
-Refusing it needs a 63-bit range check in the circuit (new VK, wallets and
-fixtures), deferred. Only a bundle's author can make such an output, from
-value it spends, and wallets never build one; the note stays spendable by
-the circuit, so a wallet that learns to hold it recovers it. The binding
-argument (section 5) is unaffected: it needs only u64 values. A bundle's
-public `Balance` value (u64) is a transparent amount leaving the pool, not a
-note, and is not capped.
+mint its stake note.
+
+**The 2^63-1 bound in the circuits.** Bundle outputs and stake note outputs
+are private, so the chain cannot refuse a large one: the public inputs
+(`cm_out`, a hash; `cv`, blinded by `rcv`) do not reveal the value. The
+circuits do. privacy_core `NOTE_VALUE_BITS = 63`: `note_cm` and `stake_cm`
+range-check the value to 63 bits before hashing it, so no circuit opens or
+creates a commitment to a value above 2^63-1:
+
+- action: `o_value` (the fix: it was range-checked only as a u64, so a
+  bundle could create a note of up to 2^64-1 that no wallet sees) and
+  `s_value`;
+- stake: both inputs and both outputs (`in_amount`, `out_amount`);
+- vote: the voted note's `amount`, hence `weight <= amount < 2^63`.
+
+The input bounds are implied (every note in either tree comes from a
+bounded circuit output or a bounded chain mint, above) but checked anyway:
+the soundness argument needs no induction over the tree's history, and the
+cost is nil. Each check is one range constraint on the value's existing
+witness. Gates (bb v5.0.0, noir-recursive): action 8,120 -> 8,098 (still
+2^13), stake 9,647 -> 9,672, vote 9,046 -> 9,072 (2^14); membership
+(5,659) does not hash notes and is unchanged. The circuits' interface is
+unchanged; the action, stake and vote verifying keys are new (genesis
+sha256 77af7586...652d). Not notes, not bounded: the stake circuit's public
+`v_in`/`v_out` and a bundle's public `Balance` value (u64), transparent
+amounts the chain sees and checks.
+
+Tests: nargo (privacy_core, action, stake, vote) refuse 2^63 and 2^64-1 at
+every bounded value with every other constraint satisfied (fixtures commit
+without the bound). `TestOrchardOutputAboveNoteMax` (zk/ultrahonk): a
+balanced bundle with an output of 2^63, its binding signature valid; action
+0's witness, solved by a twin circuit without the bound and proven by bb
+with the real circuit, does not verify, while the honest action 1 solved
+the same way does (`scripts/orchard-bundles.sh`).
 
 **One live handle per passport (P2).** MsgBindHandle needs the claim bound
 (`max_predecessor < now - handle lease - 86400`) unless the prover holds a

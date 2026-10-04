@@ -40,9 +40,15 @@ like, because nodes running different versions cannot agree.
   - x/shielded, x/shieldedstaking: **no chain-minted note above 2^63-1**
     (`MaxNoteValue`, what every wallet holds): MintNote, MintOpenNote,
     MsgShield, stake notes (delegation derth, undelegation claim, unlock),
-    and a genesis position's derth. Bundle outputs stay u64 (the circuit's
-    range; private, so the chain cannot see them). Swap fee rounds up. TWAP
+    and a genesis position's derth. Swap fee rounds up. TWAP
     accumulators are exported (genesis `price_accumulators` = 11).
+  - **New action, stake and vote verifying keys** (genesis): the circuits
+    bound every note value to 2^63-1 (`note_cm`/`stake_cm`), so a bundle or
+    stake proof can no longer create a note above `MaxNoteValue`. The
+    action circuit had range-checked an output only as a u64, so a bundle
+    could create a note of up to 2^64-1 that no wallet sees. Proofs from
+    the old circuits do not verify; wallets must ship the new circuits.
+    genesis.json sha256 77af758697b293eb95d1f9f08a8f49b35bef648fd931ae1448cc3d0f2ddd652d.
   - x/allocation: a struck INTEGRATED option stays out of the handler set
     across export/import, prune clears it, and a dangling entry no longer
     halts BeginBlock.
