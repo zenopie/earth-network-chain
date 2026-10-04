@@ -49,7 +49,7 @@ const gwE = uint64(ssErth)
 
 func initGwEnv(t *testing.T) *gwEnv {
 	e := initStakeEnv(t)
-	e.auditFundPool(1_000_000 * ssErth)
+	e.fundPoolDirect(1_000_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	gov := authtypes.NewModuleAddress("gov")
@@ -67,7 +67,7 @@ func initGwEnv(t *testing.T) *gwEnv {
 	if !left.IsZero() {
 		require.NoError(t, e.app.BankKeeper.SendCoins(e.ctx(), gov, e.userAddr(), left))
 	}
-	e.auditDelegate(v, uint64(200_000*gwE), "gw")
+	e.fakeDelegate(v, uint64(200_000*gwE), "gw")
 	e.days(2) // processed, then rewards compounded: rate > 1
 	require.True(t, e.state(v).EpochRate.GT(math.LegacyOneDec()))
 	return g
@@ -309,7 +309,7 @@ func TestGroundworksEpochCostIndependentOfPositions(t *testing.T) {
 func TestGroundworksSlashReweigh(t *testing.T) {
 	g := initGwEnv(t)
 	vA := g.genesisValidator()
-	g.auditDelegate(vA, uint64(50_000*gwE), "gw-a")
+	g.fakeDelegate(vA, uint64(50_000*gwE), "gw-a")
 	g.days(1)
 	g.lockPos(vA, 10_000*gwE, 1, g.split(100))
 	g.lockPos(vA, 3_000*gwE, 2, g.split(20, 80))

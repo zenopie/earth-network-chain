@@ -308,7 +308,7 @@ func TestPoolToStakingModuleNeedsRelease(t *testing.T) {
 	_, err = e.app.ShieldedStakingKeeper.SendRestriction(shieldedtypes.WithModuleRelease(ctx, sstypes.ModuleName), pool, mod, one)
 	require.NoError(t, err)
 
-	e.auditFundPool(10)
+	e.fundPoolDirect(10)
 	ctx = e.ctx()
 	require.ErrorIs(t, e.app.BankKeeper.SendCoins(ctx, pool, mod, one), sstypes.ErrSendRestricted)
 	require.NoError(t, e.app.ShieldedStakingKeeper.AssertInvariants(ctx))

@@ -37,9 +37,9 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// auditFundPool mints uerth into the shielded pool (as if shielded) so
+// fundPoolDirect mints uerth into the shielded pool (as if shielded) so
 // fake-authorized Delegates can release it.
-func (e *stakeEnv) auditFundPool(amt int64) {
+func (e *stakeEnv) fundPoolDirect(amt int64) {
 	ctx := e.ctx()
 	coins := sdk.NewCoins(sdk.NewInt64Coin("uerth", amt))
 	// The pool's account cannot mint (and refuses plain sends): shield.
@@ -77,7 +77,7 @@ func fakeStake(label string, credit bool) sstypes.StakeProof {
 	return p
 }
 
-func auditDelegateMsg(valoper string, amt uint64, label string) *sstypes.MsgDelegate {
+func fakeDelegateMsg(valoper string, amt uint64, label string) *sstypes.MsgDelegate {
 	return &sstypes.MsgDelegate{
 		Bundle:    stubBundle(label, shieldedtypes.ValueBalance{Denom: "uerth", Amount: amt + 1}),
 		Amount:    amt,
@@ -87,11 +87,11 @@ func auditDelegateMsg(valoper string, amt uint64, label string) *sstypes.MsgDele
 	}
 }
 
-// auditDelegate drives MsgDelegate's handler (ante faked) for amt uerth,
+// fakeDelegate drives MsgDelegate's handler (ante faked) for amt uerth,
 // crediting exactly what it buys (the handler runs on the state it was
 // quoted on: no margin needed).
-func (e *stakeEnv) auditDelegate(val sdk.ValAddress, amt uint64, label string) *sstypes.MsgDelegateResponse {
-	m := auditDelegateMsg(e.valoper(val), amt, label)
+func (e *stakeEnv) fakeDelegate(val sdk.ValAddress, amt uint64, label string) *sstypes.MsgDelegateResponse {
+	m := fakeDelegateMsg(e.valoper(val), amt, label)
 	m.Derth = e.exactDerth(val, amt)
 	res, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Delegate(e.fakeAuthorized(m), m)
 	require.NoError(e.t, err)
@@ -103,17 +103,17 @@ func (e *stakeEnv) auditDelegate(val sdk.ValAddress, amt uint64, label string) *
 // everyone's stake. Every entry point must now refuse a non-canonical string.
 func TestValoperCaseAliasDrainsDelegation(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(v, uint64(1_000*ssErth), "victim")
+	e.fakeDelegate(v, uint64(1_000*ssErth), "victim")
 	e.next(25 * time.Hour)
 	canon := e.valoper(v)
 	before := e.modDelegation(v)
 	require.True(t, before.IsPositive())
 
 	for _, alias := range []string{strings.ToUpper(canon), canon[:5] + strings.ToUpper(canon[5:8]) + canon[8:]} {
-		m := auditDelegateMsg(alias, 1, "atk")
+		m := fakeDelegateMsg(alias, 1, "atk")
 		require.Error(t, m.ValidateBasic(), alias)
 		srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 		_, err := srv.Delegate(e.fakeAuthorized(m), m)
@@ -176,7 +176,7 @@ func TestGenesisRefusesNonCanonicalValoper(t *testing.T) {
 // processed within ceil(books / EpochValidatorLimit) blocks of the epoch end.
 func TestEpochValidatorStarvation(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 
 	var vals []sdk.ValAddress
 	for i := 0; i < sstypes.EpochValidatorLimit+5; i++ {
@@ -185,11 +185,11 @@ func TestEpochValidatorStarvation(t *testing.T) {
 	}
 	e.next(5 * time.Second)
 	for i, v := range vals {
-		e.auditDelegate(v, uint64(ssErth), fmt.Sprintf("book-%d", i)) // the minimum: 1 ERTH
+		e.fakeDelegate(v, uint64(ssErth), fmt.Sprintf("book-%d", i)) // the minimum: 1 ERTH
 	}
 	sort.Slice(vals, func(i, j int) bool { return e.valoper(vals[i]) < e.valoper(vals[j]) })
 	victim := vals[len(vals)-1] // sorts last
-	e.auditDelegate(victim, uint64(1_000*ssErth), "victim")
+	e.fakeDelegate(victim, uint64(1_000*ssErth), "victim")
 
 	e.next(25 * time.Hour) // epoch end: the first EpochValidatorLimit books
 	sweep, err := e.app.ShieldedStakingKeeper.EpochSweep.Get(e.ctx())
@@ -215,10 +215,10 @@ func TestEpochValidatorStarvation(t *testing.T) {
 // derth, is refused.
 func TestMinDelegation(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	v, _ := e.createValidator(1)
 	e.next(5 * time.Second)
-	m := auditDelegateMsg(e.valoper(v), uint64(ssErth)-1, "dust")
+	m := fakeDelegateMsg(e.valoper(v), uint64(ssErth)-1, "dust")
 	_, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Delegate(e.fakeAuthorized(m), m)
 	require.ErrorContains(t, err, "at least")
 	_, err = sskeeper.NewActionHandler(e.app.ShieldedStakingKeeper).CheckPrivateAction(e.ctx(), m)
@@ -235,11 +235,11 @@ func TestMinDelegation(t *testing.T) {
 func TestSnapshotGasIndependentOfBooks(t *testing.T) {
 	gasWith := func(books int) uint64 {
 		e := initStakeEnv(t)
-		e.auditFundPool(10_000 * ssErth)
+		e.fundPoolDirect(10_000 * ssErth)
 		for i := 0; i < books; i++ {
 			v, _ := e.createValidator(1)
 			e.next(5 * time.Second)
-			e.auditDelegate(v, uint64(ssErth), fmt.Sprintf("g-%d", i))
+			e.fakeDelegate(v, uint64(ssErth), fmt.Sprintf("g-%d", i))
 		}
 		e.next(25 * time.Hour)
 		e.next(5 * time.Second)
@@ -275,10 +275,10 @@ func must[T any](v T, err error) T {
 // the reset: the export re-imports, and the unbonding still pays.
 func TestZeroHeightExportBreaksInvariants(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	res := e.auditDelegate(v, uint64(1_000*ssErth), "z")
+	res := e.fakeDelegate(v, uint64(1_000*ssErth), "z")
 	e.next(25 * time.Hour)
 	// an unbonding in flight across the export
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth / 4,
@@ -334,10 +334,10 @@ func TestZeroHeightExportBreaksInvariants(t *testing.T) {
 // pool; the book empties and is removed.
 func TestOrphanBackingNotCaptured(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	res := e.auditDelegate(v, uint64(100*ssErth), "o")
+	res := e.fakeDelegate(v, uint64(100*ssErth), "o")
 	e.next(25 * time.Hour)
 	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth,
@@ -352,7 +352,7 @@ func TestOrphanBackingNotCaptured(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, s.IsZero())
 	require.True(t, b.IsPositive(), "rewards accrued after the last notes were minted")
-	m := auditDelegateMsg(e.valoper(v), uint64(ssErth), "late")
+	m := fakeDelegateMsg(e.valoper(v), uint64(ssErth), "late")
 	_, err = srv.Delegate(e.fakeAuthorized(m), m)
 	require.ErrorContains(t, err, "settling")
 
@@ -372,7 +372,7 @@ func TestOrphanBackingNotCaptured(t *testing.T) {
 	e.invariants()
 
 	// a new delegator starts at rate 1 with nothing to capture
-	e.auditDelegate(v, uint64(ssErth), "fresh")
+	e.fakeDelegate(v, uint64(ssErth), "fresh")
 	b, s, err = e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(v))
 	require.NoError(t, err)
 	require.Equal(t, b, s)
@@ -384,10 +384,10 @@ func TestOrphanBackingNotCaptured(t *testing.T) {
 // escrow is paid out once the unbonding time has passed.
 func TestEscrowReleasedOnRetirement(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	vB, vBKey := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(vB, uint64(10*ssErth), "dust-forever")
+	e.fakeDelegate(vB, uint64(10*ssErth), "dust-forever")
 	e.next(25 * time.Hour)
 	opB, escB, valoper := sdk.AccAddress(vB), sstypes.RewardEscrowAddress(vB), e.valoper(vB)
 	bal := func(a sdk.AccAddress) math.Int { return e.app.BankKeeper.GetBalance(e.ctx(), a, "uerth").Amount }
@@ -451,10 +451,10 @@ func TestUpdatePositionNeedsWeight(t *testing.T) {
 // payout goes to the community pool when it matures; the book is removed.
 func TestOrphanDelegationToCommunityPool(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(v, uint64(5*ssErth), "legacy")
+	e.fakeDelegate(v, uint64(5*ssErth), "legacy")
 	e.next(25 * time.Hour)
 	k := e.app.ShieldedStakingKeeper
 	ctx := e.ctx()
@@ -496,10 +496,10 @@ func TestOrphanDelegationToCommunityPool(t *testing.T) {
 // is refused, not rounded away.
 func TestDonationInflationHarmless(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	res := e.auditDelegate(v, uint64(ssErth), "atk")
+	res := e.fakeDelegate(v, uint64(ssErth), "atk")
 	e.next(25 * time.Hour)
 	srv := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper)
 	u := &sstypes.MsgUndelegate{Validator: e.valoper(v), Amount: res.Derth - 1,
@@ -519,13 +519,13 @@ func TestDonationInflationHarmless(t *testing.T) {
 	t.Logf("after the donation: backing %s for %s derth", b, s)
 	require.True(t, b.GT(math.NewInt(1000)))
 
-	m := auditDelegateMsg(e.valoper(v), uint64(100*ssErth), "victim")
+	m := fakeDelegateMsg(e.valoper(v), uint64(100*ssErth), "victim")
 	_, err = srv.Delegate(e.fakeAuthorized(m), m)
 	require.ErrorContains(t, err, "less than the minimum")
 	// a delegation that mints enough loses under a millionth to rounding
 	big := b.MulRaw(ssErth).Add(b).Uint64()
-	e.auditFundPool(int64(big) + ssErth)
-	vr := e.auditDelegate(v, big, "big")
+	e.fundPoolDirect(int64(big) + ssErth)
+	vr := e.fakeDelegate(v, big, "big")
 	b2, s2, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(v))
 	require.NoError(t, err)
 	value := math.NewIntFromUint64(vr.Derth).Mul(b2).Quo(s2)

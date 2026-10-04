@@ -293,14 +293,14 @@ func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 // Moves in one block share one entry.
 func TestRedelegateNoLockout(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(300_000 * ssErth)
+	e.fundPoolDirect(300_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	vC, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	mod := e.app.ShieldedStakingKeeper.ModuleAddress()
-	e.auditDelegate(vA, uint64(100_000*ssErth), "a")
-	e.auditDelegate(vC, uint64(2_000*ssErth), "c")
+	e.fakeDelegate(vA, uint64(100_000*ssErth), "a")
+	e.fakeDelegate(vC, uint64(2_000*ssErth), "c")
 	e.days(1)
 	e.next(time.Hour)
 
@@ -381,7 +381,7 @@ func TestRedelegateNoLockout(t *testing.T) {
 // the retained exposure, and an undelegation of it pays that, no more.
 func TestRedelegateSlashDebt(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(20_000 * ssErth)
+	e.fundPoolDirect(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
@@ -391,7 +391,7 @@ func TestRedelegateSlashDebt(t *testing.T) {
 	}
 	dB := sstypes.DerthDenom(e.valoper(vB))
 	n := e.delegate(vA, uint64(2_000*ssErth))
-	e.auditDelegate(vB, uint64(3_000*ssErth), "honest") // B's other holders
+	e.fakeDelegate(vB, uint64(3_000*ssErth), "honest") // B's other holders
 	e.days(1)
 	e.next(time.Hour)
 
@@ -497,13 +497,13 @@ func TestRedelegateSlashDebt(t *testing.T) {
 // holds. A move created before the infraction is not charged.
 func TestRedelegateSlashDuringMaturity(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(20_000 * ssErth)
+	e.fundPoolDirect(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	mod := e.app.ShieldedStakingKeeper.ModuleAddress()
-	e.auditDelegate(vA, uint64(4_000*ssErth), "a")
-	e.auditDelegate(vB, uint64(2_000*ssErth), "b")
+	e.fakeDelegate(vA, uint64(4_000*ssErth), "a")
+	e.fakeDelegate(vB, uint64(2_000*ssErth), "b")
 	e.days(1)
 
 	// A move before the infraction: not exposed to it.
@@ -872,13 +872,13 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 // over.
 func TestRedelegateGenesisRoundTrip(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(20_000 * ssErth)
+	e.fundPoolDirect(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	mod := e.app.ShieldedStakingKeeper.ModuleAddress()
-	e.auditDelegate(vA, uint64(4_000*ssErth), "a")
-	e.auditDelegate(vB, uint64(1_000*ssErth), "b")
+	e.fakeDelegate(vA, uint64(4_000*ssErth), "a")
+	e.fakeDelegate(vB, uint64(1_000*ssErth), "b")
 	e.days(1)
 	e.next(5 * time.Second)
 	infraction := e.height
@@ -1001,11 +1001,11 @@ func TestRedelegateGenesisRoundTrip(t *testing.T) {
 // reported.
 func TestRedelegateInvariant(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(vA, uint64(1_000*ssErth), "a")
+	e.fakeDelegate(vA, uint64(1_000*ssErth), "a")
 	e.days(1)
 	_, err := e.fakeRedelegate(vA, vB, uint64(800*ssErth), "ab")
 	require.NoError(t, err)
@@ -1121,13 +1121,13 @@ func (e *stakeEnv) fillEntryCap(a, b sdk.ValAddress, moves map[int]int) stakingt
 // it). The move pays gas for the pair's record (A7-L1).
 func TestRedelegateEntryCap(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(100_000 * ssErth)
+	e.fundPoolDirect(100_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	k := e.app.ShieldedStakingKeeper
 	mod := k.ModuleAddress()
-	e.auditDelegate(vA, uint64(50_000*ssErth), "a")
+	e.fakeDelegate(vA, uint64(50_000*ssErth), "a")
 	e.days(1)
 	e.next(time.Hour)
 	h := sskeeper.NewActionHandler(k)
@@ -1179,12 +1179,12 @@ func TestRedelegateEntryCap(t *testing.T) {
 // joins the latest entry instead, as a last resort: never refused.
 func TestRedelegateEntryCapFallback(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(100_000 * ssErth)
+	e.fundPoolDirect(100_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
 	mod := e.app.ShieldedStakingKeeper.ModuleAddress()
-	e.auditDelegate(vA, uint64(50_000*ssErth), "a")
+	e.fakeDelegate(vA, uint64(50_000*ssErth), "a")
 	e.days(1)
 	e.next(time.Hour)
 	_, err := e.fakeRedelegate(vA, vB, uint64(5_000*ssErth), "first")
@@ -1252,16 +1252,16 @@ type a7Outcome struct {
 // evidence lands.
 func runA7Scenario(t *testing.T, move bool) a7Outcome {
 	e := initStakeEnv(t)
-	e.auditFundPool(20_000 * ssErth)
+	e.fundPoolDirect(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	att := e.auditDelegate(vA, uint64(1_000*ssErth), "attacker")
-	e.auditDelegate(vA, uint64(3_000*ssErth), "honest")
-	e.auditDelegate(vB, uint64(3_000*ssErth), "b")
+	att := e.fakeDelegate(vA, uint64(1_000*ssErth), "attacker")
+	e.fakeDelegate(vA, uint64(3_000*ssErth), "honest")
+	e.fakeDelegate(vB, uint64(3_000*ssErth), "b")
 	e.days(1)
 	e.next(time.Hour)
-	e.auditDelegate(vA, uint64(2_000*ssErth), "newcomer") // queued this epoch
+	e.fakeDelegate(vA, uint64(2_000*ssErth), "newcomer") // queued this epoch
 	require.True(t, e.state(vA).PendingDelegation.GTE(math.NewInt(2_000*ssErth)))
 
 	e.next(5 * time.Second)
@@ -1325,14 +1325,14 @@ func TestQueueEscapesSlash(t *testing.T) {
 // no entry and no move, since a slash of it takes nothing from the book.
 func TestQueueOnlyWithoutBondedStake(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(20_000 * ssErth)
+	e.fundPoolDirect(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(vB, uint64(1_000*ssErth), "b")
+	e.fakeDelegate(vB, uint64(1_000*ssErth), "b")
 	e.days(1)
 	e.next(time.Hour)
-	d := e.auditDelegate(vA, uint64(2_000*ssErth), "first") // queued, nothing bonded at A
+	d := e.fakeDelegate(vA, uint64(2_000*ssErth), "first") // queued, nothing bonded at A
 	require.True(t, e.modDelegation(vA).IsZero())
 	r, err := e.fakeRedelegate(vA, vB, d.Derth/2, "queued")
 	require.NoError(t, err)
@@ -1353,12 +1353,12 @@ func TestQueueOnlyWithoutBondedStake(t *testing.T) {
 // invariant holds after the prep and after the import.
 func TestZeroHeightExportWithMoves(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(20_000 * ssErth)
+	e.fundPoolDirect(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(vA, uint64(4_000*ssErth), "a")
-	e.auditDelegate(vB, uint64(1_000*ssErth), "b")
+	e.fakeDelegate(vA, uint64(4_000*ssErth), "a")
+	e.fakeDelegate(vB, uint64(1_000*ssErth), "b")
 	e.days(1)
 	e.next(time.Hour)
 	k := e.app.ShieldedStakingKeeper
@@ -1434,12 +1434,12 @@ func TestZeroHeightExportWithMoves(t *testing.T) {
 // reached owes it, the dust entry after it, which it skipped, owes nothing.
 func TestSlashSkipsDustEntry(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(20_000 * ssErth)
+	e.fundPoolDirect(20_000 * ssErth)
 	vA, _ := e.createValidator(1000 * ssErth)
 	vB, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	e.auditDelegate(vA, uint64(4_000*ssErth), "a")
-	e.auditDelegate(vB, uint64(1_000*ssErth), "b")
+	e.fakeDelegate(vA, uint64(4_000*ssErth), "a")
+	e.fakeDelegate(vB, uint64(1_000*ssErth), "b")
 	e.days(1)
 	e.next(time.Hour)
 	k := e.app.ShieldedStakingKeeper

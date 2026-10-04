@@ -48,10 +48,10 @@ func (e *stakeEnv) payoutEvents(typ string, id uint64) []map[string]string {
 // balance throughout.
 func TestUnbondPayoutsSweepRetryNeverDrop(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(100_000 * ssErth)
+	e.fundPoolDirect(100_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	res := e.auditDelegate(v, uint64(10_000*ssErth), "staker")
+	res := e.fakeDelegate(v, uint64(10_000*ssErth), "staker")
 	e.next(25 * time.Hour)
 
 	// 120 undelegations in one epoch: one record, 120 payouts.
@@ -153,10 +153,10 @@ func TestUnbondPayoutsSweepRetryNeverDrop(t *testing.T) {
 // a payout that does not add up to its record.
 func TestUnbondPayoutGenesisRoundTrip(t *testing.T) {
 	e := initStakeEnv(t)
-	e.auditFundPool(10_000 * ssErth)
+	e.fundPoolDirect(10_000 * ssErth)
 	v, _ := e.createValidator(1000 * ssErth)
 	e.next(5 * time.Second)
-	res := e.auditDelegate(v, uint64(1_000*ssErth), "g")
+	res := e.fakeDelegate(v, uint64(1_000*ssErth), "g")
 	e.next(25 * time.Hour)
 	u := e.fakeUndelegate(v, res.Derth/4, "g")
 	gs, err := e.app.ShieldedStakingKeeper.ExportGenesis(e.ctx())
