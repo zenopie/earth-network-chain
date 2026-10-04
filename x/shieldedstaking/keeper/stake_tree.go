@@ -28,7 +28,7 @@ import (
 //	nf  = H(TAG_SNF, nk, rho, position)     asset = AssetID(stake denom)
 //
 // Every note is a stake proof's output, its amount hidden: the chain mints
-// no stake note (ORCHARD_DESIGN.md section 20). A note may carry a slash
+// no stake note (ORCHARD_DESIGN.md 8.1). A note may carry a slash
 // label (moves.go), hidden in its commitment like everything else.
 
 // stakeNodeStore backs zk/merkle's tree with StakeTreeNodes.

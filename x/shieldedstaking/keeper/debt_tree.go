@@ -18,7 +18,7 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// The slash debt tree (zk/debt; ORCHARD_DESIGN.md section 20): one row per
+// The slash debt tree (zk/debt; ORCHARD_DESIGN.md 3.5, 8.7): one row per
 // private redelegation a slash reached, keyed by its move key, holding what
 // its credited exposure is still worth. A note labelled with the move clears
 // its label at that value (circuits/stake) and votes it (circuits/vote);

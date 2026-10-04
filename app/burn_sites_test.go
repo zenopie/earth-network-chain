@@ -33,11 +33,6 @@ var burnSites = map[string]string{
 	// burning them would leave the module holding supply no option claims.
 	"x/allocation/keeper/removal.go": "allocation",
 
-	// Deliberately uncounted. Private staking burns claims, not supply:
-	// derth/<valoper> when it is undelegated (the ERTH behind it stays bonded
-	// until the SDK pays it back) and unbond/<valoper>/<epoch> when it is
-	// claimed (the ERTH it was a claim on is paid out, not destroyed).
-
 	// Deliberately uncounted. Withdrawing liquidity burns the shares that
 	// represented the claim; the assets behind them go back to their owner and
 	// no supply leaves. Counting these would report an ordinary withdrawal as

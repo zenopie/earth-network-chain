@@ -582,7 +582,7 @@ func (m *MsgRedelegate) ValidateBasic() error {
 
 // MaxVoteNotes is how many stake notes one vote proof carries (circuits/vote
 // MAX_NOTES): every MsgStakeVote has exactly this many vote nullifier slots.
-// One note per validator (ORCHARD_DESIGN.md section 20) needs one; the second
+// One note per validator (ORCHARD_DESIGN.md 8.1) needs one; the second
 // covers a note made beside a labelled one.
 const MaxVoteNotes = 2
 

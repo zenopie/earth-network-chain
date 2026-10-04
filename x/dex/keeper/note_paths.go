@@ -21,8 +21,8 @@ import (
 // (swapExactIn, AddLiquidity, CreatePool, RemoveLiquidity without a pc).
 //
 //   - MsgNoteSwap (unsigned, private): spend any asset from a note, swap it
-//     through any pools, mint the output as a note. May pay its fee from an
-//     ERTH output.
+//     through any pools, mint the output as a note. Its fee is its bundle's
+//     uerth balance (less amount_in when it swaps uerth).
 //   - MsgBuyAnml (signed): a transparent account's ERTH (or any token, through
 //     ERTH) for ANML, minted as a note.
 //   - MsgAddLiquidityShielded (unsigned, private): both legs of a deposit from

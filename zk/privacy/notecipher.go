@@ -279,7 +279,7 @@ func decryptBlind(salt []byte, version byte, ct []byte, ek [32]byte) (BlindNote,
 
 // ---- wallet stake ciphertext -----------------------------------------------
 //
-// The chain mints no stake note (ORCHARD_DESIGN.md section 20): every stake
+// The chain mints no stake note (ORCHARD_DESIGN.md 8.1, 12.1): every stake
 // note is a stake proof's output and carries the wallet's own ciphertext of
 // it, for the owner's other devices, in one length the chain checks:
 //

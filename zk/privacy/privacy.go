@@ -42,7 +42,7 @@ var (
 	TagSNFL = tag("earth.snfl")
 	TagVNF  = tag("earth.vnf")
 	// Stake note slash labels and the slash debt tree's leaves (circuits/stake,
-	// circuits/vote; ORCHARD_DESIGN.md section 20).
+	// circuits/vote; ORCHARD_DESIGN.md 4.1, 4.2).
 	TagSLabel = tag("earth.slabel")
 	TagDebtL  = tag("earth.debtl")
 

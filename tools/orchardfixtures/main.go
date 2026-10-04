@@ -22,7 +22,7 @@
 // Balance: ERTH 10_000 (the fee), every other asset 0.
 //
 // over: a balanced 2-action bundle whose first output is 2^63, one above a
-// note's maximum (ORCHARD_DESIGN section 16), which the action circuit
+// note's maximum (ORCHARD_DESIGN.md 2.1), which the action circuit
 // refuses; nargo execute fails on action_0 by design
 // (scripts/orchard-bundles.sh proves it against an unbounded twin):
 //

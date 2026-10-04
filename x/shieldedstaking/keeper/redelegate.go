@@ -75,8 +75,7 @@ import (
 // would take the slash from them first (prepareRedelegationSlash sets them
 // aside for the slash). The part that moved out of A's queue was never
 // bonded at A and carries no entry: it is the move's pro-rata share of what
-// a slash of A could not take either. See ORCHARD_DESIGN.md sections 19 and
-// 20.
+// a slash of A could not take either. See ORCHARD_DESIGN.md 8.7.
 
 // bondedDust is the largest bonded part a redelegation leaves behind: the
 // value is then its queued part alone, the dust left to the source's book.

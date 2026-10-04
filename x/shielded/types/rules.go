@@ -13,8 +13,8 @@ import (
 // shield, a module's MintNote: registration rewards, ANML claims, swap
 // outputs, LP shares, refunds and payouts, unbonding payouts) carries an
 // amount-blind v2 ciphertext (zk/privacy.EncryptBlindNote) supplied by the
-// msg that asks for it, and every stake note x/shieldedstaking mints carries
-// a blind stake ciphertext (zk/privacy.EncryptBlindStakeNote). The wallet
+// msg that asks for it. The chain mints no stake note: every stake note is a
+// stake proof output carrying the wallet's own ciphertext. The wallet
 // finds every note it owns by trial-decrypting ciphertexts and checking the
 // cm against the published amount; it keeps no self-mint counter. One
 // exception, an open note (Keeper.MintOpenNote: the referral note the chain

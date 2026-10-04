@@ -258,7 +258,7 @@ func requireCanonicalEncoding(ctx sdk.Context, p *txtypes.Tx) error {
 //     (where x/earth burns half), pay an unshield's receiver, and authorize
 //     the msg and its action;
 //  7. run the action here if its handler must be atomic with the spend
-//     (types.PrivateActionExecutor), and require any fee from output paid.
+//     (types.PrivateActionExecutor).
 type PrivateMsgDecorator struct {
 	K keeper.Keeper
 }

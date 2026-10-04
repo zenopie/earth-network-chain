@@ -44,7 +44,7 @@ import (
 // quoteDerth is the derth a wallet names for a delegation of amount to val:
 // what amount buys at the current live rate, less a margin for the rate's
 // drift until the block (rewards accrue every block; 1% here, where little
-// is staked and rewards are large: ORCHARD_DESIGN.md 20.4 for wallets).
+// is staked and rewards are large: ORCHARD_DESIGN.md 12.2 for wallets).
 // Exactly amount while nothing is outstanding (rate 1, no drift).
 func (e *stakeEnv) quoteDerth(val sdk.ValAddress, amount uint64) uint64 {
 	b, s, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(val))

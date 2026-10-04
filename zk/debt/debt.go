@@ -1,4 +1,4 @@
-// Package debt is the slash debt tree (ORCHARD_DESIGN.md section 20): an
+// Package debt is the slash debt tree (ORCHARD_DESIGN.md 3.5): an
 // indexed (sorted) Merkle tree over zk/merkle's depth-32 Poseidon2 tree with
 // one row per SLASHED redelegation, so a circuit can read what a
 // redelegation's exposure is still worth: the row's retained derth if the

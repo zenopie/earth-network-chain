@@ -40,7 +40,7 @@ type Keeper struct {
 	shieldedOnly   map[string]bool
 	shieldedOnlyTo map[string]bool // module account address (string bytes)
 	// shieldedOnlyPrefixes are families of shielded-only denoms registered by
-	// other modules (x/shieldedstaking's derth/ and unbond/), each with its own
+	// other modules (x/shieldedstaking's derth/), each with its own
 	// allowed recipients (module account address, string bytes). A map so every
 	// copy of the keeper sees a registration made during module wiring.
 	shieldedOnlyPrefixes map[string]map[string]bool
@@ -50,7 +50,7 @@ type Keeper struct {
 	// MsgRemoveLiquidityShielded.
 	poolLockedPrefixes map[string]bool
 	// excludedAssetPrefixes are families of denoms the pool never admits as
-	// assets: x/shieldedstaking's derth/ and unbond/, which live in its own
+	// assets: x/shieldedstaking's derth/, which lives in its own
 	// owner-locked stake note tree.
 	excludedAssetPrefixes map[string]bool
 

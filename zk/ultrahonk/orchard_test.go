@@ -159,7 +159,7 @@ func TestOrchardBundles(t *testing.T) {
 }
 
 // TestOrchardOutputAboveNoteMax: a bundle spending 2^63-1 + 10_001 ERTH into
-// an output of 2^63, one above a note's maximum (ORCHARD_DESIGN section 16),
+// an output of 2^63, one above a note's maximum (ORCHARD_DESIGN.md 2.1),
 // a dummy output and a 10_000 fee. It balances and its binding signature holds; the honest
 // action's proof verifies; action 0's proof, made by bb with the real circuit
 // from a witness only a twin without the note bound accepts

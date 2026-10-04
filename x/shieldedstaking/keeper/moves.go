@@ -16,7 +16,7 @@ import (
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
-// Note-enforced slash debt (ORCHARD_DESIGN.md section 20).
+// Note-enforced slash debt (ORCHARD_DESIGN.md 8.7).
 //
 // A private redelegation ("move") from src to dst credits derth/dst to its
 // owner's note LABELLED with the move: (move key = the credit nullifier,

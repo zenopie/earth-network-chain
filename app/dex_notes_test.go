@@ -134,8 +134,8 @@ func TestDexNoteSwaps(t *testing.T) {
 	require.Equal(t, before-ssFee+wantErth, e.w.balance("uerth"))
 	e.dexInvariants()
 
-	// --- the fee rule: a swap pays its fee from its bundle's uerth (only a
-	// claim pays from its output). Below the floor it is refused; the rest
+	// --- the fee rule: a swap pays its fee from its bundle's uerth. Below
+	// the floor it is refused; the rest
 	// of the ANML sells with an ERTH fee note paying.
 	rest := e.w.unspent("uanml", 1)
 	require.NotNil(t, rest)

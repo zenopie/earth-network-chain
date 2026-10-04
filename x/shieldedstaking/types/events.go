@@ -41,8 +41,8 @@ const (
 	EventTypeStakeNote      = "shieldedstaking_stake_note"
 	EventTypeStakeNullifier = "shieldedstaking_stake_nullifier"
 	EventTypeStakeRoot      = "shieldedstaking_stake_root"
-	// The slash debt of private redelegations (ORCHARD_DESIGN.md section
-	// 20): a slash reached the module's redelegation entries into a
+	// The slash debt of private redelegations (ORCHARD_DESIGN.md 8.7): a
+	// slash reached the module's redelegation entries into a
 	// validator (EventTypeSlashDebt: the derth taken off its supply), each
 	// move it reached (EventTypeMoveSlashed: its debt and what its exposure
 	// is still worth), and the debt tree's row for it (EventTypeDebtRow:
