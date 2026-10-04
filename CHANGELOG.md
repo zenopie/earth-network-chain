@@ -13,6 +13,19 @@ like, because nodes running different versions cannot agree.
 
 ## [Unreleased]
 
+**Not consensus-affecting.**
+
+- x/shieldedstaking: **Query/Validators** (`/earth/shieldedstaking/v1/validators`,
+  paged): every validator's quote inputs in one list (x/staking's validator,
+  tombstoned, delegatable and refusal, the book, B, S, rate, D, W, the
+  module's redelegation entries per destination). Wallets read the whole list
+  instead of asking about one validator before a staking msg.
+- Genesis: `scripts/ceremony.sh --genesis-time <RFC3339> --pubkey <json>`
+  replaces `scripts/ceremony-gentx.sh` and does the whole launch ceremony
+  (operator earth1n6amvk…, devnet faucet and gas wallet removed, gentx,
+  genesis_time, rebuild). Not yet run: `TestLaunchCeremony` reports PENDING
+  CEREMONY until it is.
+
 **Consensus-affecting.**
 
 - One stake note per validator; redelegation slashes paid by the notes they

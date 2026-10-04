@@ -421,6 +421,28 @@ func TestDexAnmlPoolLiquidity(t *testing.T) {
 	require.True(t, backE.known, "the ERTH leg was minted as a note to erth_pc")
 	require.True(t, backT.known, "the ANML leg was minted as a note to token_pc")
 	e.dexInvariants()
+
+	// --- LP share notes move privately like any note: a shielded transfer
+	// (MsgSend, fee only, no receiver) of the remaining shares to another
+	// owner passes every rule (simulated: proofs aside, simulate checks
+	// everything a block does); only an unshield of them is refused.
+	rest := e.w.unspent(lp, 1)
+	require.NotNil(t, rest, "the withdrawal's change of shares")
+	pt := e.build(spend{denom: lp, inputs: []*wnote{rest}, valueOut: 0})
+	bobNK := ssDet("bob-nk", 0)
+	pt.plan.Actions[0].Out.PC = privacy.PC(privacy.OwnerPK(bobNK), ssDet("bob-rho", 0), ssDet("bob-rcm", 0))
+	require.Equal(t, rest.value, pt.plan.Actions[0].Out.Value, "every share to bob")
+	tb, err := pt.plan.Unproven()
+	require.NoError(t, err)
+	transfer := &shieldedtypes.MsgSend{Bundle: tb, Fee: pt.fee}
+	unproven(transfer)
+	_, _, err = e.app.Simulate(e.privateTx(transfer))
+	require.NoError(t, err, "a shielded transfer of LP shares to another owner")
+	out := &shieldedtypes.MsgSend{Bundle: tb, Fee: pt.fee, Receiver: e.bech(e.userAddr())}
+	out.Bundle.Balances = append(out.Bundle.Balances, shieldedtypes.ValueBalance{Denom: lp, Amount: 1})
+	unproven(out)
+	_, _, err = e.app.Simulate(e.privateTx(out))
+	require.ErrorIs(t, err, shieldedtypes.ErrSendRestricted, "but not an unshield")
 }
 
 // The SimulateSwapExactIn query on the real app, over ABCI as a wallet's

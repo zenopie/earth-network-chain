@@ -513,7 +513,7 @@ canonical encoding of what they decode to (one msg, one tx hash).
    (`CheckTxProofCacheSize` 8,192). Skipped on recheck; charged but not
    required in simulate.
 6. Spend the nullifiers, append the outputs, pay the fee to fee_collector
-   (x/earth burns half, rounded up), pay an unshield's receiver, authorize the
+   (x/earth burns half, rounded up: 5.3), pay an unshield's receiver, authorize the
    msg and its action (keyed by SHA-256 of the msg's proto bytes:
    `AuthorizedAction/Result/Positions`).
 7. Run the action here if its handler must be atomic with the spend
@@ -573,6 +573,19 @@ mint into the pool. Notes shielded before the switch still move privately.
 
 **Turnstile.** Per denom, `ShieldedIn − ShieldedOut == module balance`
 (releases and unshields count out; shields and mints count in).
+
+**Fee split (x/earth `SplitCollectedFees`).** Yes, half of every fee is
+burned. At each EndBlock x/earth takes what fee_collector holds (that
+block's tx fees only: the emission is minted into it and swept by
+x/distribution in BeginBlock) and, per denom, burns `ceil(fee / 2)` and
+leaves `floor(fee / 2)`: an odd unit is burned, burned + paid = collected
+exactly. The paid half is swept by x/distribution at the next BeginBlock
+under the standard rules with `community_tax` 0: to validators by voting
+power, then commission and delegators (the module's books' rewards W,
+operators' reward escrows, 8.8). A fixed shape, not a parameter. Every fee
+lands there: transparent tx fees and every private tx's fee (`payFee`).
+Event `gas_fees_split {burned, to_validators}`; the burn is recorded under
+source `gas_fees`. (The dex swap fee is a separate 50/50 split, `splitFee`.)
 
 ### 5.4 x/shielded params
 
@@ -706,6 +719,19 @@ proof in the handle scope.
   expires_at + handle_renewal_seconds: does not resolve, only the same
   nullifier may renew (under the claim bound), cannot be moved. Free after
   that (swept).
+- **Renewal rule, exactly.** The holder (the handle-scope nullifier holding
+  it) may renew **at any time** while it is live or in its renewal period
+  (defaults: lease 365 days, renewal period 30 days; at most 2 years and 1
+  year). There is no early window: a renewal is a MsgBindHandle of the same
+  handle, and it sets `expires_at = block time + handle_lease_seconds`, so
+  the new lease runs from the renewal, not from the old expiry (renewing
+  early does not stack; the unused part is dropped). While the handle is
+  live the renewal is unbounded (any `max_predecessor`); in the renewal
+  period it is treated as a claim and needs the claim bound below, so an
+  identity that switched away and back cannot revive it. After the renewal
+  period the holder has no priority: the handle is free and anyone may
+  claim it (`handleStatus`, `handleClaimable`, `handleStatement`,
+  `applyBindHandle`; test `TestHandleLifecycle`).
 - **Claim bound**: a claim, or a renewal or change of a handle that is not
   live, needs `max_predecessor < now − the longest handle lease ever in force
   − ActivationMarginSeconds (86,400)`, so anything a predecessor identity held
@@ -1165,6 +1191,16 @@ atomically with the spend):
   `MsgAddLiquidityShielded` mints the shares as a note to `share_pc` and what
   the ratio does not take back as refund notes (one ciphertext for both refund
   notes). Only pool reserves and module-held liquidity are public.
+- **LP share notes are transferable, not owner-locked.** A `dexlp/<pool>`
+  note is an ordinary pool note: any bundle may spend it and output it to any
+  pc, so a shielded transfer (MsgSend with only the fee as balance, no
+  receiver) hands shares to another person privately, and the new owner may
+  withdraw them. "Pool-locked" refuses only an unshield (`checkUnshield`:
+  `IsPoolLocked`, before anything is spent; x/shielded 1109 `ErrSendRestricted`): shares
+  leave the pool only through `MsgRemoveLiquidityShielded`
+  (`ReleaseToModule`). Owner-locked notes are stake notes alone (3.3).
+  Test: `TestDexAnmlPoolLiquidity` (the transfer passes every rule, the
+  unshield is refused).
 - `MsgRemoveLiquidityShielded` releases exactly `dexlp/<pool>` into an
   `LpUnbonding` with no address (`withdrawal_id = 0x00 || first nf`); at
   maturity both legs are minted as notes (`MintNoteSplit`). A withdrawal whose
