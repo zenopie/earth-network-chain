@@ -337,6 +337,13 @@ func (k Keeper) openSlashWatch(ctx context.Context, src sdk.ValAddress, reds []s
 		if err := k.WatchSrc.Set(cc, srcoper); err != nil {
 			return err
 		}
+		// The source is re-weighed at the end of the block, like every
+		// destination (prepareRedelegationSlash), even when x/staking takes
+		// the whole slash from the entries and never calls
+		// BeforeValidatorSlashed for it (audit 7).
+		if err := k.SlashedValidators.Set(cc, srcoper); err != nil {
+			return err
+		}
 		mod := k.modString(cc)
 		for _, r := range reds {
 			if r.DelegatorAddress != mod {

@@ -278,11 +278,13 @@ func (s PositionWeightSource) TracksBonded(key []byte) bool {
 
 // reweighSlashed: a slash lowers a validator's rate at once (its delegation
 // lost tokens), so its positions must not keep voting at the pre-slash epoch
-// rate until the next epoch. For each validator slashed this block (recorded
-// by the slash hook, which runs before the tokens move): the live rate, after
-// the slash, becomes its epoch rate, and only its positions re-weigh at it,
-// each in its own cache. Rewards still reach positions at the daily epoch.
-// Never fails: it runs in EndBlock.
+// rate until the next epoch. For each validator recorded this block (slashed,
+// by the slash hook, which runs before the tokens move; the source and every
+// destination of a slashed redelegation; both sides of a private
+// redelegation, audit 7): the live rate becomes its epoch rate if lower,
+// and only its positions re-weigh at it, each in its own cache. Rewards
+// still reach positions at the daily epoch. Never fails: it runs in
+// EndBlock.
 func (k Keeper) reweighSlashed(ctx context.Context) {
 	var vals []string
 	_ = k.SlashedValidators.Walk(ctx, nil, func(v string) (bool, error) {

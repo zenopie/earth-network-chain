@@ -328,7 +328,19 @@ func TestRedelegateNoLockout(t *testing.T) {
 	require.NoError(t, err)
 	_, err = e.fakeRedelegate(vA, vB, uint64(300*ssErth), "same2")
 	require.NoError(t, err)
+	// Both books are marked for the end of the block's Groundworks re-weigh
+	// (audit 7), and cleared by it.
+	for _, v := range []sdk.ValAddress{vA, vB} {
+		has, err := e.app.ShieldedStakingKeeper.SlashedValidators.Has(e.ctx(), e.valoper(v))
+		require.NoError(t, err)
+		require.True(t, has)
+	}
 	e.next(5 * time.Second)
+	for _, v := range []sdk.ValAddress{vA, vB} {
+		has, err := e.app.ShieldedStakingKeeper.SlashedValidators.Has(e.ctx(), e.valoper(v))
+		require.NoError(t, err)
+		require.False(t, has)
+	}
 	red, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
 	require.NoError(t, err)
 	require.Len(t, red.Entries, 41)
@@ -784,11 +796,19 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 	// epoch rate alone.
 	change := e.unspentStake(dn.denom)
 	require.NotNil(t, change)
-	e.redelegate(vA, vB, change, uint64(200*ssErth))
+	_, rres := e.redelegate(vA, vB, change, uint64(200*ssErth))
 	require.Equal(t, rateA, e.state(vA).EpochRate)
 	vtA, err = voter(vA)
 	require.NoError(t, err)
 	require.Equal(t, wA, vtA.Weight)
+	// Both sides were re-filed at the end of the move's block (audit 7):
+	// the re-weigh set is empty again.
+	for _, v := range []sdk.ValAddress{vA, vB} {
+		has, err := e.app.ShieldedStakingKeeper.SlashedValidators.Has(e.ctx(), e.valoper(v))
+		require.NoError(t, err)
+		require.False(t, has)
+	}
+	require.NotEmpty(t, eventsOf(rres.Events, sstypes.EventTypeRedelegate))
 	e.invariants()
 
 	// Unlock the position: its derth merges into the A note; A's voter goes.

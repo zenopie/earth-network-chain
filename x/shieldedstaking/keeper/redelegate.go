@@ -260,6 +260,16 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 		pos = positions[len(positions)-1]
 	}
 
+	// Both books' Groundworks voters are re-filed at the end of the block
+	// (reweighSlashed), so neither keeps weight at a rate the move changed
+	// (audit 7).
+	if err := k.SlashedValidators.Set(ctx, m.SrcValidator); err != nil {
+		return nil, err
+	}
+	if err := k.SlashedValidators.Set(ctx, m.DstValidator); err != nil {
+		return nil, err
+	}
+
 	// 7. The move, while a slash of the source can reach its entry.
 	if entryHeight != 0 {
 		mv := types.Move{
