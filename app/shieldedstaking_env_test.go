@@ -492,7 +492,7 @@ func (e *stakeEnv) shield(amount uint64) *wnote {
 
 // spend describes one bundle: inputs (0..n) of asset denom, the value
 // leaving the pool as denom (valueOut), the change back to the wallet, and
-// an ERTH fee note paying fee (unless feeless).
+// an ERTH fee note paying fee.
 type spend struct {
 	denom    string
 	inputs   []*wnote
@@ -502,9 +502,6 @@ type spend struct {
 	// atSize leaves (a stake vote's snapshot root) instead of the current
 	// one; every input must be among them.
 	atSize uint64
-	// feeless pays no fee: no fee action (a stake vote's vote bundle, whose
-	// fee a second bundle pays; a msg paying its fee from its output).
-	feeless bool
 }
 
 // pendingBundle is a bundle built but not yet proven.
@@ -515,8 +512,6 @@ type pendingBundle struct {
 	fee uint64
 	in  []*wnote
 	out []*wnote
-	// also are bundles spent in the same msg, settled with this one.
-	also []*pendingBundle
 }
 
 // build lays out a bundle against the current tree (or the first atSize
@@ -526,9 +521,7 @@ type pendingBundle struct {
 func (e *stakeEnv) build(s spend) *pendingBundle {
 	e.t.Helper()
 	w := e.w
-	if s.feeless {
-		s.fee = 0
-	} else if s.fee == 0 {
+	if s.fee == 0 {
 		s.fee = ssFee
 	}
 	size := uint64(len(w.leaves))
@@ -561,12 +554,10 @@ func (e *stakeEnv) build(s spend) *pendingBundle {
 		p.in = append(p.in, n)
 		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{Spend: ps(n), Out: output(w.fresh(s.denom, v))})
 	}
-	if !s.feeless {
-		feeNote := w.unspentBefore("uerth", s.fee, size, append(append([]*wnote{}, s.inputs...), e.reserved...)...)
-		require.NotNil(e.t, feeNote, "no ERTH note to pay the fee")
-		p.in = append(p.in, feeNote)
-		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{Spend: ps(feeNote), Out: output(w.fresh("uerth", feeNote.value-s.fee))})
-	}
+	feeNote := w.unspentBefore("uerth", s.fee, size, append(append([]*wnote{}, s.inputs...), e.reserved...)...)
+	require.NotNil(e.t, feeNote, "no ERTH note to pay the fee")
+	p.in = append(p.in, feeNote)
+	p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{Spend: ps(feeNote), Out: output(w.fresh("uerth", feeNote.value-s.fee))})
 	for len(p.plan.Actions) < shieldedtypes.MinActionsPerBundle {
 		p.plan.Actions = append(p.plan.Actions, shieldedtest.PlanAction{Out: output(w.fresh(s.denom, 0))})
 	}
@@ -683,12 +674,10 @@ func unproven(msg shieldedtypes.PrivateMsg) {
 
 // settle marks a bundle executed: inputs spent, outputs tracked.
 func (e *stakeEnv) settle(p *pendingBundle) {
-	for _, q := range append([]*pendingBundle{p}, p.also...) {
-		for _, n := range q.in {
-			n.spent = true
-		}
-		e.w.track(q.out...)
+	for _, n := range p.in {
+		n.spent = true
 	}
+	e.w.track(p.out...)
 	e.w.scan(e)
 }
 
