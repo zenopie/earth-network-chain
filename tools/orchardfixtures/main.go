@@ -6,6 +6,7 @@
 // Go<->Noir parity check for the value bases, R and the value commitments.
 //
 //	go run ./tools/orchardfixtures <n> <outdir>
+//	go run ./tools/orchardfixtures over <outdir>
 //
 // The bundle (a private ANML send paying an ERTH fee):
 //
@@ -19,6 +20,16 @@
 //	        and, if one is left, spend ERTH 7 -> out ERTH 7
 //
 // Balance: ERTH 10_000 (the fee), every other asset 0.
+//
+// over: a balanced 2-action bundle whose first output is 2^63, one above a
+// note's maximum (ORCHARD_DESIGN section 16), which the action circuit
+// refuses; nargo execute fails on action_0 by design
+// (scripts/orchard-bundles.sh proves it against an unbounded twin):
+//
+//	spend ERTH 2^63-1 -> out ERTH 2^63
+//	spend ERTH 10_001 -> out ERTH 0 (dummy output)
+//
+// Balance: ERTH 10_000 (the fee).
 package main
 
 import (
@@ -26,6 +37,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -118,15 +130,27 @@ func specs(n int) []spec {
 	return s
 }
 
+// overSpecs is the "over" bundle: an output of 2^63 the circuit refuses.
+func overSpecs() []spec {
+	erth := privacy.AssetID("uerth")
+	return []spec{{erth, 1<<63 - 1, erth, 1 << 63}, {erth, 10_001, erth, 0}}
+}
+
 func main() {
 	if len(os.Args) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: orchardfixtures <n> <outdir>")
+		fmt.Fprintln(os.Stderr, "usage: orchardfixtures <n>|over <outdir>")
 		os.Exit(2)
 	}
-	n, err := strconv.Atoi(os.Args[1])
-	must(err)
+	var ss []spec
+	if os.Args[1] == "over" {
+		ss = overSpecs()
+	} else {
+		n, err := strconv.Atoi(os.Args[1])
+		must(err)
+		ss = specs(n)
+	}
+	n := len(ss)
 	out := os.Args[2]
-	ss := specs(n)
 
 	// Note tree: unrelated notes, with the real spends at positions 3, 6, 9, ...
 	t := merkle.NewMem()
@@ -160,7 +184,7 @@ func main() {
 	rcvs := make([]fr.Element, n)
 	outPC := make([]fr.Element, n)
 	paths := make([]string, n)
-	bal := map[fr.Element]int64{}
+	bal := map[fr.Element]*big.Int{}
 	for i, s := range ss {
 		rcvs[i] = det("rcv", uint64(i))
 		outPC[i] = privacy.PC(privacy.OwnerPK(det("recipient", uint64(i))), det("orho", uint64(i)), det("orcm", uint64(i)))
@@ -183,16 +207,21 @@ func main() {
 			Cv:         orchard.ValueCommit(s.sAsset, s.sValue, s.oAsset, s.oValue, rcvs[i]),
 			Ciphertext: ct,
 		})
-		bal[s.sAsset] += int64(s.sValue)
-		bal[s.oAsset] -= int64(s.oValue)
+		for _, a := range []fr.Element{s.sAsset, s.oAsset} {
+			if bal[a] == nil {
+				bal[a] = new(big.Int)
+			}
+		}
+		bal[s.sAsset].Add(bal[s.sAsset], new(big.Int).SetUint64(s.sValue))
+		bal[s.oAsset].Sub(bal[s.oAsset], new(big.Int).SetUint64(s.oValue))
 	}
 	erth := privacy.AssetID("uerth")
 	for a, v := range bal {
-		if a != erth && v != 0 {
+		if (a != erth && v.Sign() != 0) || v.Sign() < 0 || !v.IsUint64() {
 			panic("fixture unbalanced")
 		}
 	}
-	b.Balances = []orchard.Balance{{Asset: erth, Value: uint64(bal[erth])}}
+	b.Balances = []orchard.Balance{{Asset: erth, Value: bal[erth].Uint64()}}
 
 	const msgType, chainID = "/earth.orchard.fixture", "earth-1"
 	tx := orchard.TxFields{Memo: "orchard fixture", TimeoutHeight: 1_000_000, GasLimit: 3_000_000}

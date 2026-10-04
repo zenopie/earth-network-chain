@@ -3,6 +3,7 @@ package ultrahonk
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,7 +65,12 @@ func bhex(t testing.TB, s string) []byte {
 // sighash (which must equal the one the proofs bind).
 func loadBundle(t testing.TB, n int) (*orchard.Bundle, fr.Element, []byte) {
 	t.Helper()
-	dir := filepath.Join("testdata", "orchard", fmt.Sprintf("bundle_%d", n))
+	return loadBundleDir(t, fmt.Sprintf("bundle_%d", n))
+}
+
+func loadBundleDir(t testing.TB, name string) (*orchard.Bundle, fr.Element, []byte) {
+	t.Helper()
+	dir := filepath.Join("testdata", "orchard", name)
 	raw, err := os.ReadFile(filepath.Join(dir, "bundle.json"))
 	if err != nil {
 		t.Skipf("fixture missing (%v); run scripts/orchard-bundles.sh", err)
@@ -149,6 +155,30 @@ func TestOrchardBundles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestOrchardOutputAboveNoteMax: a bundle spending 2^63-1 + 10_001 ERTH into
+// an output of 2^63, one above a note's maximum (ORCHARD_DESIGN section 16),
+// a dummy output and a 10_000 fee. It balances and its binding signature holds; the honest
+// action's proof verifies; action 0's proof, made by bb with the real circuit
+// from a witness only a twin without the note bound accepts
+// (scripts/orchard-bundles.sh), does not. The chain refuses the bundle at
+// action 0.
+func TestOrchardOutputAboveNoteMax(t *testing.T) {
+	b, sighash, vk := loadBundleDir(t, "over_note_max")
+	if err := b.CheckBalance(sighash, orchard.CanonicalBase); err != nil {
+		t.Fatalf("the bundle should balance: %v", err)
+	}
+	if ok, err := Verify(vk, b.Actions[1].Proof, b.PublicInputs(1, sighash)); err != nil || !ok {
+		t.Fatalf("honest action 1: ok=%v err=%v", ok, err)
+	}
+	if ok, _ := Verify(vk, b.Actions[0].Proof, b.PublicInputs(0, sighash)); ok {
+		t.Fatal("a proof of an output of 2^63 verified")
+	}
+	var ae *orchard.ActionError
+	if err := b.Verify(sighash, orchard.CanonicalBase, verifier(vk)); !errors.As(err, &ae) || ae.Action != 0 {
+		t.Fatalf("bundle: want action 0 refused, got %v", err)
 	}
 }
 
