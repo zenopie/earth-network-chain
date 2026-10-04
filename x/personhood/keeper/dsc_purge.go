@@ -8,7 +8,7 @@ import (
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	"github.com/earth-network/earth/internal/safeexec"
+	"github.com/earth-network/earth/x/personhood/types"
 )
 
 // Retiring the registrations a revoked Document Signer produced.
@@ -69,13 +69,23 @@ func (k Keeper) purgeRevokedDscs(ctx context.Context, budget int) (int, error) {
 		victims []victim
 		drained [][]byte // signers whose registrations are all gone
 	)
+	// A registration a sweep failed to retire is passed over until its retry
+	// time (audit 6 B6-5), within a bound on the entries scanned; a signer
+	// whose remaining registrations are all waiting stays pending.
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	scanned := 0
 	err := k.PendingDscPurge.Walk(ctx, nil, func(dscKey []byte) (bool, error) {
 		found := 0
 		rng := collections.NewPrefixedPairRange[[]byte, []byte](dscKey)
 		if err := k.RegByDsc.Walk(ctx, rng, func(key collections.Pair[[]byte, []byte]) (bool, error) {
-			victims = append(victims, victim{dsc: dscKey, nullifier: key.K2()})
 			found++
-			return len(victims) >= budget, nil
+			scanned++
+			if waiting, err := k.sweepRetrying(ctx, key.K2(), now); err != nil {
+				return true, err
+			} else if !waiting {
+				victims = append(victims, victim{dsc: dscKey, nullifier: key.K2()})
+			}
+			return len(victims) >= budget || scanned >= budget*types.SweepScanFactor, nil
 		}); err != nil {
 			return true, err
 		}
@@ -83,7 +93,7 @@ func (k Keeper) purgeRevokedDscs(ctx context.Context, budget int) (int, error) {
 			// Nothing left under this signer: the purge for it is complete.
 			drained = append(drained, dscKey)
 		}
-		return len(victims) >= budget, nil
+		return len(victims) >= budget || scanned >= budget*types.SweepScanFactor, nil
 	})
 	if err != nil {
 		return 0, err
@@ -113,9 +123,9 @@ func (k Keeper) purgeRevokedDscs(ctx context.Context, budget int) (int, error) {
 			}
 			return 0, err
 		}
-		safeexec.Item(sdk.UnwrapSDKContext(ctx), "personhood", "purge_registration", func(c sdk.Context) error {
-			return k.removeRegistration(c, reg)
-		})
+		if err := k.retireOrRetryLater(ctx, reg, "purge_registration", now); err != nil {
+			return 0, err
+		}
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(

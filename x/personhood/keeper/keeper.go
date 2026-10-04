@@ -62,6 +62,9 @@ type Keeper struct {
 	// on the chain. PendingDscPurge is the set still being worked through.
 	RegByDsc        collections.KeySet[collections.Pair[[]byte, []byte]]
 	PendingDscPurge collections.KeySet[[]byte]
+	// SweepRetry: registrations a sweep failed to retire, passed over until
+	// the time held (see sweepRetrying).
+	SweepRetry collections.Map[[]byte, int64]
 
 	// The identity tree and its anchors. See identity.go.
 	IdentityNodes       collections.Map[collections.Pair[uint32, uint64], []byte]
@@ -163,6 +166,7 @@ func NewKeeper(
 
 		RegByDsc:        collections.NewKeySet(sb, types.RegByDscKey, "reg_by_dsc", pairBytes),
 		PendingDscPurge: collections.NewKeySet(sb, types.PendingDscPurgeKey, "pending_dsc_purge", collections.BytesKey),
+		SweepRetry:      collections.NewMap(sb, types.SweepRetryKey, "sweep_retry", collections.BytesKey, collections.Int64Value),
 
 		IdentityNodes: collections.NewMap(sb, types.IdentityNodesKey, "identity_nodes",
 			collections.PairKeyCodec(collections.Uint32Key, collections.Uint64Key), collections.BytesValue),

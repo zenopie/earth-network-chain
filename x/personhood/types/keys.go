@@ -360,7 +360,20 @@ var (
 
 	// LeaseHoldKey: types.LeaseHold, the lowered-lease-length hold.
 	LeaseHoldKey = collections.NewPrefix("lease_hold")
+
+	// SweepRetryKey maps a registration the expiry or purge sweep failed to
+	// retire to when the sweeps may try it again (audit 6 B6-5). Not
+	// exported: an import retries everything.
+	SweepRetryKey = collections.NewPrefix("sweep_retry")
 )
+
+// SweepRetrySeconds is how long a registration the sweeps failed to retire
+// is passed over before they try it again: a day.
+const SweepRetrySeconds = 24 * 60 * 60
+
+// SweepScanFactor bounds how many index entries a sweep may pass over (ones
+// waiting out SweepRetrySeconds) per entry of its budget.
+const SweepScanFactor = 8
 
 // UsedBindingGraceSeconds is added to current_date_max_skew_seconds for how
 // long a landed registration's binding is refused: current_date is a day

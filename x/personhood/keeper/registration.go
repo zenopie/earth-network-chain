@@ -393,14 +393,24 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int,
 	}
 
 	// Collect first: removeRegistration writes to the index being walked.
+	// A registration a sweep failed to retire is passed over until its retry
+	// time (audit 6 B6-5: it stays at the head of the index, and a budget's
+	// worth of them would otherwise stop the sweep for good), within a bound
+	// on the entries scanned.
 	var expired []collections.Pair[int64, []byte]
+	scanned := 0
 	err = k.RegByRegisteredAt.Walk(ctx, nil, func(key collections.Pair[int64, []byte]) (bool, error) {
 		// isExpired is now > registered_at + validity, i.e. registered_at < cutoff.
 		if key.K1() >= cutoff {
 			return true, nil
 		}
-		expired = append(expired, key)
-		return len(expired) >= budget, nil
+		scanned++
+		if waiting, err := k.sweepRetrying(ctx, key.K2(), now); err != nil {
+			return true, err
+		} else if !waiting {
+			expired = append(expired, key)
+		}
+		return len(expired) >= budget || scanned >= budget*types.SweepScanFactor, nil
 	})
 	if err != nil {
 		return 0, err
@@ -417,9 +427,9 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int,
 		}
 		// Per entry, recovering panics: one registration that cannot be
 		// retired is skipped, not a halt and not the end of the sweep.
-		safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, "expire_registration", func(c sdk.Context) error {
-			return k.removeRegistration(c, reg)
-		})
+		if err := k.retireOrRetryLater(ctx, reg, "expire_registration", now); err != nil {
+			return 0, err
+		}
 	}
 	if len(expired) >= budget {
 		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
@@ -430,6 +440,31 @@ func (k Keeper) sweepExpiredRegistrations(ctx context.Context, budget int) (int,
 		))
 	}
 	return len(expired), nil
+}
+
+// sweepRetrying reports whether a sweep failed to retire the registration
+// under nullifier and is waiting out its retry time.
+func (k Keeper) sweepRetrying(ctx context.Context, nullifier []byte, now int64) (bool, error) {
+	at, err := k.SweepRetry.Get(ctx, nullifier)
+	if errors.Is(err, collections.ErrNotFound) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return now < at, nil
+}
+
+// retireOrRetryLater removes reg in its own cache, recovering panics. If it
+// cannot be retired the failure is logged and evented (safeexec.Item) and the
+// sweeps pass it over for types.SweepRetrySeconds; once retired, any retry
+// record goes.
+func (k Keeper) retireOrRetryLater(ctx context.Context, reg types.Registration, stage string, now int64) error {
+	if safeexec.Item(sdk.UnwrapSDKContext(ctx), types.ModuleName, stage, func(c sdk.Context) error {
+		return k.removeRegistration(c, reg)
+	}) {
+		return k.SweepRetry.Remove(ctx, reg.Nullifier)
+	}
+	return k.SweepRetry.Set(ctx, reg.Nullifier, now+types.SweepRetrySeconds)
 }
 
 // markBindingUsed records a landed registration's binding, refused for reuse
