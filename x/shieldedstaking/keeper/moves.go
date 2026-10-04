@@ -117,19 +117,31 @@ func (k Keeper) ClearBefore(ctx context.Context) (uint64, error) {
 	return uint64(now) - w, nil
 }
 
-// checkStakeClear: a proof that may clear a label (clear_before > 0) names a
-// clear_before the label window allows now, and reads the current debt
-// root. The circuit clears only a label with move_time < clear_before.
+// checkStakeClear: every stake proof names the label window's current
+// clear_before and the current debt root (audit 7, B L-1 / A7-L3), whether or
+// not it clears a label, so a proof that clears one looks like every other:
+// clear_before within ClearBeforeSlackSeconds below ClearBefore(now) (the
+// proof was made against a recent block), and the debt root current. (Both
+// are 0 only while the block time is less than the window, which no real
+// chain sees.) The circuit clears only a label with move_time <
+// clear_before, and checks nothing about either when it clears none.
 func (k Keeper) checkStakeClear(ctx context.Context, p *types.StakeProof) error {
-	if p.ClearBefore == 0 {
-		return nil
-	}
 	cb, err := k.ClearBefore(ctx)
 	if err != nil {
 		return err
 	}
-	if p.ClearBefore > cb {
-		return types.ErrStakeTree.Wrapf("clear_before %d is after %d: labels newer than that may still be slashed", p.ClearBefore, cb)
+	if cb == 0 {
+		if p.ClearBefore != 0 {
+			return types.ErrStakeTree.Wrapf("clear_before must be 0 while the block time is within the label window (it is %d)", p.ClearBefore)
+		}
+		return nil
+	}
+	lo := uint64(1)
+	if cb > types.ClearBeforeSlackSeconds {
+		lo = cb - types.ClearBeforeSlackSeconds
+	}
+	if p.ClearBefore < lo || p.ClearBefore > cb {
+		return types.ErrStakeTree.Wrapf("clear_before %d is not within [%d, %d]: name the label window's current clear_before (Query/DebtTree)", p.ClearBefore, lo, cb)
 	}
 	return k.checkDebtRoot(ctx, p.DebtRoot)
 }

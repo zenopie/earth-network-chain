@@ -211,8 +211,11 @@ type StakeLanes struct {
 
 // ValidateBasic checks a stake proof's form: a proof, every field a canonical
 // 32-byte element, exactly two lane A nullifiers, the non-zero nullifiers
-// distinct, and a 153-byte wallet stake ciphertext exactly for each non-zero
-// commitment. Which slots a msg must use is shape's.
+// distinct, a zero debt_root with a zero clear_before, and a 201-byte
+// (privacy.WalletStakeCiphertextBytes) wallet stake ciphertext exactly for
+// each non-zero commitment. Which slots a msg must use is shape's; that
+// clear_before and debt_root are the current ones, the keeper's
+// (checkStakeClear).
 func (p *StakeProof) ValidateBasic() error {
 	if err := shieldedtypes.CheckProofLength(p.Proof); err != nil {
 		return errorsmod.Wrapf(ErrInvalidMsg, "stake proof: %v", err)
@@ -237,10 +240,10 @@ func (p *StakeProof) ValidateBasic() error {
 			return err
 		}
 	}
-	// A proof that clears nothing (clear_before 0) reads no debt root: one
-	// encoding, the zero root.
+	// clear_before 0 (a chain younger than the label window) reads no debt
+	// root: one encoding, the zero root.
 	if p.ClearBefore == 0 && !isZero(p.DebtRoot) {
-		return errorsmod.Wrap(ErrInvalidMsg, "debt_root is zero when clear_before is 0 (the proof clears no label)")
+		return errorsmod.Wrap(ErrInvalidMsg, "debt_root is zero when clear_before is 0")
 	}
 	seen := map[string]bool{}
 	for _, nf := range p.SpentNullifiers() {

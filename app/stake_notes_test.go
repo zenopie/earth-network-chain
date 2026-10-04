@@ -250,18 +250,25 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 	if li := sp.labelledIn(); li != nil && !sp.clear && sp.out != nil {
 		sp.out.moveKey, sp.out.moveTime, sp.out.exposed = li.moveKey, li.moveTime, li.exposed
 	}
+	// Every proof names the label window's current clear_before and the
+	// current debt root once the chain is a window old (audit 7, B L-1),
+	// whether it clears a label or not.
+	cb, err := e.app.ShieldedStakingKeeper.ClearBefore(e.ctx())
+	require.NoError(e.t, err)
 	if sp.clear {
 		require.NotNil(e.t, sp.labelledIn(), "nothing to clear")
-		cb, err := e.app.ShieldedStakingKeeper.ClearBefore(e.ctx())
-		require.NoError(e.t, err)
+	}
+	if cb > 0 || sp.clear {
 		p.ClearBefore = cb
 		t := e.debtTree()
 		root, err := t.Root()
 		require.NoError(e.t, err)
 		p.DebtRoot = privacy.FieldBytes(root)
-		w, err := t.Lookup(sp.labelledIn().moveKey)
-		require.NoError(e.t, err)
-		sp.debtW = &w
+		if sp.clear {
+			w, err := t.Lookup(sp.labelledIn().moveKey)
+			require.NoError(e.t, err)
+			sp.debtW = &w
+		}
 	}
 	if !sp.noSpend {
 		out := sp.out

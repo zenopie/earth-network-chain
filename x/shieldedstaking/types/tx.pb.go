@@ -158,7 +158,12 @@ type StakeProof struct {
 	// nullifiers: exactly two (lane A), 32 bytes each; zero for no input.
 	Nullifiers [][]byte `protobuf:"bytes,3,rep,name=nullifiers,proto3" json:"nullifiers,omitempty"`
 	// owner_tag is H(TAG_OTAG, owner_pk, salt) (32 bytes): stored by
-	// LockPosition, compared by a position's later msgs.
+	// LockPosition, compared by a position's later msgs. Every proof publishes
+	// it, so the salt is a fresh random field element on every proof that does
+	// not act on a position (MsgDelegate, MsgUndelegate, MsgRedelegate,
+	// MsgRestake): a salt used twice links the two txs to one owner. A
+	// MsgLockPosition's salt is fresh too and stays that position's; the
+	// position's later msgs (update, vote, unlock) reuse it, as they must.
 	OwnerTag []byte `protobuf:"bytes,7,opt,name=owner_tag,json=ownerTag,proto3" json:"owner_tag,omitempty"`
 	// commitment is lane A's output (32 bytes): the owner's merged note, change
 	// or a padding zero note; zero for none. Appended to the stake tree first.
@@ -178,12 +183,15 @@ type StakeProof struct {
 	// is non-zero, else empty.
 	CreditCiphertext []byte `protobuf:"bytes,13,opt,name=credit_ciphertext,json=creditCiphertext,proto3" json:"credit_ciphertext,omitempty"`
 	// clear_before lets lane A clear a slash label whose move_time is below it
-	// (the circuit's clear_before): at most the block time less the label
-	// window (Query/DebtTree's clear_before; 0 when the proof clears nothing).
+	// (the circuit's clear_before). Every stake proof names it, whether or not
+	// it clears a label, so that one which does looks like every other: the
+	// label window's current clear_before (Query/DebtTree's clear_before: the
+	// block time less window_seconds) as of a recent block, within
+	// ClearBeforeSlackSeconds (3600) below the including block's.
 	ClearBefore uint64 `protobuf:"varint,14,opt,name=clear_before,json=clearBefore,proto3" json:"clear_before,omitempty"`
-	// debt_root is the slash debt tree's root the proof reads (32 bytes): it
-	// must be the current one (it changes only when a slash reaches a
-	// redelegation, at the start of a block).
+	// debt_root is the slash debt tree's root (32 bytes, Query/DebtTree's
+	// root): the current one on every proof. It changes only when a slash
+	// reaches a redelegation, at the start of a block.
 	DebtRoot []byte `protobuf:"bytes,15,opt,name=debt_root,json=debtRoot,proto3" json:"debt_root,omitempty"`
 }
 
