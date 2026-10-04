@@ -29,7 +29,7 @@ import (
 //     the module's SDK entries' initial balances, and each record's creation
 //     height has an entry.
 //  4. Rate: per validator, pending_undelegation == its PENDING records'
-//     targets, D + W + P >= U (the notes minted this epoch can be paid), and
+//     targets, D + W + P >= U (the undelegations booked this epoch can be paid), and
 //     derth_supply_v x rate_v == D + W + P - U. Tolerance: rate_v is an
 //     18-decimal LegacyDec, so the product may fall short of the backing by
 //     at most ceil(supply x 1e-18) + 1 uerth; it never exceeds it.

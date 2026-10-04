@@ -162,7 +162,7 @@ func DecryptNote(ct []byte, cm fr.Element, ek [32]byte) (NotePlaintext, error) {
 // A v1 ciphertext needs the note's cm, so its value, when it is made. Notes
 // whose value the chain decides when the msg runs cannot have one: a dex
 // swap's output (MsgBuyAnml, MsgNoteSwap), an LP withdrawal priced at
-// maturity, a derth mint at the live rate. For those the sender encrypts only
+// maturity, an undelegation payout priced at maturity. For those the sender encrypts only
 // the secrets the recipient cannot learn from the chain:
 //
 //	ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 12 zero bytes, aad = none, pt)

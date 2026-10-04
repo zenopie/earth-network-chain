@@ -399,11 +399,11 @@ message MsgPositionVoteResponse {}
 // cr_v_in = dst_derth) spends the owner's existing derth/<dst> note (or a
 // padding input) and creates the merged derth/<dst> note, which must be
 // unlabelled. The chain moves the spent derth's live ERTH value u from src's
-// book to dst's (out of src's delegation queue first, then the rest of the
-// module's bonded stake, unbonded at src and bonded at dst at once, with a
-// redelegation entry the module records itself) and refuses dst_derth unless
-// what arrived buys
-// it at dst's live rate: dst_derth <= floor(arrived x S_dst / B_dst) (=
+// book to dst's (pro rata to the book's queue and bonded part, queue first
+// only when no slash can reach src: src unbonded, or nothing bonded; the
+// bonded part unbonded at src and bonded at dst at once, with a redelegation
+// entry the module records itself) and refuses dst_derth unless what arrived
+// buys it at dst's live rate: dst_derth <= floor(arrived x S_dst / B_dst) (=
 // arrived while S_dst is 0), and dst_derth >= min_delegation. What arrived
 // beyond dst_derth stays in dst's book. bundle pays the fee only.
 //
@@ -440,9 +440,8 @@ message MsgRedelegate {
 
 // MsgRedelegateResponse: the ERTH value moved, the derth/<dst_validator>
 // credited and the merged stake note's position, and when x/staking's
-// redelegation entry completes (unix ns; 0 when none was made: the value
-// moved out of the source's delegation queue alone, or the source was not
-// bonded).
+// redelegation entry completes (unix ns; 0 when none was made: nothing
+// bonded moved, or the source was unbonded).
 message MsgRedelegateResponse {
   uint64 value = 1;
   uint64 derth = 2;

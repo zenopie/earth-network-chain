@@ -16,7 +16,8 @@ message Params {
   // of Params (see x/personhood Params).
   option (gogoproto.stable_marshaler) = true;
 
-  // verifying_keys maps a circuit name ("action", "membership") to its
+  // verifying_keys maps a circuit name ("action", "membership", "stake",
+  // "vote") to its
   // Barretenberg UltraHonk (bb v5.0.0) verifying key. A private msg whose
   // circuit has no key is refused.
   map<string, bytes> verifying_keys = 1;

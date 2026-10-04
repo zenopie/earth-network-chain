@@ -393,7 +393,8 @@ func withStake(p *StakeProof, fields ...fr.Element) []fr.Element {
 // its note, and the same note's votes across proposals. Every wallet rounds
 // the weight down to this many digits, and the chain refuses any other, so
 // all weights fall in the same buckets (audit 6 C-L3). The circuit asks only
-// 0 < weight <= amount.
+// 0 < weight <= the voted notes' value (a labelled note at amount - exposed +
+// retained).
 const VoteWeightSigFigs = 3
 
 // RoundVoteWeight rounds w down to VoteWeightSigFigs significant digits.

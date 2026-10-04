@@ -1034,8 +1034,8 @@ func (m *MsgNoteSwap) GetAmountIn() uint64 {
 	return 0
 }
 
-// MsgNoteSwapResponse returns the swap's output (before any fee from output)
-// and the minted note's position.
+// MsgNoteSwapResponse returns the swap's output (all of it minted to pc) and
+// the minted note's position.
 type MsgNoteSwapResponse struct {
 	TokenOut types.Coin `protobuf:"bytes,1,opt,name=token_out,json=tokenOut,proto3" json:"token_out"`
 	Position uint64     `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`

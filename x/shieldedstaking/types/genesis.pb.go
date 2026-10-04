@@ -60,7 +60,7 @@ type GenesisState struct {
 	UnbondPayouts      []UnbondPayout `protobuf:"bytes,17,rep,name=unbond_payouts,json=unbondPayouts,proto3" json:"unbond_payouts"`
 	NextUnbondPayoutId uint64         `protobuf:"varint,18,opt,name=next_unbond_payout_id,json=nextUnbondPayoutId,proto3" json:"next_unbond_payout_id,omitempty"`
 	// moves are the private redelegations a slash of their source can still
-	// reach (each with an x/staking entry, or none when nothing was bonded).
+	// reach, each with its x/staking entry.
 	Moves []Move `protobuf:"bytes,19,rep,name=moves,proto3" json:"moves"`
 	// debt_rows are the slash debt tree's rows in insertion order, each with
 	// its latest retained value (InitGenesis rebuilds the same tree).

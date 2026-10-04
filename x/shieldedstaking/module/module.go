@@ -109,8 +109,9 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, _ codec.JSONCodec) json.RawMe
 // ConsensusVersion is the module's state-machine version.
 func (AppModule) ConsensusVersion() uint64 { return 1 }
 
-// BeginBlock puts back what a slash of a redelegation's source set aside
-// this block (keeper.BeginBlocker); it runs after x/slashing and x/evidence.
+// BeginBlock settles the last watched slash of a redelegation's source into
+// slash debt and puts back what it set aside (keeper.BeginBlocker); it runs
+// after x/slashing and x/evidence.
 func (am AppModule) BeginBlock(ctx context.Context) error {
 	return am.keeper.BeginBlocker(ctx)
 }

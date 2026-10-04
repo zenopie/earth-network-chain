@@ -205,8 +205,9 @@ func Bytes(b []byte) fr.Element {
 //	signal = H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id), fields...)
 //
 // A private msg's sighash (zk/orchard.Sighash) is Signal over its type URL,
-// chain id, bundle count, bundle digests and own fields: the value its action
-// proofs and binding signatures bind, and its membership proof's signal.
+// chain id, bundle count, bundle digests, Bytes(memo), timeout_height,
+// gas_limit and own fields: the value its action proofs and binding
+// signatures bind, and its membership, stake or vote proof's signal.
 //
 // msg_type is the enclosing msg's type URL ("/earth.shielded.v1.MsgSend"),
 // so one proof can never be replayed as a different kind of msg; chain_id

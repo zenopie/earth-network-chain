@@ -1109,9 +1109,9 @@ func countVotes(t *testing.T, e *stakeEnv, prop uint64) int {
 	return n
 }
 
-// Groundworks is weighted by positions: an account's bonded stake no longer
-// votes; a position votes derth x epoch rate, re-weighed every epoch, and is
-// driven by its own key inside unsigned txs.
+// Groundworks is weighted by positions: a position votes derth x epoch rate
+// (one voter per validator), re-weighed every epoch, and its owner acts on
+// it with a stake proof of its owner tag.
 func TestGroundworksPositions(t *testing.T) {
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)

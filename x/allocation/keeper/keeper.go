@@ -156,10 +156,10 @@ func NewKeeper(
 	}
 	k.Schema = schema
 
-	// The capital stream's weight source lives here rather than in x/earth: this
-	// module already holds both halves of it (bonded stake from staking, the
-	// compounding index from earth) and owns the staking hooks that keep it
-	// current.
+	// The capital stream's default weight source (bonded stake). In the app,
+	// x/shieldedstaking replaces it at wiring with its own
+	// (RegisterWeightSource: positions per validator, operators' self-bonds
+	// at Bonded validators); this one remains for keeper tests.
 	k.weightSources[types.STREAM_ID_GROUNDWORKS] = capitalWeightSource{k: k}
 
 	return k

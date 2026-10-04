@@ -40,7 +40,7 @@ type Params struct {
 	// for its proposal).
 	StakeRootWindowSeconds uint64 `protobuf:"varint,4,opt,name=stake_root_window_seconds,json=stakeRootWindowSeconds,proto3" json:"stake_root_window_seconds,omitempty"`
 	// min_delegation is the smallest private delegation, in uerth, and the
-	// least derth one may mint. It keeps validator books from being created
+	// least derth one may credit. It keeps validator books from being created
 	// for dust (every book is processed at epoch end) and bounds the rounding
 	// a donation to the validator's rewards pool can inflict on a delegator.
 	MinDelegation cosmossdk_io_math.Int `protobuf:"bytes,5,opt,name=min_delegation,json=minDelegation,proto3,customtype=cosmossdk.io/math.Int" json:"min_delegation"`

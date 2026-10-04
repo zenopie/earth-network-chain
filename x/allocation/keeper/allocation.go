@@ -405,7 +405,7 @@ func voterContributions(v types.Voter) []contribution {
 // + `add_new_allocations`.
 //
 // weight arrives already resolved — the human stream's fixed per-human weight,
-// or a staker's normalized bonded stake. Nothing here knows which stream it is
+// or the stake weight the capital stream's weight source reports. Nothing here knows which stream it is
 // working on, which is the point.
 func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz []byte, percentages []types.AllocationWeight, weight math.Int) error {
 	// Options pruned since the vote leave the split here (audit 6 D-L-A1):

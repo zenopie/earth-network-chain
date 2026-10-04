@@ -17,9 +17,8 @@ import (
 //
 //   - The pool account takes coins only from this keeper (MsgShield,
 //     MintNote), which counts them into the turnstile as it moves them. The
-//     account is deliberately not on the bank's blocked list — distribution
-//     must be able to pay it once private staking lands — so this is what
-//     keeps its balance exactly In - Out. A stray deposit would otherwise halt
+//     account is not on the bank's blocked list, so this is what keeps its
+//     balance exactly In - Out. A stray deposit would otherwise halt
 //     the chain at the next invariant check.
 //   - A shielded-only denom (uanml) may only go to the listed module
 //     accounts: the pool itself and the modules that hold it in the open

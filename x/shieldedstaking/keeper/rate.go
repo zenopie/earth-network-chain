@@ -31,7 +31,7 @@ import (
 //	     never a coin)
 //
 // Every conversion uses the live B_v and S_v, in integers, rounding toward the
-// pool: a delegation of a mints floor(a * S / B) derth; an undelegation of d
+// pool: a delegation of a may credit at most floor(a * S / B) derth; an undelegation of d
 // is worth floor(d * B / S). Live, not the last epoch's rate, for two reasons:
 //
 //   - a slash lowers D_v the moment it lands. A stale rate would let whoever
@@ -40,8 +40,8 @@ import (
 //   - rewards accrue in W_v every block. Without them a delegation made just
 //     before the epoch end would buy a whole epoch's rewards it did not earn.
 //
-// Slashes also hit U_v (see hooks.go): notes minted this epoch are still
-// bonded until the epoch ends, so they take their share.
+// Slashes also hit U_v (see hooks.go): undelegations booked this epoch are
+// still bonded until the epoch ends, so they take their share.
 
 // ValidatorState returns v's book, zero if none.
 func (k Keeper) ValidatorState(ctx context.Context, valoper string) (types.ValidatorState, error) {
@@ -157,8 +157,8 @@ func rateOf(b, s math.Int) math.LegacyDec {
 	return math.LegacyNewDecFromInt(b).QuoInt(s)
 }
 
-// derthFor is the derth a delegation of amount mints: floor(a * S / B), or a
-// while nothing is outstanding.
+// derthFor is the most derth a delegation of amount may credit:
+// floor(a * S / B), or a while nothing is outstanding.
 func derthFor(amount, backing, supply math.Int) (math.Int, error) {
 	if !supply.IsPositive() {
 		return amount, nil

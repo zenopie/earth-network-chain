@@ -440,9 +440,10 @@ func (k msgServer) Redelegate(ctx context.Context, m *types.MsgRedelegate) (*typ
 	return r, nil
 }
 
-// ExecutesInAnte: a redelegation runs atomically with its spend, so that
-// x/staking's refusal (its limits are shared by every private staker, so
-// they can change between CheckTx and the block) costs nothing.
+// ExecutesInAnte: a redelegation runs atomically with its spend. Its credit is
+// priced against both books' live rates and x/staking's Unbond and Delegate,
+// all of which can change between CheckTx and the block, so a refusal costs
+// nothing.
 func (h ActionHandler) ExecutesInAnte(msg shieldedtypes.PrivateMsg) bool {
 	_, ok := msg.(*types.MsgRedelegate)
 	return ok
@@ -475,7 +476,8 @@ func (h ActionHandler) ExecutePrivateAction(ctx sdk.Context, msg shieldedtypes.P
 //     (other people, who left dst and never staked at src), and the slash
 //     would take from them up to the whole amount besides. Set aside, the
 //     slash takes exactly slash_fraction x the entry's shares from the
-//     module's delegation at dst: dst's book absorbs it, pro rata;
+//     module's delegation at dst, and the burn becomes slash debt of the
+//     moves it reached (next point), so dst's rate does not move;
 //   - the slash is watched (openSlashWatch): what it burns at dst becomes the
 //     slash debt of the moves it reached (moves.go);
 //   - dst is re-weighed at the end of the block.

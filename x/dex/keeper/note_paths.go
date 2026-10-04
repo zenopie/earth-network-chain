@@ -141,7 +141,7 @@ func (h ActionHandler) VerifyPrivateAction(context.Context, shieldedtypes.Privat
 // atomically with their spend.
 func (h ActionHandler) ExecutesInAnte(shieldedtypes.PrivateMsg) bool { return true }
 
-// ExecutePrivateAction runs the swap or deposit for the ante.
+// ExecutePrivateAction runs the swap, deposit or withdrawal for the ante.
 func (h ActionHandler) ExecutePrivateAction(ctx sdk.Context, msg shieldedtypes.PrivateMsg, _ any) (any, error) {
 	switch m := msg.(type) {
 	case *types.MsgNoteSwap:

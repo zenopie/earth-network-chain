@@ -231,7 +231,8 @@ func (m *MsgRegisterAssetResponse) GetAssetId() []byte {
 // and fee-paying like any transparent tx.
 type MsgShield struct {
 	Sender string `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
-	// amount of a registered denom, at most 2^64 - 1 (note values are u64).
+	// amount of a registered denom, at most 2^63 - 1 (MaxNoteValue: what
+	// every wallet holds).
 	Amount types.Coin `protobuf:"bytes,2,opt,name=amount,proto3" json:"amount"`
 	// pc = H(TAG_PC, owner_pk, rho, rcm), 32 bytes.
 	Pc []byte `protobuf:"bytes,3,opt,name=pc,proto3" json:"pc,omitempty"`
@@ -377,8 +378,8 @@ type MsgSend struct {
 	// balances exceed the fee.
 	Receiver string `protobuf:"bytes,2,opt,name=receiver,proto3" json:"receiver,omitempty"`
 	// fee is the uerth the bundle pays to fee_collector; the tx's declared fee
-	// must equal it. An unshield of uerth pays it out of what it releases (a
-	// fee from output), with no separate fee note.
+	// must equal it. An unshield of uerth pays it out of what it releases,
+	// with no separate fee note.
 	Fee uint64 `protobuf:"varint,3,opt,name=fee,proto3" json:"fee,omitempty"`
 }
 

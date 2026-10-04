@@ -99,8 +99,8 @@ func feeEvents(t *testing.T, res *abci.ExecTxResult) []map[string]string {
 	return eventsOf(res.Events, shieldedtypes.EventTypeFee)
 }
 
-// Swaps between notes in both directions through the ANML/ERTH pool, one
-// paying its fee from its ERTH output; an unshield paying its fee from what
+// Swaps between notes in both directions through the ANML/ERTH pool, each
+// paying its fee from its bundle's uerth balance; an unshield paying its fee from what
 // it unshields; and a swap whose price moved past its bound, which fails
 // whole: nothing spent, no fee.
 func TestDexNoteSwaps(t *testing.T) {

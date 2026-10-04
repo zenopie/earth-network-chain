@@ -37,8 +37,8 @@ const (
 	// to the escrow.
 	EventTypeWithdrawAddrReset = "shieldedstaking_withdraw_addr_reset"
 	// The stake note tree's stream, for wallets and indexers: every append
-	// (position, commitment; a minted note's denom, amount and stake pc, a
-	// created note's ciphertext), every spent nullifier, every recorded root.
+	// (position, commitment, and the proof output's wallet stake
+	// ciphertext), every spent nullifier, every recorded root.
 	EventTypeStakeNote      = "shieldedstaking_stake_note"
 	EventTypeStakeNullifier = "shieldedstaking_stake_nullifier"
 	EventTypeStakeRoot      = "shieldedstaking_stake_root"

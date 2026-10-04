@@ -13,11 +13,11 @@
 //	ValidateTx        tx shape (no timeout_timestamp); bundle shapes; fee ==
 //	                  the msg's fee, in uerth
 //	TxTimeoutHeight, ValidateMemo, ConsumeGasForTxSize  (as the normal chain)
-//	PrivateMsg        record the bound tx fields; fixed gas; block cap; state
-//	                  checks; binding signatures and proofs; spend + append;
-//	                  fee floor; fee to fee_collector; unshield; an action
-//	                  that must be atomic with the spend, and a fee paid from
-//	                  that action's output
+//	PrivateMsg        record the bound tx fields; fixed gas; block cap; fee
+//	                  floor; state checks; the action's proofs, binding
+//	                  signatures, action proofs; spend + append; fee to
+//	                  fee_collector; unshield; an action that must be atomic
+//	                  with the spend
 //
 // The tx is unsigned, so whoever relays it could rewrite anything outside the
 // msg. Every sighash therefore binds the tx body's memo and timeout_height and
@@ -29,9 +29,9 @@
 // encoding of what they decode to (requireCanonicalEncoding), so one msg has
 // one tx encoding and one hash.
 //
-// A msg may spend more than one bundle (a stake vote and the bundle paying
-// its fee); each is checked, proven and executed as a single one is, under
-// the msg's one sighash.
+// A msg may spend up to MaxBundlesPerMsg bundles (every current msg spends
+// one); each is checked, proven and executed as a single one is, under the
+// msg's one sighash.
 //
 // A msg of another module may carry an action beyond its bundles (see
 // types.PrivateActionHandler); its checks and proofs run in the same pass,
@@ -50,9 +50,9 @@
 // Cost of junk. A tx failing CheckTx pays nothing, and a binding signature
 // is no filter (anyone can sign a forged balance over unproven value
 // commitments), so CheckTx orders the work cheapest first (shape, anchors,
-// nullifiers, assets, the release map, the action's state checks, binding
-// signatures) and verifies proofs one at a time, the msg's own action proofs
-// before its bundles', stopping at the first failure, and remembers every
+// nullifiers, assets, the release map, the action's state checks), then
+// verifies the msg's own action proofs, the binding signatures and the
+// bundles' proofs one at a time, stopping at the first failure, and remembers every
 // proof it saw verify: a junk tx costs a node at most one verification of a
 // proof it has not already seen verify. Public
 // nodes should still rate-limit CheckTx per peer (sentry nodes in front of
@@ -381,9 +381,8 @@ func (d PrivateMsgDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate boo
 	if hasAction {
 		pool = keeper.WithAuthorizedAction(pool, actionPrepared)
 	}
-	// An action that must be atomic with the spend runs here, and a fee from
-	// output must now be paid in full; either failing fails the whole ante,
-	// so nothing above is written.
+	// An action that must be atomic with the spend runs here; its failure
+	// fails the whole ante, so nothing above is written.
 	if err := d.K.ExecutePrivateAction(pool, msg, actionPrepared); err != nil {
 		return ctx, err
 	}

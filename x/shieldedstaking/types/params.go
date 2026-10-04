@@ -19,7 +19,7 @@ const (
 var DefaultMinPosition = math.NewInt(1_000_000)
 
 // DefaultMinDelegation is 1 ERTH: the smallest private delegation, and the
-// least derth one mints.
+// least derth one credits.
 var DefaultMinDelegation = math.NewInt(1_000_000)
 
 // DefaultParams returns the default parameters.

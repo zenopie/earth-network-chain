@@ -40,7 +40,8 @@ import (
 // handler, after the notes are spent.
 
 // Base gas per action, on top of the bundles', the stake proof's verification
-// and one note write per stake note or nullifier the action writes. Covers
+// and two note writes per nullifier slot (an indexed-tree insert) and one per
+// output slot. Covers
 // the handler's reads and writes (the rate's reward computation is the
 // heaviest: a distribution period walk).
 const (
@@ -282,7 +283,7 @@ func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) error {
 	}
 	if !s.IsPositive() && b.IsPositive() {
 		// Backing nobody owns (rewards accrued after the last holder's
-		// notes were minted): the epoch end settles it (processValidator).
+		// derth was credited): the epoch end settles it (processValidator).
 		// A delegation now would buy it at rate 1 (audit F5).
 		return types.ErrValidator.Wrapf("%s's book is settling (no derth, %s%s backing); delegate after the epoch end", m.Validator, b, types.BondDenom)
 	}

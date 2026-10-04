@@ -92,7 +92,8 @@ type TxFields struct {
 }
 
 // Sighash is what every action proof of a msg binds as its public
-// `sighash`, what any other proof in the msg (membership, passport) binds as
+// `sighash`, what any other proof in the msg (membership, passport, stake,
+// vote) binds as
 // its signal, and what each bundle's binding signature signs:
 //
 //	sighash = zk/privacy.Signal(msg_type_url, chain_id,

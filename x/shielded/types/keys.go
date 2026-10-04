@@ -43,7 +43,7 @@ const (
 	// ProofBytes is the exact length of every proof the chain verifies
 	// (zk/ultrahonk.ProofSize): bb v5.0.0 UltraHonk ZK-flavor proofs are
 	// padded to a constant 458 field elements whatever the circuit (action,
-	// stake, membership, passport). bb's verifier ignores trailing bytes, so
+	// stake, vote, membership, passport). bb's verifier ignores trailing bytes, so
 	// anything longer would verify as the same proof under another tx hash;
 	// anything else is refused before it is parsed.
 	ProofBytes = 14_656

@@ -15,15 +15,14 @@ import (
 //
 // Two modules file votes under keys that are not accounts. x/personhood files
 // anonymous caretaker splits under caretaker nullifiers at a weight it decides
-// (SetVoterSplit). x/shieldedstaking's Groundworks positions vote in the
-// Groundworks stream,
-// but a position is not an account: its owner is anonymous, its split is
-// changed by a msg signed with the position's own key inside an unsigned tx,
-// and its weight (derth x rate) is resolved by the weight source that module
-// registers for the stream. These calls are that module's way in. key is any
-// byte string that cannot collide with an account address (a position key is
-// 17 bytes, a caretaker nullifier 32 bytes in its own stream; accounts are 20
-// or 32). MsgSetAllocations goes through ApplySplit too, so every split meets
+// (SetVoterSplit). x/shieldedstaking files all of a validator's Groundworks
+// positions as one weighted voter (key "gwpos/" || validator address bytes)
+// with absolute option weights it computes itself (SetWeightedVoter); a
+// position's anonymous owner changes its split with a stake proof of the
+// position's owner tag, never a key. These calls are those modules' way in.
+// key is any byte string that cannot collide with an account address (a
+// validator voter key is 26 or 38 bytes, a caretaker nullifier 32 bytes in
+// its own stream; accounts are 20 or 32). MsgSetAllocations goes through ApplySplit too, so every split meets
 // the same ValidateSplit.
 
 // ValidateSplit checks a split within one stream: at most MaxVoterOptions

@@ -43,8 +43,9 @@ const (
 	// unchanged. What does change is the JSON the LCD emits and accepts, since
 	// grpc-gateway spells enums by name.
 	STREAM_ID_CARETAKER StreamId = 1
-	// STREAM_ID_GROUNDWORKS is the Groundworks Fund: stake-weighted. Weight is
-	// the voter's bonded stake, normalized by the stake compounding index.
+	// STREAM_ID_GROUNDWORKS is the Groundworks Fund: stake-weighted, by the
+	// weight source x/shieldedstaking registers (each validator's positions as
+	// one voter, and operators' self-bonds at Bonded validators).
 	STREAM_ID_GROUNDWORKS StreamId = 2
 )
 
@@ -289,8 +290,8 @@ func (m *AllocationWeight) GetPercent() uint64 {
 
 // Voter records one address's split within one stream, and the weight it was
 // applied with. The human stream applies the same fixed weight to everyone; the
-// capital stream applies the voter's normalized bonded stake, kept in sync by
-// the staking hooks.
+// capital stream applies the weight its weight source reports (positions per
+// validator, an operator's self-bond while Bonded), kept in sync by hooks.
 type Voter struct {
 	Percentages []AllocationWeight    `protobuf:"bytes,1,rep,name=percentages,proto3" json:"percentages"`
 	Weight      cosmossdk_io_math.Int `protobuf:"bytes,2,opt,name=weight,proto3,customtype=cosmossdk.io/math.Int" json:"weight"`

@@ -10,7 +10,7 @@ import (
 //
 //	cv = v_spend*G(asset_spend) - v_out*G(asset_out) + rcv*R
 //
-// v_spend, v_out are u64; rcv is a circuit Field (< r) lifted into the scalar
+// v_spend, v_out are note values (the circuit bounds them to 2^63-1); rcv is a circuit Field (< r) lifted into the scalar
 // field. The spend and the output may hold different assets: each term uses
 // its own canonical base, so the two never mix.
 func ValueCommit(assetSpend fr.Element, vSpend uint64, assetOut fr.Element, vOut uint64, rcv fr.Element) Point {

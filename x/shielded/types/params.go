@@ -33,9 +33,8 @@ const (
 	// balance) and the binding signature (0.12 ms on an M-class core).
 	DefaultBundleGas uint64 = 100_000
 
-	// DefaultRootWindowSeconds is two weeks: long enough for a stake vote to
-	// use the root at proposal start, and for a wallet that was offline for a
-	// few days to still prove against the root it last synced.
+	// DefaultRootWindowSeconds is two weeks: long enough for a wallet that was
+	// offline for a few days to still prove against the root it last synced.
 	DefaultRootWindowSeconds uint64 = 14 * 24 * 60 * 60
 
 	// DefaultMaxPrivateActionsPerBlock caps the proofs of a block's private
@@ -44,8 +43,8 @@ const (
 	// one-proof transfers the cap allowed before bundles).
 	DefaultMaxPrivateActionsPerBlock uint32 = 32
 
-	// DefaultMaxActionsPerBundle bounds one bundle: a send of up to 15 notes
-	// plus change, and an ordinary block's worth of proofs at most.
+	// DefaultMaxActionsPerBundle bounds one bundle: a send spending up to 16
+	// notes (each action one spend and one output), and an ordinary block's worth of proofs at most.
 	DefaultMaxActionsPerBundle uint32 = 16
 
 	// MaxProofVerificationGas, MaxNoteGas and MaxBundleGas cap the gas prices

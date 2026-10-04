@@ -85,8 +85,9 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// every transparent path refuses it by name).
 	in.ShieldedKeeper.ExcludeAssetPrefix(types.DerthPrefix)
 	in.ShieldedKeeper.RegisterShieldedOnlyPrefix(types.DerthPrefix, types.ModuleName)
-	// Groundworks weight is a position's derth x rate; an account's bonded
-	// stake no longer says anything (this module is the only delegator).
+	// Groundworks weight: each validator's positions as one voter (derth x
+	// epoch rate), and an operator's self-bond while its validator is
+	// Bonded; this module's own delegations carry none.
 	in.AllocationKeeper.RegisterWeightSource(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewPositionWeightSource(k))
 
 	return ModuleOutputs{

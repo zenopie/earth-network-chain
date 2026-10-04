@@ -30,7 +30,8 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 // Params defines the parameters of the shielded pool.
 type Params struct {
-	// verifying_keys maps a circuit name ("action", "membership") to its
+	// verifying_keys maps a circuit name ("action", "membership", "stake",
+	// "vote") to its
 	// Barretenberg UltraHonk (bb v5.0.0) verifying key. A private msg whose
 	// circuit has no key is refused.
 	VerifyingKeys map[string][]byte `protobuf:"bytes,1,rep,name=verifying_keys,json=verifyingKeys,proto3" json:"verifying_keys,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`

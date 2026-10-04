@@ -251,7 +251,7 @@ message MsgNoteSwap {
   bytes pc = 4;
   bytes ciphertext = 5;
   // fee_from_output (6), fee (7): the fee is paid from the bundle's uerth
-  // balance (see above); only claims pay from their output.
+  // balance (see above).
   reserved 6, 7;
   reserved "fee_from_output", "fee";
   // denom_in and amount_in are the asset swapped in.
@@ -259,8 +259,8 @@ message MsgNoteSwap {
   uint64 amount_in = 9;
 }
 
-// MsgNoteSwapResponse returns the swap's output (before any fee from output)
-// and the minted note's position.
+// MsgNoteSwapResponse returns the swap's output (all of it minted to pc) and
+// the minted note's position.
 message MsgNoteSwapResponse {
   cosmos.base.v1beta1.Coin token_out = 1 [(gogoproto.nullable) = false];
   uint64 position = 2;

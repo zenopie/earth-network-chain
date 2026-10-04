@@ -74,7 +74,8 @@ import (
 // A validator's derth supply as of the snapshot is recovered lazily, when a
 // vote or the tally needs it, from supply checkpoints written copy-on-write:
 // the first time a book's derth supply changes after snapshot seq was taken
-// (Delegate, Undelegate: checkpointSupply), the supply it had until then is
+// (Delegate, Undelegate, Redelegate on both books, a slash debt:
+// checkpointSupply), the supply it had until then is
 // stored under (validator, seq) unless an entry is there already. The
 // supply snapshot s saw for v is then the entry (v, q) with the smallest
 // q >= s.seq — the supply just before v's first change after s — or, with

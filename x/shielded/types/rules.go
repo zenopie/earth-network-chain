@@ -39,11 +39,11 @@ func CheckBlindCiphertext(what string, ct []byte) error {
 	return nil
 }
 
-// MaxNoteValue is the largest note value the chain mints: 2^63-1. The action
-// circuit's range is u64, but every wallet (Android Long, iOS Int64, web)
-// holds note and stake note values only up to 2^63-1 and ignores a note
-// above it (PRIVACY_FORMATS section 3, Amounts), so a chain-minted note
-// above it would be invisible to its owner. Every chain mint (MintNote,
+// MaxNoteValue is the largest note value: 2^63-1. Every wallet (Android
+// Long, iOS Int64, web) holds note and stake note values only up to 2^63-1
+// and ignores a note above it (PRIVACY_FORMATS section 3, Amounts), so every
+// circuit range-checks note values to 63 bits (NOTE_VALUE_BITS) and a
+// chain-minted note above it would be invisible to its owner. Every chain mint (MintNote,
 // MintOpenNote, a shield) and every stake credit refuses a value above it.
 //
 // MintNoteSplit pays a value above it as ceil(v / MaxNoteValue) notes to one

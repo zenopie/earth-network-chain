@@ -456,7 +456,7 @@ func (k Keeper) pendingRecordsUpTo(ctx context.Context, valoper string, maxEpoch
 //
 // A book left with no derth (S_v == 0) and no later records owns nothing it
 // backs: the module's whole delegation goes out with its last records (the
-// rewards accrued since their notes were minted are theirs: their stake
+// rewards accrued since their derth was credited are theirs: their stake
 // earned them), or, with no records at all, into an orphan record whose
 // payout goes to the community pool; and what is queued is sent to the
 // community pool. So the next delegator to v never buys backing nobody owns
@@ -493,7 +493,7 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 	// Delegate the queue, unless the validator cannot take it: gone, or
 	// slashed to nothing. Jailed and tombstoned validators still take the
 	// queue: the msgs that filled it were checked when they were sent, and the
-	// derth they minted is backed by it either way.
+	// derth they credited is backed by it either way.
 	delegated := math.ZeroInt()
 	if v2, err := k.staking.GetValidator(ctx, val); err == nil && queue.IsPositive() &&
 		v2.Tokens.IsPositive() && !v2.InvalidExRate() {

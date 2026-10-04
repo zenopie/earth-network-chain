@@ -157,8 +157,8 @@ func (e *stakeEnv) requireRateKept(v sdk.ValAddress, r math.LegacyDec, debt math
 // redelegation entry recorded by the module), the derth/B credit is merged
 // into the wallet's B note and labelled with the move, worth what the derth/A
 // was, the change stays at A, both books keep their rates, and the stake
-// earns at B at once. A value that fits in A's delegation queue moves as a
-// book entry, with no x/staking entry. There is no transitive lock: stake at
+// earns at B at once. While the module has nothing bonded at A, the value
+// moves out of A's queue as a book entry, with no x/staking entry. There is no transitive lock: stake at
 // B moves out again at once, all but the labelled exposure.
 func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	e := initStakeEnv(t)

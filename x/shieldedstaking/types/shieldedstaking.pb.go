@@ -233,9 +233,9 @@ type Move struct {
 	// credited is the derth/<dst> it credited: the note's exposure.
 	Credited cosmossdk_io_math.Int `protobuf:"bytes,6,opt,name=credited,proto3,customtype=cosmossdk.io/math.Int" json:"credited"`
 	// shares are its shares of the module's x/staking redelegation entry
-	// (src, dst, entry_height): what a slash of src takes, pro rata. 0 (and
-	// no entry) when the value moved out of src's queue alone or src was not
-	// bonded.
+	// (src, dst, entry_height): what a slash of src takes, pro rata. Always
+	// positive: a move with no entry (nothing bonded moved, or src unbonded)
+	// is not recorded.
 	Shares      cosmossdk_io_math.LegacyDec `protobuf:"bytes,7,opt,name=shares,proto3,customtype=cosmossdk.io/math.LegacyDec" json:"shares"`
 	EntryHeight int64                       `protobuf:"varint,8,opt,name=entry_height,json=entryHeight,proto3" json:"entry_height,omitempty"`
 	// completion is when the entry matures (unix ns); the record is dropped
@@ -1034,7 +1034,7 @@ type StakeVote struct {
 	Validator string                   `protobuf:"bytes,4,opt,name=validator,proto3" json:"validator,omitempty"`
 	Derth     cosmossdk_io_math.Int    `protobuf:"bytes,5,opt,name=derth,proto3,customtype=cosmossdk.io/math.Int" json:"derth"`
 	Options   []*v1.WeightedVoteOption `protobuf:"bytes,6,rep,name=options,proto3" json:"options,omitempty"`
-	// vote_nullifiers are a note vote's vote nullifiers (1..4, the first the
+	// vote_nullifiers are a note vote's vote nullifiers (1..2, the first the
 	// key's); empty for a position vote.
 	VoteNullifiers [][]byte `protobuf:"bytes,7,rep,name=vote_nullifiers,json=voteNullifiers,proto3" json:"vote_nullifiers,omitempty"`
 }
