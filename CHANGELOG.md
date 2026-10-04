@@ -16,8 +16,8 @@ like, because nodes running different versions cannot agree.
 **Consensus-affecting.**
 
 - One stake note per validator; redelegation slashes paid by the notes they
-  credited (user decisions; ORCHARD_DESIGN.md section 20,
-  STAKING_WAVE_PROGRESS.md change 4). **New stake and vote circuits and
+  credited (user decisions; ORCHARD_DESIGN.md 8.1 and 8.7,
+  AUDIT_HISTORY.md). **New stake and vote circuits and
   verifying keys; genesis.json sha256
   ffb269c5047e823b3f3aa27034767ff894c9fe76626703ccf42d0b1b321b6b59.**
   - x/shieldedstaking: **the chain mints no stake note.** The stake proof
@@ -88,7 +88,7 @@ like, because nodes running different versions cannot agree.
       and counts moves and entries against its bound.
 
 - Private redelegation (user decision, the one exception to the feature
-  freeze; ORCHARD_DESIGN.md section 19, STAKING_WAVE_PROGRESS.md). No circuit,
+  freeze; HISTORY.md, AUDIT_HISTORY.md). No circuit,
   verifying key or genesis change (genesis.json sha256
   1824225dce524e47bf84bc5ff4fe0f8e76127b1c128480c925f6e420a6067ee8).
   - x/shieldedstaking: **new MsgRedelegate** {bundle, src_validator (2),
@@ -121,7 +121,7 @@ like, because nodes running different versions cannot agree.
     nothing stays set aside. Validator self-bonds still cannot redelegate.
 
 - Staking without background transactions (user decision; see
-  STAKING_WAVE_PROGRESS.md, ORCHARD_DESIGN.md section 18). **New vote
+  AUDIT_HISTORY.md, HISTORY.md). **New vote
   verifying key; genesis.json sha256
   1824225dce524e47bf84bc5ff4fe0f8e76127b1c128480c925f6e420a6067ee8.**
   - x/shieldedstaking: **an undelegation pays out by itself.**
@@ -149,7 +149,7 @@ like, because nodes running different versions cannot agree.
     `shieldedstaking_stake_vote` event's `vote_nullifier` becomes
     `vote_nullifiers` (comma-separated hex). Positions vote as before.
 
-- Audit round 6 (see FIX_ROUND6_PROGRESS.md, ORCHARD_DESIGN.md section 17).
+- Audit round 6 (see AUDIT_HISTORY.md).
   No circuit, verifying key or genesis change (genesis.json sha256
   77af758697b293eb95d1f9f08a8f49b35bef648fd931ae1448cc3d0f2ddd652d):
   - x/allocation: **a self-bond withdrawn from a validator in any status
@@ -187,7 +187,7 @@ like, because nodes running different versions cannot agree.
   - Not changed: transparent tx replay across earth-1 relaunches (X-1) is
     accepted; genesis account numbers are not offset.
 
-- Audit round 5 (see FIX_ROUND5_PROGRESS.md, ORCHARD_DESIGN.md section 16):
+- Audit round 5 (see AUDIT_HISTORY.md):
   - x/personhood: **the chain mints the referral note** to the referrer
     handle's registered address, with an opening derived from the passport
     nullifier and leaf index (`H("earth.referral", nullifier, leaf_index,
@@ -235,7 +235,7 @@ like, because nodes running different versions cannot agree.
     router).
   - x/shieldedstaking: checkpointSupply's walk is bounded; InitGenesis
     validates first; a position's derth must fit a u64.
-- Audit round 4 (see FIX_ROUND4_PROGRESS.md):
+- Audit round 4 (see AUDIT_HISTORY.md):
   - x/dex: **pool cap 2^120** on reserves, LP share supply, a swap input and
     the auction raise (ErrPoolCap, code 1120); payout / POL / deposit maths
     in big.Int. Before this an IBC voucher of 2^200 seeded a pool whose
@@ -325,7 +325,7 @@ like, because nodes running different versions cannot agree.
     (16); `referrer_bindings` (8) removed.
 
 - x/shieldedstaking: **private stake votes no longer spend the note**
-  (ORCHARD_DESIGN.md section 15). One stake note can vote on every
+  (ORCHARD_DESIGN.md 8.5). One stake note can vote on every
   concurrently open proposal (the decoy-proposal attack on spend-to-vote).
   - The stake nullifier set is now an indexed (sorted) depth-32 Poseidon2
     Merkle tree (zk/indexed); its root and size are recorded at EndBlock
@@ -342,7 +342,7 @@ like, because nodes running different versions cannot agree.
     weight, vote_nullifier. Nothing is spent or re-minted; a second vote of
     the same note on a proposal is refused (code 1119). Wallets rebuild the
     nullifier tree at the snapshot from the first nf_size-1 stake
-    nullifiers in insertion order (section 15 has the steps).
+    nullifiers in insertion order (ORCHARD_DESIGN.md 12.2 has the steps).
   - New query `StakeNullifierTree{start, limit}` (values in insertion order,
     size, current and latest roots); `StakeNullifier` also returns the leaf
     index; `shieldedstaking_stake_nullifier` events carry `index`;
@@ -358,7 +358,7 @@ like, because nodes running different versions cannot agree.
     tree's size.
   - Positions unchanged (they never spent to vote).
 
-- Audit round 3 (see FIX_ROUND3_PROGRESS.md):
+- Audit round 3 (see AUDIT_HISTORY.md):
   - Node (F1): **the app mempool is always the no-op one.** app.New
     installs it last, overriding app.toml; a mempool.max-txs other than -1
     is logged ("ignoring app.toml mempool.max-txs") and has no effect.
@@ -449,7 +449,7 @@ like, because nodes running different versions cannot agree.
     one-day activation margin); two x/shielded fixtures added (unshield to
     a module account). Genesis regenerated: networks/genesis.json sha256
     d5385d77cd1df472e049a78467bd896e143bd21009540b55fb578870e96154db.
-- Re-audit round 2 (see FIX_ROUND2_PROGRESS.md):
+- Re-audit round 2 (see AUDIT_HISTORY.md):
   - x/personhood (R1): a landed registration's binding (the proof's
     address input) is refused for reuse until registered_at +
     current_date_max_skew_seconds + 1 day (new error 1124
@@ -567,6 +567,18 @@ verification, but CheckTx is still free.
   purge cannot starve them.
 - Removed the transparent gas grant: `earthd gas-check membership`,
   `Keeper.CheckGasMembership`, `GasScope`/`GasTransparentSignal`.
+
+**Not consensus-affecting (pre-audit cleanup).** Genesis, verifying keys and
+wire format unchanged.
+
+- x/shielded: removed the unused fee-from-output path (`FeeFromOutputMsg`,
+  `PayFeeFromModule`); no msg had used it since MsgClaimUnbonding was retired.
+- Removed unused keeper dependencies, helpers, x/shieldedstaking
+  `ErrUnknownRecord` (1105, never returned; the code stays reserved) and the
+  `spc` event attribute key.
+- Docs: ORCHARD_DESIGN.md is a current-state specification; its history is in
+  HISTORY.md and the audit rounds in AUDIT_HISTORY.md (replacing the
+  *_PROGRESS.md files). Tests are grouped by feature instead of audit round.
 
 ## [v0.9.4]
 
