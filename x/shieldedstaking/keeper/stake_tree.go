@@ -21,10 +21,11 @@ import (
 // notes here: an
 // append-only depth-32 Poseidon2 tree like the shielded pool's, with its own
 // nullifier set and root window, proven against by circuits/stake. Its notes
-// are owner-locked (see the circuit): a stake note can be merged, split,
-// undelegated, locked or voted (without spending it, circuits/vote) by its owner, never handed to anyone else.
+// are owner-locked (see the circuit): a stake note can be merged,
+// undelegated, locked, redelegated or voted (without spending it,
+// circuits/vote) by its owner, never handed to anyone else.
 //
-//	spc = H(TAG_SPC, owner_pk, rho, rcm)   cm = H(TAG_STAKE, asset, amount, spc)
+//	spc = H(TAG_SPC, owner_pk, rho, rcm)   cm = H(TAG_STAKE, asset, amount, spc, label)
 //	nf  = H(TAG_SNF, nk, rho, position)     asset = AssetID(stake denom)
 //
 // Every note is a stake proof's output, its amount hidden: the chain mints

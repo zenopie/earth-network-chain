@@ -27,7 +27,7 @@ import (
 // root and the stake nullifier tree's (both as of the end of the last block
 // that changed them) and, lazily, per validator, the derth supply. A
 // derth/v stake note that was in the tree then and unspent then votes WITHOUT
-// being spent: MsgStakeVote's vote proof (circuits/vote) shows up to four
+// being spent: MsgStakeVote's vote proof (circuits/vote) shows up to two
 // notes of one owner under the snapshot's note root, each one's spend
 // nullifier absent from the snapshot's nullifier tree (a low leaf), and
 // publishes ONE weight (at most their sum) and each note's vote nullifier

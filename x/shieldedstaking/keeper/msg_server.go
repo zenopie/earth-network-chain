@@ -160,7 +160,7 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	return &types.MsgUndelegateResponse{Value: u.Uint64(), PayoutId: id}, nil
 }
 
-// StakeVote records one vote of up to four stake notes, its weight once.
+// StakeVote records one vote of up to two stake notes, its weight once.
 // Nothing is spent or minted: the vote nullifiers (checked unused by
 // checkStakeVote, recorded by putVote) stop the notes voting on this
 // proposal again, and nothing else.

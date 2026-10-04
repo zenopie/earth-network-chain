@@ -4,8 +4,9 @@ package types
 const (
 	EventTypeDelegate   = "shieldedstaking_delegate"
 	EventTypeUndelegate = "shieldedstaking_undelegate"
-	// EventTypeRedelegate: derth moved between validators (the derth/<dst>
-	// stake note's own event carries its position, spc and ciphertext).
+	// EventTypeRedelegate: derth moved between validators (the merged
+	// derth/<dst> stake note's own event carries its position, commitment
+	// and ciphertext).
 	EventTypeRedelegate     = "shieldedstaking_redelegate"
 	EventTypeEpoch          = "shieldedstaking_epoch"
 	EventTypeEpochValidator = "shieldedstaking_epoch_validator"

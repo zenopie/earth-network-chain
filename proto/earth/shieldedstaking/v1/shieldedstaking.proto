@@ -339,7 +339,7 @@ message ValidatorSnapshot {
   ];
 }
 
-// StakeVote is one private stake vote: up to four stake notes' (keyed by
+// StakeVote is one private stake vote: up to two stake notes' (keyed by
 // their first vote nullifier) or a position's.
 message StakeVote {
   uint64 proposal_id = 1;

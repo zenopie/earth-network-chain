@@ -1023,7 +1023,7 @@ func (m *ValidatorSnapshot) GetValidator() string {
 	return ""
 }
 
-// StakeVote is one private stake vote: up to four stake notes' (keyed by
+// StakeVote is one private stake vote: up to two stake notes' (keyed by
 // their first vote nullifier) or a position's.
 type StakeVote struct {
 	ProposalId uint64 `protobuf:"varint,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
