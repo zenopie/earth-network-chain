@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"cosmossdk.io/collections"
@@ -85,10 +86,17 @@ func (k Keeper) SweepMaturedUnbondings(ctx context.Context) error {
 		// failing entry costs a sweep slot ever more rarely and never halts.
 		minted := 0
 		if err := safeexec.Cached(sdkCtx, func(cacheCtx sdk.Context) error {
-			n, err := k.payoutUnbonding(cacheCtx, m.entry)
+			n, err := k.payoutUnbonding(cacheCtx, m.entry, types.LpUnbondNoteBudget-notes)
 			minted = n
 			return err
-		}); err != nil {
+		}); errors.Is(err, errNoteBudget) {
+			// Its notes would take the sweep past its budget (audit 6
+			// D-L-D1: the budget was checked only before each payout, which
+			// can mint 2 x MaxSplitNotes): it waits for the next block, at
+			// the head of the queue, not as a failure.
+			capped = true
+			break
+		} else if err != nil {
 			cause := err
 			// Store writes only, but on its own branch too: a failure here
 			// leaves the entry where it is (retried next block), never a halt.
@@ -166,7 +174,14 @@ func (k Keeper) retryUnbonding(ctx context.Context, key collections.Triple[int64
 // private withdrawal (no address), mints both legs as notes. A note leg above
 // a note's maximum (2^63-1) is paid as several notes (MintNoteSplit). Returns how many
 // notes it minted.
-func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) (int, error) {
+// errNoteBudget: the payout would mint more notes than the sweep has left.
+var errNoteBudget = errors.New("lp unbond sweep: note budget spent")
+
+// payoutUnbonding pays a matured withdrawal. budget is how many notes the
+// sweep has left: a payout needing more is refused with errNoteBudget before
+// anything is written, unless the sweep has minted none yet (budget is the
+// whole LpUnbondNoteBudget), so that one large payout always goes through.
+func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding, budget int) (int, error) {
 	notes := 0
 	private := entry.Address == ""
 	var addrBz []byte
@@ -240,6 +255,27 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding) (i
 	}
 	outErth := sdk.NewCoin(pool.ReserveErth.Denom, erthAmt)
 	outToken := sdk.NewCoin(pool.ReserveToken.Denom, tokenAmt)
+
+	// The notes this payout mints, counted before anything is written.
+	var noteLegs []sdk.Coin
+	if private {
+		noteLegs = []sdk.Coin{outErth, outToken}
+	} else if k.isShieldedOnly(outToken.Denom) {
+		noteLegs = []sdk.Coin{outToken}
+	}
+	need := 0
+	for _, c := range noteLegs {
+		if c.IsPositive() {
+			vs, err := shieldedtypes.SplitNoteValues(c.Amount)
+			if err != nil {
+				return 0, err
+			}
+			need += len(vs)
+		}
+	}
+	if need > budget && budget < types.LpUnbondNoteBudget {
+		return 0, errNoteBudget
+	}
 
 	if err := k.burnEscrowedShares(ctx, entry.Shares); err != nil {
 		return 0, err

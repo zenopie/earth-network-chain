@@ -230,8 +230,9 @@ const (
 
 	// LpUnbondNoteBudget caps the notes one sweep mints: a private leg above
 	// a note's maximum (2^63-1) is paid as several notes (up to MaxSplitNotes each), so
-	// the entry count alone does not bound the tree appends. The entry that
-	// crosses the budget still pays; the next one waits for the next block.
+	// the entry count alone does not bound the tree appends. A payout whose
+	// notes would pass the budget waits for the next block, unless it is the
+	// sweep's first (one payout mints at most 2 x MaxSplitNotes = 256).
 	LpUnbondNoteBudget = 256
 
 	// LpUnbondRetryBaseSeconds and LpUnbondRetryMaxShift: a payout that fails
