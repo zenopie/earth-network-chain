@@ -120,6 +120,11 @@ func (k Keeper) validatorOptionWeights(ctx context.Context, v string, epoch uint
 	var ws []allocationtypes.OptionWeight
 	err = k.GwTotals.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](v),
 		func(key collections.Pair[string, uint64], t math.Int) (bool, error) {
+			// An option pruned since a position named it takes nothing
+			// (x/allocation skips it); the voter leaves it out (audit 7).
+			if ok, err := k.gwOptionExists(ctx, key.K2()); err != nil || !ok {
+				return err != nil, err
+			}
 			w := rate.MulInt(t).QuoInt64(100).TruncateInt()
 			if w.IsPositive() {
 				ws = append(ws, allocationtypes.OptionWeight{OptionId: key.K2(), Weight: w})
@@ -127,6 +132,29 @@ func (k Keeper) validatorOptionWeights(ctx context.Context, v string, epoch uint
 			return false, nil
 		})
 	return ws, err
+}
+
+// gwOptionExists reports whether Groundworks option id still exists (not
+// pruned).
+func (k Keeper) gwOptionExists(ctx context.Context, id uint64) (bool, error) {
+	return k.allocation.Options.Has(ctx, collections.Join(uint32(allocationtypes.STREAM_ID_GROUNDWORKS), id))
+}
+
+// existingSplits is splits without the options pruned since (what an export
+// writes: x/allocation's export drops them from its voters alike, audit 6
+// D-L-A1; a position naming one would rebuild totals naming it).
+func (k Keeper) existingSplits(ctx context.Context, splits []allocationtypes.AllocationWeight) ([]allocationtypes.AllocationWeight, error) {
+	var out []allocationtypes.AllocationWeight
+	for _, w := range splits {
+		ok, err := k.gwOptionExists(ctx, w.OptionId)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, w)
+		}
+	}
+	return out, nil
 }
 
 // syncValidatorVoter re-files v's Groundworks voter from its totals at its

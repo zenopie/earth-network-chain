@@ -403,3 +403,65 @@ func TestGroundworksGenesisRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, vt.OptionWeights, vt2.OptionWeights)
 }
+
+// Audit 7: an option pruned while positions still name it. The validator's
+// voter is re-filed without it at once (it took nothing anyway); an export
+// drops it from the positions' splits (as x/allocation's from its voters), so
+// the imported chain rebuilds totals and a voter that never name it, and
+// re-filing there needs nothing more.
+func TestGroundworksPrunedOptionLeavesPositions(t *testing.T) {
+	g := initGwEnv(t)
+	id1 := g.lockPos(g.v, 1_000*gwE, 1, g.split(10, 90))
+	id2 := g.lockPos(g.v, 500*gwE, 2, g.split(100))
+	g.days(1)
+	pruned := g.opts[0]
+	// The chamber strikes option 0; thirty idle days later it is pruned.
+	require.NoError(t, g.app.AllocationKeeper.RemoveGroundworksOption(g.ctx(), authtypes.NewModuleAddress("assembly"), pruned))
+	g.days(31)
+	has, err := g.app.AllocationKeeper.Options.Has(g.ctx(), collections.Join(uint32(gwStream), pruned))
+	require.NoError(t, err)
+	require.False(t, has, "pruned")
+	// Still named by the positions and their totals at runtime...
+	require.Equal(t, g.opts[0], g.position(id2).Splits[0].OptionId)
+	_, named := g.totals(g.v)[pruned]
+	require.True(t, named)
+	// ...but the re-filed voter leaves it out.
+	g.app.ShieldedStakingKeeper.ReweighGroundworks(g.ctx())
+	_, inVoter := g.voter(g.v)[pruned]
+	require.False(t, inVoter)
+	require.NoError(t, g.app.ShieldedStakingKeeper.AssertInvariants(g.ctx()))
+
+	exported, err := g.app.ExportAppStateAndValidators(false, nil, nil)
+	require.NoError(t, err)
+	var appState map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(exported.AppState, &appState))
+	var gs sstypes.GenesisState
+	require.NoError(t, g.app.AppCodec().UnmarshalJSON(appState[sstypes.ModuleName], &gs))
+	for _, p := range gs.Positions {
+		for _, w := range p.Splits {
+			require.NotEqual(t, pruned, w.OptionId, "position %d", p.Id)
+		}
+		if p.Id == id2 {
+			require.Empty(t, p.Splits, "its only option is gone: no split")
+		}
+		if p.Id == id1 {
+			require.Equal(t, g.split(0, 90), p.Splits)
+		}
+	}
+	fresh := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
+		baseapp.SetChainID(ssChainID))
+	fctx := fresh.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: g.height, Time: g.now})
+	_, err = fresh.ModuleManager.InitGenesis(fctx, fresh.AppCodec(), appState)
+	require.NoError(t, err)
+	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
+	require.NoError(t, fresh.ShieldedStakingKeeper.GwTotals.Walk(fctx, nil, func(k collections.Pair[string, uint64], _ math.Int) (bool, error) {
+		require.NotEqual(t, pruned, k.K2())
+		return false, nil
+	}))
+	fresh.ShieldedStakingKeeper.ReweighGroundworks(fctx)
+	vt, err := fresh.AllocationKeeper.Voters.Get(fctx, collections.Join(uint32(gwStream), sstypes.ValidatorVoterKey(g.v)))
+	require.NoError(t, err)
+	for _, w := range vt.OptionWeights {
+		require.NotEqual(t, pruned, w.OptionId)
+	}
+}

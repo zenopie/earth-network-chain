@@ -464,6 +464,20 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return nil, err
 	}
 	if err := k.Positions.Walk(ctx, nil, func(_ uint64, p types.Position) (bool, error) {
+		// A split naming an option pruned since loses it (audit 7, as
+		// x/allocation's export drops it from its voters); a split left with
+		// nothing is no split.
+		if len(p.Splits) > 0 {
+			kept, err := k.existingSplits(ctx, p.Splits)
+			if err != nil {
+				return true, err
+			}
+			if len(kept) == 0 {
+				p.Splits, p.SplitEpoch = nil, 0
+			} else {
+				p.Splits = kept
+			}
+		}
 		gs.Positions = append(gs.Positions, p)
 		return false, nil
 	}); err != nil {
