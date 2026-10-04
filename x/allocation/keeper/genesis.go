@@ -334,6 +334,35 @@ func (k Keeper) exportStream(ctx context.Context, stream types.StreamId) (types.
 			if err != nil {
 				return true, err
 			}
+			// A voter who has not voted since an option it named was pruned
+			// still names it; the runtime skips it, genesis validation
+			// refuses it, so the export drops it (audit 6 D-L-A1). A
+			// weighted voter's weight is the sum of what remains.
+			if v.Percentages, err = k.existingSplit(ctx, stream, v.Percentages); err != nil {
+				return true, err
+			}
+			if len(v.OptionWeights) > 0 {
+				kept := v.OptionWeights[:0:0]
+				sum := math.ZeroInt()
+				for _, w := range v.OptionWeights {
+					ok, err := k.Options.Has(ctx, optionKey(stream, w.OptionId))
+					if err != nil {
+						return true, err
+					}
+					if ok {
+						kept = append(kept, w)
+						sum = sum.Add(w.Weight)
+					}
+				}
+				if len(kept) == 0 {
+					return false, nil
+				}
+				if len(kept) < len(v.OptionWeights) {
+					v.OptionWeights, v.Weight = kept, sum
+				}
+			} else if len(v.Percentages) == 0 {
+				return false, nil // every option it named is gone
+			}
 			st.Voters = append(st.Voters, types.VoterEntry{Address: addr, Voter: v})
 			return false, nil
 		}); err != nil {

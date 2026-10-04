@@ -408,9 +408,31 @@ func voterContributions(v types.Voter) []contribution {
 // or a staker's normalized bonded stake. Nothing here knows which stream it is
 // working on, which is the point.
 func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz []byte, percentages []types.AllocationWeight, weight math.Int) error {
+	// Options pruned since the vote leave the split here (audit 6 D-L-A1):
+	// they took nothing (writeVoter skips a missing option) and a stored
+	// split naming one fails genesis validation on export.
+	percentages, err := k.existingSplit(ctx, stream, percentages)
+	if err != nil {
+		return err
+	}
 	rec := types.Voter{Percentages: percentages, Weight: weight}
 	keep := len(percentages) > 0 && weight.IsPositive()
 	return k.writeVoter(ctx, stream, addrBz, rec, splitContributions(percentages, weight), keep)
+}
+
+// existingSplit is pcts without the options that no longer exist (pruned).
+func (k Keeper) existingSplit(ctx context.Context, stream types.StreamId, pcts []types.AllocationWeight) ([]types.AllocationWeight, error) {
+	out := pcts[:0:0]
+	for _, w := range pcts {
+		ok, err := k.Options.Has(ctx, optionKey(stream, w.OptionId))
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, w)
+		}
+	}
+	return out, nil
 }
 
 // writeVoter replaces a voter's contribution: the stored record's (if it

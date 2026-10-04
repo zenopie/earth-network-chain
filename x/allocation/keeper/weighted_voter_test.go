@@ -87,7 +87,6 @@ func TestWeightedVoterGenesisValidation(t *testing.T) {
 		"bad sum":   {OptionWeights: []types.OptionWeight{ow(1, 1), ow(2, 2)}, Weight: math.NewInt(4)},
 		"zero":      {OptionWeights: []types.OptionWeight{ow(1, 0)}, Weight: math.NewInt(0)},
 		"duplicate": {OptionWeights: []types.OptionWeight{ow(1, 1), ow(1, 1)}, Weight: math.NewInt(2)},
-		"unknown":   {OptionWeights: []types.OptionWeight{ow(9, 1)}, Weight: math.NewInt(1)},
 	} {
 		e := newTestEnv(t)
 		k, ctx := e.k, e.ctx
@@ -99,4 +98,58 @@ func TestWeightedVoterGenesisValidation(t *testing.T) {
 		require.NoError(t, err)
 		require.Error(t, gs.Validate(), name)
 	}
+}
+
+// Audit 6 D-L-A1: an option pruned after a voter named it leaves the export
+// (the runtime skips it); validation still refuses a hand-written genesis
+// naming one.
+func TestExportDropsPrunedOptions(t *testing.T) {
+	ow := func(id uint64, w int64) types.OptionWeight {
+		return types.OptionWeight{OptionId: id, Weight: math.NewInt(w)}
+	}
+	e := newTestEnv(t)
+	k, ctx := e.k, e.ctx
+	gw := types.STREAM_ID_GROUNDWORKS
+	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
+	seedOptions(t, k, ctx, gw, 2)
+	require.NoError(t, k.OptionSeq.Set(ctx, key(gw), 2))
+	require.NoError(t, k.Voters.Set(ctx, voterKey(gw, []byte("gwpos/01234567890123456789")),
+		types.Voter{OptionWeights: []types.OptionWeight{ow(1, 1), ow(9, 2)}, Weight: math.NewInt(3)}))
+	require.NoError(t, k.Voters.Set(ctx, voterKey(gw, []byte("gwpos/98765432109876543210")),
+		types.Voter{OptionWeights: []types.OptionWeight{ow(9, 2)}, Weight: math.NewInt(2)}))
+	require.NoError(t, k.Voters.Set(ctx, voterKey(gw, []byte("addr-a")),
+		types.Voter{Percentages: []types.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 9, Percent: 40}}, Weight: math.NewInt(10)}))
+	require.NoError(t, k.Voters.Set(ctx, voterKey(gw, []byte("addr-b")),
+		types.Voter{Percentages: []types.AllocationWeight{{OptionId: 9, Percent: 100}}, Weight: math.NewInt(10)}))
+	gs, err := k.ExportGenesis(ctx)
+	require.NoError(t, err)
+	require.NoError(t, gs.Validate())
+	var voters []types.VoterEntry
+	for _, st := range gs.Streams {
+		if st.Stream == gw {
+			voters = st.Voters
+		}
+	}
+	require.Len(t, voters, 2, "the voters naming only the pruned option are gone")
+	for _, v := range voters {
+		for _, w := range v.Voter.OptionWeights {
+			require.NotEqual(t, uint64(9), w.OptionId)
+		}
+		for _, w := range v.Voter.Percentages {
+			require.NotEqual(t, uint64(9), w.OptionId)
+		}
+		if len(v.Voter.OptionWeights) > 0 {
+			require.Equal(t, math.NewInt(1), v.Voter.Weight)
+		}
+	}
+	for i := range gs.Streams {
+		if gs.Streams[i].Stream == gw {
+			for j := range gs.Streams[i].Voters {
+				if len(gs.Streams[i].Voters[j].Voter.OptionWeights) > 0 {
+					gs.Streams[i].Voters[j].Voter = types.Voter{OptionWeights: []types.OptionWeight{ow(9, 1)}, Weight: math.NewInt(1)}
+				}
+			}
+		}
+	}
+	require.ErrorContains(t, gs.Validate(), "does not exist")
 }
