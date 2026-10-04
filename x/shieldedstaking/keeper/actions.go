@@ -397,6 +397,12 @@ func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
 	if math.NewIntFromUint64(m.Amount).LT(params.MinPosition) {
 		return types.ErrPosition.Wrapf("a position locks at least %s derth", params.MinPosition)
 	}
+	// v_out is a public u64, so two maximal notes could lock 2^64-2: a
+	// position that could never unlock (its note would not fit) and that
+	// genesis refuses (audit 6 C-L2).
+	if err := fitsNote(math.NewIntFromUint64(m.Amount)); err != nil {
+		return err
+	}
 	if err := k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits); err != nil {
 		return err
 	}

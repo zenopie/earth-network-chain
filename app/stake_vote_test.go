@@ -169,7 +169,8 @@ func (e *stakeEnv) tryProveVote(m *sstypes.MsgStakeVote, vp *votePlan) ([]byte, 
 	return e.voteProver().TryProve(toml, pub)
 }
 
-// stakeVoteMsg is n's vote on proposalID with weight (0: all of n), its fee
+// stakeVoteMsg is n's vote on proposalID with weight (0: all of n, rounded
+// down to three significant digits), its fee
 // bundle paid from any current ERTH note. With prove, its bundle and vote
 // proof are proven (failing the test if the circuit refuses).
 func (e *stakeEnv) stakeVoteMsg(n *snote, proposalID uint64, opts []*v1.WeightedVoteOption, weight uint64, prove bool) (*sstypes.MsgStakeVote, *pendingBundle, *votePlan) {
@@ -177,7 +178,7 @@ func (e *stakeEnv) stakeVoteMsg(n *snote, proposalID uint64, opts []*v1.Weighted
 	v, ok := sstypes.ParseDerthDenom(n.denom)
 	require.True(e.t, ok)
 	if weight == 0 {
-		weight = n.amount
+		weight = sstypes.RoundVoteWeight(n.amount) // as every wallet does
 	}
 	vp := e.votePlanFor(n, proposalID)
 	fee := e.feeOnly()

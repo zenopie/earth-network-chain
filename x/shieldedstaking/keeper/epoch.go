@@ -54,6 +54,16 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		return k.recordNfRoot(cc)
 	}); err != nil {
 		k.failure(ctx, "stake_roots", "", err)
+		// A snapshot taken before the next successful recording would pair
+		// the stale roots with positions locked since, whose spent notes'
+		// nullifiers the stale nf root lacks: the same derth could vote as a
+		// note and as a position. Snapshots take no roots until then (audit
+		// 6 C-L4).
+		if err := k.RootsStale.Set(ctx, true); err != nil {
+			k.failure(ctx, "stake_roots_stale", "", err)
+		}
+	} else if err := k.RootsStale.Remove(ctx); err != nil {
+		k.failure(ctx, "stake_roots_stale", "", err)
 	}
 	k.reweighSlashed(ctx)
 	k.matureRecords(ctx)

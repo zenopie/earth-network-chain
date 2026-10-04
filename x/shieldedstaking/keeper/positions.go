@@ -289,6 +289,11 @@ func (k Keeper) reweighSlashed(ctx context.Context) {
 	})
 	for _, v := range vals {
 		err := k.guarded(ctx, func(cc context.Context) error {
+			// A validator with no book has no positions to re-weigh; writing
+			// one here would only create an empty book (audit 6 C-L1).
+			if has, err := k.Validators.Has(cc, v); err != nil || !has {
+				return err
+			}
 			rate, err := k.Rate(cc, v)
 			if err != nil {
 				return err

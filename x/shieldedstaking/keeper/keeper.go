@@ -97,6 +97,10 @@ type Keeper struct {
 	StakeNfSize       collections.Item[uint64]
 	StakeNfLatestRoot collections.Item[[]byte]
 	StakeNfLatestSize collections.Item[uint64]
+	// RootsStale: the last end-of-block recording of the stake roots failed,
+	// so the latest recorded roots may predate notes spent since (see
+	// takeSnapshot). Not exported: InitGenesis records the roots afresh.
+	RootsStale collections.Item[bool]
 
 	// RewardEscrows maps each validator's reward escrow account to the
 	// validator's address (escrow.go). Rebuilt from x/staking at genesis.
@@ -198,6 +202,7 @@ func NewKeeper(
 		StakeNfSize:       collections.NewItem(sb, types.StakeNfSizeKey, "stake_nf_size", collections.Uint64Value),
 		StakeNfLatestRoot: collections.NewItem(sb, types.StakeNfLatestRootKey, "stake_nf_latest_root", collections.BytesValue),
 		StakeNfLatestSize: collections.NewItem(sb, types.StakeNfLatestSizeKey, "stake_nf_latest_size", collections.Uint64Value),
+		RootsStale:        collections.NewItem(sb, types.RootsStaleKey, "roots_stale", collections.BoolValue),
 		StakeRoots: collections.NewMap(sb, types.StakeRootsKey, "stake_roots", collections.BytesKey,
 			codec.CollValue[types.StakeRoot](cdc)),
 		StakeRootsByTime: collections.NewKeySet(sb, types.StakeRootsByTimeKey, "stake_roots_by_time",

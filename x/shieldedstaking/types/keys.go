@@ -140,6 +140,9 @@ var (
 	StakeNfSizeKey       = collections.NewPrefix(35)
 	StakeNfLatestRootKey = collections.NewPrefix(36)
 	StakeNfLatestSizeKey = collections.NewPrefix(37)
+	// RootsStaleKey: set when recording the stake roots at a block's end
+	// failed, cleared by the next success (audit 6 C-L4).
+	RootsStaleKey = collections.NewPrefix(38)
 )
 
 // DerthDenom is validator's delegation token.

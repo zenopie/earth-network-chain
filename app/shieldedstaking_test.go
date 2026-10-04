@@ -832,7 +832,12 @@ func TestStakeVoteTally(t *testing.T) {
 	// Nor does n3's vote proof verify for another weight (with a bundle
 	// proven for the changed sighash).
 	heavier := *sa
-	heavier.Weight = sa.Weight - 1
+	heavier.Weight = sstypes.RoundVoteWeight(sa.Weight - 1)
+	// A weight with more than three significant digits is refused outright.
+	odd := *sa
+	odd.Weight = sa.Weight - 1
+	res = e.checkTx(e.privateTx(&odd))
+	require.Contains(t, res.Log, "significant digits")
 	hp := e.feeOnly()
 	heavier.Bundle = hp.b
 	e.prove(&heavier, hp)

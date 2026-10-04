@@ -365,6 +365,34 @@ func withStake(p *StakeProof, fields ...fr.Element) []fr.Element {
 	return append(p.StakeFields(), fields...)
 }
 
+// VoteWeightSigFigs is how many significant decimal digits a stake vote's
+// weight may have. Minted note amounts are public (delegate, undelegate and
+// unlock events), so an exact weight links a vote to the mint that made its
+// note, and the same note's votes across proposals. Every wallet rounds the
+// weight down to this many digits, and the chain refuses any other, so all
+// weights fall in the same buckets (audit 6 C-L3). The circuit asks only
+// 0 < weight <= amount.
+const VoteWeightSigFigs = 3
+
+// RoundVoteWeight rounds w down to VoteWeightSigFigs significant digits.
+func RoundVoteWeight(w uint64) uint64 {
+	scale := uint64(1)
+	for w/scale >= 1000 {
+		scale *= 10
+	}
+	return w / scale * scale
+}
+
+// CheckVoteWeight refuses a weight with more than VoteWeightSigFigs
+// significant digits.
+func CheckVoteWeight(w uint64) error {
+	if RoundVoteWeight(w) != w {
+		return errorsmod.Wrapf(ErrInvalidMsg, "weight %d has more than %d significant digits (round it down: %d)",
+			w, VoteWeightSigFigs, RoundVoteWeight(w))
+	}
+	return nil
+}
+
 func positive(what string, v uint64) error {
 	if v == 0 {
 		return errorsmod.Wrapf(ErrInvalidMsg, "%s must be positive", what)
@@ -544,6 +572,9 @@ func (m *MsgStakeVote) ValidateBasic() error {
 		return err
 	}
 	if err := positive("weight", m.Weight); err != nil {
+		return err
+	}
+	if err := CheckVoteWeight(m.Weight); err != nil {
 		return err
 	}
 	if err := checkMoves(m, "", 0); err != nil {

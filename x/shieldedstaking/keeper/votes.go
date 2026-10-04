@@ -243,20 +243,32 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	snap := types.ProposalSnapshot{ProposalId: proposalID, Height: sdkCtx.BlockHeight(), VotingEnd: prop.VotingEndTime.UnixNano()}
-	if root, err := k.StakeLatestRoot.Get(ctx); err == nil {
-		rec, err := k.StakeRoots.Get(ctx, root)
-		if err != nil {
-			return err
-		}
-		snap.Root, snap.TreeSize = root, rec.TreeSize
-	} else if !errors.Is(err, collections.ErrNotFound) {
+	// The latest recorded roots are the end of the last block only if that
+	// block's recording succeeded. If it failed, a note spent since by a
+	// position lock is still unspent under the recorded nf root, and the
+	// position votes too: the snapshot takes no roots, so no note votes on
+	// this proposal (positions still do). Not attacker-reachable; a failure
+	// is a store error (audit 6 C-L4).
+	stale, err := k.RootsStale.Has(ctx)
+	if err != nil {
 		return err
 	}
-	// The nullifier tree as of the end of the same block as the note root
-	// (both recorded at EndBlock): a note in snap.Root is unspent at the
-	// snapshot iff its nullifier is not under snap.NfRoot.
-	if snap.NfRoot, snap.NfSize, err = k.latestNfRoot(ctx); err != nil {
-		return err
+	if !stale {
+		if root, err := k.StakeLatestRoot.Get(ctx); err == nil {
+			rec, err := k.StakeRoots.Get(ctx, root)
+			if err != nil {
+				return err
+			}
+			snap.Root, snap.TreeSize = root, rec.TreeSize
+		} else if !errors.Is(err, collections.ErrNotFound) {
+			return err
+		}
+		// The nullifier tree as of the end of the same block as the note
+		// root (both recorded at EndBlock): a note in snap.Root is unspent at
+		// the snapshot iff its nullifier is not under snap.NfRoot.
+		if snap.NfRoot, snap.NfSize, err = k.latestNfRoot(ctx); err != nil {
+			return err
+		}
 	}
 	seq, err := k.SnapshotSeq.Next(ctx)
 	if err != nil {
