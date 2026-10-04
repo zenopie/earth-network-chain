@@ -31,6 +31,12 @@ const MaxLpUnbondingSeconds = 90 * 24 * 60 * 60
 // happen against real deposited depth rather than against nothing at all.
 const DefaultVolumeDepthCapPerDay = 2
 
+// MaxVolumeDepthCapPerDay bounds the multiple governance may set (audit 6
+// D-L-D2): far above any real market's daily turnover, and far below where
+// the cap arithmetic (reserve x multiple x 7 x index, and the int64 cast of
+// the multiple) leaves its bounds.
+const MaxVolumeDepthCapPerDay = 1_000
+
 // VolumeDepthCapPerDayOrDefault returns the volume cap multiple, reading zero as
 // "unset, use the default" rather than as a cap of zero — which would leave
 // every pool unable to earn anything. See the proto comment.
@@ -71,6 +77,10 @@ func (p Params) Validate() error {
 	if p.LpUnbondingSeconds > MaxLpUnbondingSeconds {
 		return fmt.Errorf("lp unbonding of %ds exceeds maximum of %ds",
 			p.LpUnbondingSeconds, MaxLpUnbondingSeconds)
+	}
+	// Zero means the default.
+	if p.VolumeDepthCapPerDay > MaxVolumeDepthCapPerDay {
+		return fmt.Errorf("volume_depth_cap_per_day %d exceeds maximum of %d", p.VolumeDepthCapPerDay, MaxVolumeDepthCapPerDay)
 	}
 	return nil
 }
