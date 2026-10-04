@@ -1,8 +1,8 @@
-// Package certs does the native (non-ZK) passport-PKI certificate work for the
-// DSC registry: verifying that a Document Signer Certificate (DSC) was signed by
-// a trusted CSCA, and deriving the canonical public-key bytes that become the
-// registry Merkle leaf. This is the "DSC->CSCA verified once, on-chain, in Go"
-// half of Option C (see docs/DSC_REGISTRY_OPTION_C.md).
+// Package certs does the native (non-ZK) passport-PKI certificate work:
+// verifying that a Document Signer Certificate (DSC) was signed by a trusted
+// CSCA, and deriving the DSC's canonical public key, whose commitment
+// (DscCommitment) the register circuit exposes. The DSC->CSCA chain is
+// verified once, on-chain, in Go; the circuit proves only SOD->DSC.
 package certs
 
 import (
