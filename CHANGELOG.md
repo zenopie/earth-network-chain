@@ -15,6 +15,44 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Audit round 6 (see FIX_ROUND6_PROGRESS.md, ORCHARD_DESIGN.md section 17).
+  No circuit, verifying key or genesis change (genesis.json sha256
+  77af758697b293eb95d1f9f08a8f49b35bef648fd931ae1448cc3d0f2ddd652d):
+  - x/allocation: **a self-bond withdrawn from a validator in any status
+    takes its Groundworks weight with it.** It used to keep the weight when
+    the validator was not Bonded (just created, jailed, unbonding), so
+    create, vote and undelegate in one block left full weight with no
+    stake. Voter splits drop options pruned since they were cast (at the
+    next resync and in the export).
+  - x/personhood: **the registration binding includes the chain id**
+    (`H(TAG_REG, Bytes(chain_id), idc, ...)`); wallets must compute it. An
+    identity switch proven under a different Document Signer from the live
+    registration's is refused (code 1127); a switch counts against its
+    signer's daily cap. A recurring identity root no longer leaves a stale
+    by-time entry (export failed, the anchor expired early). Genesis
+    refuses records dated after genesis and handle leases past genesis +
+    handle_lease_max, and checks registration nullifier length. A
+    registration the expiry or purge sweep cannot retire is passed over for
+    a day instead of blocking the sweep.
+  - x/personhood: `HandleEntry.owner` (Query/Handle, Query/Handles): the
+    handle-scope nullifier holding the handle, hex. `handle_bound`,
+    `handle_moved` and `handle_released` carry `owner`; `handle_moved` also
+    `previous_owner`.
+  - x/shielded: a private tx's gas_limit is at most 5x the gas it uses;
+    every action of a bundle uses the same anchor; a send-disabled denom is
+    refused on module releases and module mints too;
+    `max_private_actions_per_block` is at most 256.
+  - x/shieldedstaking: MsgStakeVote weight has at most three significant
+    digits; LockPosition refuses more than 2^63-1; a slash of a validator
+    with no book writes none; a snapshot after a failed root recording takes
+    no roots; genesis requires a book for every module delegation.
+  - x/dex: an LP payout that would pass the sweep's note budget waits;
+    `volume_depth_cap_per_day` is at most 1,000. x/dex and x/personhood
+    module accounts lose the unused Staking permission.
+  - x/assembly: the Subjects sweep resumes from a cursor.
+  - Not changed: transparent tx replay across earth-1 relaunches (X-1) is
+    accepted; genesis account numbers are not offset.
+
 - Audit round 5 (see FIX_ROUND5_PROGRESS.md, ORCHARD_DESIGN.md section 16):
   - x/personhood: **the chain mints the referral note** to the referrer
     handle's registered address, with an opening derived from the passport

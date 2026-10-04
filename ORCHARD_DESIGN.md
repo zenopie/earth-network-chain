@@ -854,3 +854,107 @@ demotes votes again in round 1 (a new nullifier scope; `Query/BallotInputs`
 reports it). Chamber votes pass the circuit breaker; the private gas prices
 are capped (proof 10M, note 1M, bundle 1M). Handle binds cost nine note
 writes of gas.
+
+## 17. Audit round 6: wallet-facing rules (2026-10-03)
+
+Same principle: people are private; power and public money are public. Each
+item changes consensus unless marked. No circuit changed: the verifying keys
+and the genesis (sha256 77af7586...652d) are unchanged.
+
+**Registration binding names the chain (B6-4).** The passport proof's
+`address` input is now
+
+    H(TAG_REG, Bytes(chain_id), idc, pc_anml, Bytes(ciphertext_anml),
+      pc_erth, Bytes(ciphertext_erth), affiliate)
+
+so a MsgRegister seen on one network (a testnet) cannot be replayed onto
+another within the current_date skew with a fresh fee bundle. The circuit
+treats `address` as opaque, so this is a wallet-side hash change only.
+Pinned vector (`zk/privacy` TestRegistrationBindingPinned): chain_id
+"earth-1", idc 1, pc_anml 2, ciphertext_anml "anml", pc_erth 3,
+ciphertext_erth "erth", affiliate 0 ->
+`148b3513a501b6ff9c02314f355cb83fb544e22b2a9df79552fe49c944424159`
+(was `20ce5fcc...5b0c`).
+
+**An identity switch stays under its Document Signer (B6-1).** A switch (a
+MsgRegister for a passport nullifier with a live registration) whose proof's
+DSC differs from the live registration's is refused (personhood 1127,
+`ErrSwitchSignerMismatch`). A re-proof of a passport is signed by the DSC
+that signed it; only a compromised signer could prove someone else's
+nullifier, and as a switch that took their registration outside every rate
+cap, or moved registrations off a signer about to be purged. A switch also
+counts against its signer's daily cap (shared with its registrations; the
+network and country counters do not move): over it, 1113 (retry tomorrow).
+Wallets: re-prove a switch with the same passport (same SOD), as they do.
+
+**Stake vote weight: three significant digits (C-L3).** MsgStakeVote.weight
+must have at most three significant decimal digits
+(`RoundVoteWeight`: 399,999,999 -> 399,000,000); any other is refused at
+ValidateBasic. Minted note amounts are public, so an exact weight links a
+vote to the mint and to the same note's other votes; with every wallet
+rounding down alike, weights fall in shared buckets. The circuit only asks
+0 < weight <= amount.
+
+**Bundles: one anchor (A-L3).** Every action of a bundle proves against the
+same anchor (ValidateBasic). Both wallets already do this.
+
+**Private gas limit (A-L1).** A private tx's gas_limit may be at most 5x the
+gas it uses (refused in the ante, before the proofs, with "exceeds what this
+private tx uses"). The gas is known by then: tx size, the fixed per-bundle
+and per-action charge and the action's own charge; handlers run on an
+infinite meter. Wallets declare the simulated gas plus 10%, well inside.
+
+**Handles report their owner (wallet dependency).** `HandleEntry.owner`
+(Query/Handle, Query/Handles, field 6): the handle-scope nullifier holding
+the handle, 64 lowercase hex characters, "" for a handle never claimed.
+`handle_bound` and `handle_released` carry it as `owner`; `handle_moved`
+as `owner` (the new owner) and `previous_owner` (the mover). Nothing new is
+disclosed: the owner is the MsgBindHandle membership nullifier (claim or
+renewal) or the MsgMoveHandle new_owner, both public in the tx (and
+`handle_bound` and `handle_moved` already carried them as `nullifier`). The handle scope is one fixed
+scope, so the nullifier links only an identity's own handle txs to each
+other, which the handle itself already does. A wallet compares it with its
+own handle-scope nullifier to know a handle is its own.
+
+**SendEnabled (A-L2).** A send-disabled denom is refused at every pool edge:
+shield, unshield, a module release (a dex note swap, a private delegation's
+ERTH: refused in the ante's release-map check, before anything is spent)
+and a module mint into the pool. Notes shielded before the switch still move
+privately inside the pool.
+
+**Smaller rules.**
+- `max_private_actions_per_block` is at most 256.
+- `volume_depth_cap_per_day` is at most 1,000.
+- A private LP payout that would take the sweep past its note budget (256)
+  waits for the next block, unless it is the sweep's first.
+- A LockPosition above 2^63-1 derth is refused (it could never unlock).
+- Groundworks: a self-bond withdrawn from a validator in any status takes its
+  weight with it (D6-1; the weight is the SDK's bonded sum with the removed
+  delegation left out). Status changes move no tokens and need no resync.
+- An allocation voter's split drops options pruned since it was cast (at its
+  next resync, and in the export).
+- Not consensus-visible to wallets: a recurring identity root moves its
+  by-time entry (B6-2); a registration the expiry or purge sweep cannot
+  retire is passed over for a day, then retried (B6-5); genesis refuses
+  records dated after genesis and handle leases past genesis +
+  handle_lease_max (B6-3); a stake snapshot taken after a failed root
+  recording takes no roots, so no note votes on that proposal (C-L4).
+
+**Known lag (B6-5).** Membership checks the anchor, not the registration's
+expiry: an expired registration proves until the expiry sweep zeroes its
+leaf (at least budget/8 per block; normally the block it expires). The leaf
+is private, so the sweep is the only bound.
+
+**Accepted, not changed.**
+- X-1, transparent tx replay across earth-1 relaunches: accepted by the user
+  (they were the only user on the earlier chains); account numbers are not
+  offset.
+- Info items left as they are: fee amounts are wallet-chosen (wallets should
+  round to a fixed schedule, A-I6); timing between a move and a switch, or a
+  registration and a claim, links a passport to a handle (wallets should
+  randomize delays, B6-6); private stake votes keep their expedited-round
+  vote after a demotion while human votes rescope (C-I4); derth is
+  owner-locked but nk can be sold off-chain (C-I1); contract, ICA and group
+  operators (C-I3); dust undelegations (C-I5); TWAP precision (I-D3) and the
+  export-to-relaunch gap credited at the pre-export price (I-D4); a single
+  YES carries an uncontested removal ballot (I-AS2, by design).
