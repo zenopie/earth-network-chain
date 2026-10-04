@@ -33,20 +33,33 @@ import (
 //  1. Rewards first. The module's unwithdrawn rewards at A and at B are
 //     withdrawn into their queues (W -> P: neither backing changes), so the
 //     x/staking calls below pay none outside the books.
-//  2. Out of A's delegation queue first: P_A is ERTH waiting for the epoch
-//     end to be delegated to A. min(u, P_A) moves to P_B as a book entry; it
-//     was never bonded at A, so no x/staking entry is needed or made.
-//  3. The rest from the module's bonded stake at A, unbonded at A and
-//     bonded at B at once with x/staking's primitives (moveBonded), the
-//     redelegation entry recorded by the module itself: no transitive lock,
-//     no max_entries. The rest never exceeds D_A - U_A: B_A >= u with W_A = 0
-//     and P_A spent.
+//  2. Pro rata to A's book (audit 7, A7-1). Every derth/A is a claim on
+//     B_A = (D_A - U_A) + P_A with W_A = 0: the bonded part D_A - U_A, which
+//     a slash of A burns, and the queue P_A, ERTH waiting for the epoch end
+//     to be delegated to A, which no slash reaches. The value u leaves both
+//     parts in that proportion: floor(u x P_A / B_A) out of the queue, as a
+//     book entry, and the rest bonded. Taking the queue first would let a
+//     staker who sees a slash of A coming (missed blocks, double-sign
+//     evidence in the pool, the operator itself) leave with the unslashable
+//     slice of the book and its remaining holders pay their share. The
+//     bonded part never exceeds D_A - U_A (u <= B_A).
+//     Only when no slash can reach A's stake does the value come out of the
+//     queue first: A is unbonded (x/staking does not slash an unbonded
+//     validator, and x/evidence ignores evidence against one), or its bonded
+//     part is nothing (D_A <= U_A: slashed to nothing, or never delegated);
+//     the rest, if any, then moves bonded with no entry, as x/staking's
+//     BeginRedelegation from an unbonded validator does.
+//  3. The bonded part is unbonded at A and bonded at B at once with
+//     x/staking's primitives (moveBonded), the redelegation entry recorded
+//     by the module itself: no transitive lock, no max_entries. A slash of A
+//     for an infraction before the move reaches the entry, and through it
+//     the move's label (moves.go: the slash debt).
 //  4. B credits dst_derth <= floor(arrived x S_B / B_B), arrived being the
 //     measured rise of B's backing (u, less x/staking's truncation):
 //     rounding, and what arrived buys beyond dst_derth, favour the book on
-//     both sides (creditDst). A value exceeding A's queue by at most
-//     bondedDust (0.001 ERTH) moves out of the queue alone, the excess left
-//     to A's book.
+//     both sides (creditDst). A bonded part of at most bondedDust (0.001
+//     ERTH) does not move: the value is the queued part alone, the dust left
+//     to A's book (the mover's loss, never the book's).
 //
 // It runs in the private ante, atomically with the spend (ExecutesInAnte):
 // anything refused fails the tx before a note is spent or a fee paid.
@@ -60,15 +73,16 @@ import (
 // the slashed entries owe it through their notes' labels (moves.go: the
 // slash debt). B's undelegations already under way are spared: x/staking
 // would take the slash from them first (prepareRedelegationSlash sets them
-// aside for the slash). The value that moved out of A's queue was never
-// bonded at A and carries no entry. See ORCHARD_DESIGN.md sections 19 and
+// aside for the slash). The part that moved out of A's queue was never
+// bonded at A and carries no entry: it is the move's pro-rata share of what
+// a slash of A could not take either. See ORCHARD_DESIGN.md sections 19 and
 // 20.
 
-// bondedDust is the most a redelegation's value may exceed the source's
-// queue by and still move out of the queue alone, the excess left to the
-// source's book: x/staking may return nothing for so few tokens of a
-// slashed validator (and would refuse the redelegation), and an entry for
-// it would take one of the pair's max_entries.
+// bondedDust is the largest bonded part a redelegation leaves behind: the
+// value is then its queued part alone, the dust left to the source's book.
+// x/staking may return nothing for so few tokens of a slashed validator (and
+// the redelegation would be refused), and an entry for it would cost the
+// pair a slot.
 var bondedDust = math.NewInt(1_000)
 
 // gasRedelegate is MsgRedelegate's base gas: two reward withdrawals, the
@@ -121,9 +135,14 @@ func (k Keeper) checkRedelegate(ctx context.Context, m *types.MsgRedelegate) (ma
 	}
 	u := valueOf(d, bA, sA)
 	// At least min_delegation, worth and minted: the rounding loss is then
-	// at most 1/min_delegation of it, as for a delegation (audit F4).
+	// at most 1/min_delegation of it, as for a delegation (audit F4). At
+	// most one note's worth, as for an undelegation (the response carries
+	// it as a uint64).
 	if u.LT(params.MinDelegation) {
 		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "the redelegation is worth %s%s, less than the minimum %s", u, types.BondDenom, params.MinDelegation)
+	}
+	if err := fitsNote(u); err != nil {
+		return math.Int{}, err
 	}
 	// An estimate (x/staking may truncate what arrives by a uerth):
 	// executeRedelegate checks the arrival itself, in the ante.
@@ -135,6 +154,40 @@ func (k Keeper) checkRedelegate(ctx context.Context, m *types.MsgRedelegate) (ma
 		return math.Int{}, err
 	}
 	return u, nil
+}
+
+// splitValue splits the value u leaving src's book into the part that comes
+// out of its queue and the part that moves bonded (step 2 above): pro rata to
+// the book's queue P and bonded part D - U, the queued part rounded down (so
+// the slashable part rounds up); out of the queue first only while no slash
+// can reach src's stake (src unbonded, or no bonded part). Run after the
+// rewards were collected (W = 0, so u <= D - U + P).
+func (k Keeper) splitValue(ctx context.Context, src sdk.ValAddress, srcoper string, u math.Int) (queued, bonded math.Int, err error) {
+	vs, err := k.ValidatorState(ctx, srcoper)
+	if err != nil {
+		return math.Int{}, math.Int{}, err
+	}
+	p := vs.PendingDelegation
+	d, _, v, found, err := k.delegation(ctx, src)
+	if err != nil {
+		return math.Int{}, math.Int{}, err
+	}
+	slashable := d.Sub(vs.PendingUndelegation)
+	if !found || v.IsUnbonded() || !slashable.IsPositive() {
+		queued = math.MinInt(u, p)
+		return queued, u.Sub(queued), nil
+	}
+	queued = u.Mul(p).Quo(slashable.Add(p))
+	bonded = u.Sub(queued)
+	if bonded.GT(slashable) {
+		// Unreachable while u <= B: never more than the bonded part.
+		bonded = slashable
+		queued = u.Sub(bonded)
+	}
+	if queued.GT(p) {
+		return math.Int{}, math.Int{}, errorsmod.Wrapf(types.ErrRedelegation, "the value %s exceeds %s's book", u, srcoper)
+	}
+	return queued, bonded, nil
 }
 
 // collectRewards withdraws the module's rewards at val into v's queue (a
@@ -193,14 +246,12 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 	if err != nil {
 		return nil, err
 	}
-	vsA, err := k.ValidatorState(ctx, m.SrcValidator)
+	queued, bonded, err := k.splitValue(ctx, src, m.SrcValidator, u)
 	if err != nil {
 		return nil, err
 	}
-	queued := math.MinInt(u, vsA.PendingDelegation)
-	bonded := u.Sub(queued)
 	if bonded.IsPositive() && bonded.LTE(bondedDust) {
-		// Dust beyond the queue stays with the source's book.
+		// A dust bonded part stays with the source's book.
 		u, bonded = queued, math.ZeroInt()
 	}
 
@@ -219,7 +270,8 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 	}
 
 	// 4. The books: the source's queue and supply, the destination's queue.
-	if vsA, err = k.ValidatorState(ctx, m.SrcValidator); err != nil {
+	vsA, err := k.ValidatorState(ctx, m.SrcValidator)
+	if err != nil {
 		return nil, err
 	}
 	if err := k.checkpointSupply(ctx, &vsA); err != nil {

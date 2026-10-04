@@ -238,26 +238,35 @@ func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	e.days(1)
 	e.invariants()
 
-	// --- from A's queue: a delegation this epoch waits in A's queue; a
-	// redelegation that fits in it moves as a book entry, with no x/staking
-	// entry, and records no move (nothing a slash of A could reach). Its
-	// credit, labelled, cannot merge into the labelled B note: a second B
-	// note.
+	// --- pro rata to A's book (audit 7, A7-1): a delegation this epoch
+	// waits in A's queue; a redelegation takes its value out of the queue
+	// and the bonded stake in the book's proportion, never out of the queue
+	// first, so its bonded part keeps an x/staking entry and a move that a
+	// slash of A reaches. Its credit, labelled, cannot merge into the
+	// labelled B note: a second B note.
 	q2 := e.delegate(vA, uint64(500*ssErth))
+	vsA := e.state(vA)
+	pA, dA0 := vsA.PendingDelegation, e.modDelegation(vA).Sub(vsA.PendingUndelegation)
 	pB := e.state(vB).PendingDelegation
 	b2, res := e.redelegate(vA, vB, q2, uint64(150*ssErth))
 	ev = eventsOf(res.Events, sstypes.EventTypeRedelegate)[0]
-	value2 := evInt(t, ev, "value")
-	require.Equal(t, value2, evInt(t, ev, "queued"))
-	require.Equal(t, "0", ev["bonded"])
-	require.Equal(t, "", ev["completion_time"])
-	_, ok = e.move(privacy.FieldBytes(b2.moveKey))
-	require.False(t, ok, "no x/staking entry, no move to slash")
+	value2, queued2, bonded2 := evInt(t, ev, "value"), evInt(t, ev, "queued"), evInt(t, ev, "bonded")
+	require.Equal(t, value2, queued2.Add(bonded2))
+	require.True(t, queued2.IsPositive() && bonded2.IsPositive(), "queued %s bonded %s", queued2, bonded2)
+	// The queue's share of the book (the rewards collected into the queue
+	// first move it by less than a uerth in a thousand).
+	share := math.LegacyNewDecFromInt(pA).QuoInt(pA.Add(dA0))
+	require.InEpsilon(t, share.MulInt(value2).MustFloat64(), float64(queued2.Int64()), 1e-3)
+	require.NotEmpty(t, ev["completion_time"])
+	mv2, ok := e.move(privacy.FieldBytes(b2.moveKey))
+	require.True(t, ok, "the bonded part's move, which a slash of A reaches")
 	require.False(t, b.spent, "a labelled note takes no credit")
 	red, err = e.app.StakingKeeper.GetRedelegation(e.ctx(), mod, vA, vB)
 	require.NoError(t, err)
-	require.Len(t, red.Entries, 1, "no new x/staking entry")
-	require.True(t, e.state(vB).PendingDelegation.Sub(pB).GTE(value2), "B's queue took the value")
+	require.Len(t, red.Entries, 2, "an entry for the bonded part")
+	require.Equal(t, bonded2, red.Entries[1].InitialBalance)
+	require.Equal(t, red.Entries[1].SharesDst, mv2.Shares)
+	require.True(t, e.state(vB).PendingDelegation.Sub(pB).GTE(queued2), "B's queue took the queued part")
 	e.invariants()
 	e.days(1)
 	e.invariants()
