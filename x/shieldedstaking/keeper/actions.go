@@ -103,9 +103,10 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 		return 0, err
 	}
 	// A stake vote: the proof, one write for the vote and one per vote
-	// nullifier it uses, whatever the tree sizes.
+	// nullifier (always MaxVoteNotes: padding included), whatever the tree
+	// sizes.
 	if m, ok := msg.(*types.MsgStakeVote); ok {
-		return gasVote + proof + uint64(1+len(m.UsedVoteNullifiers()))*note, nil
+		return gasVote + proof + uint64(1+len(m.VoteNullifiers))*note, nil
 	}
 	sm, ok := msg.(types.StakeMsg)
 	if !ok {
@@ -379,7 +380,7 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (type
 	if d.GT(supply) {
 		return snap, math.Int{}, errorsmod.Wrap(types.ErrAmount, "vote exceeds the validator's derth supply at the snapshot")
 	}
-	for _, vnf := range m.UsedVoteNullifiers() {
+	for _, vnf := range m.VoteNullifiers {
 		if used, err := k.UsedVoteNullifiers.Has(ctx, collections.Join(m.ProposalId, vnf)); err != nil {
 			return snap, math.Int{}, err
 		} else if used {

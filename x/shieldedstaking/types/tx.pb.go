@@ -724,7 +724,10 @@ func (m *MsgUndelegateResponse) GetPayoutId() uint64 {
 // (ProposalSnapshot.root and .nf_root), that every used slot's note was in
 // the stake tree and unspent when voting began, that its vote nullifier is
 // H(TAG_VNF, nk, rho, position, proposal_id) under the one nk, that an unused
-// slot's vote nullifier is 0, and that 0 < weight <= the notes' sum. The
+// slot's is the padding nullifier H(TAG_VPAD, nk, r, proposal_id) (r fresh
+// random; it looks like a real one and never equals one), and that 0 <
+// weight <= the notes' sum. Every vote carries two non-zero vote nullifiers:
+// the number of notes voted is hidden. The
 // wallet votes the sum rounded down to three significant digits (weight must
 // have at most three; RoundVoteWeight). The chain refuses a vote nullifier
 // repeated in the msg or already used on the proposal (final: no re-vote)
@@ -753,8 +756,9 @@ type MsgStakeVote struct {
 	Weight     uint64                   `protobuf:"varint,5,opt,name=weight,proto3" json:"weight,omitempty"`
 	// proof is the bb v5.0.0 UltraHonk proof of circuits/vote.
 	Proof []byte `protobuf:"bytes,8,opt,name=proof,proto3" json:"proof,omitempty"`
-	// vote_nullifiers: exactly two, 32 bytes each: the used slots' vote
-	// nullifiers first (at least one, distinct, non-zero), then zeros.
+	// vote_nullifiers: exactly two, 32 bytes each, non-zero and distinct: a
+	// used slot's vote nullifier or an unused slot's padding nullifier, in
+	// the proof's slot order (wallets put the padding in a random slot).
 	VoteNullifiers [][]byte `protobuf:"bytes,10,rep,name=vote_nullifiers,json=voteNullifiers,proto3" json:"vote_nullifiers,omitempty"`
 	// debt_root is the current slash debt tree root (32 bytes): a labelled
 	// note votes its amount less what slashes have cut from its exposure.

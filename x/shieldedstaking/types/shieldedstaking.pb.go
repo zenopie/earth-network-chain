@@ -1034,8 +1034,9 @@ type StakeVote struct {
 	Validator string                   `protobuf:"bytes,4,opt,name=validator,proto3" json:"validator,omitempty"`
 	Derth     cosmossdk_io_math.Int    `protobuf:"bytes,5,opt,name=derth,proto3,customtype=cosmossdk.io/math.Int" json:"derth"`
 	Options   []*v1.WeightedVoteOption `protobuf:"bytes,6,rep,name=options,proto3" json:"options,omitempty"`
-	// vote_nullifiers are a note vote's vote nullifiers (1..2, the first the
-	// key's); empty for a position vote.
+	// vote_nullifiers are a note vote's two vote nullifiers (a used slot's or
+	// an unused slot's padding, indistinguishable; the first the key's); empty
+	// for a position vote.
 	VoteNullifiers [][]byte `protobuf:"bytes,7,rep,name=vote_nullifiers,json=voteNullifiers,proto3" json:"vote_nullifiers,omitempty"`
 }
 

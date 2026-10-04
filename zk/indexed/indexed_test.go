@@ -1,6 +1,7 @@
 package indexed
 
 import (
+	"fmt"
 	"math/rand"
 	"sort"
 	"testing"
@@ -134,6 +135,9 @@ func TestNonMembership(t *testing.T) {
 func TestNoirParity(t *testing.T) {
 	require.Equal(t, "0x65617274682e736e666c", "0x"+privacy.TagSNFL.Text(16))
 	require.Equal(t, "0x65617274682e766e66", "0x"+privacy.TagVNF.Text(16))
+	require.Equal(t, "0x65617274682e76706164", "0x"+privacy.TagVPad.Text(16))
+	pad := privacy.VotePadNF(el(0x5eed), el(0x77), 7)
+	require.Equal(t, "0x08d195db55c5c0006ae0d2e8ee33df8cd5286226124074ad37c1d5ebe74b6235", "0x"+fmt.Sprintf("%064x", pad.Bytes()))
 	leaf := privacy.NFLeaf(el(1), el(2), 3)
 	vnf := privacy.VoteNF(el(0x5eed), el(0xa1), 1, 7)
 	nf := privacy.StakeNF(el(0x5eed), el(0xa1), 1)

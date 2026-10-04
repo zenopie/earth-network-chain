@@ -13,7 +13,7 @@ module books, validator stake, pool reserves, allocation weights and every
 amount the chain itself computes are public.
 
 Genesis: `networks/genesis.json` sha256
-`ffb269c5047e823b3f3aa27034767ff894c9fe76626703ccf42d0b1b321b6b59`, carrying
+`84921c0b360c3b3da84dd9c136481536fecae8dc503eada6ede475927cb77acc`, carrying
 the action, stake, vote and membership verifying keys
 (`networks/genesis/shielded-verifying-keys/*.vk.b64`) and the passport keys
 (`networks/genesis/verifying-keys/`). `make genesis-check` and
@@ -78,6 +78,7 @@ Tags are ASCII strings read as big-endian integers (`"earth.id"` ->
 | TAG_OTAG | `earth.otag` | position owner tag |
 | TAG_SNFL | `earth.snfl` (`0x65617274682e736e666c`) | stake nullifier tree leaf |
 | TAG_VNF | `earth.vnf` | stake vote nullifier |
+| TAG_VPAD | `earth.vpad` (`0x65617274682e76706164`) | padding vote nullifier of an unused vote slot |
 | TAG_SLABEL | `earth.slabel` | stake note slash label |
 | TAG_DEBTL | `earth.debtl` | slash debt tree leaf |
 | TAG_SIGNAL | `earth.signal` | Signal / sighash (chain and wallet only) |
@@ -376,13 +377,13 @@ counts (`bb gates`, nargo 1.0.0-beta.22):
 | --- | --- | --- | --- |
 | action | 8,098 | 2^13 | anchor, nf, cm_out, cv_x, cv_y, sighash |
 | stake | 16,242 | 2^14 | anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash |
-| vote | 21,716 | 2^15 | note_root, nf_root, debt_root, asset, weight, proposal_id, vnf_0, vnf_1, sighash |
+| vote | 22,011 | 2^15 | note_root, nf_root, debt_root, asset, weight, proposal_id, vnf_0, vnf_1, sighash |
 | membership | 5,659 | 2^13 | root, scope, nullifier, signal, excluded_dsc, excluded_country, max_activation, max_predecessor |
 | passport (lean_poa and variants) | | | positions are params; `address` carries the registration binding, `current_date` is pinned to block time |
 
 The vote circuit fits the bundled SRS (2^15 + 1 points); the prover's SRS
 hint must be at least the circuit's dyadic size. Action has 94 gates of
-headroom under 2^13. nargo tests: action 41, stake 52, vote 45 (mobile
+headroom under 2^13. nargo tests: action 41, stake 52, vote 50 (mobile
 `circuits/`), plus privacy_core's Go parity vectors.
 
 Measured (Apple M2): action prove 0.34 s single-thread, 0.16 s on 8 threads;
@@ -433,9 +434,20 @@ when it clears; the chain checks them on every proof (section 8.2).
       vnf_i = H(TAG_VNF, nk, rho_i, pos_i, proposal_id)
       value_i = amount_i, or for a labelled note amount_i − exposed + retained
                 (debt tree under debt_root, the CURRENT root)
-    slot unused (amount_i = 0): vnf_i = 0
+    slot unused (amount_i = 0): vnf_i = H(TAG_VPAD, nk, r_i, proposal_id)   (r_i = rho_i, fresh random)
     0 < weight ≤ Σ value_i;  amounts < 2^63
     bind(sighash)
+
+**Padding.** Every vote publishes two vote nullifiers. An unused slot's
+padding nullifier is a Poseidon2 output like a real one, so without nk and
+r it cannot be told apart: the number of notes voted is hidden, as is which
+slot is padding (wallets place it at random). It never equals any note's
+vote nullifier (another tag, and arity 4 against 5: the sponge absorbs the
+length), so it can neither take a real vnf nor block one; a prover cannot
+aim it at a chosen value (a preimage); and once used on a proposal it is
+recorded like a real one, so neither a replayed vote nor another vote
+reusing it is accepted. At least one slot is a note (weight > 0 ≤ Σ
+values).
 
 ### 4.3 Membership circuit
 
@@ -465,6 +477,7 @@ The signal of every membership proof is the msg's sighash
 - `zk/indexed TestNoirParity` (= Noir `test_go_parity`):
   `nf_leaf(1, 2, 3)` = `0x0cdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276`;
   `vote_nf(0x5eed, 0xa1, 1, 7)` = `0x1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f`.
+  `vote_pad_nf(0x5eed, 0x77, 7)` = `0x08d195db55c5c0006ae0d2e8ee33df8cd5286226124074ad37c1d5ebe74b6235`.
 - `zk/debt TestNoirParity` (= `test_go_parity_debt`):
   `DebtLeaf(1, 2, 3, 4)` = `0x0b28cc858d976ddad0ede75ca9538f9b5ab36538964f6e241b8e89be2711e82a`;
   `StakeLabel(0x4d4b, 1000, 200)` = `0x2dfbc154973d1d3ec6e03137ba41b5c2cf5119f66cc69e3e58c033a77c80a881`;
@@ -903,7 +916,7 @@ rewrites two paths) + 1 per output slot: lane A 2 nullifiers and 1 output,
 lane B (Redelegate) 1 and 1, Undelegate +1 for its queued payout. Bases:
 Delegate 400,000; Restake 100,000; Undelegate 400,000; Lock 400,000; Update
 300,000; Unlock 300,000; PositionVote 250,000; StakeVote 250,000 (its writes:
-1 + used vote nullifiers); Redelegate 700,000 + 2,500 per entry of the pair's
+1 + 2 vote nullifiers, padding included: the same for every vote); Redelegate 700,000 + 2,500 per entry of the pair's
 x/staking record, + 2,500 per entry + 128 × 20,000 while the pair is at the
 entry cap (wallets simulate).
 
@@ -969,16 +982,18 @@ The payout's pc and ciphertext link the undelegate tx to its payout notes
     sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight,
                     vote_nullifiers[0..1], debt_root
 
-- ValidateBasic: exactly 2 slots, canonical, used ones first (at least one),
-  distinct, zeros after; weight > 0 with at most three significant decimal
+- ValidateBasic: exactly 2 vote nullifiers, canonical, non-zero, distinct
+  (`CheckVoteNullifiers`; an unused slot carries its padding nullifier);
+  weight > 0 with at most three significant decimal
   digits (`RoundVoteWeight`: 399,999,999 -> 399,000,000; `VoteWeightSigFigs`
   = 3), so weights fall in shared buckets; options valid.
 - The chain refuses: no open snapshot, a snapshot without nf_root (1106), a
   debt_root that is not current, weight above the validator's snapshot
   supply (1103), any vote nullifier already used on the proposal
   (`UsedVoteNullifiers`; `ErrVoteNullifierUsed` 1119, final, no re-vote).
-- It records ONE StakeVote under `0x00 || vote_nullifiers[0]` with
-  `vote_nullifiers` (field 7) and derth = weight. Nothing is spent or minted.
+- It records ONE StakeVote under `0x00 || vote_nullifiers[0]` with both
+  `vote_nullifiers` (field 7) and derth = weight, and marks both used on the
+  proposal (padding included). Nothing is spent or minted.
   Event `shieldedstaking_stake_vote` carries `vote_nullifiers`
   (comma-separated hex, slot order).
 - Tally: weight at the snapshot rate; private votes are fractions of the
@@ -995,7 +1010,7 @@ still votes, and its outputs cannot. A labelled note votes `amount − exposed
 the old value's vote with the old note (wallets keep spent notes' openings
 while a proposal snapshotted before their spend is open). One weight per
 owner and validator; a wallet staked with several validators sends one vote
-each. The number of notes voted (1 or 2) is visible.
+each. The number of notes voted (1 or 2) is hidden (padding, 4.2).
 
 ### 8.6 Positions (Groundworks)
 
@@ -1253,7 +1268,7 @@ such an entry's completion).
 
 Validate refuses: a zero or repeated stake nullifier; a malformed nf_root or
 an nf_size beyond the tree; a repeated or malformed vote key; a note vote
-without 1..2 vote nullifiers (the first its key's) or sharing one with
+without exactly 2 non-zero vote nullifiers (the first its key's) or sharing one with
 another vote on the proposal; a position vote with any; payouts per record
 not summing to its outstanding, values outside 1..2^63−1, a payout without a
 pc or blind ciphertext, retry_at not set exactly when attempts > 0; a
@@ -1399,10 +1414,19 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
   `index`; read failed txs too); its root must equal nf_root. Low leaf of nf:
   the predecessor (else the sentinel: value 0, index 0) with next = nf's
   successor (else 0, 0). vnf = H(TAG_VNF, nk, rho, pos, proposal_id); weight
-  = RoundVoteWeight(Σ values); unused slots amount 0, vnf 0;
-  vote_nullifiers = [vnf_0, vnf_1 or 0]; debt_root the current root. Prover
+  = RoundVoteWeight(Σ values); an unused slot carries padding (below); debt_root the current root. Prover
   arrays per slot (amount, rho, rcm, pos, path, low_*, label and debt
-  witness, vnf).
+  witness, vnf). See the padding rule below.
+- **Vote padding (wallet rule).** A vote always carries exactly two
+  non-zero, distinct vote nullifiers. A vote of one note fills the other
+  slot with padding: draw r, a fresh uniformly random field element (a CSPRNG,
+  e.g. 64 random bytes reduced mod p) for every vote and never reuse it;
+  vnf_pad = H(TAG_VPAD, nk, r, proposal_id) (`privacy.VotePadNF`,
+  privacy_core `vote_pad_nf`); put the note and the padding in a random slot
+  order. The prover's padding slot: amount 0, rho = r, every other field 0,
+  vnf = vnf_pad. vote_nullifiers = the two slots' vnfs in that order (the
+  record's key is the first, whichever it is). Remember the notes' vnfs as
+  voted; the padding needs no record. Gas: 1 + 2 note writes for every vote.
 - **Discovery**: every stake note is a proof output with a wallet
   ciphertext. Find derth credited by a delegation or redelegation in your own
   output (the response's `position` names the merged note).

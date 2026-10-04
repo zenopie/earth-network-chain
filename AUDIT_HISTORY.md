@@ -24,6 +24,7 @@ redesign; the replacement is named.
 | Fix round 6 | `77af7586…652d` (unchanged) | none |
 | Staking wave, change 2 | `1824225d…7ee8` | vote (4 slots) |
 | Staking wave, change 4 / audit 7 | `ffb269c5…6b59` | stake v2, vote v2 |
+| Pre-audit: vote padding | `84921c0b…7acc` | vote (padding nullifier) |
 
 ## Wave: Orchard phase 1 (2026-10-02)
 
@@ -240,6 +241,15 @@ max_entries shared, griefable) is gone with change 4.
 | D7-L2 | Low | Self-bond weight at non-bonded validators | Counted only at Bonded; resync on bond/unbond start | fd79d39 |
 | D items | - | Books of a redelegation and slashed source not re-weighed; pruned options in position splits | Re-weighed in the block; dropped | c107ef9, 6f67a2d |
 | Infos | Info | 201-byte comment; redelegation value bound; genesis move checks | Fixed | e52b170 |
+
+## Pre-audit fixes (2026-10-04)
+
+| Change | Fix | Commits |
+| --- | --- | --- |
+| Per-validator book queries tied an IP to an intent | Query/Validators: every validator's quote inputs, paged | b7e77f8 |
+| Launch ceremony was manual and refused the launch key | scripts/ceremony.sh; TestLaunchCeremony with a pending path | 5343560 |
+| Docs: LP share transfer, handle renewal, fee split | Answered in ORCHARD_DESIGN (5.3, 6.2, 10) | a838682 |
+| A one-note stake vote showed a zero vnf | Unused slot carries a padding nullifier H(TAG_VPAD, nk, r, proposal_id); chain requires exactly 2 non-zero, distinct vnfs, all recorded | (this wave) |
 
 ## Known limits and open items
 

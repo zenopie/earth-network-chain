@@ -9,6 +9,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -82,6 +83,13 @@ func (e *stakeEnv) snapshotNfTree(snap sstypes.ProposalSnapshot) *indexed.Tree {
 
 func (e *stakeEnv) vnf(n *snote, proposalID uint64) []byte {
 	return privacy.FieldBytes(privacy.VoteNF(e.w.nk, n.rho, uint32(n.pos), proposalID))
+}
+
+// padR is the padding value of unused slot i of a vote of ns on proposalID:
+// a wallet draws it fresh at random; derived here so proof fixtures are
+// deterministic.
+func padR(ns []*snote, proposalID uint64, i int) fr.Element {
+	return privacy.H(privacy.AssetID("staking-fixture/vote-pad"), ns[0].rho, privacy.U64(proposalID), privacy.U64(uint64(i)))
 }
 
 // votePlan is a vote proof's witness: per used slot, the note, its path
@@ -172,7 +180,7 @@ func (e *stakeEnv) voteWitness(m *sstypes.MsgStakeVote, vp *votePlan, sighash fr
 		if used(i) {
 			return vp.notes[i]
 		}
-		return &snote{}
+		return &snote{rho: padR(vp.notes, m.ProposalId, i)} // padding: r in rho
 	}
 	fmt.Fprintf(&b, "nk = %s\n", tomlQ(e.w.nk))
 	arr("amount", func(i int) string { return tomlU(note(i).amount) })
@@ -234,13 +242,14 @@ func (e *stakeEnv) tryProveVote(m *sstypes.MsgStakeVote, vp *votePlan) ([]byte, 
 }
 
 // voteNullifiers is the MaxVoteNotes vote nullifier slots of ns on
-// proposalID: theirs first, then zeros.
+// proposalID: theirs first, then padding nullifiers.
 func (e *stakeEnv) voteNullifiers(ns []*snote, proposalID uint64) [][]byte {
 	out := make([][]byte, sstypes.MaxVoteNotes)
 	for i := range out {
-		out[i] = make([]byte, 32)
 		if i < len(ns) {
 			out[i] = e.vnf(ns[i], proposalID)
+		} else {
+			out[i] = privacy.FieldBytes(privacy.VotePadNF(e.w.nk, padR(ns, proposalID, i), proposalID))
 		}
 	}
 	return out
@@ -295,8 +304,8 @@ func (e *stakeEnv) stakeVoteNotes(ns []*snote, proposalID uint64, opt v1.VoteOpt
 	require.Empty(e.t, eventsOf(res.Events, sstypes.EventTypeStakeNote), "a vote mints no stake note")
 	ev := eventsOf(res.Events, sstypes.EventTypeStakeVote)
 	require.Len(e.t, ev, 1)
-	hs := make([]string, len(ns))
-	for i, b := range m.UsedVoteNullifiers() {
+	hs := make([]string, len(m.VoteNullifiers))
+	for i, b := range m.VoteNullifiers {
 		hs[i] = fmt.Sprintf("%x", b)
 	}
 	require.Equal(e.t, strings.Join(hs, ","), ev[0][sstypes.AttributeKeyVoteNFs])
@@ -404,6 +413,7 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 	// verify.
 	forged, fp, _ := e.stakeVoteMsg(n, prop1, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
 	forged.VoteNullifiers[0] = privacy.FieldBytes(ssDet("forged-vnf", 0))
+	forged.VoteNullifiers[1] = privacy.FieldBytes(ssDet("forged-pad", 0)) // the first vote's padding is used too
 	forgedProof := *forged
 	e.prove(&forgedProof, fp)
 	forgedProof.Proof = make([]byte, shieldedtypes.ProofBytes)
@@ -518,14 +528,15 @@ func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 	e.next(5 * time.Second)
 	prop := e.submitProposal()
 
-	// The shape, before any proof: exactly two slots, used ones first,
-	// distinct; three notes do not fit.
+	// The shape, before any proof: exactly two non-zero, distinct vote
+	// nullifiers (padding fills an unused slot); three notes do not fit.
 	m, _, _ := e.stakeVoteNotesMsg(ns[:2], prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
 	z := make([]byte, 32)
 	for name, vnfs := range map[string][][]byte{
 		"one slot":      m.VoteNullifiers[:1],
 		"three slots":   append(append([][]byte{}, m.VoteNullifiers...), z),
-		"gap":           {z, m.VoteNullifiers[1]},
+		"zero first":    {z, m.VoteNullifiers[1]},
+		"zero padding":  {m.VoteNullifiers[0], z},
 		"none used":     {z, z},
 		"repeated note": {m.VoteNullifiers[0], m.VoteNullifiers[0]},
 	} {
@@ -561,9 +572,26 @@ func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 	require.Equal(t, sstypes.ErrStakeTree.ABCICode(), res.Code, res.Log)
 	require.Contains(t, res.Log, "debt root")
 
-	// The third note votes in a second msg (its own weight).
-	e.stakeVote(ns[2], prop, v1.OptionNo)
+	// The third note votes in a second msg (its own weight); its unused slot
+	// carries a padding nullifier, recorded like any vote nullifier.
+	v3 := e.stakeVoteNotes(ns[2:], prop, v1.OptionNo)
 	require.Equal(t, 2, countVotes(t, e, prop))
+	pad := v3.VoteNullifiers[1]
+	require.NotEqual(t, make([]byte, 32), pad)
+	for _, n := range ns {
+		require.NotEqual(t, e.vnf(n, prop), pad, "a padding nullifier is no note's")
+	}
+	used, err := e.app.ShieldedStakingKeeper.UsedVoteNullifiers.Has(e.ctx(), collections.Join(prop, pad))
+	require.NoError(t, err)
+	require.True(t, used, "the padding nullifier is spent with the vote")
+	// Replaying the vote, or reusing its padding nullifier beside another
+	// vote nullifier, is refused before any proof is read.
+	res = e.checkTx(e.privateTx(v3))
+	require.NotEqual(t, uint32(0), res.Code, "a replay")
+	reuse, _, _ := e.stakeVoteMsg(ns[2], prop, v1.NewNonSplitVoteOption(v1.OptionNo), 0, false)
+	reuse.VoteNullifiers = [][]byte{privacy.FieldBytes(ssDet("other-vnf", 0)), pad}
+	res = e.checkTx(e.privateTx(reuse))
+	require.Equal(t, sstypes.ErrVoteNullifierUsed.ABCICode(), res.Code, res.Log)
 
 	tl, err := e.app.ShieldedStakingKeeper.Tallies.Get(e.ctx(), collections.Join(prop, e.valoper(vB)))
 	require.NoError(t, err)
@@ -587,8 +615,7 @@ func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 	bad := *gs
 	bad.Votes = append([]sstypes.StakeVote(nil), gs.Votes...)
 	for i := range bad.Votes {
-		if len(bad.Votes[i].VoteNullifiers) == 1 {
-			v := bad.Votes[i]
+		if v := bad.Votes[i]; !v.Position && !bytes.Equal(v.VoteNullifiers[0], e.vnf(ns[0], prop)) {
 			v.VoteNullifiers = [][]byte{v.VoteNullifiers[0], e.vnf(ns[0], prop)}
 			bad.Votes[i] = v
 		}

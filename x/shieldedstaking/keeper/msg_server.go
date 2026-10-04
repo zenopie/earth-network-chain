@@ -173,7 +173,7 @@ func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*typ
 	if err != nil {
 		return nil, err
 	}
-	vnfs := m.UsedVoteNullifiers()
+	vnfs := append([][]byte(nil), m.VoteNullifiers...)
 	v := types.StakeVote{
 		ProposalId: m.ProposalId, Key: noteVoteKey(vnfs[0]), Validator: m.Validator,
 		Derth: d, Options: m.Options, VoteNullifiers: vnfs,

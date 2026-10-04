@@ -617,21 +617,9 @@ func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
 	return append(out, root), nil
 }
 
-// UsedVoteNullifiers is the msg's non-zero vote nullifiers, in order (one
-// per note voted). Call after ValidateBasic.
-func (m *MsgStakeVote) UsedVoteNullifiers() [][]byte {
-	var out [][]byte
-	for _, b := range m.VoteNullifiers {
-		if !isZero(b) {
-			out = append(out, b)
-		}
-	}
-	return out
-}
-
-// ValidateBasic: exactly MaxVoteNotes vote nullifier slots, canonical field
-// elements, the used ones first (at least one), distinct, the rest zero; a
-// positive weight of at most three significant digits.
+// ValidateBasic: exactly MaxVoteNotes vote nullifiers, canonical, non-zero
+// and distinct (an unused slot carries a padding nullifier, so every vote
+// looks the same); a positive weight of at most three significant digits.
 func (m *MsgStakeVote) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
 		return err
@@ -651,32 +639,34 @@ func (m *MsgStakeVote) ValidateBasic() error {
 	if _, err := field("debt_root", m.DebtRoot); err != nil {
 		return err
 	}
-	if len(m.VoteNullifiers) != MaxVoteNotes {
-		return errorsmod.Wrapf(ErrInvalidMsg, "a stake vote carries exactly %d vote nullifiers (zero for an unused slot)", MaxVoteNotes)
+	if err := CheckVoteNullifiers(m.VoteNullifiers); err != nil {
+		return err
+	}
+	return ValidateOptions(m.Options)
+}
+
+// CheckVoteNullifiers: exactly MaxVoteNotes, each a canonical non-zero field
+// element, distinct. A note's vote nullifier and an unused slot's padding
+// nullifier look alike (circuits/vote); neither is ever zero.
+func CheckVoteNullifiers(vnfs [][]byte) error {
+	if len(vnfs) != MaxVoteNotes {
+		return errorsmod.Wrapf(ErrInvalidMsg, "a stake vote carries exactly %d vote nullifiers (a padding nullifier for an unused slot)", MaxVoteNotes)
 	}
 	seen := map[string]bool{}
-	zeros := false
-	for i, b := range m.VoteNullifiers {
+	for i, b := range vnfs {
 		vnf, err := field("vote_nullifier", b)
 		if err != nil {
 			return err
 		}
 		if vnf.IsZero() {
-			zeros = true
-			continue
-		}
-		if zeros {
-			return errorsmod.Wrapf(ErrInvalidMsg, "vote nullifier %d follows an unused slot: used slots come first", i)
+			return errorsmod.Wrapf(ErrInvalidMsg, "vote nullifier %d is zero: an unused slot carries a padding nullifier", i)
 		}
 		if seen[string(b)] {
 			return errorsmod.Wrap(ErrInvalidMsg, "repeated vote nullifier: a note votes once")
 		}
 		seen[string(b)] = true
 	}
-	if len(seen) == 0 {
-		return errorsmod.Wrap(ErrInvalidMsg, "a stake vote votes at least one note")
-	}
-	return ValidateOptions(m.Options)
+	return nil
 }
 
 // VotePublicInputs lays out the vote circuit's public inputs: note_root,

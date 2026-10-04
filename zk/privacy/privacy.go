@@ -41,6 +41,8 @@ var (
 	// (circuits/vote).
 	TagSNFL = tag("earth.snfl")
 	TagVNF  = tag("earth.vnf")
+	// TagVPad: the padding vote nullifier of an unused vote slot.
+	TagVPad = tag("earth.vpad")
 	// Stake note slash labels and the slash debt tree's leaves (circuits/stake,
 	// circuits/vote; ORCHARD_DESIGN.md 4.1, 4.2).
 	TagSLabel = tag("earth.slabel")
@@ -156,6 +158,14 @@ func NFLeaf(value, nextValue fr.Element, nextIndex uint64) fr.Element {
 // H(TAG_VNF, nk, rho, position, proposal_id) (privacy_core::vote_nf).
 func VoteNF(nk, rho fr.Element, position uint32, proposalID uint64) fr.Element {
 	return H(TagVNF, nk, rho, U64(uint64(position)), U64(proposalID))
+}
+
+// VotePadNF is the vote nullifier an unused vote slot publishes:
+// H(TAG_VPAD, nk, r, proposal_id), r a fresh random field element per vote
+// (privacy_core::vote_pad_nf). Another tag and arity than VoteNF, so it
+// never equals a note's vote nullifier; without nk and r it looks like one.
+func VotePadNF(nk, r fr.Element, proposalID uint64) fr.Element {
+	return H(TagVPad, nk, r, U64(proposalID))
 }
 
 // CM is the note commitment H(TAG_CM, asset, value, pc).

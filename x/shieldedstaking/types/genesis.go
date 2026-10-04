@@ -272,8 +272,9 @@ func (gs GenesisState) validatePayouts() error {
 	return nil
 }
 
-// checkVoteNullifiers: a note vote names 1..MaxVoteNotes vote nullifiers,
-// non-zero canonical field elements, its key's first, none used by another
+// checkVoteNullifiers: a note vote names exactly MaxVoteNotes vote
+// nullifiers (padding included), non-zero canonical field elements, its
+// key's first, none used by another
 // vote on the proposal (used records proposal/vnf seen so far); a position
 // vote names none.
 func checkVoteNullifiers(v StakeVote, used map[string]bool) error {
@@ -283,8 +284,8 @@ func checkVoteNullifiers(v StakeVote, used map[string]bool) error {
 		}
 		return nil
 	}
-	if len(v.VoteNullifiers) == 0 || len(v.VoteNullifiers) > MaxVoteNotes {
-		return fmt.Errorf("note vote on proposal %d: %d vote nullifiers, want 1..%d", v.ProposalId, len(v.VoteNullifiers), MaxVoteNotes)
+	if len(v.VoteNullifiers) != MaxVoteNotes {
+		return fmt.Errorf("note vote on proposal %d: %d vote nullifiers, want %d", v.ProposalId, len(v.VoteNullifiers), MaxVoteNotes)
 	}
 	if !bytes.Equal(v.VoteNullifiers[0], v.Key[1:]) {
 		return fmt.Errorf("note vote on proposal %d: key %x is not its first vote nullifier", v.ProposalId, v.Key)

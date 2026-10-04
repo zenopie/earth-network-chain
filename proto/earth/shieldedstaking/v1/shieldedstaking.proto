@@ -355,8 +355,9 @@ message StakeVote {
     (amino.dont_omitempty) = true
   ];
   repeated cosmos.gov.v1.WeightedVoteOption options = 6;
-  // vote_nullifiers are a note vote's vote nullifiers (1..2, the first the
-  // key's); empty for a position vote.
+  // vote_nullifiers are a note vote's two vote nullifiers (a used slot's or
+  // an unused slot's padding, indistinguishable; the first the key's); empty
+  // for a position vote.
   repeated bytes vote_nullifiers = 7;
 }
 

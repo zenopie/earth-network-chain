@@ -28,6 +28,14 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting.**
 
+- Stake vote padding (**new vote circuit and verifying key; genesis.json
+  sha256 84921c0b360c3b3da84dd9c136481536fecae8dc503eada6ede475927cb77acc**).
+  An unused vote slot publishes a padding nullifier
+  H(TAG_VPAD = "earth.vpad", nk, r, proposal_id) instead of 0, so every vote
+  looks the same. MsgStakeVote must carry exactly two non-zero, distinct
+  vote nullifiers; both are recorded as used (a zero is refused). Its gas is
+  1 + 2 note writes for every vote. Wallets must use the new vote.json.
+
 - One stake note per validator; redelegation slashes paid by the notes they
   credited (user decisions; ORCHARD_DESIGN.md 8.1 and 8.7,
   AUDIT_HISTORY.md). **New stake and vote circuits and
