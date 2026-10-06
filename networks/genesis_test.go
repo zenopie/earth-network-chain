@@ -351,7 +351,7 @@ func TestVerifyingKeysAreSeeded(t *testing.T) {
 	}
 }
 
-// Private txs are enabled at launch: x/shielded's action, membership and stake keys
+// Private txs are enabled at launch: x/shielded's action, membership, stake, vote and move keys
 // are in genesis, equal to their sources, and equal to the keys every
 // real-proof test in this repo verifies against (so a genesis key that drifted
 // from the circuits fails here, not on the first private tx). That the test
@@ -364,6 +364,7 @@ func TestShieldedVerifyingKeysAreSeeded(t *testing.T) {
 		"membership": "../x/personhood/testdata/app/membership.vk",
 		"stake":      "../x/shieldedstaking/testdata/stake.vk",
 		"vote":       "../x/shieldedstaking/testdata/vote.vk",
+		"move":       "../x/personhood/testdata/app/move.vk",
 	}
 	if got := len(g.AppState.Shielded.Params.VerifyingKeys); got != len(tests) {
 		t.Errorf("genesis carries %d shielded verifying keys, want %d", got, len(tests))

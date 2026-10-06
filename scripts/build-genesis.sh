@@ -13,7 +13,7 @@
 #   networks/genesis/app_state.json    the parameters this chain deliberately sets
 #   networks/genesis/accounts.json     every balance that exists at height 1
 #   networks/genesis/verifying-keys/   one base64 UltraHonk key per register circuit
-#   networks/genesis/shielded-verifying-keys/  action, membership, stake, vote (scripts/privacy-vks.sh)
+#   networks/genesis/shielded-verifying-keys/  action, membership, stake, vote, move (scripts/privacy-vks.sh)
 #   networks/genesis/gentx/            signed gentxs to collect, if any
 #   csca/                            the CSCA trust store, via tools/pki-genesis
 #
@@ -126,7 +126,7 @@ g['app_state']['personhood']['params']['verifying_keys'] = vks
 svks = od()
 for p in sorted(glob.glob(os.path.join(src, 'shielded-verifying-keys', '*.vk.b64'))):
     svks[os.path.basename(p)[:-len('.vk.b64')]] = open(p).read().strip()
-missing = {'action', 'membership', 'stake', 'vote'} - set(svks)
+missing = {'action', 'membership', 'stake', 'vote', 'move'} - set(svks)
 if missing:
     sys.exit('networks/genesis/shielded-verifying-keys lacks %s: run scripts/privacy-vks.sh'
              % ', '.join(sorted(missing)))
