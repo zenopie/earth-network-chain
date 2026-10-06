@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strconv"
@@ -79,12 +80,15 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 	// registration lapsed or was purged) has a predecessor too: whatever it
 	// held may still be live.
 	predecessorAt := int64(0)
-	if seen, err := k.PassportsSeen.Has(ctx, p.nullifier); err != nil {
+	lastIdc, err := k.PassportsSeen.Get(ctx, p.nullifier)
+	seen := err == nil
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
 		return nil, err
-	} else if seen || switched {
+	}
+	if seen || switched {
 		predecessorAt = now
 	}
-	if err := k.PassportsSeen.Set(ctx, p.nullifier); err != nil {
+	if err := k.PassportsSeen.Set(ctx, p.nullifier, msg.Idc); err != nil {
 		return nil, err
 	}
 	leaf, err := IdentityLeaf(msg.Idc, p.dsc.key, p.dsc.country, now, predecessorAt)
@@ -94,6 +98,15 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 	index, err := k.appendLeaf(ctx, leaf)
 	if err != nil {
 		return nil, err
+	}
+	// The succession from the passport's last identity to this one: what a
+	// move proof (circuits/move) shows, so that a handle or split passes only
+	// to this passport's next identity. Public data only: both idcs are in
+	// the passport's registration records already.
+	if seen && !bytes.Equal(lastIdc, msg.Idc) {
+		if err := k.appendSuccession(ctx, lastIdc, msg.Idc); err != nil {
+			return nil, err
+		}
 	}
 	if err := k.addRegistration(ctx, types.Registration{
 		Nullifier:     p.nullifier,

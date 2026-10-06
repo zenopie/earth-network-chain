@@ -29,6 +29,30 @@ func (k Keeper) VerifyMembership(ctx context.Context, m types.Membership, st Mem
 	return nil
 }
 
+// MoveStatement is what a move proof is verified against: the scope its msg
+// fixes and the msg's sighash.
+type MoveStatement struct {
+	Scope  fr.Element
+	Signal fr.Element
+}
+
+// CheckMove checks a move proof's anchor (a recent identity root).
+func (k Keeper) CheckMove(ctx context.Context, m types.MoveProof) error {
+	return k.CheckIdentityAnchor(ctx, m.Root)
+}
+
+// VerifyMove verifies m against st with the pool's move key
+// (circuits/move): the prover knows the secrets of the identity behind
+// old_nullifier and of its successor under the same passport, which is
+// live, behind new_nullifier.
+func (k Keeper) VerifyMove(ctx context.Context, m types.MoveProof, st MoveStatement) error {
+	pub := types.MovePublicInputs(m, st.Scope, st.Signal)
+	if err := k.shieldedKeeper.VerifyCircuit(ctx, shieldedtypes.CircuitMove, m.Proof, pub); err != nil {
+		return errorsmod.Wrap(types.ErrInvalidMove, err.Error())
+	}
+	return nil
+}
+
 // MembershipActionGas is the fixed gas of a private action carrying one
 // membership proof and making `writes` note-sized writes.
 func (k Keeper) MembershipActionGas(ctx context.Context, writes uint64) (uint64, error) {

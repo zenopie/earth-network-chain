@@ -87,11 +87,20 @@ type Keeper struct {
 	Handles       collections.Map[string, types.Handle]
 	HandleByNf    collections.Map[[]byte, string]
 	HandleRelease collections.KeySet[collections.Pair[int64, string]]
-	// HandleLeaseMax: the longest handle_lease_seconds ever in force.
-	HandleLeaseMax collections.Item[int64]
-	// PassportsSeen: passport nullifiers ever registered (a registration of
-	// one again is a re-entry: its leaf's predecessor_at is set).
-	PassportsSeen collections.KeySet[[]byte]
+	// HandleMovedOut: handle nullifiers that moved their handle away (they
+	// may never claim one again); HandleLeaseMax: the longest
+	// handle_lease_seconds ever in force.
+	HandleMovedOut collections.KeySet[[]byte]
+	// CaretakerMovedOut: caretaker nullifiers that moved their split away.
+	CaretakerMovedOut collections.KeySet[[]byte]
+	HandleLeaseMax    collections.Item[int64]
+	// PassportsSeen: passport nullifiers ever registered, each to the idc of
+	// its last registration (a registration of one again is a re-entry or a
+	// switch: its leaf's predecessor_at is set and a succession leaf from
+	// that idc is appended). Successions: the identity tree's succession
+	// leaves by index (circuits/move proves moves along them).
+	PassportsSeen collections.Map[[]byte, []byte]
+	Successions   collections.Map[uint64, types.Succession]
 
 	// Registration bindings that have landed, refused for reuse until their
 	// expiry, and the expiry order. See registration.go.
@@ -183,8 +192,11 @@ func NewKeeper(
 		HandleByNf: collections.NewMap(sb, types.HandleByNfKey, "handle_by_nf", collections.BytesKey, collections.StringValue),
 		HandleRelease: collections.NewKeySet(sb, types.HandleReleaseKey, "handle_release",
 			collections.PairKeyCodec(collections.Int64Key, collections.StringKey)),
-		HandleLeaseMax: collections.NewItem(sb, types.HandleLeaseMaxKey, "handle_lease_max", collections.Int64Value),
-		PassportsSeen:  collections.NewKeySet(sb, types.PassportsSeenKey, "passports_seen", collections.BytesKey),
+		HandleMovedOut:    collections.NewKeySet(sb, types.HandleMovedOutKey, "handle_moved_out", collections.BytesKey),
+		CaretakerMovedOut: collections.NewKeySet(sb, types.CaretakerMovedOutKey, "caretaker_moved_out", collections.BytesKey),
+		HandleLeaseMax:    collections.NewItem(sb, types.HandleLeaseMaxKey, "handle_lease_max", collections.Int64Value),
+		PassportsSeen:     collections.NewMap(sb, types.PassportsSeenKey, "passports_seen", collections.BytesKey, collections.BytesValue),
+		Successions:       collections.NewMap(sb, types.SuccessionsKey, "successions", collections.Uint64Key, codec.CollValue[types.Succession](cdc)),
 
 		UsedBindings:      collections.NewMap(sb, types.UsedBindingsKey, "used_bindings", collections.BytesKey, collections.Int64Value),
 		UsedBindingExpiry: collections.NewKeySet(sb, types.UsedBindingExpiryKey, "used_binding_expiry", timeBytes),

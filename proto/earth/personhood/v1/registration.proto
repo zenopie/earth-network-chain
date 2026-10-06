@@ -95,6 +95,40 @@ message Membership {
   bytes nullifier = 3;
 }
 
+// MoveProof is a move circuit proof (circuits/move, bb v5.0.0 UltraHonk): its
+// prover knows the identity secrets of an identity and of the identity that
+// succeeded it under the same passport (the chain's succession leaf
+// H(TAG_SUCC, idc_old, idc_new) and the successor's live identity leaf are
+// both in the tree at root), and old_nullifier and new_nullifier are the two
+// identities' nullifiers in the scope the msg fixes. Public inputs, in order:
+// root, scope, old_nullifier, new_nullifier, signal (the msg's sighash).
+message MoveProof {
+  bytes proof = 1;
+  // root is the identity-tree anchor the proof was made against.
+  bytes root = 2;
+  // old_nullifier is H(TAG_SN, old_id_secret, scope): what holds the handle
+  // or split now.
+  bytes old_nullifier = 3;
+  // new_nullifier is H(TAG_SN, new_id_secret, scope): the successor that is
+  // to hold it.
+  bytes new_nullifier = 4;
+}
+
+// Succession is a succession leaf of the identity tree: the passport whose
+// last registration was to idc_old registered to idc_new.
+message Succession {
+  uint64 leaf_index = 1;
+  bytes idc_old = 2;
+  bytes idc_new = 3;
+}
+
+// PassportSeen is a passport ever registered and the identity commitment of
+// its last registration (a later one appends a succession from it).
+message PassportSeen {
+  bytes nullifier = 1;
+  bytes last_idc = 2;
+}
+
 // ClaimNullifier records that the holder of nullifier claimed on day.
 message ClaimNullifier {
   uint64 day = 1;

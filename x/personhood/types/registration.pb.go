@@ -378,6 +378,202 @@ func (m *Membership) GetNullifier() []byte {
 	return nil
 }
 
+// MoveProof is a move circuit proof (circuits/move, bb v5.0.0 UltraHonk): its
+// prover knows the identity secrets of an identity and of the identity that
+// succeeded it under the same passport (the chain's succession leaf
+// H(TAG_SUCC, idc_old, idc_new) and the successor's live identity leaf are
+// both in the tree at root), and old_nullifier and new_nullifier are the two
+// identities' nullifiers in the scope the msg fixes. Public inputs, in order:
+// root, scope, old_nullifier, new_nullifier, signal (the msg's sighash).
+type MoveProof struct {
+	Proof []byte `protobuf:"bytes,1,opt,name=proof,proto3" json:"proof,omitempty"`
+	// root is the identity-tree anchor the proof was made against.
+	Root []byte `protobuf:"bytes,2,opt,name=root,proto3" json:"root,omitempty"`
+	// old_nullifier is H(TAG_SN, old_id_secret, scope): what holds the handle
+	// or split now.
+	OldNullifier []byte `protobuf:"bytes,3,opt,name=old_nullifier,json=oldNullifier,proto3" json:"old_nullifier,omitempty"`
+	// new_nullifier is H(TAG_SN, new_id_secret, scope): the successor that is
+	// to hold it.
+	NewNullifier []byte `protobuf:"bytes,4,opt,name=new_nullifier,json=newNullifier,proto3" json:"new_nullifier,omitempty"`
+}
+
+func (m *MoveProof) Reset()         { *m = MoveProof{} }
+func (m *MoveProof) String() string { return proto.CompactTextString(m) }
+func (*MoveProof) ProtoMessage()    {}
+func (*MoveProof) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b6481390e9f75f57, []int{4}
+}
+func (m *MoveProof) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MoveProof) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MoveProof.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MoveProof) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MoveProof.Merge(m, src)
+}
+func (m *MoveProof) XXX_Size() int {
+	return m.Size()
+}
+func (m *MoveProof) XXX_DiscardUnknown() {
+	xxx_messageInfo_MoveProof.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MoveProof proto.InternalMessageInfo
+
+func (m *MoveProof) GetProof() []byte {
+	if m != nil {
+		return m.Proof
+	}
+	return nil
+}
+
+func (m *MoveProof) GetRoot() []byte {
+	if m != nil {
+		return m.Root
+	}
+	return nil
+}
+
+func (m *MoveProof) GetOldNullifier() []byte {
+	if m != nil {
+		return m.OldNullifier
+	}
+	return nil
+}
+
+func (m *MoveProof) GetNewNullifier() []byte {
+	if m != nil {
+		return m.NewNullifier
+	}
+	return nil
+}
+
+// Succession is a succession leaf of the identity tree: the passport whose
+// last registration was to idc_old registered to idc_new.
+type Succession struct {
+	LeafIndex uint64 `protobuf:"varint,1,opt,name=leaf_index,json=leafIndex,proto3" json:"leaf_index,omitempty"`
+	IdcOld    []byte `protobuf:"bytes,2,opt,name=idc_old,json=idcOld,proto3" json:"idc_old,omitempty"`
+	IdcNew    []byte `protobuf:"bytes,3,opt,name=idc_new,json=idcNew,proto3" json:"idc_new,omitempty"`
+}
+
+func (m *Succession) Reset()         { *m = Succession{} }
+func (m *Succession) String() string { return proto.CompactTextString(m) }
+func (*Succession) ProtoMessage()    {}
+func (*Succession) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b6481390e9f75f57, []int{5}
+}
+func (m *Succession) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *Succession) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_Succession.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *Succession) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_Succession.Merge(m, src)
+}
+func (m *Succession) XXX_Size() int {
+	return m.Size()
+}
+func (m *Succession) XXX_DiscardUnknown() {
+	xxx_messageInfo_Succession.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_Succession proto.InternalMessageInfo
+
+func (m *Succession) GetLeafIndex() uint64 {
+	if m != nil {
+		return m.LeafIndex
+	}
+	return 0
+}
+
+func (m *Succession) GetIdcOld() []byte {
+	if m != nil {
+		return m.IdcOld
+	}
+	return nil
+}
+
+func (m *Succession) GetIdcNew() []byte {
+	if m != nil {
+		return m.IdcNew
+	}
+	return nil
+}
+
+// PassportSeen is a passport ever registered and the identity commitment of
+// its last registration (a later one appends a succession from it).
+type PassportSeen struct {
+	Nullifier []byte `protobuf:"bytes,1,opt,name=nullifier,proto3" json:"nullifier,omitempty"`
+	LastIdc   []byte `protobuf:"bytes,2,opt,name=last_idc,json=lastIdc,proto3" json:"last_idc,omitempty"`
+}
+
+func (m *PassportSeen) Reset()         { *m = PassportSeen{} }
+func (m *PassportSeen) String() string { return proto.CompactTextString(m) }
+func (*PassportSeen) ProtoMessage()    {}
+func (*PassportSeen) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b6481390e9f75f57, []int{6}
+}
+func (m *PassportSeen) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *PassportSeen) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_PassportSeen.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *PassportSeen) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_PassportSeen.Merge(m, src)
+}
+func (m *PassportSeen) XXX_Size() int {
+	return m.Size()
+}
+func (m *PassportSeen) XXX_DiscardUnknown() {
+	xxx_messageInfo_PassportSeen.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_PassportSeen proto.InternalMessageInfo
+
+func (m *PassportSeen) GetNullifier() []byte {
+	if m != nil {
+		return m.Nullifier
+	}
+	return nil
+}
+
+func (m *PassportSeen) GetLastIdc() []byte {
+	if m != nil {
+		return m.LastIdc
+	}
+	return nil
+}
+
 // ClaimNullifier records that the holder of nullifier claimed on day.
 type ClaimNullifier struct {
 	Day       uint64 `protobuf:"varint,1,opt,name=day,proto3" json:"day,omitempty"`
@@ -388,7 +584,7 @@ func (m *ClaimNullifier) Reset()         { *m = ClaimNullifier{} }
 func (m *ClaimNullifier) String() string { return proto.CompactTextString(m) }
 func (*ClaimNullifier) ProtoMessage()    {}
 func (*ClaimNullifier) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b6481390e9f75f57, []int{4}
+	return fileDescriptor_b6481390e9f75f57, []int{7}
 }
 func (m *ClaimNullifier) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -442,7 +638,7 @@ func (m *CaretakerVote) Reset()         { *m = CaretakerVote{} }
 func (m *CaretakerVote) String() string { return proto.CompactTextString(m) }
 func (*CaretakerVote) ProtoMessage()    {}
 func (*CaretakerVote) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b6481390e9f75f57, []int{5}
+	return fileDescriptor_b6481390e9f75f57, []int{8}
 }
 func (m *CaretakerVote) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -506,7 +702,7 @@ func (m *Handle) Reset()         { *m = Handle{} }
 func (m *Handle) String() string { return proto.CompactTextString(m) }
 func (*Handle) ProtoMessage()    {}
 func (*Handle) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b6481390e9f75f57, []int{6}
+	return fileDescriptor_b6481390e9f75f57, []int{9}
 }
 func (m *Handle) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -587,7 +783,7 @@ func (m *UsedRegistrationBinding) Reset()         { *m = UsedRegistrationBinding
 func (m *UsedRegistrationBinding) String() string { return proto.CompactTextString(m) }
 func (*UsedRegistrationBinding) ProtoMessage()    {}
 func (*UsedRegistrationBinding) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b6481390e9f75f57, []int{7}
+	return fileDescriptor_b6481390e9f75f57, []int{10}
 }
 func (m *UsedRegistrationBinding) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -644,7 +840,7 @@ func (m *LeaseHold) Reset()         { *m = LeaseHold{} }
 func (m *LeaseHold) String() string { return proto.CompactTextString(m) }
 func (*LeaseHold) ProtoMessage()    {}
 func (*LeaseHold) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b6481390e9f75f57, []int{8}
+	return fileDescriptor_b6481390e9f75f57, []int{11}
 }
 func (m *LeaseHold) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -692,6 +888,9 @@ func init() {
 	proto.RegisterType((*RateCounter)(nil), "earth.personhood.v1.RateCounter")
 	proto.RegisterType((*IdentityRoot)(nil), "earth.personhood.v1.IdentityRoot")
 	proto.RegisterType((*Membership)(nil), "earth.personhood.v1.Membership")
+	proto.RegisterType((*MoveProof)(nil), "earth.personhood.v1.MoveProof")
+	proto.RegisterType((*Succession)(nil), "earth.personhood.v1.Succession")
+	proto.RegisterType((*PassportSeen)(nil), "earth.personhood.v1.PassportSeen")
 	proto.RegisterType((*ClaimNullifier)(nil), "earth.personhood.v1.ClaimNullifier")
 	proto.RegisterType((*CaretakerVote)(nil), "earth.personhood.v1.CaretakerVote")
 	proto.RegisterType((*Handle)(nil), "earth.personhood.v1.Handle")
@@ -704,48 +903,54 @@ func init() {
 }
 
 var fileDescriptor_b6481390e9f75f57 = []byte{
-	// 642 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x84, 0x54, 0xcd, 0x6e, 0xd3, 0x4c,
-	0x14, 0xad, 0xe3, 0xfc, 0xd4, 0xd3, 0xa4, 0xfa, 0x34, 0x1f, 0x50, 0x97, 0x9f, 0x28, 0x04, 0x81,
-	0xb2, 0x21, 0x51, 0xc5, 0x92, 0x0d, 0x69, 0x59, 0xb4, 0x6a, 0x41, 0x95, 0xf9, 0x59, 0x20, 0x24,
-	0x6b, 0xe2, 0xb9, 0x4d, 0x46, 0x76, 0x3c, 0xd6, 0xcc, 0x75, 0xda, 0xf4, 0x25, 0xe0, 0x09, 0x78,
-	0x1e, 0x96, 0x5d, 0xb2, 0x44, 0xed, 0x8b, 0xa0, 0x19, 0x3b, 0x6d, 0x1a, 0x24, 0xba, 0xbb, 0xe7,
-	0xe4, 0xe8, 0xde, 0x73, 0x8f, 0x6f, 0x86, 0xbc, 0x00, 0xa6, 0x70, 0x32, 0xc8, 0x40, 0x69, 0x99,
-	0x4e, 0xa4, 0xe4, 0x83, 0xd9, 0xce, 0x40, 0xc1, 0x58, 0x68, 0x54, 0x0c, 0x85, 0x4c, 0xfb, 0x99,
-	0x92, 0x28, 0xe9, 0xff, 0x56, 0xd7, 0xbf, 0xd1, 0xf5, 0x67, 0x3b, 0x0f, 0xb7, 0x23, 0xa9, 0xa7,
-	0x52, 0x87, 0x56, 0x32, 0x28, 0x40, 0xa1, 0xef, 0xfe, 0xa8, 0x90, 0x66, 0xb0, 0xd4, 0x86, 0x3e,
-	0x26, 0x5e, 0x9a, 0x27, 0x89, 0x38, 0x11, 0xa0, 0x7c, 0xa7, 0xe3, 0xf4, 0x9a, 0xc1, 0x0d, 0x41,
-	0x9f, 0x10, 0x92, 0x00, 0x3b, 0x09, 0x45, 0xca, 0xe1, 0xcc, 0xaf, 0x74, 0x9c, 0x5e, 0x35, 0xf0,
-	0x0c, 0x73, 0x60, 0x08, 0xfa, 0x8c, 0xb4, 0x0a, 0x4f, 0xa0, 0x80, 0x87, 0x0c, 0x7d, 0xb7, 0xe3,
-	0xf4, 0xdc, 0xa0, 0x79, 0x43, 0x0e, 0x91, 0x3e, 0x25, 0x4d, 0x16, 0xa1, 0x98, 0x31, 0x2c, 0x34,
-	0x55, 0xab, 0xd9, 0xb8, 0xe6, 0x86, 0x48, 0xb7, 0x48, 0x83, 0xeb, 0x28, 0x8c, 0x61, 0xee, 0xd7,
-	0xac, 0x85, 0x3a, 0xd7, 0xd1, 0x21, 0xcc, 0xa9, 0x4f, 0x1a, 0x91, 0xcc, 0x53, 0x54, 0x73, 0xbf,
-	0xde, 0x71, 0x7a, 0x5e, 0xb0, 0x80, 0xf4, 0x3f, 0xe2, 0x0a, 0x1e, 0xf9, 0x0d, 0x2b, 0x37, 0x25,
-	0x7d, 0x4e, 0x36, 0x33, 0x05, 0x1c, 0x22, 0xd0, 0x5a, 0x2a, 0x33, 0x69, 0xdd, 0x4e, 0x6a, 0x2d,
-	0xb1, 0x43, 0x34, 0x2b, 0x65, 0x4a, 0xca, 0x93, 0x90, 0x33, 0x04, 0xdf, 0xb3, 0x12, 0xcf, 0x32,
-	0x6f, 0x19, 0x42, 0xf7, 0x2b, 0xd9, 0x08, 0x18, 0xc2, 0x9e, 0x19, 0x03, 0xca, 0x8c, 0xe1, 0x6c,
-	0x6e, 0x83, 0xa9, 0x06, 0xa6, 0xa4, 0xf7, 0x48, 0xcd, 0x7a, 0x28, 0xd3, 0x28, 0x40, 0x39, 0x7c,
-	0x26, 0x64, 0xae, 0xc3, 0xe2, 0x67, 0xd7, 0xfe, 0xdc, 0x5a, 0xb0, 0xb6, 0x61, 0x37, 0x26, 0xcd,
-	0x03, 0x0e, 0x29, 0x0a, 0x9c, 0x07, 0x52, 0x22, 0xa5, 0xa4, 0xaa, 0xa4, 0xc4, 0x32, 0x78, 0x5b,
-	0xd3, 0x07, 0xa4, 0x3e, 0x01, 0x31, 0x9e, 0x14, 0x13, 0xdc, 0xa0, 0x44, 0x46, 0x8b, 0x62, 0x0a,
-	0x65, 0xc6, 0xb6, 0xa6, 0x8f, 0x88, 0x87, 0x0a, 0x20, 0xd4, 0xe2, 0x1c, 0x6c, 0xb0, 0xd5, 0x60,
-	0xdd, 0x10, 0x1f, 0xc4, 0x39, 0x74, 0x3f, 0x12, 0xf2, 0x0e, 0xa6, 0x23, 0x50, 0x7a, 0x22, 0x32,
-	0xe3, 0xdb, 0x6e, 0x59, 0xce, 0x2a, 0xc0, 0xb5, 0x81, 0xca, 0x92, 0x81, 0x5b, 0x27, 0xe1, 0xae,
-	0x9c, 0x44, 0xf7, 0x0d, 0xd9, 0xdc, 0x4b, 0x98, 0x98, 0xbe, 0xbf, 0x3e, 0x92, 0xbf, 0x33, 0xba,
-	0xd5, 0xa1, 0xb2, 0xda, 0xe1, 0x88, 0xb4, 0xf6, 0x98, 0x02, 0x64, 0x31, 0xa8, 0xcf, 0x12, 0xe1,
-	0xee, 0x1b, 0x84, 0xb3, 0x4c, 0x28, 0xd0, 0xe6, 0x9b, 0x16, 0x99, 0x78, 0x25, 0x33, 0xc4, 0xee,
-	0x37, 0x87, 0xd4, 0xf7, 0x59, 0xca, 0x13, 0xb0, 0xc9, 0xd9, 0xca, 0x36, 0xf1, 0x82, 0x12, 0xd1,
-	0x6d, 0xb2, 0x2e, 0x4f, 0x53, 0x50, 0x61, 0x16, 0x97, 0x6e, 0x1a, 0x16, 0x1f, 0xc7, 0xf4, 0x3e,
-	0xa9, 0x43, 0x1c, 0x66, 0xf9, 0xa8, 0x5c, 0xb4, 0x06, 0xf1, 0x71, 0x3e, 0xba, 0xed, 0xa8, 0xfa,
-	0x6f, 0x47, 0xb5, 0x55, 0x47, 0x01, 0xd9, 0xfa, 0xa4, 0x81, 0x2f, 0xff, 0xcd, 0x76, 0x45, 0xca,
-	0x45, 0x3a, 0x36, 0xf7, 0x3c, 0x2a, 0xca, 0x72, 0xcf, 0x05, 0xbc, 0x6b, 0xcb, 0xd7, 0xc4, 0x3b,
-	0x02, 0xa6, 0x61, 0x5f, 0x26, 0xdc, 0x74, 0xd1, 0x10, 0xc9, 0x94, 0x6b, 0xdb, 0xc5, 0x0d, 0x16,
-	0xd0, 0x7c, 0xe4, 0x3c, 0x45, 0x91, 0x94, 0x0d, 0x0a, 0xb0, 0x7b, 0xf8, 0xf3, 0xb2, 0xed, 0x5c,
-	0x5c, 0xb6, 0x9d, 0xdf, 0x97, 0x6d, 0xe7, 0xfb, 0x55, 0x7b, 0xed, 0xe2, 0xaa, 0xbd, 0xf6, 0xeb,
-	0xaa, 0xbd, 0xf6, 0x65, 0x67, 0x2c, 0x70, 0x92, 0x8f, 0xfa, 0x91, 0x9c, 0x0e, 0xec, 0x4b, 0xf2,
-	0x32, 0x05, 0x3c, 0x95, 0x2a, 0x2e, 0xd0, 0xe0, 0x6c, 0xf9, 0x05, 0xc2, 0x79, 0x06, 0x7a, 0x54,
-	0xb7, 0x0f, 0xc9, 0xab, 0x3f, 0x01, 0x00, 0x00, 0xff, 0xff, 0xa1, 0xbe, 0xa9, 0x77, 0xa2, 0x04,
-	0x00, 0x00,
+	// 748 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x54, 0xcb, 0x6e, 0xf3, 0x44,
+	0x14, 0xae, 0x73, 0xad, 0xcf, 0x9f, 0xfc, 0x42, 0xe6, 0x52, 0x97, 0x4b, 0x14, 0x5c, 0x81, 0xb2,
+	0x21, 0x51, 0xc5, 0x92, 0x0d, 0x69, 0x91, 0x68, 0xd5, 0x0b, 0x91, 0x0b, 0x2c, 0x10, 0xc8, 0x9a,
+	0x78, 0x4e, 0x93, 0x91, 0x9d, 0x19, 0x6b, 0x66, 0x9c, 0x34, 0xdd, 0xf0, 0x08, 0xf0, 0x04, 0x3c,
+	0x0f, 0xcb, 0x2e, 0x59, 0xa2, 0xf6, 0x45, 0xd0, 0x8c, 0x9d, 0x2b, 0x12, 0x65, 0x77, 0xbe, 0x33,
+	0x9f, 0xcf, 0xf9, 0xce, 0xf1, 0x37, 0x03, 0x9f, 0x23, 0x91, 0x7a, 0x3a, 0xc8, 0x50, 0x2a, 0xc1,
+	0xa7, 0x42, 0xd0, 0xc1, 0xfc, 0x74, 0x20, 0x71, 0xc2, 0x94, 0x96, 0x44, 0x33, 0xc1, 0xfb, 0x99,
+	0x14, 0x5a, 0x78, 0xef, 0x5a, 0x5e, 0x7f, 0xc3, 0xeb, 0xcf, 0x4f, 0x3f, 0x3c, 0x8e, 0x85, 0x9a,
+	0x09, 0x15, 0x59, 0xca, 0xa0, 0x00, 0x05, 0x3f, 0xf8, 0xa3, 0x02, 0xad, 0x70, 0xab, 0x8c, 0xf7,
+	0x31, 0xb8, 0x3c, 0x4f, 0x53, 0x76, 0xcf, 0x50, 0xfa, 0x4e, 0xd7, 0xe9, 0xb5, 0xc2, 0x4d, 0xc2,
+	0xfb, 0x04, 0x20, 0x45, 0x72, 0x1f, 0x31, 0x4e, 0xf1, 0xc1, 0xaf, 0x74, 0x9d, 0x5e, 0x2d, 0x74,
+	0x4d, 0xe6, 0xd2, 0x24, 0xbc, 0x13, 0x68, 0x17, 0x9a, 0x50, 0x22, 0x8d, 0x88, 0xf6, 0xab, 0x5d,
+	0xa7, 0x57, 0x0d, 0x5b, 0x9b, 0xe4, 0x50, 0x7b, 0x9f, 0x42, 0x8b, 0xc4, 0x9a, 0xcd, 0x89, 0x2e,
+	0x38, 0x35, 0xcb, 0x79, 0xb3, 0xce, 0x0d, 0xb5, 0x77, 0x04, 0x4d, 0xaa, 0xe2, 0x28, 0xc1, 0xa5,
+	0x5f, 0xb7, 0x12, 0x1a, 0x54, 0xc5, 0x57, 0xb8, 0xf4, 0x7c, 0x68, 0xc6, 0x22, 0xe7, 0x5a, 0x2e,
+	0xfd, 0x46, 0xd7, 0xe9, 0xb9, 0xe1, 0x0a, 0x7a, 0xef, 0x40, 0x95, 0xd1, 0xd8, 0x6f, 0x5a, 0xba,
+	0x09, 0xbd, 0xcf, 0xe0, 0x6d, 0x26, 0x91, 0x62, 0x8c, 0x4a, 0x09, 0x69, 0x3a, 0x1d, 0xda, 0x4e,
+	0xed, 0xad, 0xec, 0x50, 0x9b, 0x91, 0x32, 0x29, 0xc4, 0x7d, 0x44, 0x89, 0x46, 0xdf, 0xb5, 0x14,
+	0xd7, 0x66, 0xbe, 0x21, 0x1a, 0x83, 0x9f, 0xe1, 0x4d, 0x48, 0x34, 0x9e, 0x9b, 0x36, 0x28, 0x4d,
+	0x1b, 0x4a, 0x96, 0x76, 0x31, 0xb5, 0xd0, 0x84, 0xde, 0x7b, 0x50, 0xb7, 0x1a, 0xca, 0x6d, 0x14,
+	0xa0, 0x6c, 0x3e, 0x67, 0x22, 0x57, 0x51, 0x71, 0x5c, 0xb5, 0xc7, 0xed, 0x55, 0xd6, 0x16, 0x0c,
+	0x12, 0x68, 0x5d, 0x52, 0xe4, 0x9a, 0xe9, 0x65, 0x28, 0x84, 0xf6, 0x3c, 0xa8, 0x49, 0x21, 0x74,
+	0xb9, 0x78, 0x1b, 0x7b, 0x1f, 0x40, 0x63, 0x8a, 0x6c, 0x32, 0x2d, 0x3a, 0x54, 0xc3, 0x12, 0x19,
+	0xae, 0x66, 0x33, 0x2c, 0x77, 0x6c, 0x63, 0xef, 0x23, 0x70, 0xb5, 0x44, 0x8c, 0x14, 0x7b, 0x44,
+	0xbb, 0xd8, 0x5a, 0x78, 0x68, 0x12, 0x77, 0xec, 0x11, 0x83, 0xef, 0x01, 0x6e, 0x70, 0x36, 0x46,
+	0xa9, 0xa6, 0x2c, 0x33, 0xba, 0xed, 0x94, 0x65, 0xaf, 0x02, 0xac, 0x05, 0x54, 0xb6, 0x04, 0xec,
+	0x58, 0xa2, 0xba, 0x67, 0x89, 0xe0, 0x57, 0x70, 0x6f, 0xc4, 0x1c, 0x47, 0xf6, 0xf3, 0xff, 0x5f,
+	0xf4, 0x04, 0xda, 0x22, 0xa5, 0xd1, 0x7e, 0xe1, 0x96, 0x48, 0xe9, 0xed, 0xda, 0x6e, 0x27, 0xd0,
+	0xe6, 0xb8, 0xd8, 0x22, 0xd5, 0x0a, 0x12, 0xc7, 0xc5, 0x9a, 0x14, 0xfc, 0x02, 0x70, 0x97, 0xc7,
+	0xe6, 0x7f, 0x1a, 0xff, 0xee, 0x3a, 0xd4, 0xd9, 0x77, 0xe8, 0x11, 0x34, 0x19, 0x8d, 0x23, 0x91,
+	0xd2, 0x52, 0x4d, 0x83, 0xd1, 0xf8, 0xbb, 0x94, 0xae, 0x0e, 0x38, 0x2e, 0x4a, 0x25, 0xe6, 0xe0,
+	0x16, 0x17, 0xc1, 0xb7, 0xd0, 0x1a, 0x11, 0xa5, 0x32, 0x21, 0xf5, 0x1d, 0xe2, 0x6b, 0x17, 0xe4,
+	0x18, 0x0e, 0x53, 0xa2, 0x74, 0x64, 0xbc, 0x58, 0x34, 0x68, 0x1a, 0x7c, 0x49, 0xe3, 0xe0, 0x6b,
+	0x78, 0x7b, 0x9e, 0x12, 0x36, 0xdb, 0x8c, 0xf7, 0x6f, 0x33, 0xed, 0x14, 0xaf, 0xec, 0xaf, 0xfa,
+	0x1a, 0xda, 0xe7, 0x44, 0xa2, 0x26, 0x09, 0xca, 0x1f, 0x85, 0xc6, 0xd7, 0x2f, 0x2b, 0x3e, 0x64,
+	0x4c, 0xa2, 0x32, 0xe6, 0x2f, 0xcc, 0xe3, 0x96, 0x99, 0xa1, 0x0e, 0x7e, 0x73, 0xa0, 0x71, 0x41,
+	0x38, 0x4d, 0xd1, 0x5a, 0xcc, 0x46, 0xb6, 0x88, 0x1b, 0x96, 0xc8, 0x4c, 0x23, 0x16, 0x1c, 0x65,
+	0x94, 0x25, 0xab, 0x69, 0x2c, 0x1e, 0x25, 0xde, 0xfb, 0xd0, 0xc0, 0x24, 0xca, 0xf2, 0x71, 0xb9,
+	0xae, 0x3a, 0x26, 0xa3, 0x7c, 0xbc, 0xab, 0xa8, 0xf6, 0xdf, 0x8a, 0xea, 0xfb, 0x8a, 0x42, 0x38,
+	0xfa, 0x41, 0x21, 0xdd, 0x7e, 0x8f, 0xce, 0x18, 0xa7, 0x8c, 0x4f, 0xcc, 0xc5, 0x1f, 0x17, 0x61,
+	0x39, 0xe7, 0x0a, 0xbe, 0x36, 0xe5, 0x57, 0xe0, 0x5e, 0x23, 0x51, 0x78, 0x21, 0x52, 0x6a, 0xaa,
+	0x28, 0x8c, 0x05, 0xa7, 0xca, 0x56, 0xa9, 0x86, 0x2b, 0x68, 0x8c, 0x9b, 0x73, 0xcd, 0xd2, 0xb2,
+	0x40, 0x01, 0xce, 0xae, 0xfe, 0x7c, 0xee, 0x38, 0x4f, 0xcf, 0x1d, 0xe7, 0xef, 0xe7, 0x8e, 0xf3,
+	0xfb, 0x4b, 0xe7, 0xe0, 0xe9, 0xa5, 0x73, 0xf0, 0xd7, 0x4b, 0xe7, 0xe0, 0xa7, 0xd3, 0x09, 0xd3,
+	0xd3, 0x7c, 0xdc, 0x8f, 0xc5, 0x6c, 0x60, 0x9f, 0xdc, 0x2f, 0x38, 0xea, 0x85, 0x90, 0x49, 0x81,
+	0x06, 0x0f, 0xdb, 0x4f, 0xb5, 0x5e, 0x66, 0xa8, 0xc6, 0x0d, 0xfb, 0xe2, 0x7e, 0xf9, 0x4f, 0x00,
+	0x00, 0x00, 0xff, 0xff, 0x43, 0xb5, 0xfe, 0xed, 0xcb, 0x05, 0x00, 0x00,
 }
 
 func (m *Registration) Marshal() (dAtA []byte, err error) {
@@ -945,6 +1150,136 @@ func (m *Membership) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i -= len(m.Proof)
 		copy(dAtA[i:], m.Proof)
 		i = encodeVarintRegistration(dAtA, i, uint64(len(m.Proof)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MoveProof) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MoveProof) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MoveProof) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.NewNullifier) > 0 {
+		i -= len(m.NewNullifier)
+		copy(dAtA[i:], m.NewNullifier)
+		i = encodeVarintRegistration(dAtA, i, uint64(len(m.NewNullifier)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.OldNullifier) > 0 {
+		i -= len(m.OldNullifier)
+		copy(dAtA[i:], m.OldNullifier)
+		i = encodeVarintRegistration(dAtA, i, uint64(len(m.OldNullifier)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.Root) > 0 {
+		i -= len(m.Root)
+		copy(dAtA[i:], m.Root)
+		i = encodeVarintRegistration(dAtA, i, uint64(len(m.Root)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.Proof) > 0 {
+		i -= len(m.Proof)
+		copy(dAtA[i:], m.Proof)
+		i = encodeVarintRegistration(dAtA, i, uint64(len(m.Proof)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *Succession) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Succession) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *Succession) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.IdcNew) > 0 {
+		i -= len(m.IdcNew)
+		copy(dAtA[i:], m.IdcNew)
+		i = encodeVarintRegistration(dAtA, i, uint64(len(m.IdcNew)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.IdcOld) > 0 {
+		i -= len(m.IdcOld)
+		copy(dAtA[i:], m.IdcOld)
+		i = encodeVarintRegistration(dAtA, i, uint64(len(m.IdcOld)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if m.LeafIndex != 0 {
+		i = encodeVarintRegistration(dAtA, i, uint64(m.LeafIndex))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *PassportSeen) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *PassportSeen) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *PassportSeen) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.LastIdc) > 0 {
+		i -= len(m.LastIdc)
+		copy(dAtA[i:], m.LastIdc)
+		i = encodeVarintRegistration(dAtA, i, uint64(len(m.LastIdc)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.Nullifier) > 0 {
+		i -= len(m.Nullifier)
+		copy(dAtA[i:], m.Nullifier)
+		i = encodeVarintRegistration(dAtA, i, uint64(len(m.Nullifier)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -1251,6 +1586,68 @@ func (m *Membership) Size() (n int) {
 		n += 1 + l + sovRegistration(uint64(l))
 	}
 	l = len(m.Nullifier)
+	if l > 0 {
+		n += 1 + l + sovRegistration(uint64(l))
+	}
+	return n
+}
+
+func (m *MoveProof) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Proof)
+	if l > 0 {
+		n += 1 + l + sovRegistration(uint64(l))
+	}
+	l = len(m.Root)
+	if l > 0 {
+		n += 1 + l + sovRegistration(uint64(l))
+	}
+	l = len(m.OldNullifier)
+	if l > 0 {
+		n += 1 + l + sovRegistration(uint64(l))
+	}
+	l = len(m.NewNullifier)
+	if l > 0 {
+		n += 1 + l + sovRegistration(uint64(l))
+	}
+	return n
+}
+
+func (m *Succession) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.LeafIndex != 0 {
+		n += 1 + sovRegistration(uint64(m.LeafIndex))
+	}
+	l = len(m.IdcOld)
+	if l > 0 {
+		n += 1 + l + sovRegistration(uint64(l))
+	}
+	l = len(m.IdcNew)
+	if l > 0 {
+		n += 1 + l + sovRegistration(uint64(l))
+	}
+	return n
+}
+
+func (m *PassportSeen) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Nullifier)
+	if l > 0 {
+		n += 1 + l + sovRegistration(uint64(l))
+	}
+	l = len(m.LastIdc)
 	if l > 0 {
 		n += 1 + l + sovRegistration(uint64(l))
 	}
@@ -2010,6 +2407,447 @@ func (m *Membership) Unmarshal(dAtA []byte) error {
 			m.Nullifier = append(m.Nullifier[:0], dAtA[iNdEx:postIndex]...)
 			if m.Nullifier == nil {
 				m.Nullifier = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipRegistration(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MoveProof) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowRegistration
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MoveProof: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MoveProof: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Proof", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Proof = append(m.Proof[:0], dAtA[iNdEx:postIndex]...)
+			if m.Proof == nil {
+				m.Proof = []byte{}
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Root", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Root = append(m.Root[:0], dAtA[iNdEx:postIndex]...)
+			if m.Root == nil {
+				m.Root = []byte{}
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OldNullifier", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.OldNullifier = append(m.OldNullifier[:0], dAtA[iNdEx:postIndex]...)
+			if m.OldNullifier == nil {
+				m.OldNullifier = []byte{}
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NewNullifier", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.NewNullifier = append(m.NewNullifier[:0], dAtA[iNdEx:postIndex]...)
+			if m.NewNullifier == nil {
+				m.NewNullifier = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipRegistration(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *Succession) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowRegistration
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Succession: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Succession: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LeafIndex", wireType)
+			}
+			m.LeafIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.LeafIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IdcOld", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.IdcOld = append(m.IdcOld[:0], dAtA[iNdEx:postIndex]...)
+			if m.IdcOld == nil {
+				m.IdcOld = []byte{}
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IdcNew", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.IdcNew = append(m.IdcNew[:0], dAtA[iNdEx:postIndex]...)
+			if m.IdcNew == nil {
+				m.IdcNew = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipRegistration(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *PassportSeen) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowRegistration
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: PassportSeen: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: PassportSeen: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Nullifier", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Nullifier = append(m.Nullifier[:0], dAtA[iNdEx:postIndex]...)
+			if m.Nullifier == nil {
+				m.Nullifier = []byte{}
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LastIdc", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowRegistration
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthRegistration
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.LastIdc = append(m.LastIdc[:0], dAtA[iNdEx:postIndex]...)
+			if m.LastIdc == nil {
+				m.LastIdc = []byte{}
 			}
 			iNdEx = postIndex
 		default:

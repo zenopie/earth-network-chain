@@ -212,3 +212,30 @@ func (k Keeper) SetWeightedVoter(ctx context.Context, stream types.StreamId, key
 func (k Keeper) StreamEpoch(ctx context.Context, stream types.StreamId) (uint64, error) {
 	return k.getEpoch(ctx, stream)
 }
+
+// MoveVoter files from's split (percentages and weight) under to and clears
+// from, settling the stream first. For x/personhood's caretaker move: an
+// identity switch hands its live split to the new identity's nullifier. A
+// from with no live split (none, or from an older epoch) moves nothing.
+func (k Keeper) MoveVoter(ctx context.Context, stream types.StreamId, from, to []byte) error {
+	if err := k.AdvanceIndex(ctx, stream); err != nil {
+		return err
+	}
+	old, err := k.Voters.Get(ctx, voterKey(stream, from))
+	if errors.Is(err, collections.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	epoch, err := k.getEpoch(ctx, stream)
+	if err != nil {
+		return err
+	}
+	if err := k.resyncVoter(ctx, stream, from, nil, math.ZeroInt()); err != nil {
+		return err
+	}
+	if old.Epoch != epoch {
+		return nil
+	}
+	return k.resyncVoter(ctx, stream, to, old.Percentages, old.Weight)
+}

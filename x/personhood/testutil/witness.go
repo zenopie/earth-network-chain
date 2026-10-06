@@ -80,3 +80,42 @@ type Note struct {
 
 func (n Note) PC() fr.Element { return privacy.PC(privacy.OwnerPK(n.NK), n.Rho, n.Rcm) }
 func (n Note) CM() fr.Element { return privacy.CM(privacy.AssetID(n.Denom), n.Value, n.PC()) }
+
+// Move is one move proof's witness and public inputs (circuits/move): the
+// identity behind OldSecret hands what it holds in Scope to its successor
+// NewSecret, whose live leaf (with its other fields) is at LeafIndex and the
+// chain's succession leaf H(TAG_SUCC, idc(old), idc(new)) at
+// SuccessionIndex, both under Root.
+type Move struct {
+	OldSecret          fr.Element
+	NewSecret          fr.Element
+	SuccessionIndex    uint64
+	SuccessionSiblings [merkle.Depth]fr.Element
+	DscKey             fr.Element
+	Country            fr.Element
+	ActivatedAt        uint64
+	PredecessorAt      uint64
+	LeafIndex          uint64
+	Siblings           [merkle.Depth]fr.Element
+	Root               fr.Element
+	Scope              fr.Element
+	Signal             fr.Element
+}
+
+// OldNullifier and NewNullifier are the proof's two scope nullifiers.
+func (m Move) OldNullifier() fr.Element { return privacy.ScopeNullifier(m.OldSecret, m.Scope) }
+func (m Move) NewNullifier() fr.Element { return privacy.ScopeNullifier(m.NewSecret, m.Scope) }
+
+// Witness is the Prover.toml and public inputs in ABI order: root, scope,
+// old_nullifier, new_nullifier, signal.
+func (m Move) Witness() (string, []fr.Element) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "old_secret = %s\nnew_secret = %s\nsuccession_index = \"%d\"\nsuccession_siblings = %s\n",
+		q(m.OldSecret), q(m.NewSecret), m.SuccessionIndex, arr(m.SuccessionSiblings[:]))
+	fmt.Fprintf(&b, "dsc_key = %s\ncountry = %s\nactivated_at = \"%d\"\npredecessor_at = \"%d\"\nleaf_index = \"%d\"\nsiblings = %s\n",
+		q(m.DscKey), q(m.Country), m.ActivatedAt, m.PredecessorAt, m.LeafIndex, arr(m.Siblings[:]))
+	onf, nnf := m.OldNullifier(), m.NewNullifier()
+	fmt.Fprintf(&b, "root = %s\nscope = %s\nold_nullifier = %s\nnew_nullifier = %s\nsignal = %s\n",
+		q(m.Root), q(m.Scope), q(onf), q(nnf), q(m.Signal))
+	return b.String(), []fr.Element{m.Root, m.Scope, onf, nnf, m.Signal}
+}

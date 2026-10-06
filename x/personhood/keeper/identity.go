@@ -103,6 +103,35 @@ func (k Keeper) appendLeaf(ctx context.Context, leaf fr.Element) (uint64, error)
 	return i, nil
 }
 
+// SuccessionLeaf is the identity tree's succession leaf for a passport whose
+// last registration was to idcOld registering to idcNew.
+func SuccessionLeaf(idcOld, idcNew []byte) (fr.Element, error) {
+	a, err := privacy.FieldFromBytes(idcOld)
+	if err != nil {
+		return fr.Element{}, err
+	}
+	b, err := privacy.FieldFromBytes(idcNew)
+	if err != nil {
+		return fr.Element{}, err
+	}
+	return privacy.SuccessionLeaf(a, b), nil
+}
+
+// appendSuccession appends the succession leaf (idcOld, idcNew) and records
+// it for export. It is never zeroed: a move along it also needs the
+// successor's own leaf, which a switch or expiry zeroes.
+func (k Keeper) appendSuccession(ctx context.Context, idcOld, idcNew []byte) error {
+	leaf, err := SuccessionLeaf(idcOld, idcNew)
+	if err != nil {
+		return err
+	}
+	index, err := k.appendLeaf(ctx, leaf)
+	if err != nil {
+		return err
+	}
+	return k.Successions.Set(ctx, index, types.Succession{LeafIndex: index, IdcOld: idcOld, IdcNew: idcNew})
+}
+
 // zeroLeaf empties a leaf: the registration behind it no longer proves
 // membership once the roots from before this block have aged out.
 func (k Keeper) zeroLeaf(ctx context.Context, index uint64) error {

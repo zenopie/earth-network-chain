@@ -31,6 +31,10 @@ const (
 	// CircuitVote is x/shieldedstaking's stake vote circuit: a stake note
 	// votes on a proposal without being spent.
 	CircuitVote = "vote"
+	// CircuitMove is x/personhood's move circuit: a handle or caretaker
+	// split passes from an identity to its successor under the same
+	// passport.
+	CircuitMove = "move"
 
 	// MinActionsPerBundle is the padding rule: every bundle carries at least
 	// two actions, so a one-note spend (the commonest shape) is not told

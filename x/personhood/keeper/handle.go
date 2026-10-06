@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -41,15 +42,17 @@ import (
 //
 // A change to another handle frees the old one at once (no reservation),
 // in the same msg that claims the new one; a release frees it at once. A
-// handle never moves to another nullifier (audit B-4): the chain cannot tell
-// a move to the holder's own next identity from one to another person's, so
-// moves let one passport hold a live handle per identity it switched to.
+// move (MsgMoveHandle) hands it, lease and all, to the successor identity's
+// handle nullifier under the same passport (a move proof, circuits/move):
+// how an identity switch keeps its handle.
 //
 // One live handle per passport, across identity switches: a claim by a
 // nullifier holding none needs a leaf whose predecessor_at (the switch or
 // re-entry that made it; 0 for a passport never registered) is before now -
 // the longest lease ever in force - the activation margin, so anything the
-// predecessor identity held has lapsed. A fresh registrant claims at once.
+// predecessor identity held has lapsed. A fresh registrant claims at once. A
+// nullifier that moved its handle away may never claim again (its identity
+// handed its one handle on).
 //
 // Nobody's consent is needed to bind an address: naming someone else's
 // shielded address only sends the binder's referrals to them.
@@ -379,6 +382,11 @@ func (k Keeper) handleStatement(ctx context.Context, m *types.MsgBindHandle) (Me
 			return MembershipStatement{}, err
 		}
 		if !holdsLive {
+			if moved, err := k.HandleMovedOut.Has(ctx, nf); err != nil {
+				return MembershipStatement{}, err
+			} else if moved {
+				return MembershipStatement{}, types.ErrHandleMovedOut
+			}
 			bound, err := k.handleClaimBound(ctx)
 			if err != nil {
 				return MembershipStatement{}, err
@@ -455,6 +463,116 @@ func (k msgServer) BindHandle(goCtx context.Context, msg *types.MsgBindHandle) (
 		))
 	}
 	return &types.MsgBindHandleResponse{ExpiresAt: expiresAt}, nil
+}
+
+// --- MsgMoveHandle ---------------------------------------------------------
+
+type moveHandleAction struct{ k Keeper }
+
+func (a moveHandleAction) PrivateActionGas(ctx context.Context, _ shieldedtypes.PrivateMsg) (uint64, error) {
+	return a.k.MembershipActionGas(ctx, 4)
+}
+
+// checkMoveHandle: old_nullifier holds handle and it is live, new_nullifier
+// holds none and never moved one away, and the proof's root is a recent
+// identity root. The move proof shows new_nullifier is the successor's (same
+// passport, live): one live handle per passport across a switch, however
+// often its holder switches. A handle in its renewal period does not move
+// (audit 5 P2): the new owner could renew it unbounded, reviving a handle a
+// switched identity had let lapse.
+func (k Keeper) checkMoveHandle(ctx context.Context, m *types.MsgMoveHandle) (MoveStatement, error) {
+	cur, err := k.HandleByNf.Get(ctx, m.Move.OldNullifier)
+	if errors.Is(err, collections.ErrNotFound) || (err == nil && cur != m.Handle) {
+		return MoveStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg, "old_nullifier does not hold %q", m.Handle)
+	} else if err != nil {
+		return MoveStatement{}, err
+	}
+	rec, err := k.Handles.Get(ctx, m.Handle)
+	if err != nil {
+		return MoveStatement{}, err
+	}
+	if st, _, err := k.handleStatus(ctx, rec); err != nil {
+		return MoveStatement{}, err
+	} else if st != HandleLive {
+		return MoveStatement{}, errorsmod.Wrapf(types.ErrInvalidMsg, "%q is not live (%s): renew it before moving it", m.Handle, st)
+	}
+	if err := k.checkNewHandleOwner(ctx, m.Move.NewNullifier); err != nil {
+		return MoveStatement{}, err
+	}
+	if err := k.CheckMove(ctx, m.Move); err != nil {
+		return MoveStatement{}, err
+	}
+	signal, err := k.SignalOf(ctx, m)
+	if err != nil {
+		return MoveStatement{}, err
+	}
+	return MoveStatement{Scope: privacy.HandleScope(), Signal: signal}, nil
+}
+
+func (k Keeper) checkNewHandleOwner(ctx context.Context, owner []byte) error {
+	if has, err := k.HandleByNf.Has(ctx, owner); err != nil {
+		return err
+	} else if has {
+		return errorsmod.Wrap(types.ErrHandleTaken, "the successor already holds a handle")
+	}
+	if moved, err := k.HandleMovedOut.Has(ctx, owner); err != nil {
+		return err
+	} else if moved {
+		return types.ErrHandleMovedOut
+	}
+	return nil
+}
+
+// applyMoveHandle hands handle (held by nf) to owner; nf may never claim
+// again.
+func (k Keeper) applyMoveHandle(ctx context.Context, nf []byte, handle string, owner []byte) error {
+	if err := k.checkNewHandleOwner(ctx, owner); err != nil {
+		return err
+	}
+	rec, err := k.Handles.Get(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if string(rec.Nullifier) != string(nf) {
+		return errorsmod.Wrapf(types.ErrInvalidMsg, "the prover does not hold %q", handle)
+	}
+	if err := k.HandleByNf.Remove(ctx, nf); err != nil {
+		return err
+	}
+	rec.Nullifier = owner
+	if err := k.putHandle(ctx, rec); err != nil {
+		return err
+	}
+	return k.HandleMovedOut.Set(ctx, nf)
+}
+
+func (a moveHandleAction) CheckPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg) (any, error) {
+	return a.k.checkMoveHandle(ctx, msg.(*types.MsgMoveHandle))
+}
+
+func (a moveHandleAction) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, prepared any) error {
+	return a.k.VerifyMove(ctx, msg.(*types.MsgMoveHandle).Move, prepared.(MoveStatement))
+}
+
+// ReleasedDenoms: a move only pays a fee.
+func (moveHandleAction) ReleasedDenoms(shieldedtypes.PrivateMsg) []string { return nil }
+
+// MoveHandle hands old_nullifier's handle to its successor's new_nullifier.
+func (k msgServer) MoveHandle(goCtx context.Context, msg *types.MsgMoveHandle) (*types.MsgMoveHandleResponse, error) {
+	ctx, _, err := authorized[MoveStatement](goCtx, msg)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.applyMoveHandle(ctx, msg.Move.OldNullifier, msg.Handle, msg.Move.NewNullifier); err != nil {
+		return nil, err
+	}
+	ctx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeHandleMoved,
+		sdk.NewAttribute(types.AttributeKeyHandle, msg.Handle),
+		sdk.NewAttribute(types.AttributeKeyNullifier, hexOf(msg.Move.NewNullifier)),
+		sdk.NewAttribute(types.AttributeKeyOwner, hexOf(msg.Move.NewNullifier)),
+		sdk.NewAttribute(types.AttributeKeyPreviousOwner, hexOf(msg.Move.OldNullifier)),
+	))
+	return &types.MsgMoveHandleResponse{}, nil
 }
 
 // importHandles loads genesis handles.

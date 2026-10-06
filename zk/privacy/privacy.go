@@ -47,6 +47,8 @@ var (
 	// circuits/vote; ORCHARD_DESIGN.md 4.1, 4.2).
 	TagSLabel = tag("earth.slabel")
 	TagDebtL  = tag("earth.debtl")
+	// Succession leaves in the identity tree (x/personhood, circuits/move).
+	TagSucc = tag("earth.succ")
 
 	// Chain-side only: no circuit computes these. They define the public
 	// `signal` input the circuits bind (see Signal).
@@ -106,6 +108,11 @@ func CountryField(cc string) fr.Element {
 
 // ScopeNullifier is H(TAG_SN, id_secret, scope).
 func ScopeNullifier(idSecret, scope fr.Element) fr.Element { return H(TagSN, idSecret, scope) }
+
+// SuccessionLeaf = H(TAG_SUCC, idc_old, idc_new): appended to the identity
+// tree when a passport whose last registration was to idc_old registers to
+// idc_new (circuits/move proves a move along it).
+func SuccessionLeaf(idcOld, idcNew fr.Element) fr.Element { return H(TagSucc, idcOld, idcNew) }
 
 // PC is the hidden-owner commitment H(TAG_PC, owner_pk, rho, rcm).
 func PC(ownerPK, rho, rcm fr.Element) fr.Element { return H(TagPC, ownerPK, rho, rcm) }

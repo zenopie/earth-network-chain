@@ -61,13 +61,26 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		if err != nil {
 			return fmt.Errorf("registration %x: %w", reg.Nullifier, err)
 		}
-		if err := k.PassportsSeen.Set(ctx, reg.Nullifier); err != nil {
+		if err := k.PassportsSeen.Set(ctx, reg.Nullifier, reg.Idc); err != nil {
 			return err
 		}
 		if err := t.Update(reg.LeafIndex, leaf); err != nil {
 			return err
 		}
 		if err := k.addRegistration(ctx, reg); err != nil {
+			return err
+		}
+	}
+	// Succession leaves are never zeroed: each is rebuilt where it was.
+	for _, sc := range genState.Successions {
+		leaf, err := SuccessionLeaf(sc.IdcOld, sc.IdcNew)
+		if err != nil {
+			return fmt.Errorf("succession at %d: %w", sc.LeafIndex, err)
+		}
+		if err := t.Update(sc.LeafIndex, leaf); err != nil {
+			return err
+		}
+		if err := k.Successions.Set(ctx, sc.LeafIndex, sc); err != nil {
 			return err
 		}
 	}
@@ -86,7 +99,7 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		}
 		sizes[r.TreeSize] = true
 	}
-	rebuilt, err := identityRootsAt(genState.Registrations, sizes)
+	rebuilt, err := identityRootsAt(genState.Registrations, genState.Successions, sizes)
 	if err != nil {
 		return err
 	}
@@ -136,8 +149,24 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 	if err := k.importHandles(ctx, genState.Handles); err != nil {
 		return err
 	}
-	for _, nf := range genState.PassportsSeen {
-		if err := k.PassportsSeen.Set(ctx, nf); err != nil {
+	for _, p := range genState.Passports {
+		// A passport with a live registration was last registered to it.
+		if reg, err := k.Registrations.Get(ctx, p.Nullifier); err == nil && !bytes.Equal(reg.Idc, p.LastIdc) {
+			return fmt.Errorf("passport %x: last_idc is not its live registration's idc", p.Nullifier)
+		} else if err != nil && !errors.Is(err, collections.ErrNotFound) {
+			return err
+		}
+		if err := k.PassportsSeen.Set(ctx, p.Nullifier, p.LastIdc); err != nil {
+			return err
+		}
+	}
+	for _, nf := range genState.HandleMovedOut {
+		if err := k.HandleMovedOut.Set(ctx, nf); err != nil {
+			return err
+		}
+	}
+	for _, nf := range genState.CaretakerMovedOut {
+		if err := k.CaretakerMovedOut.Set(ctx, nf); err != nil {
 			return err
 		}
 	}
@@ -231,7 +260,13 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 			sizes[r.TreeSize] = true
 		}
 	}
-	rebuilt, err := identityRootsAt(genesis.Registrations, sizes)
+	if err := k.Successions.Walk(ctx, nil, func(_ uint64, sc types.Succession) (bool, error) {
+		genesis.Successions = append(genesis.Successions, sc)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	rebuilt, err := identityRootsAt(genesis.Registrations, genesis.Successions, sizes)
 	if err != nil {
 		return nil, err
 	}
@@ -261,8 +296,20 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}); err != nil {
 		return nil, err
 	}
-	if err := k.PassportsSeen.Walk(ctx, nil, func(nf []byte) (bool, error) {
-		genesis.PassportsSeen = append(genesis.PassportsSeen, nf)
+	if err := k.PassportsSeen.Walk(ctx, nil, func(nf, last []byte) (bool, error) {
+		genesis.Passports = append(genesis.Passports, types.PassportSeen{Nullifier: nf, LastIdc: last})
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.HandleMovedOut.Walk(ctx, nil, func(nf []byte) (bool, error) {
+		genesis.HandleMovedOut = append(genesis.HandleMovedOut, nf)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.CaretakerMovedOut.Walk(ctx, nil, func(nf []byte) (bool, error) {
+		genesis.CaretakerMovedOut = append(genesis.CaretakerMovedOut, nf)
 		return false, nil
 	}); err != nil {
 		return nil, err
@@ -307,7 +354,7 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 // index no registration holds) and returns its root after each size in
 // sizes. The tree's root does not depend on its size counter, only on its
 // leaves, so the root "at size n" is the root over leaves [0, n).
-func identityRootsAt(regs []types.Registration, sizes map[uint64]bool) (map[uint64][]byte, error) {
+func identityRootsAt(regs []types.Registration, succs []types.Succession, sizes map[uint64]bool) (map[uint64][]byte, error) {
 	out := make(map[uint64][]byte, len(sizes))
 	var top uint64
 	for n := range sizes {
@@ -325,6 +372,16 @@ func identityRootsAt(regs []types.Registration, sizes map[uint64]bool) (map[uint
 			return nil, fmt.Errorf("registration %x: %w", reg.Nullifier, err)
 		}
 		leaves[reg.LeafIndex] = leaf
+	}
+	for _, sc := range succs {
+		if sc.LeafIndex >= top {
+			continue
+		}
+		leaf, err := SuccessionLeaf(sc.IdcOld, sc.IdcNew)
+		if err != nil {
+			return nil, fmt.Errorf("succession at %d: %w", sc.LeafIndex, err)
+		}
+		leaves[sc.LeafIndex] = leaf
 	}
 	t := merkle.NewMem()
 	record := func() error {

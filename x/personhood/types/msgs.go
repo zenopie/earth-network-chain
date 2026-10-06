@@ -18,11 +18,15 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgClaimAnml)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgSetCaretaker)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgBindHandle)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgMoveHandle)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgMoveCaretaker)(nil)
 
 	_ sdk.HasValidateBasic = (*MsgRegister)(nil)
 	_ sdk.HasValidateBasic = (*MsgClaimAnml)(nil)
 	_ sdk.HasValidateBasic = (*MsgSetCaretaker)(nil)
 	_ sdk.HasValidateBasic = (*MsgBindHandle)(nil)
+	_ sdk.HasValidateBasic = (*MsgMoveHandle)(nil)
+	_ sdk.HasValidateBasic = (*MsgMoveCaretaker)(nil)
 )
 
 // MaxPublicSignals bounds a passport proof's public input count. The lean_poa
@@ -347,6 +351,85 @@ func (m *MsgBindHandle) ValidateBasic() error {
 		return err
 	}
 	return m.Membership.ValidateBasic()
+}
+
+// --- move proofs ---------------------------------------------------------
+
+// ValidateBasic checks the proof's length and that its root and nullifiers
+// are canonical field elements, the two nullifiers distinct.
+func (m MoveProof) ValidateBasic() error {
+	if err := shieldedtypes.CheckProofLength(m.Proof); err != nil {
+		return errorsmod.Wrap(ErrInvalidMove, err.Error())
+	}
+	if _, err := Field("move root", m.Root); err != nil {
+		return err
+	}
+	if _, err := Field("move old_nullifier", m.OldNullifier); err != nil {
+		return err
+	}
+	if _, err := Field("move new_nullifier", m.NewNullifier); err != nil {
+		return err
+	}
+	if string(m.OldNullifier) == string(m.NewNullifier) {
+		return errorsmod.Wrap(ErrInvalidMove, "old and new nullifier are the same")
+	}
+	return nil
+}
+
+// MovePublicInputs lays out the move circuit's public inputs: root, scope,
+// old_nullifier, new_nullifier, signal.
+func MovePublicInputs(m MoveProof, scope, signal fr.Element) [][]byte {
+	return [][]byte{m.Root, privacy.FieldBytes(scope), m.OldNullifier, m.NewNullifier, privacy.FieldBytes(signal)}
+}
+
+// --- MsgMoveCaretaker ----------------------------------------------------
+
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgMoveCaretaker) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
+
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgMoveCaretaker) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+
+// SighashFields implements PrivateMsg: none (the move proof binds the
+// sighash; its nullifiers are its own public inputs).
+func (m *MsgMoveCaretaker) SighashFields(address.Codec) ([]fr.Element, error) {
+	return nil, nil
+}
+
+// ValidateBasic checks everything that needs no state.
+func (m *MsgMoveCaretaker) ValidateBasic() error {
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
+		return err
+	}
+	return m.Move.ValidateBasic()
+}
+
+// --- MsgMoveHandle -------------------------------------------------------
+
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgMoveHandle) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
+
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgMoveHandle) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+
+// SighashFields implements PrivateMsg: Bytes(handle).
+func (m *MsgMoveHandle) SighashFields(address.Codec) ([]fr.Element, error) {
+	return []fr.Element{privacy.Bytes([]byte(m.Handle))}, nil
+}
+
+// ValidateBasic checks everything that needs no state.
+func (m *MsgMoveHandle) ValidateBasic() error {
+	if err := ValidateHandle(m.Handle); err != nil {
+		return errorsmod.Wrapf(ErrInvalidMsg, "handle: %v", err)
+	}
+	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
+		return err
+	}
+	return m.Move.ValidateBasic()
 }
 
 // MaxShieldedAddressBytes bounds a shielded address string in a msg (one is

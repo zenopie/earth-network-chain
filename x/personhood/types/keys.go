@@ -343,10 +343,17 @@ var (
 	HandlesKey       = collections.NewPrefix("handles")
 	HandleByNfKey    = collections.NewPrefix("handle_by_nf")
 	HandleReleaseKey = collections.NewPrefix("handle_release")
+	// HandleMovedOutKey: handle nullifiers that moved their handle away;
 	// HandleLeaseMaxKey: the longest handle lease ever in force.
+	HandleMovedOutKey = collections.NewPrefix("handle_moved_out")
 	HandleLeaseMaxKey = collections.NewPrefix("handle_lease_max")
-	// PassportsSeenKey: passport nullifiers ever registered.
+	// CaretakerMovedOutKey: caretaker nullifiers that moved their split away.
+	CaretakerMovedOutKey = collections.NewPrefix("caretaker_moved_out")
+	// PassportsSeenKey: passport nullifiers ever registered, to the idc of
+	// their last registration; SuccessionsKey: the identity tree's
+	// succession leaves by index.
 	PassportsSeenKey = collections.NewPrefix("passports_seen")
+	SuccessionsKey   = collections.NewPrefix("successions")
 
 	// UsedBindingsKey maps a landed registration's binding to when it may be
 	// forgotten; UsedBindingExpiryKey orders them by that for the sweep.

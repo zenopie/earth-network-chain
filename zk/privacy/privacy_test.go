@@ -33,6 +33,7 @@ func TestTagsMatchNoir(t *testing.T) {
 		"signal": {TagSignal.Text(16), "65617274682e7369676e616c"},
 		"bytes":  {TagBytes.Text(16), "65617274682e6279746573"},
 		"scope":  {TagScope.Text(16), "65617274682e73636f7065"},
+		"succ":   {TagSucc.Text(16), "65617274682e73756363"},
 	} {
 		if c.got != c.want {
 			t.Errorf("tag %s = %s, want %s", name, c.got, c.want)

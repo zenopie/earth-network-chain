@@ -211,7 +211,8 @@ message HandleEntry {
   // owner is the handle-scope nullifier that holds the handle, as 64
   // lowercase hex characters ("" for a handle never claimed). Already
   // public: it is the membership nullifier of the MsgBindHandle that claimed
-  // or renewed the handle, and the handle events carry it. A wallet compares it with its
+  // or renewed the handle, or the move proof's new_nullifier of the MsgMoveHandle that moved
+  // it here, and the handle events carry it. A wallet compares it with its
   // own handle-scope nullifier to know a handle is its own.
   string owner = 6;
 }

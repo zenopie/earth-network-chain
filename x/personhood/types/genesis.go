@@ -106,15 +106,43 @@ func (gs GenesisState) Validate() error {
 	if err := validateHandles(gs.Handles); err != nil {
 		return err
 	}
-	for what, list := range map[string][][]byte{"passports_seen": gs.PassportsSeen} {
+	seenPassport := map[string]bool{}
+	for _, p := range gs.Passports {
+		// Passport nullifiers, as registrations carry them.
+		if len(p.Nullifier) == 0 || len(p.Nullifier) > 32 {
+			return fmt.Errorf("passports: a nullifier is 1..32 bytes")
+		}
+		if seenPassport[string(p.Nullifier)] {
+			return fmt.Errorf("passports: %x listed twice", p.Nullifier)
+		}
+		seenPassport[string(p.Nullifier)] = true
+		if _, err := privacy.FieldFromBytes(p.LastIdc); err != nil {
+			return fmt.Errorf("passport %x last_idc: %w", p.Nullifier, err)
+		}
+	}
+	seenIndex := map[uint64]bool{}
+	for _, r := range gs.Registrations {
+		seenIndex[r.LeafIndex] = true
+	}
+	for _, sc := range gs.Successions {
+		if sc.LeafIndex >= gs.IdentityTreeSize {
+			return fmt.Errorf("succession at %d: past the identity tree's %d leaves", sc.LeafIndex, gs.IdentityTreeSize)
+		}
+		if seenIndex[sc.LeafIndex] {
+			return fmt.Errorf("succession at %d: the index holds another leaf", sc.LeafIndex)
+		}
+		seenIndex[sc.LeafIndex] = true
+		if _, err := privacy.FieldFromBytes(sc.IdcOld); err != nil {
+			return fmt.Errorf("succession at %d idc_old: %w", sc.LeafIndex, err)
+		}
+		if _, err := privacy.FieldFromBytes(sc.IdcNew); err != nil {
+			return fmt.Errorf("succession at %d idc_new: %w", sc.LeafIndex, err)
+		}
+	}
+	for what, list := range map[string][][]byte{"handle_moved_out": gs.HandleMovedOut, "caretaker_moved_out": gs.CaretakerMovedOut} {
 		seen := map[string]bool{}
 		for _, nf := range list {
-			if what == "passports_seen" {
-				// Passport nullifiers, as registrations carry them.
-				if len(nf) == 0 || len(nf) > 32 {
-					return fmt.Errorf("%s: a nullifier is 1..32 bytes", what)
-				}
-			} else if _, err := privacy.FieldFromBytes(nf); err != nil {
+			if _, err := privacy.FieldFromBytes(nf); err != nil {
 				return fmt.Errorf("%s: %w", what, err)
 			}
 			if seen[string(nf)] {

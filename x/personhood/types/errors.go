@@ -30,6 +30,12 @@ var (
 	// ErrBindingUsed: this registration (its exact binding: idc, notes,
 	// ciphertexts, affiliate) has landed before. A replay of a public proof.
 	ErrBindingUsed = errors.Register(ModuleName, 1124, "this registration has already been used")
+	// ErrHandleMovedOut: this handle nullifier moved its handle away
+	// (MsgMoveHandle) and may never hold another; or a move's new owner did.
+	ErrHandleMovedOut = errors.Register(ModuleName, 1125, "this identity moved its handle away")
+	// ErrCaretakerMovedOut: this caretaker nullifier moved its split away
+	// (MsgMoveCaretaker) and may never cast another; or a move's new owner did.
+	ErrCaretakerMovedOut = errors.Register(ModuleName, 1126, "this identity moved its caretaker split away")
 	// ErrSwitchSignerMismatch: an identity switch whose proof is signed by a
 	// different Document Signer from the live registration's. A re-proof of
 	// the same passport is signed by the same signer.
@@ -38,4 +44,7 @@ var (
 	// registration's (Registration.proof_date): at most one switch per
 	// passport per day, and no replay of a proof older than the live one.
 	ErrSwitchProofStale = errors.Register(ModuleName, 1128, "identity switch must be proven on a later date than the live registration")
+	// ErrInvalidMove: a move proof that does not verify against the
+	// statement the msg fixes (circuits/move).
+	ErrInvalidMove = errors.Register(ModuleName, 1129, "invalid move proof")
 )
