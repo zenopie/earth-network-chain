@@ -1,18 +1,18 @@
 # Additional CSCA Certificates
 
-Place manually obtained CSCA certificates here in DER format (.der, .cer).
+Place manually obtained CSCA certificates here, DER-encoded, named `*.cer`.
 
 These certificates are loaded in addition to the ICAO master list certificates.
 The directory may be empty — the build handles that, and today it is.
 
 **Usage:**
-1. Download CSCA certificate (DER or CER format)
-2. Save to this directory with a descriptive name (e.g. `csca_nigeria.der`)
+1. Download the CSCA certificate (DER)
+2. Save it to this directory as `<name>.cer` (e.g. `csca_nigeria.cer`)
 3. `make genesis`, then commit the certificate and the regenerated
    `networks/genesis.json` together
 
 **Format:** DER-encoded X.509 certificates
-**File extensions:** .der, .cer, or any extension (will attempt to load all files)
+**File extension:** `.cer` only — `scripts/build-genesis.sh` reads `additional/*.cer`, and any other file here is ignored
 
 **Example certificates to add here:**
 - Nigeria CSCA (newer ones not yet distributed)
@@ -28,7 +28,6 @@ The directory may be empty — the build handles that, and today it is.
   because there is no ICAO-distributed Israeli CSCA to fall back to.
 
   Reversible if that judgement changes: `MsgAddCsca` is authority-gated, so
-  governance can add them post-launch. The reverse is not — there is no
-  `MsgRemoveCsca`, so genesis is the only point at which a CSCA can be taken
-  out. The certificates themselves are public and recoverable from git history
+  governance can add them post-launch (and `MsgRevokeCsca`, also
+  authority-gated, withdraws trust from a CSCA's key). The certificates themselves are public and recoverable from git history
   (`git log --diff-filter=D -- csca/additional/`).

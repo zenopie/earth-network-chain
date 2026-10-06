@@ -1,7 +1,7 @@
 # CSCA trust store
 
-The root of trust for passport verification, and the input that produced the
-`pki.cscas` block in `config.yml`.
+The root of trust for passport verification, and the input that produces the
+`pki.cscas` block in the launch genesis (`make genesis`) and in `config.yml`.
 
 A Country Signing Certificate Authority is what a state uses to sign the
 Document Signer certificates that in turn sign passports. `x/pki` will only
@@ -28,9 +28,8 @@ Certificates that share a signing key are intentionally **not** collapsed: the
 keeper indexes issuers by subject DN as well as by SKI, and one SKI here appears
 under two distinct DNs.
 
-These lived in `earth-network-backend` while registration was verified by a
-server. Registration is now proved on-device and verified on-chain, so the trust
-store belongs with the chain that enforces it.
+Registration is proved on-device and verified on-chain, so the trust store lives
+with the chain that enforces it.
 
 The parsing tests are opt-in, since they read the master list directly. The path
 must be absolute — `go test` runs with the package directory as its working
