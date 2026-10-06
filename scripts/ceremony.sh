@@ -18,8 +18,15 @@
 #                    VALIDATOR_MNEMONIC is already set in the environment.
 #   --memo-peer ID@HOST:PORT
 #                    the gentx memo: the validator's public p2p address, the
-#                    genesis's only advertised peer. Required; a private,
-#                    loopback, link-local or unspecified IP is refused.
+#                    genesis's only advertised peer. Required. HOST is a
+#                    public IP (is_global: private, CGNAT 100.64.0.0/10,
+#                    loopback, link-local, reserved and documentation ranges
+#                    are refused) or a fully qualified DNS name that MUST
+#                    resolve to public addresses only; it is resolved here
+#                    and refused if it does not resolve or any address is
+#                    not public. Use a name only if it resolves the same,
+#                    publicly, from everywhere (no split-horizon or
+#                    internal zone); prefer the public IP.
 #   --moniker NAME   the validator's moniker. Required; the placeholder's
 #                    devnet moniker is refused.
 #
@@ -63,7 +70,7 @@ while [ $# -gt 0 ]; do
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --memo-peer) MEMO_PEER="$2"; shift 2 ;;
     --moniker) MONIKER="$2"; shift 2 ;;
-    -h|--help) sed -n '2,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -76,7 +83,7 @@ die() { echo "ceremony: $*" >&2; exit 1; }
 [ -n "$MONIKER" ] || die "--moniker NAME is required"
 [ "$MONIKER" != "earth-akash-devnet" ] || die "--moniker earth-akash-devnet is the placeholder's devnet name"
 python3 - "$MEMO_PEER" <<'PY' || exit 1
-import sys, ipaddress, re
+import sys, ipaddress, re, socket
 peer = sys.argv[1]
 m = re.fullmatch(r'([0-9a-f]{40})@(.+):([0-9]{1,5})', peer)
 if not m:
@@ -84,13 +91,42 @@ if not m:
 host, port = m.group(2), int(m.group(3))
 if not 0 < port < 65536:
     sys.exit('ceremony: --memo-peer port %d is out of range' % port)
+
+def public(ip):
+    # is_global leaves out private, loopback, link-local, unspecified,
+    # reserved, documentation and shared (CGNAT 100.64.0.0/10) ranges.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+bare = host[1:-1] if host.startswith('[') and host.endswith(']') else host
 try:
-    ip = ipaddress.ip_address(host.strip('[]'))
+    ip = ipaddress.ip_address(bare)
 except ValueError:
-    ip = None  # a DNS name
-if host.lower() in ('localhost',) or (ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local
-                                                          or ip.is_unspecified or ip.is_reserved or ip.is_multicast)):
-    sys.exit('ceremony: --memo-peer host %s is not a public address' % host)
+    ip = None
+if ip is not None:
+    if not public(ip):
+        sys.exit('ceremony: --memo-peer host %s is not a public address (private, CGNAT, loopback, '
+                 'link-local, reserved or multicast)' % host)
+else:
+    # A DNS name must be a fully qualified public name that resolves, from
+    # here, to public addresses only. Every node in the world dials it from
+    # the genesis, so a name that resolves privately anywhere (split-horizon,
+    # an internal zone) is the operator's to rule out; this refuses what can
+    # be seen from this machine.
+    name = host.rstrip('.').lower()
+    labels = name.split('.')
+    if (len(labels) < 2 or not all(re.fullmatch(r'[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?', l) for l in labels)
+            or labels[-1] in ('localhost', 'local', 'internal', 'lan', 'home', 'corp', 'intranet', 'test', 'invalid', 'example')
+            or name.endswith('.home.arpa')):
+        sys.exit('ceremony: --memo-peer host %s is not a public DNS name' % host)
+    try:
+        addrs = {ipaddress.ip_address(a[4][0].split('%')[0]) for a in socket.getaddrinfo(name, port, proto=socket.IPPROTO_TCP)}
+    except (socket.gaierror, UnicodeError) as e:
+        sys.exit('ceremony: --memo-peer host %s does not resolve (%s): a DNS name must resolve to a public address' % (host, e))
+    bad = sorted(str(a) for a in addrs if not public(a))
+    if not addrs or bad:
+        sys.exit('ceremony: --memo-peer host %s resolves to non-public %s' % (host, ', '.join(bad) or 'nothing'))
 PY
 
 # ── arguments ───────────────────────────────────────────────────────────────
