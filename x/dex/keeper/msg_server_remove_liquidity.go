@@ -64,8 +64,23 @@ func (k msgServer) RemoveLiquidity(ctx context.Context, msg *types.MsgRemoveLiqu
 	key := collections.Join3(completion, msg.PoolId, creatorBz)
 
 	// Two withdrawals in the same block land on the same key, so fold them
-	// together instead of letting the second overwrite the first.
+	// together instead of letting the second overwrite the first. A failed
+	// payout re-filed at this key (retryUnbonding) is not folded into: the
+	// new shares would take on its attempt count, and so its backoff, and its
+	// failure (audit D-3). The new withdrawal takes the next free second.
 	entry, err := k.LpUnbondings.Get(ctx, key)
+	if err == nil && entry.PayoutAttempts > 0 {
+		err = types.ErrInvalidAmount.Wrap("no free completion time within a minute of a retried withdrawal")
+		for i := int64(1); i <= 60; i++ {
+			next := collections.Join3(completion+i, msg.PoolId, creatorBz)
+			if has, herr := k.LpUnbondings.Has(ctx, next); herr != nil {
+				return nil, herr
+			} else if !has {
+				completion, key, err = completion+i, next, collections.ErrNotFound
+				break
+			}
+		}
+	}
 	switch {
 	case err == nil:
 		// One entry pays one note: a second withdrawal in the block must

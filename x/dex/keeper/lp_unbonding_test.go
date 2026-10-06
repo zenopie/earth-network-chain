@@ -262,6 +262,17 @@ func TestOneBadUnbondingDoesNotHaltTheSweep(t *testing.T) {
 			// later), so the entries behind it are not stalled.
 			_, err = k.LpUnbondings.Get(due, collections.Join3(bad.CompletionTime, bad.PoolId, []byte(addr)))
 			require.ErrorIs(t, err, collections.ErrNotFound, "the bad entry must be removed")
+			// ...and re-filed at its retry time with one attempt counted,
+			// not dropped (audit D-4: the original key alone shows neither).
+			retryAt := due.BlockTime().Unix() + types.LpUnbondRetryDelay(1)
+			again, err := k.LpUnbondings.Get(due, collections.Join3(retryAt, bad.PoolId, []byte(addr)))
+			require.NoError(t, err, "re-filed at now + LpUnbondRetryDelay(1)")
+			require.Equal(t, uint32(1), uint32(again.PayoutAttempts))
+			require.Equal(t, retryAt, again.CompletionTime)
+			require.Equal(t, bad.Shares.Denom, again.Shares.Denom)
+			if !bad.Shares.Amount.IsNil() {
+				require.True(t, bad.Shares.Amount.Equal(again.Shares.Amount), "its shares are kept")
+			}
 
 			// And the good one behind it was paid.
 			require.Equal(t, math.NewInt(400_000), bank.sentTo(addr).AmountOf("uerth"),
@@ -271,4 +282,28 @@ func TestOneBadUnbondingDoesNotHaltTheSweep(t *testing.T) {
 			require.NoError(t, k.AssertHotInvariants(due))
 		})
 	}
+}
+
+// Audit D-3: a withdrawal whose completion time lands on a retried entry's
+// key does not fold into it (taking its attempt count and failure); it takes
+// the next free second.
+func TestWithdrawalDoesNotMergeIntoARetriedEntry(t *testing.T) {
+	k, ctx, _, addr, addrStr := unbondFixture(t, 1_000)
+	ms := keeper.NewMsgServerImpl(k)
+	completion := ctx.BlockTime().Unix() + types.DefaultLpUnbondingSeconds
+	retried := types.LpUnbonding{Address: addrStr, PoolId: 1, Shares: sdk.NewInt64Coin(types.LPShareDenom(1), 100),
+		CompletionTime: completion, PayoutAttempts: 3}
+	require.NoError(t, k.LpUnbondings.Set(ctx, collections.Join3(completion, uint64(1), []byte(addr)), retried))
+
+	resp, err := ms.RemoveLiquidity(ctx, &types.MsgRemoveLiquidity{Creator: addrStr, PoolId: 1,
+		Shares: sdk.NewInt64Coin(types.LPShareDenom(1), 400)})
+	require.NoError(t, err)
+	require.Equal(t, completion+1, resp.CompletionTime)
+	old, err := k.LpUnbondings.Get(ctx, collections.Join3(completion, uint64(1), []byte(addr)))
+	require.NoError(t, err)
+	require.Equal(t, int64(100), old.Shares.Amount.Int64(), "the retried entry is untouched")
+	fresh, err := k.LpUnbondings.Get(ctx, collections.Join3(completion+1, uint64(1), []byte(addr)))
+	require.NoError(t, err)
+	require.Zero(t, fresh.PayoutAttempts)
+	require.Equal(t, int64(400), fresh.Shares.Amount.Int64())
 }
