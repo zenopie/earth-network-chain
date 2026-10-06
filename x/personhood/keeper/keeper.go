@@ -83,7 +83,7 @@ type Keeper struct {
 	CaretakerCount  collections.Item[uint64]
 
 	// Handles: handle -> record, nullifier -> its active handle, and
-	// (expires_at + grace, handle) for the sweep. See handle.go.
+	// (expires_at, handle) for the sweep. See handle.go.
 	Handles       collections.Map[string, types.Handle]
 	HandleByNf    collections.Map[[]byte, string]
 	HandleRelease collections.KeySet[collections.Pair[int64, string]]

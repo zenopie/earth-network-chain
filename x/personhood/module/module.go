@@ -117,8 +117,9 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, _ codec.JSONCodec) json.RawMe
 // To avoid wrong/empty versions, the initial version should be set to 1.
 func (AppModule) ConsensusVersion() uint64 { return 1 }
 
-// BeginBlock settles the democratic allocation stream and runs the ANML
-// buyback-and-burn.
+// BeginBlock runs the module's sweeps (caretaker leases, registration expiry
+// and revoked-signer purge, used bindings, handles, claim nullifiers) and the
+// ANML buyback-and-burn.
 func (am AppModule) BeginBlock(ctx context.Context) error {
 	return am.keeper.BeginBlocker(ctx)
 }

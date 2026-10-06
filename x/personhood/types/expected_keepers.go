@@ -71,8 +71,7 @@ type DexKeeper interface {
 	// SwapExactInForModule trades on behalf of a module account. The ordinary
 	// SwapExactIn cannot be used here: it pays out with
 	// SendCoinsFromModuleToAccount, and this module's account is on the bank's
-	// blocked list, so every buyback failed with "not allowed to receive funds"
-	// and was silently discarded.
+	// blocked list ("not allowed to receive funds").
 	SwapExactInForModule(ctx context.Context, moduleName string, tokenIn sdk.Coin, denomOut string, minOut math.Int) (sdk.Coin, error)
 	// TwapObservation reads the pool's time-weighted price accumulator and its
 	// current spot price. The buyback stores one reading, takes another a window
@@ -90,7 +89,7 @@ type DexKeeper interface {
 // trustworthy, so a registration proof can be bound to a specific, verified
 // signer.
 type PkiKeeper interface {
-	// VerifyDsc checks that a DER-encoded Document Signer certificate chains to
+	// VerifyDscIssuer checks that a DER-encoded Document Signer certificate chains to
 	// a trusted CSCA, is currently valid, and has not been revoked. It returns
 	// the DSC's parsed public key, from which this module recomputes the
 	// commitment the register circuit exposes as a public input.

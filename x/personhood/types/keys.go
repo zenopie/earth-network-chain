@@ -36,9 +36,8 @@ const (
 	// 86% by the twenty-thousandth.
 	//
 	// Parts per million rather than basis points so the unreferred branch, which
-	// halves this, divides exactly. In whole basis points the smallest usable
-	// rate was 2, because 1/2 truncates to zero and paid an unreferred registrant
-	// nothing without erroring.
+	// halves this, divides exactly (in whole basis points the smallest usable
+	// rate would be 2: 1/2 truncates to zero).
 	RegistrationRewardPpm = 100
 
 	// EmissionPerSecond is the ERTH emission rate in uerth for this module's
@@ -67,9 +66,9 @@ const (
 	// nowhere near the years of backdating needed to revive an expired passport.
 	DefaultCurrentDateMaxSkewSeconds = 48 * 60 * 60
 
-	// DefaultRegistrationSweepLimit caps how many registrations BeginBlocker
-	// retires per block across every reason for retiring one — lapsed, and
-	// belonging to a revoked signer.
+	// DefaultRegistrationSweepLimit caps the per-block work of BeginBlocker's
+	// shared sweeps: retiring registrations (lapsed, or belonging to a revoked
+	// signer) and the caretaker, used-binding and handle sweeps.
 	//
 	// One budget rather than one per sweep. BeginBlock runs on an infinite gas
 	// meter and consumes no block gas, so this number is the only ceiling on
@@ -104,20 +103,19 @@ const (
 	// DefaultCountryDailyRegistrationFloor is the same allowance per issuing
 	// country.
 	//
-	// A thousand a day, not the ten thousand it started at. The floor only
-	// matters before the network is big enough for the share term to take over,
-	// and at launch scale ten thousand registrations from one country in a day
-	// is not adoption — it is the shape a compromised CSCA takes. It also sets
-	// how fast the registration-reward pool can drain: at 2 bps the pool halves
-	// every 3,466 registrations, so a ten-thousand-a-day country would spend
-	// most of the seed inside a week.
+	// A thousand a day. The floor only matters before the network is big enough
+	// for the share term to take over, and at launch scale ten thousand
+	// registrations from one country in a day is not adoption — it is the shape
+	// a compromised CSCA takes. It also sets how fast the registration-reward
+	// pool can drain: at 100 ppm the pool halves every 6,931 registrations, so a
+	// ten-thousand-a-day country would spend most of the seed inside a week.
 	//
 	// It is a deferral, not a ban: the counter rolls at midnight UTC and genuine
 	// holders retry. Raising it is a governance parameter change, which is the
 	// right amount of friction for a number that decides how fast a compromise
 	// pays out.
 	//
-	// NOTE: this now equals DefaultDscDailyRegistrationFloor, so at launch scale
+	// It equals DefaultDscDailyRegistrationFloor, so at launch scale
 	// the per-signer cap cannot bind before the per-country one does. The signer
 	// cap only starts doing independent work once the share term lifts the
 	// country cap above it.
@@ -139,8 +137,8 @@ const (
 	DefaultNetworkDailyRegistrationGrowthBps = 30_000
 
 	// UnknownCountry is the rate-limit bucket for a signer whose issuer names no
-	// country. One shared bucket rather than no bucket: an empty country used
-	// to skip the country cap altogether.
+	// country. One shared bucket rather than no bucket, so an empty country does
+	// not skip the country cap.
 	UnknownCountry = "??"
 
 	// DefaultProofVerificationGas is the gas charged for one UltraHonk proof
@@ -155,8 +153,8 @@ const (
 	// of proof CPU against a ~5s block — leaving the rest of the block for
 	// everything else.
 	//
-	// Tripled in v0.9.2. The 10ms allowance was for a whole core; earth-1's
-	// validator runs on a fraction of one on Akash, where the same proof is
+	// Then tripled: the 10ms allowance is for a whole core; a validator may run
+	// on a fraction of one (earth-1's does, on Akash), where the same proof is
 	// several times slower, and a block of deliberately invalid proofs costs
 	// the full verification each. At 3,000,000 a block holds at most 33, about
 	// 0.8s even at 24ms apiece.
@@ -175,7 +173,7 @@ const (
 	// operations, and the Poseidon2 commitment over the key. Priced by the same
 	// block-limit method at a tenth of the proof charge.
 	//
-	// Tripled in v0.9.2 with the proof charge. The worst case is not one
+	// Tripled with the proof charge. The worst case is not one
 	// signature check but MaxIssuerCandidates of them, against trust-store keys
 	// as large as governance has admitted — brainpool512 and 4096-bit RSA
 	// among them — plus a commitment that absorbs one field element per key
@@ -340,7 +338,8 @@ var (
 
 	// HandlesKey maps a handle to its Handle record; HandleByNfKey is the
 	// reverse index (nullifier -> handle); HandleReleaseKey orders records
-	// by release time (expires_at + ReleaseGraceSeconds) for the sweep.
+	// by (expires_at, handle) for the sweep, which releases a handle once its
+	// renewal period (handle_renewal_seconds) has passed too.
 	HandlesKey       = collections.NewPrefix("handles")
 	HandleByNfKey    = collections.NewPrefix("handle_by_nf")
 	HandleReleaseKey = collections.NewPrefix("handle_release")

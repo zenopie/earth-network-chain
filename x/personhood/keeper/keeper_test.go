@@ -26,18 +26,15 @@ import (
 type fixture struct {
 	ctx context.Context
 	// keeper is the module under test; allocation is the real x/allocation keeper
-	// it delegates the human emission stream to. Stubbing that out would hide the
-	// thing most worth testing here — that a lapsed registration really does give
-	// its vote weight back.
+	// it files caretaker splits and registration rewards with.
 	keeper       keeper.Keeper
 	allocation   allocationkeeper.Keeper
 	addressCodec address.Codec
 }
 
-// stubBankKeeper records mints and sends so a handler that moves coins can be
-// exercised without a real bank module. It is deliberately not a mock with
-// expectations — the tests that use it care whether the handler was reached at
-// all, not how many coins moved.
+// stubBankKeeper accepts every mint and send so a handler that moves coins can
+// be exercised without a real bank module. It records nothing: the tests that
+// use it care whether the handler was reached at all, not how many coins moved.
 type stubBankKeeper struct{}
 
 func (stubBankKeeper) GetSupply(context.Context, string) sdk.Coin { return sdk.Coin{} }
@@ -78,8 +75,7 @@ func (stubDexKeeper) QuoteHubToToken(context.Context, string, math.Int) (math.In
 var errStubNoPool = errors.New("stub dex: no pool")
 
 // stubStaking feeds the allocation keeper's capital stream, which these tests
-// never touch — the human stream's weight comes from the personhood keeper
-// registered as its source below.
+// never touch.
 type stubStaking struct{}
 
 func (stubStaking) BondDenom(context.Context) (string, error) { return "uerth", nil }

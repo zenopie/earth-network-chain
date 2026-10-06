@@ -56,9 +56,9 @@ import (
 // Nobody's consent is needed to bind an address: naming someone else's
 // shielded address only sends the binder's referrals to them.
 //
-// Self-referral. A registrant cannot name a handle it holds itself: claiming
-// one takes a live registration activated R + a root window ago, and the
-// registration naming it is a new one. The residual case is re-entry: a
+// Self-referral. A registrant cannot name a handle it holds itself: a handle
+// is held by an existing registration, and the registration naming it is a
+// new one. The residual case is re-entry: a
 // person whose registration lapsed may still hold a live handle (for up to
 // R), and re-registering the same passport as new pays the referrer's half
 // to their own handle. The chain cannot see that the handle's nullifier and

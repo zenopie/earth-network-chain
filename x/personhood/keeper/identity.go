@@ -17,7 +17,8 @@ import (
 )
 
 // The identity tree: depth 32, one leaf per registration ever written,
-// leaf = H(TAG_LEAF, idc, dsc_key, country, activated_at), computed here from
+// leaf = H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at)
+// (zk/privacy.IdentityLeaf), computed here from
 // public msg fields and the DSC's recorded issuing country. A leaf is zeroed when its registration expires, its Document
 // Signer is revoked, or its holder switches to a new identity secret; a zero
 // leaf proves nothing (see zk/merkle).

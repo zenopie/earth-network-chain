@@ -10,6 +10,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// minRegisterVariants is the number of passport register circuits
+// (PASSPORT_COVERAGE.md in the mobile repo): a smaller set means a scheme
+// real passports use was dropped.
+const minRegisterVariants = 33
+
 // TestGenesisSeedsRegistrationTrustAnchors guards the two lists that decide
 // whether proof-of-personhood works at all on a fresh chain.
 //
@@ -18,11 +23,6 @@ import (
 // would leave ANML claims and the entire democratic pillar inert from block 1
 // until a governance proposal landed — a week, given the voting period. Both are
 // easy to drop while editing config.yml, and nothing else would notice.
-// minRegisterVariants is the number of passport register circuits
-// (PASSPORT_COVERAGE.md in the mobile repo): a smaller set means a scheme
-// real passports use was dropped.
-const minRegisterVariants = 33
-
 func TestGenesisSeedsRegistrationTrustAnchors(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "config.yml"))
 	if err != nil {

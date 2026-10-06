@@ -115,7 +115,7 @@ func (p Params) NetworkDailyCap(networkPreviousDay uint64) uint64 {
 	return DailyRegistrationCap(floor, growth, networkPreviousDay)
 }
 
-// The five knobs below all read zero as "unset, use the compiled-in default"
+// The *OrDefault accessors below all read zero as "unset, use the compiled-in default"
 // rather than as a literal zero.
 //
 // Zero is the value state arrives with when a chain upgrade adds a field to
@@ -214,9 +214,8 @@ func (p Params) Validate() error {
 	// Sorted rather than ranging the map directly: with two empty keys, map order
 	// would decide which one the error names, so the same params would produce
 	// different messages on different nodes. Error text is not part of the
-	// results hash, so this is reproducibility rather than consensus — but it is
-	// the same pattern that broke consensus in Params.Marshal, so it is not left
-	// to chance.
+	// results hash, so this is reproducibility rather than consensus, but map
+	// order is not left to chance anywhere in params.
 	algos := make([]string, 0, len(p.VerifyingKeys))
 	for algo := range p.VerifyingKeys {
 		algos = append(algos, algo)
@@ -271,9 +270,8 @@ func (p Params) Validate() error {
 	}
 	// Governance may leave these at zero to take the default (see the
 	// *OrDefault accessors), but it may not set them to a value that is present
-	// and wrong. Only the upper bound needs policing: a deviation tolerance at
-	// or above 100% admits any price at all, which is the unguarded buyback this
-	// bound exists to prevent.
+	// and wrong.
+	//
 	// Bounded so the activation arithmetic (now - R - window) stays far from
 	// overflow, and so no zeroed leaf keeps proving for longer than a day.
 	if p.IdentityRootWindowSeconds > SecondsPerDay {
@@ -288,6 +286,9 @@ func (p Params) Validate() error {
 	if p.HandleLeaseSeconds > 2*365*SecondsPerDay {
 		return fmt.Errorf("handle_lease_seconds must be at most two years")
 	}
+	// Only the upper bound needs policing: a deviation tolerance at or above
+	// 100% admits any price at all, which is the unguarded buyback this bound
+	// exists to prevent.
 	if p.BuybackMaxDeviationBps >= BpsDenominator {
 		return fmt.Errorf(
 			"buyback_max_deviation_bps must be below %d: %d admits any price the pool can be pushed to",
