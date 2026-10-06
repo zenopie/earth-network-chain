@@ -592,41 +592,36 @@ func emptyResults() map[v1.VoteOption]math.LegacyDec {
 
 func (k Keeper) stakeTally(ctx context.Context, gk govkeeper.Keeper, proposal v1.Proposal, validators map[string]v1.ValidatorGovInfo,
 ) (math.LegacyDec, map[v1.VoteOption]math.LegacyDec, error) {
-	{
-		total := math.LegacyZeroDec()
-		results := map[v1.VoteOption]math.LegacyDec{
-			v1.OptionYes: math.LegacyZeroDec(), v1.OptionAbstain: math.LegacyZeroDec(),
-			v1.OptionNo: math.LegacyZeroDec(), v1.OptionNoWithVeto: math.LegacyZeroDec(),
+	total := math.LegacyZeroDec()
+	results := emptyResults()
+	// add counts power once toward the total and split across options,
+	// exactly as the default does.
+	add := func(power math.LegacyDec, opts []weighted) {
+		for _, o := range opts {
+			results[o.opt] = results[o.opt].Add(power.Mul(o.w))
 		}
-		// add counts power once toward the total and split across options,
-		// exactly as the default does.
-		add := func(power math.LegacyDec, opts []weighted) {
-			for _, o := range opts {
-				results[o.opt] = results[o.opt].Add(power.Mul(o.w))
-			}
-			total = total.Add(power)
-		}
-
-		// 1. Transparent votes: validators' own and any other delegator's.
-		if err := k.transparentTally(ctx, gk, proposal, validators, add); err != nil {
-			return math.LegacyDec{}, nil, err
-		}
-
-		// 2. Private votes, per validator.
-		if err := k.privateTally(ctx, proposal.Id, validators, add); err != nil {
-			return math.LegacyDec{}, nil, err
-		}
-
-		// 3. Validators vote what was not deducted (inheritance).
-		for _, val := range validators {
-			if len(val.Vote) == 0 || val.DelegatorShares.IsZero() {
-				continue
-			}
-			power := val.DelegatorShares.Sub(val.DelegatorDeductions).MulInt(val.BondedTokens).Quo(val.DelegatorShares)
-			add(power, weightsOf(val.Vote))
-		}
-		return total, results, nil
+		total = total.Add(power)
 	}
+
+	// 1. Transparent votes: validators' own and any other delegator's.
+	if err := k.transparentTally(ctx, gk, proposal, validators, add); err != nil {
+		return math.LegacyDec{}, nil, err
+	}
+
+	// 2. Private votes, per validator.
+	if err := k.privateTally(ctx, proposal.Id, validators, add); err != nil {
+		return math.LegacyDec{}, nil, err
+	}
+
+	// 3. Validators vote what was not deducted (inheritance).
+	for _, val := range validators {
+		if len(val.Vote) == 0 || val.DelegatorShares.IsZero() {
+			continue
+		}
+		power := val.DelegatorShares.Sub(val.DelegatorDeductions).MulInt(val.BondedTokens).Quo(val.DelegatorShares)
+		add(power, weightsOf(val.Vote))
+	}
+	return total, results, nil
 }
 
 func (k Keeper) privateTally(ctx context.Context, proposalID uint64, validators map[string]v1.ValidatorGovInfo,

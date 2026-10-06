@@ -568,7 +568,7 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 			if err != nil {
 				return err
 			}
-			if err := k.startUnbonding(ctx, records, target, returned, sdkCtx.BlockHeight(), completion); err != nil {
+			if err := k.startUnbonding(ctx, records, returned, sdkCtx.BlockHeight(), completion); err != nil {
 				return err
 			}
 		case len(records) > 0:
@@ -576,7 +576,7 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 			// slashed to nothing), or nothing to undelegate (a slash took
 			// the records' whole target): pay what the queue holds, now.
 			fromQueue = math.MinInt(target, queue.Sub(delegated))
-			if err := k.matureFromQueue(ctx, records, target, fromQueue); err != nil {
+			if err := k.matureFromQueue(ctx, records, fromQueue); err != nil {
 				return err
 			}
 		}
@@ -742,7 +742,7 @@ func targets(records []types.UnbondRecord) []math.Int {
 }
 
 // startUnbonding records one SDK undelegation against the records it serves.
-func (k Keeper) startUnbonding(ctx context.Context, records []types.UnbondRecord, _ math.Int, returned math.Int, height int64, completion time.Time) error {
+func (k Keeper) startUnbonding(ctx context.Context, records []types.UnbondRecord, returned math.Int, height int64, completion time.Time) error {
 	parts := share(returned, targets(records))
 	for i, r := range records {
 		key := collections.Join(r.Validator, r.Epoch)
@@ -765,7 +765,7 @@ func (k Keeper) startUnbonding(ctx context.Context, records []types.UnbondRecord
 
 // matureFromQueue settles records with no bonded stake behind them out of the
 // validator's queued ERTH. Their payouts are minted from the next block.
-func (k Keeper) matureFromQueue(ctx context.Context, records []types.UnbondRecord, _ math.Int, paid math.Int) error {
+func (k Keeper) matureFromQueue(ctx context.Context, records []types.UnbondRecord, paid math.Int) error {
 	parts := share(paid, targets(records))
 	for i, r := range records {
 		key := collections.Join(r.Validator, r.Epoch)

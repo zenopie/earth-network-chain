@@ -104,13 +104,6 @@ func ValidateOptions(opts []*v1.WeightedVoteOption) error {
 	return nil
 }
 
-// GovOptions converts to x/gov's type.
-func GovOptions(opts []*v1.WeightedVoteOption) v1.WeightedVoteOptions {
-	out := make(v1.WeightedVoteOptions, len(opts))
-	copy(out, opts)
-	return out
-}
-
 func field(name string, b []byte) (fr.Element, error) {
 	e, err := privacy.FieldFromBytes(b)
 	if err != nil {
@@ -586,11 +579,6 @@ func (m *MsgRedelegate) ValidateBasic() error {
 // One note per validator (ORCHARD_DESIGN.md 8.1) needs one; the second
 // covers a note made beside a labelled one.
 const MaxVoteNotes = 2
-
-// VoteProofInputs is the vote circuit's public input count: note_root,
-// nf_root, debt_root, asset, weight, proposal_id, MaxVoteNotes vote
-// nullifiers, sighash.
-const VoteProofInputs = 7 + MaxVoteNotes
 
 func (m *MsgStakeVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
 func (m *MsgStakeVote) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
