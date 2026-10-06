@@ -2,7 +2,12 @@ package certs
 
 import (
 	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/asn1"
 	"math/big"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -103,11 +108,40 @@ func TestPSSParameters(t *testing.T) {
 	}
 }
 
+// TestSHA224WithRSA: a DSC signed sha224WithRSAEncryption verifies through
+// VerifySignedBy (the path registration takes), and a flipped bit does not.
 func TestSHA224WithRSA(t *testing.T) {
-	oid := []int{1, 2, 840, 113549, 1, 1, 14}
-	var o = make([]int, len(oid))
-	copy(o, oid)
-	if h, ok := cryptoHashFor(o); !ok || h != crypto.SHA224 {
-		t.Fatalf("sha224WithRSAEncryption: %v %v", h, ok)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbs := []byte("a DSC TBSCertificate")
+	d := sha256.Sum224(tbs)
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA224, d[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := &Cert{RawTBS: tbs, SigAlgo: asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 14}, Signature: sig}
+	signer := &PublicKey{IsRSA: true, RSAModulus: key.N, RSAExp: key.E}
+	if err := VerifySignedBy(cert, signer); err != nil {
+		t.Fatalf("sha224WithRSAEncryption: %v", err)
+	}
+	cert.RawTBS = []byte("a DSC TBSCertificatf")
+	if VerifySignedBy(cert, signer) == nil {
+		t.Fatal("a changed TBS verified")
+	}
+}
+
+// TestSigAlgoMustMatchKeyType: an ECDSA OID over an RSA signer (and the
+// reverse) is refused rather than verified under the other scheme.
+func TestSigAlgoMustMatchKeyType(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := &Cert{RawTBS: []byte("x"), SigAlgo: asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}, Signature: []byte{0}}
+	signer := &PublicKey{IsRSA: true, RSAModulus: key.N, RSAExp: key.E}
+	if err := VerifySignedBy(cert, signer); err == nil || !strings.Contains(err.Error(), "key type") {
+		t.Fatalf("ECDSA OID under an RSA key: %v", err)
 	}
 }

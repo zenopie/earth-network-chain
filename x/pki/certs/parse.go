@@ -421,20 +421,20 @@ func VerifySignedBy(cert *Cert, signer *PublicKey) error {
 		return rsa.VerifyPSS(pub, ch, hh.Sum(nil), cert.Signature, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthAuto, Hash: ch})
 	}
 
-	h, ok := hashFor(cert.SigAlgo)
+	alg, ok := sigAlgoFor(cert.SigAlgo)
 	if !ok {
 		return fmt.Errorf("x509: unsupported signature algorithm %s", cert.SigAlgo)
 	}
+	if alg.rsa != signer.IsRSA {
+		return fmt.Errorf("x509: signature algorithm %s does not match the signer's key type", cert.SigAlgo)
+	}
+	h := alg.hash.New()
 	h.Write(cert.RawTBS)
 	digest := h.Sum(nil)
 
 	if signer.IsRSA {
-		ch, ok := cryptoHashFor(cert.SigAlgo)
-		if !ok {
-			return fmt.Errorf("x509: unsupported RSA hash %s", cert.SigAlgo)
-		}
 		pub := &rsa.PublicKey{N: signer.RSAModulus, E: signer.RSAExp}
-		return rsa.VerifyPKCS1v15(pub, ch, digest, cert.Signature)
+		return rsa.VerifyPKCS1v15(pub, alg.hash, digest, cert.Signature)
 	}
 	r, s, err := parseECDSASig(cert.Signature)
 	if err != nil {
@@ -567,20 +567,4 @@ func pssAlgHash(s *cryptobyte.String) (crypto.Hash, error) {
 		return crypto.SHA512, nil
 	}
 	return 0, fmt.Errorf("x509: unsupported PSS hash %s", oid)
-}
-
-func cryptoHashFor(oid asn1.ObjectIdentifier) (crypto.Hash, bool) {
-	switch oid.String() {
-	case "1.2.840.113549.1.1.5":
-		return crypto.SHA1, true
-	case "1.2.840.113549.1.1.14":
-		return crypto.SHA224, true
-	case "1.2.840.113549.1.1.11":
-		return crypto.SHA256, true
-	case "1.2.840.113549.1.1.12":
-		return crypto.SHA384, true
-	case "1.2.840.113549.1.1.13":
-		return crypto.SHA512, true
-	}
-	return 0, false
 }

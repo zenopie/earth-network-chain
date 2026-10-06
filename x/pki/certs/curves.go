@@ -1,13 +1,13 @@
 package certs
 
 import (
+	"crypto"
 	"crypto/elliptic"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
+	_ "crypto/sha1" // registers crypto.SHA1
+	_ "crypto/sha256"
+	_ "crypto/sha512"
 	"encoding/asn1"
 	"errors"
-	"hash"
 	"math/big"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -235,21 +235,32 @@ func hashToInt(digest []byte, n *big.Int) *big.Int {
 	return ret
 }
 
-// hashFor returns the hash implied by an ECDSA/RSA signature-algorithm OID.
-func hashFor(oid asn1.ObjectIdentifier) (hash.Hash, bool) {
-	switch oid.String() {
-	case "1.2.840.10045.4.1", "1.2.840.113549.1.1.5": // ecdsa/rsa with SHA-1
-		return sha1.New(), true
-	case "1.2.840.10045.4.3.2", "1.2.840.113549.1.1.11": // SHA-256
-		return sha256.New(), true
-	case "1.2.840.10045.4.3.3", "1.2.840.113549.1.1.12": // SHA-384
-		return sha512.New384(), true
-	case "1.2.840.10045.4.3.4", "1.2.840.113549.1.1.13": // SHA-512
-		return sha512.New(), true
-	case "1.2.840.10045.4.3.1": // ecdsa-with-SHA224
-		return sha256.New224(), true
-	}
-	return nil, false
+// sigAlgo is what a non-PSS signature-algorithm OID fixes: the digest and
+// the signer's key type. One table, so the digest VerifySignedBy computes and
+// the hash it hands to RSA PKCS#1 v1.5 can never come from different lists.
+type sigAlgo struct {
+	hash crypto.Hash
+	rsa  bool
+}
+
+var sigAlgos = map[string]sigAlgo{
+	"1.2.840.10045.4.1":     {crypto.SHA1, false},   // ecdsa-with-SHA1
+	"1.2.840.10045.4.3.1":   {crypto.SHA224, false}, // ecdsa-with-SHA224
+	"1.2.840.10045.4.3.2":   {crypto.SHA256, false}, // ecdsa-with-SHA256
+	"1.2.840.10045.4.3.3":   {crypto.SHA384, false}, // ecdsa-with-SHA384
+	"1.2.840.10045.4.3.4":   {crypto.SHA512, false}, // ecdsa-with-SHA512
+	"1.2.840.113549.1.1.5":  {crypto.SHA1, true},    // sha1WithRSAEncryption
+	"1.2.840.113549.1.1.14": {crypto.SHA224, true},  // sha224WithRSAEncryption
+	"1.2.840.113549.1.1.11": {crypto.SHA256, true},  // sha256WithRSAEncryption
+	"1.2.840.113549.1.1.12": {crypto.SHA384, true},  // sha384WithRSAEncryption
+	"1.2.840.113549.1.1.13": {crypto.SHA512, true},  // sha512WithRSAEncryption
+}
+
+// sigAlgoFor returns the digest and key type an ECDSA/RSA signature-algorithm
+// OID names (RSA-PSS carries its hash in parameters; see pssHash).
+func sigAlgoFor(oid asn1.ObjectIdentifier) (sigAlgo, bool) {
+	a, ok := sigAlgos[oid.String()]
+	return a, ok
 }
 
 // ecdsaSig is the DER SEQUENCE { r INTEGER, s INTEGER }.
