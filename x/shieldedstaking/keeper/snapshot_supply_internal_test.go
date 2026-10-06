@@ -95,3 +95,23 @@ func TestRootlessSnapshotTakesPositionVotes(t *testing.T) {
 	require.NoError(t, err, "a position vote does not")
 	require.Equal(t, int64(1_000), supply.Int64())
 }
+
+// Audit C-4, C-5: a maturity queue entry with no record is dropped (not
+// re-read every block), and DebtRows with limit 0 returns no rows.
+func TestDanglingMaturityEntryAndZeroLimit(t *testing.T) {
+	key := storetypes.NewKVStoreKey(types.StoreKey)
+	ctx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("tt")).Ctx
+	enc := moduletestutil.MakeTestEncodingConfig()
+	k := NewKeeper(runtime.NewKVStoreService(key), enc.Codec, addresscodec.NewBech32Codec("earth"),
+		authtypes.NewModuleAddress("gov"), nil, nil, nil, nil, nil, nil, shieldedkeeper.Keeper{}, allocationkeeper.Keeper{})
+	q := collections.Join3(ctx.BlockTime().UnixNano()-1, "earthvaloper1test", uint64(7))
+	require.NoError(t, k.MaturityQueue.Set(ctx, q))
+	k.matureRecords(ctx)
+	has, err := k.MaturityQueue.Has(ctx, q)
+	require.NoError(t, err)
+	require.False(t, has)
+
+	rows, err := k.DebtRows(ctx, 0, 0)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}

@@ -195,6 +195,9 @@ func (k Keeper) checkDebtRoot(ctx context.Context, root []byte) error {
 // order, each with its latest retained value.
 func (k Keeper) DebtRows(ctx context.Context, start, limit uint64) ([]types.DebtRow, error) {
 	var rows []types.DebtRow
+	if limit == 0 {
+		return rows, nil
+	}
 	err := k.DebtLeafKeys.Walk(ctx, new(collections.Range[uint64]).StartInclusive(start+1),
 		func(_ uint64, key []byte) (bool, error) {
 			r, err := k.DebtRetained.Get(ctx, key)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"cosmossdk.io/collections"
@@ -801,13 +800,17 @@ func (k Keeper) matureRecords(ctx context.Context) {
 		queued  []collections.Triple[int64, string, uint64]
 	}
 	var groups []*group
+	var dangling []collections.Triple[int64, string, uint64]
 	idx := map[string]*group{}
 	_ = k.MaturityQueue.Walk(ctx, nil, func(key collections.Triple[int64, string, uint64]) (bool, error) {
 		if key.K1() > now {
 			return true, nil
 		}
 		r, err := k.UnbondRecords.Get(ctx, collections.Join(key.K2(), key.K3()))
-		if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			dangling = append(dangling, key)
+			return false, nil
+		} else if err != nil {
 			return false, nil
 		}
 		id := fmt.Sprintf("%s/%d", r.Validator, r.CreationHeight)
@@ -821,6 +824,12 @@ func (k Keeper) matureRecords(ctx context.Context) {
 		g.queued = append(g.queued, key)
 		return false, nil
 	})
+	// A queue entry with no record (only a prior store inconsistency makes
+	// one) is dropped and reported, not re-read every block (audit C-4).
+	for _, key := range dangling {
+		_ = k.guarded(ctx, func(cc context.Context) error { return k.MaturityQueue.Remove(cc, key) })
+		k.failure(ctx, "mature", key.K2(), fmt.Errorf("maturity queue entry %d has no unbond record; dropped", key.K3()))
+	}
 	for _, g := range groups {
 		err := k.guarded(ctx, func(cc context.Context) error {
 			if err := k.matureGroup(cc, g.valoper, g.height, g.keys); err != nil {
@@ -893,7 +902,7 @@ func (k Keeper) matureGroup(ctx context.Context, valoper string, height int64, k
 func (k Keeper) sweepForeignRewards(ctx context.Context) error {
 	var sweep sdk.Coins
 	for _, c := range k.bank.GetAllBalances(ctx, k.modAddr) {
-		if c.Denom == types.BondDenom || strings.HasPrefix(c.Denom, types.DerthPrefix) {
+		if c.Denom == types.BondDenom {
 			continue
 		}
 		sweep = append(sweep, c)
