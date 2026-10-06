@@ -12,6 +12,7 @@ package app
 // the chain's real trees as the test reaches it.
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -54,7 +55,7 @@ const (
 	phFee      = 80_000
 	phGas      = 12_000_000
 	phFeeNote  = 2_000_000
-	phFeeNotes = 40
+	phFeeNotes = 50
 	phDay      = int64(86400)
 	// phR is the test chain's caretaker_vote_seconds (lease length R).
 	phR = int64(6 * 3600)
@@ -117,6 +118,8 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 	actionVK := actions.VerifyingKey(t)
 	membershipVK, err := prover.VK("membership")
 	require.NoError(t, err)
+	moveVK, err := prover.VK("move")
+	require.NoError(t, err)
 	leanVK, err := os.ReadFile(filepath.Join(passports, "lean_poa_p256_sha256.vk"))
 	require.NoError(t, err)
 
@@ -129,6 +132,7 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 			require.NoError(t, cdc.UnmarshalJSON(st[shieldedtypes.ModuleName], &sh))
 			sh.Params.VerifyingKeys = map[string][]byte{
 				shieldedtypes.CircuitAction: actionVK, shieldedtypes.CircuitMembership: membershipVK,
+				shieldedtypes.CircuitMove: moveVK,
 			}
 			st[shieldedtypes.ModuleName] = cdc.MustMarshalJSON(&sh)
 
@@ -398,6 +402,80 @@ func (e *phEnv) bindHandle(name, reg, handle, human string, maxPred int64) *pers
 	}
 	e.prove("handle/"+name, msg, f, &member{reg: reg, scope: privacy.HandleScope(), maxAct: noBound, maxPred: maxPred})
 	return msg
+}
+
+// moveProof proves the move of what reg holds in scope to its successor to,
+// for a msg with sighash signal.
+func (e *phEnv) tryMoveProof(name, reg, to string, scope, signal fr.Element) (personhoodtypes.MoveProof, error) {
+	e.t.Helper()
+	from, succ := personhoodtest.Registrations[reg], personhoodtest.Registrations[to]
+	next, err := e.app.PersonhoodKeeper.Registrations.Get(e.ctx(), loadPassport(e.t, to).nf)
+	if err != nil {
+		return personhoodtypes.MoveProof{}, err
+	}
+	tree := e.identityTree()
+	root, err := tree.Root()
+	require.NoError(e.t, err)
+	// The succession from reg's identity to to's, or (none: a move the
+	// circuit refuses) to's own leaf in its place.
+	succIndex := next.LeafIndex
+	oldIdc, newIdc := privacy.FieldBytes(from.IDC()), privacy.FieldBytes(succ.IDC())
+	require.NoError(e.t, e.app.PersonhoodKeeper.Successions.Walk(e.ctx(), nil, func(i uint64, sc personhoodtypes.Succession) (bool, error) {
+		if bytes.Equal(sc.IdcOld, oldIdc) && bytes.Equal(sc.IdcNew, newIdc) {
+			succIndex = i
+			return true, nil
+		}
+		return false, nil
+	}))
+	succSib, err := tree.Path(succIndex)
+	require.NoError(e.t, err)
+	sib, err := tree.Path(next.LeafIndex)
+	require.NoError(e.t, err)
+	dsc, err := privacy.FieldFromBytes(next.DscKey)
+	require.NoError(e.t, err)
+	w := personhoodtest.Move{
+		OldSecret: from.IDSecret(), NewSecret: succ.IDSecret(), SuccessionIndex: succIndex, SuccessionSiblings: succSib,
+		DscKey: dsc, Country: privacy.CountryField(next.Country), ActivatedAt: uint64(next.ActivatedAt),
+		PredecessorAt: uint64(next.PredecessorAt), LeafIndex: next.LeafIndex, Siblings: sib,
+		Root: root, Scope: scope, Signal: signal,
+	}
+	toml, pub := w.Witness()
+	proof, err := e.prover.Proof(name+".move", "move", toml, pub)
+	if err != nil {
+		return personhoodtypes.MoveProof{}, err
+	}
+	return personhoodtypes.MoveProof{Proof: proof, Root: privacy.FieldBytes(root),
+		OldNullifier: privacy.FieldBytes(w.OldNullifier()), NewNullifier: privacy.FieldBytes(w.NewNullifier())}, nil
+}
+
+// moveCaretaker moves reg's split to its successor to.
+func (e *phEnv) moveCaretaker(name, reg, to string) *personhoodtypes.MsgMoveCaretaker {
+	e.t.Helper()
+	f := e.feeFor("move-caretaker/" + name)
+	msg := &personhoodtypes.MsgMoveCaretaker{Fee: e.bundle(f)}
+	e.proveMove("move-caretaker/"+name, msg, f, reg, to, privacy.CaretakerScope(), &msg.Move)
+	return msg
+}
+
+// moveHandle moves reg's handle to its successor to.
+func (e *phEnv) moveHandle(name, reg, handle, to string) *personhoodtypes.MsgMoveHandle {
+	e.t.Helper()
+	f := e.feeFor("move-handle/" + name)
+	msg := &personhoodtypes.MsgMoveHandle{Fee: e.bundle(f), Handle: handle}
+	e.proveMove("move-handle/"+name, msg, f, reg, to, privacy.HandleScope(), &msg.Move)
+	return msg
+}
+
+// proveMove proves msg's fee bundle and its move proof (into *mv), both
+// under msg's sighash.
+func (e *phEnv) proveMove(name string, msg shieldedtypes.PrivateMsg, f *shieldedtest.Plan, reg, to string, scope fr.Element, mv *personhoodtypes.MoveProof) {
+	e.t.Helper()
+	ac := e.app.AuthKeeper.AddressCodec()
+	signal, err := shieldedtypes.Sighash(msg, shieldedtest.ChainID, phTx, ac)
+	require.NoError(e.t, err)
+	require.NoError(e.t, shieldedtest.ProveMsg(msg, shieldedtest.ChainID, phTx, ac, []*shieldedtest.Plan{f}, e.actions.TryProve), name)
+	*mv, err = e.tryMoveProof(name, reg, to, scope, signal)
+	require.NoError(e.t, err, name)
 }
 
 // handle is the directory's entry for h.
@@ -765,14 +843,17 @@ func TestPrivatePersonhood(t *testing.T) {
 	// --------------------------------------------------------- before a switch
 	// A1's last split lapsed, so it casts one again (no wait: no
 	// predecessor), and changes "alice" to "amy" (a live holder: unbounded;
-	// the old handle is freed at once). Neither can move to A2 (there are no
-	// moves, audit B-4): both stay A1's, still counting and resolving, until
-	// their leases end.
+	// the old handle is freed at once). After the switch both move to A2 with
+	// move proofs (circuits/move).
 	e.at(dayStart(d2).Add(45 * time.Minute))
 	e.mustDeliver(e.caretaker("A-again", "A1", 0, split))
 	e.mustDeliver(e.bindHandle("A1-amy", "A1", "amy", "A", noBound))
 	require.Equal(t, "free", e.handle("alice").Status)
 	amyOwner := e.handle("amy").Owner
+	// What A1 would send after moving both away (proven now, while its leaf
+	// is live; refused below once it has moved them).
+	a1Again := e.caretaker("A1-again", "A1", 0, split)
+	a1Claim := e.bindHandle("A1-again", "A1", "alice-2", "A", 0)
 
 	// ---------------------------------------------------------------- switch
 	// A re-registers the same passport under a new identity secret: the old
@@ -810,6 +891,56 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Equal(t, personhoodtypes.ErrInvalidMembership.ABCICode(), res.Code, res.Log)
 	cnt, _ = k.RegCount.Get(ctxNow())
 	require.Equal(t, uint64(2), cnt)
+
+	// ---------------------------------------------------------------- moves
+	// The switch appended the succession (A1, A2) to the identity tree. A
+	// move proof shows the prover knows both secrets, that A2 succeeded A1
+	// under the same passport and is live: the split and "amy" pass to A2,
+	// with no wait, and A1 may never cast or claim again.
+	mc := e.moveCaretaker("A1-A2", "A1", "A2")
+	fb = e.mustDeliver(mc)
+	require.Equal(t, uint64(1), e.caretakers(), "moved, not added")
+	require.Equal(t, hex.EncodeToString(mc.Move.NewNullifier), eventsOf(fb.TxResults[0].Events, "move_caretaker")[0]["nullifier"])
+	// Replayed: refused (its fee note is spent and A1 holds no split).
+	res = e.checkTx(e.tx(mc))
+	require.NotEqual(t, uint32(0), res.Code, "a replayed move")
+	mv := e.moveHandle("A1-A2", "A1", "amy", "A2")
+	// The proof binds its msg's sighash: carried by another msg (a fee
+	// bundle proven for that msg) it does not verify.
+	f := e.feeFor("move-handle/rebound")
+	rebound := &personhoodtypes.MsgMoveHandle{Fee: e.bundle(f), Handle: "amy"}
+	require.NoError(t, shieldedtest.ProveMsg(rebound, shieldedtest.ChainID, phTx, e.app.AuthKeeper.AddressCodec(),
+		[]*shieldedtest.Plan{f}, e.actions.TryProve))
+	rebound.Move = mv.Move
+	res = e.checkTx(e.tx(rebound))
+	require.Equal(t, personhoodtypes.ErrInvalidMove.ABCICode(), res.Code, res.Log)
+	// Nor does the split's move proof (another scope) move the handle.
+	rebound.Move = mc.Move
+	res = e.checkTx(e.tx(rebound))
+	require.NotEqual(t, uint32(0), res.Code, res.Log)
+	fb = e.mustDeliver(mv)
+	require.Equal(t, "live", e.handle("amy").Status)
+	require.Equal(t, hex.EncodeToString(mv.Move.NewNullifier), e.handle("amy").Owner, "the successor's nullifier")
+	movedEv := eventsOf(fb.TxResults[0].Events, "handle_moved")[0]
+	require.Equal(t, hex.EncodeToString(mv.Move.NewNullifier), movedEv["owner"])
+	require.Equal(t, hex.EncodeToString(mv.Move.OldNullifier), movedEv["previous_owner"])
+	// (Refused: moved out, and its pre-switch root has aged out too; the
+	// moved-out rule alone is TestCaretakerPredecessorBound's and
+	// TestHandlePredecessorAndMove's.)
+	res = e.checkTx(e.tx(a1Again))
+	require.NotEqual(t, uint32(0), res.Code, res.Log)
+	res = e.checkTx(e.tx(a1Claim))
+	require.NotEqual(t, uint32(0), res.Code, res.Log)
+	// No move to another passport's identity: there is no succession (A1,
+	// C1), so no witness exists (the circuit refuses it).
+	_, err = e.tryMoveProof("A1-C1", "A1", "C1", privacy.HandleScope(), fr.Element{})
+	require.Error(t, err, "a move to another passport")
+	// A2 holds the moved split and handle and refreshes both with no wait
+	// (any max_predecessor: it creates neither).
+	e.at(e.now.Add(time.Minute))
+	e.mustDeliver(e.caretaker("A2", "A2", noBound, split))
+	require.Equal(t, uint64(1), e.caretakers())
+	e.mustDeliver(e.bindHandle("A2-renew", "A2", "amy", "A", noBound))
 
 	// Day 3: A1's proof, made against a root from before the switch, is past
 	// its window. A2 cannot claim yet (activated yesterday): a proof over its
