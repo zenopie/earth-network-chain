@@ -3,9 +3,9 @@ package app
 import sdk "github.com/cosmos/cosmos-sdk/types"
 
 func init() {
-	// Set bond denom
-
-	sdk.DefaultBondDenom = "stake"
+	// The bond denom: what `earthd init` and the testnet commands default
+	// to (genesis sets it explicitly too).
+	sdk.DefaultBondDenom = "uerth"
 
 	// Set address prefixes
 	accountPubKeyPrefix := AccountAddressPrefix + "pub"

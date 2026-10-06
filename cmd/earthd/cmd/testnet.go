@@ -39,7 +39,6 @@ type valArgs struct {
 	newOperatorAddress string
 	newValPubKey       crypto.PubKey
 	accountsToFund     []string
-	upgradeToTrigger   string
 	homeDir            string
 }
 
@@ -49,9 +48,13 @@ func NewInPlaceTestnetCmd() *cobra.Command {
 	cmd.Long = `The test command modifies both application and consensus stores within a local mainnet node and starts the node,
 with the aim of facilitating testing procedures. This command replaces existing validator data with updated information,
 thereby removing the old validator set and introducing a new set suitable for local testing purposes. By altering the state extracted from the mainnet node,
-it enables developers to configure their local environments to reflect mainnet conditions more accurately.`
+it enables developers to configure their local environments to reflect mainnet conditions more accurately.
 
-	cmd.Example = fmt.Sprintf(`%sd in-place-testnet testing-1 cosmosvaloper1w7f3xx7e75p4l7qdym5msqem9rd4dyc4mq79dm --home $HOME/.%sd/validator1 --validator-privkey=6dq+/KHNvyiw2TToCgOpUpQKIzrLs69Rb8Az39xvmxPHNoPxY1Cil8FY+4DhT9YwD6s0tFABMlLcpaylzKKBOg== --accounts-to-fund="cosmos1f7twgcq4ypzg7y24wuywy06xmdet8pc4473tnq,cosmos1qvuhm5m644660nd8377d6l7yz9e9hhm9evmx3x"`, "github.com/earth-network/earth", "github.com/earth-network/earth")
+Only x/staking, x/distribution, x/slashing and x/bank are rewritten: x/shieldedstaking's books still
+name the old validators, so private stake and its rewards do not follow the new one.
+--trigger-testnet-upgrade is not supported and is refused.`
+
+	cmd.Example = `earthd in-place-testnet testing-1 earthvaloper1... --home $HOME/.earth/validator1 --validator-privkey=<base64 ed25519 key> --accounts-to-fund="earth1...,earth1..."`
 
 	cmd.Flags().String(flagAccountsToFund, "", "Comma-separated list of account addresses that will be funded for testing purposes")
 	return cmd
@@ -217,11 +220,18 @@ func getCommandArgs(appOpts servertypes.AppOptions) (valArgs, error) {
 	if !ok {
 		return args, errors.New("upgradeToTrigger is not of type string")
 	}
-	args.upgradeToTrigger = upgradeToTrigger
+	if upgradeToTrigger != "" {
+		// Parsed and then ignored, it looked as if it had worked.
+		return args, errors.New("--trigger-testnet-upgrade is not supported by earthd in-place-testnet")
+	}
 
-	// parsing  and set accounts to fund
-	accountsString := cast.ToString(appOpts.Get(flagAccountsToFund))
-	args.accountsToFund = append(args.accountsToFund, strings.Split(accountsString, ",")...)
+	// The accounts to fund, if any: an absent flag is no accounts, not one
+	// empty address.
+	for _, a := range strings.Split(cast.ToString(appOpts.Get(flagAccountsToFund)), ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			args.accountsToFund = append(args.accountsToFund, a)
+		}
+	}
 
 	// home dir
 	homeDir := cast.ToString(appOpts.Get(flags.FlagHome))

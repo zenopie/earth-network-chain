@@ -7,18 +7,17 @@ build:
   main: ./cmd/earthd
 # Dev accounts. Balances are large enough to trade meaningfully against the
 # genesis ANML/ERTH pool below (which holds 2.5B ERTH) and to fund governance
-# deposits comfortably.
+# deposits comfortably. No transparent uanml: ANML is always a note (only
+# chain mints make it), so a dev account gets ANML by registering and claiming.
 accounts:
 - name: alice
   coins:
   - 100000000000uerth
   - 1000000000uusdc
   - 1000000000uatom
-  - 1000000000uanml
 - name: bob
   coins:
   - 50000000000uerth
-  - 500000000uanml
 client:
   openapi:
     path: docs/static/openapi.json
