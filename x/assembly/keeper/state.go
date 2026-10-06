@@ -129,9 +129,9 @@ func (k Keeper) recordVote(ctx context.Context, ballot uint64, nullifier []byte,
 // purgeClosedBallots clears the votes of closed ballots, at most limit of them
 // per call, oldest ballot first.
 //
-// This is the work closing a ballot used to do in the block it closed, which
-// made the cost of that block grow with the turnout. Nothing reads a closed
-// ballot's votes, so they can wait: the backlog costs space and nothing else.
+// Not done in the block a ballot closes, which would make that block's cost
+// grow with the turnout. Nothing reads a closed ballot's votes, so they can
+// wait: the backlog costs space and nothing else.
 func (k Keeper) purgeClosedBallots(ctx context.Context, limit int) error {
 	for limit > 0 {
 		iter, err := k.ClosedBallots.Iterate(ctx, nil)

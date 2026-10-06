@@ -12,7 +12,8 @@ import (
 // VoteProposal records one human's vote on an x/gov proposal, under the
 // voter's nullifier for the proposal's current round. The private ante has
 // verified the membership proof: a live registration, not made under a signer
-// the proposal revokes, activated before the round opened.
+// the proposal revokes, whose predecessor identity (if any) was replaced before
+// the round opened (proposalInputs).
 //
 // The vote is not cast into x/gov. Its tally weighs bonded stake and deletes the
 // votes it counts, so a human vote left there would be worth nothing and would

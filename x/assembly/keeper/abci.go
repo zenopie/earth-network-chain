@@ -327,9 +327,9 @@ func (k Keeper) failProposal(ctx context.Context, proposal v1.Proposal, tally ty
 	// Whatever stake's own tally says. x/gov burns a deposit to punish a
 	// proposal that wasted the chain's time — one that missed quorum, or that
 	// stake vetoed — and that judgement is stake's to make whichever house
-	// ended the proposal. This used to refund unconditionally, so a proposal
-	// stake had vetoed as spam got its deposit back whenever the humans also
-	// said no, which took away the only cost of submitting spam. A proposal
+	// ended the proposal. Refunding unconditionally would give a proposal
+	// stake had vetoed as spam its deposit back whenever the humans also said
+	// no, taking away the only cost of submitting spam. A proposal
 	// stake would have passed or merely rejected is still refunded: the
 	// proposer used the process correctly and lost.
 	if burnDeposits {
@@ -355,8 +355,8 @@ func (k Keeper) failProposal(ctx context.Context, proposal v1.Proposal, tally ty
 //
 // A proposal cancelled in its voting period is deleted by x/gov outright: it
 // leaves the active queue, so resolveDueProposals never reaches it, and x/gov
-// has no hook for cancellation. Its ballot stayed open for good, and every
-// vote on it with it — including the index entries each retirement walks. A
+// has no hook for cancellation. Its ballot would stay open for good, and every
+// vote on it with it. A
 // ballot of a proposal that ended without this module closing it (state no
 // block writes: an imported genesis) is closed too (audit 5 L-AS4).
 //

@@ -105,7 +105,7 @@ var (
 	// first, and it links to nothing outside the ballot.
 	BallotVotesKey = collections.NewPrefix("ballot_votes") // (ballot id, nullifier) -> VoteOption
 	// BallotTallyKey is each OPEN ballot's running count, kept true as votes
-	// arrive and as voters retire, so a ballot is decided without walking its
+	// arrive and change, so a ballot is decided without walking its
 	// votes. A ballot with an entry here is open; closing it removes the entry.
 	BallotTallyKey = collections.NewPrefix("ballot_tally") // ballot id -> Tally
 
