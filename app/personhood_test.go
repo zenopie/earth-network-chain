@@ -892,6 +892,20 @@ func TestPrivatePersonhood(t *testing.T) {
 	cnt, _ = k.RegCount.Get(ctxNow())
 	require.Equal(t, uint64(2), cnt)
 
+	// ------------------------------------------- no sale, no switch back
+	// Audit R2-B1: A cannot switch her passport to buyer K's identity (K
+	// gave her only its idc) to have K move her split and handle there: the
+	// register proof outputs the idc of the secret it was made with, and
+	// none of hers gives K's. Refused, so no succession (A2, K) exists and
+	// no move to K can be proven. Audit R2-B2: nor can she switch back to
+	// A1's identity (fresh notes, so not a replay of A1's binding): every
+	// idc is registered once.
+	res = e.checkTx(e.tx(e.register("SALE")))
+	require.Equal(t, personhoodtypes.ErrBadPublicInputs.ABCICode(), res.Code, res.Log)
+	require.Contains(t, res.Log, "identity commitment")
+	res = e.checkTx(e.tx(e.register("A3")))
+	require.Equal(t, personhoodtypes.ErrIdcUsed.ABCICode(), res.Code, res.Log)
+
 	// ---------------------------------------------------------------- moves
 	// The switch appended the succession (A1, A2) to the identity tree. A
 	// move proof shows the prover knows both secrets, that A2 succeeded A1
@@ -1035,6 +1049,10 @@ func TestPrivatePersonhood(t *testing.T) {
 	ph2, err := fresh.PersonhoodKeeper.ExportGenesis(fctx)
 	require.NoError(t, err)
 	require.Equal(t, ph1, ph2)
+	// The used idcs travel: A1's retired identity stays refused after import.
+	for _, name := range []string{"A1", "A2"} {
+		require.Contains(t, ph2.UsedIdcs, privacy.FieldBytes(personhoodtest.Registrations[name].IDC()), name)
+	}
 	r1, _ := k.CurrentIdentityRoot(ctxNow())
 	r2, _ := fresh.PersonhoodKeeper.CurrentIdentityRoot(fctx)
 	require.Equal(t, r1, r2)

@@ -45,7 +45,7 @@ func readFixture(t *testing.T, dir, name string) []byte {
 // every register-circuit variant's proof. Each is a distinct circuit and VK;
 // x/personhood selects it by signature_algorithm, so accepting the proof here
 // is what "the chain accepts them" means. Public inputs are [current_date,
-// address, nullifier, dsc_key].
+// address, nullifier, dsc_key, idc].
 func TestRegisterVariantProofs(t *testing.T) {
 	for _, variant := range registerVariants(t) {
 		t.Run(variant, func(t *testing.T) {
@@ -64,8 +64,8 @@ func TestRegisterVariantProofs(t *testing.T) {
 			if !ok {
 				t.Fatal("variant proof did NOT verify on chain")
 			}
-			if len(pubInputs) != 4 {
-				t.Fatalf("expected 4 public inputs, got %d", len(pubInputs))
+			if len(pubInputs) != 5 {
+				t.Fatalf("expected 5 public inputs, got %d", len(pubInputs))
 			}
 			if cd := new(big.Int).SetBytes(pubInputs[0]); cd.String() != "250101" {
 				t.Fatalf("current_date public input = %s, want 250101", cd)
@@ -76,6 +76,19 @@ func TestRegisterVariantProofs(t *testing.T) {
 			}
 			if got, want := new(big.Int).SetBytes(pubInputs[2]).String(), strings.TrimSpace(string(readFixture(t, dir, "expected_nullifier"))); got != want {
 				t.Fatalf("nullifier = %s, want %s", got, want)
+			}
+			// idc is H(TAG_ID, id_secret) of the fixture's secret.
+			if got, want := new(big.Int).SetBytes(pubInputs[4]).String(), strings.TrimSpace(string(readFixture(t, dir, "expected_idc"))); got != want {
+				t.Fatalf("idc = %s, want %s", got, want)
+			}
+			// Nor for another identity commitment: the idc is the circuit's
+			// own output from the prover's secret, not a value one may name.
+			otherIdc := append([][]byte{}, pubInputs...)
+			flippedIdc := append([]byte{}, pubInputs[4]...)
+			flippedIdc[31] ^= 1
+			otherIdc[4] = flippedIdc
+			if ok, _ := Verify(vk, proof, otherIdc); ok {
+				t.Fatal("proof verified for another idc")
 			}
 			// A proof bound to another address must not verify.
 			other := append([][]byte{}, pubInputs...)

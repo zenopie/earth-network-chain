@@ -64,6 +64,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	n := len(msg.PublicSignals)
 	for name, idx := range map[string]uint32{
 		"nullifier": params.NullifierIndex, "address": params.AddressIndex, "current_date": params.CurrentDateIndex,
+		"idc": params.IdcIndex,
 	} {
 		if int(idx) >= n {
 			return preparedRegistration{}, types.ErrBadPublicInputs.Wrapf("%s index %d out of range", name, idx)
@@ -105,6 +106,19 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		return preparedRegistration{}, err
 	} else if used {
 		return preparedRegistration{}, types.ErrBindingUsed
+	}
+	// The identity commitment is the circuit's own output, computed from the
+	// prover's id_secret (idc = H(TAG_ID, id_secret)): the passport is
+	// registered only to an identity whose secret its prover holds. The
+	// binding above commits to msg.Idc too, but says nothing about who knows
+	// its secret. Without this a holder could switch her passport to an idc
+	// a buyer chose, and the succession the chain then writes would let the
+	// buyer move her handle or caretaker split to an identity she can never
+	// move it back from (audit R2-B1). A tampered msg.Idc would also fail
+	// the binding; this check names the actual cause.
+	if !bytes.Equal(pubInputs[params.IdcIndex], msg.Idc) {
+		return preparedRegistration{}, types.ErrBadPublicInputs.Wrap(
+			"proof's identity commitment is not this msg's idc: the prover must hold the idc's secret")
 	}
 
 	// Pin the prover-supplied current_date to the block time: the circuit
@@ -164,14 +178,28 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	// wants, and is what a replay of the registration that made it looks like:
 	// the proof is public, and replaying it within the current_date skew would
 	// otherwise zero the holder's leaf and restart its activation delay.
+	var live types.Registration
 	if switched {
-		live, err := k.Registrations.Get(ctx, nullifier)
-		if err != nil {
+		if live, err = k.Registrations.Get(ctx, nullifier); err != nil {
 			return preparedRegistration{}, err
 		}
 		if bytes.Equal(live.Idc, msg.Idc) {
 			return preparedRegistration{}, types.ErrRegistrationReplay
 		}
+	}
+	// Every registration is to a fresh identity: an idc registered before,
+	// by any passport, is refused (audit R2-B1, R2-B2). A succession then
+	// always names two identities of one passport, each in no other chain,
+	// and a switch back to a retired identity (A -> B -> A), which would
+	// carry A's moved-out marks onto the live identity and strand whatever
+	// had been moved to B, cannot happen. (A replay of the live
+	// registration's own idc is the case just above, named as a replay.)
+	if used, err := k.UsedIdcs.Has(ctx, msg.Idc); err != nil {
+		return preparedRegistration{}, err
+	} else if used {
+		return preparedRegistration{}, types.ErrIdcUsed
+	}
+	if switched {
 		// A switch re-proves the passport the live registration was made
 		// with, so its proof is signed by the same Document Signer. A
 		// different one is not the holder: a compromised signer can sign an

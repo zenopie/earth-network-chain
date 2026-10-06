@@ -12,6 +12,15 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
+// usedIdcs is the used_idcs a genesis holding regs must carry.
+func usedIdcs(regs []types.Registration) [][]byte {
+	out := make([][]byte, len(regs))
+	for i, r := range regs {
+		out[i] = r.Idc
+	}
+	return out
+}
+
 func genesisReg(i int, registeredAt int64) types.Registration {
 	return types.Registration{
 		Nullifier: []byte{byte(i / 256), byte(i % 256), 'n'}, LeafIndex: uint64(i),
@@ -29,6 +38,7 @@ func TestExpirySweepZeroesTheLeaf(t *testing.T) {
 	params.RegistrationValiditySeconds = 1000
 	gs := types.GenesisState{Params: params, IdentityTreeSize: 2,
 		Registrations: []types.Registration{genesisReg(0, 10_000), genesisReg(1, 10_600)}}
+	gs.UsedIdcs = usedIdcs(gs.Registrations)
 	require.NoError(t, gs.Validate())
 	require.NoError(t, f.keeper.InitGenesis(sdkCtx.WithBlockTime(time.Unix(10_600, 0).UTC()), gs))
 
@@ -67,6 +77,7 @@ func TestExpirySweepIsBounded(t *testing.T) {
 	for i := 0; i < cohort; i++ {
 		gs.Registrations = append(gs.Registrations, genesisReg(i, int64(10_000+i)))
 	}
+	gs.UsedIdcs = usedIdcs(gs.Registrations)
 	require.NoError(t, f.keeper.InitGenesis(sdkCtx.WithBlockTime(time.Unix(10_000+cohort, 0).UTC()), gs))
 
 	dead := sdkCtx.WithBlockTime(time.Unix(20_000, 0).UTC())

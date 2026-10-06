@@ -170,6 +170,12 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 	}
+	// Validate has checked the set holds every idc the records name.
+	for _, idc := range genState.UsedIdcs {
+		if err := k.UsedIdcs.Set(ctx, idc); err != nil {
+			return err
+		}
+	}
 	if err := k.HandleLeaseMax.Set(ctx, leaseMax); err != nil {
 		return err
 	}
@@ -310,6 +316,12 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}
 	if err := k.CaretakerMovedOut.Walk(ctx, nil, func(nf []byte) (bool, error) {
 		genesis.CaretakerMovedOut = append(genesis.CaretakerMovedOut, nf)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.UsedIdcs.Walk(ctx, nil, func(idc []byte) (bool, error) {
+		genesis.UsedIdcs = append(genesis.UsedIdcs, idc)
 		return false, nil
 	}); err != nil {
 		return nil, err

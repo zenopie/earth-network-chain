@@ -154,6 +154,9 @@ func (gs GenesisState) Validate() error {
 	if gs.HandleLeaseMax < 0 {
 		return fmt.Errorf("handle_lease_max is negative")
 	}
+	if err := gs.validateUsedIdcs(); err != nil {
+		return err
+	}
 
 	seenUsed := map[string]struct{}{}
 	for _, u := range gs.UsedBindings {
@@ -208,4 +211,47 @@ func (gs GenesisState) Validate() error {
 	}
 
 	return gs.Params.Validate()
+}
+
+// validateUsedIdcs: used_idcs are canonical and unique, and hold every idc a
+// registration, a passport or a succession names. Registration refuses an
+// idc in the set (audit R2-B1, R2-B2); an export that dropped one would
+// reopen a re-registration of it after import.
+func (gs GenesisState) validateUsedIdcs() error {
+	used := make(map[string]bool, len(gs.UsedIdcs))
+	for _, idc := range gs.UsedIdcs {
+		if _, err := privacy.FieldFromBytes(idc); err != nil {
+			return fmt.Errorf("used_idcs: %w", err)
+		}
+		if used[string(idc)] {
+			return fmt.Errorf("used_idcs: %x listed twice", idc)
+		}
+		used[string(idc)] = true
+	}
+	need := func(what string, idc []byte) error {
+		if !used[string(idc)] {
+			return fmt.Errorf("used_idcs lacks %s's idc %x", what, idc)
+		}
+		return nil
+	}
+	for _, r := range gs.Registrations {
+		if err := need(fmt.Sprintf("registration %x", r.Nullifier), r.Idc); err != nil {
+			return err
+		}
+	}
+	for _, p := range gs.Passports {
+		if err := need(fmt.Sprintf("passport %x", p.Nullifier), p.LastIdc); err != nil {
+			return err
+		}
+	}
+	for _, sc := range gs.Successions {
+		what := fmt.Sprintf("succession at %d", sc.LeafIndex)
+		if err := need(what, sc.IdcOld); err != nil {
+			return err
+		}
+		if err := need(what, sc.IdcNew); err != nil {
+			return err
+		}
+	}
+	return nil
 }

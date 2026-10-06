@@ -8,7 +8,7 @@
 //	go run ./tools/privacyfixtures <membership|membership-zeroed> <outdir>
 //	go run ./tools/privacyfixtures passport <name>
 //
-// passport prints "address doc date" for x/personhood/testutil's registration
+// passport prints "address secret doc date" for x/personhood/testutil's registration
 // <name>, the arguments tools/poafixtures binds its passport proof with.
 //
 // membership-zeroed builds the same witness after the chain zeroed the leaf;
@@ -57,8 +57,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "unknown registration %q\n", os.Args[2])
 			os.Exit(2)
 		}
-		b := r.Binding()
-		fmt.Printf("address=%s doc=%s date=%s\n", b.String(), r.Doc, r.Date)
+		b, s := r.Binding(), r.ProofSecret()
+		fmt.Printf("address=%s secret=%s doc=%s date=%s\n", b.String(), s.String(), r.Doc, r.Date)
 		return
 	}
 	if len(os.Args) != 3 {

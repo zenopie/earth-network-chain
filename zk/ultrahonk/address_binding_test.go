@@ -39,8 +39,8 @@ func TestProofDoesNotVerifyForAnotherAddress(t *testing.T) {
 	boundTo := read("expected_address")
 
 	const addressIndex = 1
-	if len(pub) != 4*ultrahonk.FieldSize {
-		t.Fatalf("expected 4 public signals, got %d", len(pub)/ultrahonk.FieldSize)
+	if len(pub) != 5*ultrahonk.FieldSize {
+		t.Fatalf("expected 5 public signals, got %d", len(pub)/ultrahonk.FieldSize)
 	}
 
 	// The address the fixture was proved for really is the one in the vector.

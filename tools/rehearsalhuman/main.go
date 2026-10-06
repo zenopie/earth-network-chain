@@ -210,8 +210,10 @@ func prepare(chainID, genesisPath, circuits, work string) error {
 	}
 	date := time.Now().UTC().Format("060102")
 	pass := filepath.Join(work, "passport")
+	secret := personhoodtest.Registrations[human].IDSecret()
 	if _, err := run(".", "go", "run", "./tools/poafixtures", variant, pass,
-		"address="+binding.String(), "doc="+personhoodtest.Registrations[human].Doc, "date="+date); err != nil {
+		"address="+binding.String(), "secret="+secret.String(),
+		"doc="+personhoodtest.Registrations[human].Doc, "date="+date); err != nil {
 		return err
 	}
 	toml, err := os.ReadFile(filepath.Join(pass, "Prover.toml"))

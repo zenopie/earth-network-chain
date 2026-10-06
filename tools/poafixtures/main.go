@@ -13,10 +13,12 @@
 // fixtures for every variant are generated with the circuits themselves
 // (earth-network-mobile circuits/tools/variants.py, scripts/regen-poa-fixtures.sh).
 //
-//	go run ./tools/poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>] [signer=<dir>]
+//	go run ./tools/poafixtures <variant> <outdir> [address=<decimal>] [secret=<decimal>] [doc=<9 chars>] [date=<YYMMDD>] [signer=<dir>]
 //
 // address is the circuit's `address` input (default FixtureAddress as a field;
-// x/personhood binds zk/privacy.RegistrationBinding there), doc the passport
+// x/personhood binds zk/privacy.RegistrationBinding there), secret the
+// identity's id_secret (the circuit outputs idc = H(TAG_ID, id_secret), which
+// the chain requires to equal MsgRegister.idc; default FixtureIDSecret), doc the passport
 // number (a different doc is a different passport nullifier), date the
 // current_date the proof asserts. signer (EC variants) reuses the Document
 // Signer and its certificate chain of an earlier run's outdir (its dsc_d,
@@ -55,6 +57,7 @@ import (
 
 	"github.com/earth-network/earth/x/pki/certs"
 	"github.com/earth-network/earth/zk/poseidon2"
+	"github.com/earth-network/earth/zk/privacy"
 )
 
 // The buffer sizes of the SHA-256 variants (circuits/variants.json
@@ -74,11 +77,13 @@ var (
 	addressOverride string
 	// signerDir is an earlier run's outdir whose signer to reuse.
 	signerDir string
+	// secretOverride replaces FixtureIDSecret as the id_secret (decimal).
+	secretOverride string
 )
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: poafixtures <variant> <outdir> [address=<decimal>] [doc=<9 chars>] [date=<YYMMDD>] [signer=<dir>]")
+		fmt.Fprintln(os.Stderr, "usage: poafixtures <variant> <outdir> [address=<decimal>] [secret=<decimal>] [doc=<9 chars>] [date=<YYMMDD>] [signer=<dir>]")
 		os.Exit(2)
 	}
 	name, outDir := os.Args[1], os.Args[2]
@@ -87,6 +92,8 @@ func main() {
 		switch {
 		case ok && k == "address":
 			addressOverride = v
+		case ok && k == "secret":
+			secretOverride = v
 		case ok && k == "doc" && len(v) == 9:
 			docNumber = v
 		case ok && k == "date" && len(v) == 6 && isDigits(v):
@@ -274,6 +281,16 @@ func run(v variant, outDir string) error {
 	if v.rsa != nil {
 		fmt.Fprintf(&b, "dsc_exponent = \"%d\"\n", rsaExponent)
 	}
+	// The identity's secret: the circuit outputs its idc.
+	secret := AddressField(FixtureIDSecret)
+	if secretOverride != "" {
+		secret = secretOverride
+	}
+	var secretEl fr.Element
+	if _, err := secretEl.SetString(secret); err != nil {
+		return fmt.Errorf("secret %q: %w", secret, err)
+	}
+	fmt.Fprintf(&b, "id_secret = \"%s\"\n", secret)
 	fmt.Fprintf(&b, "current_date = \"%s\"\n", currentDate)
 	// The account the proof is bound to. A proof only verifies against the
 	// public input vector it was made for, so this is what stops a proof read
@@ -302,6 +319,10 @@ func run(v variant, outDir string) error {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(outDir, "expected_dsc_key"), []byte(dscKey.String()), 0o644); err != nil {
+		return err
+	}
+	idc := privacy.IDC(secretEl)
+	if err := os.WriteFile(filepath.Join(outDir, "expected_idc"), []byte(idc.String()), 0o644); err != nil {
 		return err
 	}
 	fmt.Printf("dsc_key   = %s\n", dscKey.String())
@@ -467,6 +488,10 @@ func writeByteArray(b *strings.Builder, name string, data []byte) {
 // account is refused for any other, and that check is only meaningful if they
 // both mean the same twenty bytes.
 var FixtureAddress = []byte("earth-fixture-wallet")
+
+// FixtureIDSecret is the default id_secret, read as one field element like
+// FixtureAddress; circuits/tools/variants.py uses the same.
+var FixtureIDSecret = []byte("earth-fixture-id")
 
 // AddressField encodes an account address as the circuit's `address` public
 // input: the twenty address bytes read big-endian as one field element.

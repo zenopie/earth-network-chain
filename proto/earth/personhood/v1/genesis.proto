@@ -100,6 +100,11 @@ message GenesisState {
   // successions are the identity tree's succession leaves (never zeroed),
   // rebuilt with the registrations' leaves.
   repeated Succession successions = 22 [(gogoproto.nullable) = false];
+
+  // used_idcs are the identity commitments ever registered, by any
+  // passport: a registration to one of them is refused (audit R2-B1,
+  // R2-B2). Holds every registration's, passport's and succession's idc.
+  repeated bytes used_idcs = 23;
 }
 
 // DscRateCounter is one Document Signer's rate counter.

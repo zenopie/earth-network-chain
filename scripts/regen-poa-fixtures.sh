@@ -53,6 +53,7 @@ import json, sys
 e = json.load(open(sys.argv[1]))
 open(sys.argv[2] + '/expected_nullifier', 'w').write(e['nullifier'])
 open(sys.argv[2] + '/expected_dsc_key', 'w').write(e['dsc_key'])
+open(sys.argv[2] + '/expected_idc', 'w').write(e['idc'])
 open(sys.argv[2] + '/expected_address', 'wb').write(bytes.fromhex(e['address'][2:]))
 PY
 done

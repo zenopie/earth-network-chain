@@ -354,6 +354,9 @@ var (
 	// succession leaves by index.
 	PassportsSeenKey = collections.NewPrefix("passports_seen")
 	SuccessionsKey   = collections.NewPrefix("successions")
+	// UsedIdcsKey: identity commitments ever registered, by any passport
+	// (a registration to one again is refused: audit R2-B1, R2-B2).
+	UsedIdcsKey = collections.NewPrefix("used_idcs")
 
 	// UsedBindingsKey maps a landed registration's binding to when it may be
 	// forgotten; UsedBindingExpiryKey orders them by that for the sweep.

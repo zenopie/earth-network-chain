@@ -47,4 +47,8 @@ var (
 	// ErrInvalidMove: a move proof that does not verify against the
 	// statement the msg fixes (circuits/move).
 	ErrInvalidMove = errors.Register(ModuleName, 1129, "invalid move proof")
+	// ErrIdcUsed: a registration to an identity commitment that has been
+	// registered before, by this passport or any other (audit R2-B1, R2-B2).
+	// Every registration, switch and re-entry uses a fresh identity.
+	ErrIdcUsed = errors.Register(ModuleName, 1130, "identity commitment has been registered before; register a fresh identity")
 )

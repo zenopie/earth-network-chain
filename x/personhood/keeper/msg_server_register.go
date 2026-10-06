@@ -74,6 +74,10 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 	if err := k.markBindingUsed(ctx, p.binding, p.proofDate); err != nil {
 		return nil, err
 	}
+	// The ante refused an idc registered before; from here on it is used.
+	if err := k.UsedIdcs.Set(ctx, msg.Idc); err != nil {
+		return nil, err
+	}
 
 	// predecessor_at: the switch or re-entry that made this leaf, or 0 for a
 	// passport never registered before. A re-entry (the passport's earlier

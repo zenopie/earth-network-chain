@@ -21,6 +21,11 @@ type Registration struct {
 	Referrer string // human whose handle is named, "" for none
 	// ReferrerHandle is the handle named (Referrer's).
 	ReferrerHandle string
+	// ProverHuman, ProverSecret: the identity secret the passport proof was
+	// made with, when it is not this registration's own (a registration
+	// attempt by someone who lacks the idc's secret). "" for its own.
+	ProverHuman  string
+	ProverSecret uint64
 }
 
 // Registrations are the passport fixtures the app tests use, by name.
@@ -35,6 +40,13 @@ var Registrations = map[string]Registration{
 	"C2": {Name: "C2", Human: "C", Secret: 2, Doc: "Y87654321", Date: "250105", Referrer: "A", ReferrerHandle: "amy"},
 	// D registers four days in, also naming A's handle.
 	"D1": {Name: "D1", Human: "D", Secret: 1, Doc: "Z11223344", Date: "250105", Referrer: "A", ReferrerHandle: "amy"},
+	// Refused (audit R2-B1, R2-B2). A3: A, after the switch to A2, switches
+	// back to A1's identity (fresh notes, so a fresh binding): an idc
+	// registered before. SALE: A switches her passport to buyer K's idc,
+	// which she cannot prove: the circuit outputs the idc of the secret she
+	// proves with (her own), not K's.
+	"A3":   {Name: "A3", Human: "A", Secret: 1, Doc: "L898902C3", Date: "250103"},
+	"SALE": {Name: "SALE", Human: "K", Secret: 1, Doc: "L898902C3", Date: "250103", ProverHuman: "A", ProverSecret: 3},
 }
 
 // RegistrationNames lists Registrations in a stable order.
@@ -52,6 +64,15 @@ func WalletNK(human string) fr.Element { return Det("nk/"+human, 0) }
 
 // IDSecret is the identity secret of r.
 func (r Registration) IDSecret() fr.Element { return Det("id/"+r.Human, r.Secret) }
+
+// ProofSecret is the identity secret its passport proof was made with:
+// IDSecret, unless ProverHuman says otherwise.
+func (r Registration) ProofSecret() fr.Element {
+	if r.ProverHuman != "" {
+		return Det("id/"+r.ProverHuman, r.ProverSecret)
+	}
+	return r.IDSecret()
+}
 
 // IDC is its identity commitment.
 func (r Registration) IDC() fr.Element { return privacy.IDC(r.IDSecret()) }

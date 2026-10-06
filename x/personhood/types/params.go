@@ -262,6 +262,7 @@ func (p Params) Validate() error {
 		{"dsc_key_index", p.DscKeyIndex},
 		{"current_date_index", p.CurrentDateIndex},
 		{"address_index", p.AddressIndex},
+		{"idc_index", p.IdcIndex},
 	} {
 		if other, dup := indexes[idx.at]; dup && len(p.VerifyingKeys) > 0 {
 			return fmt.Errorf("%s and %s both name public input %d", other, idx.name, idx.at)

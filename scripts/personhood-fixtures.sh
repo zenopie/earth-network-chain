@@ -8,7 +8,9 @@
 #   Registration, bound (address input) to its RegistrationBinding, for its
 #   document number and current_date; each with its own fresh CSCA and DSC,
 #   except A2 (A's identity switch: a re-proof of A1's passport), which is
-#   signed by A1's DSC, as a real re-proof is and as the chain requires.
+#   signed by A1's DSC, as a real re-proof is and as the chain requires; so
+#   are A3 (A switching back to A1's identity) and SALE (A's passport bound to
+#   buyer K's identity but proven with a secret of A's), both refused.
 #   -> x/personhood/testdata/passports/<name>/
 # app: reruns the app tests in proving mode (EARTH_PROVE_CIRCUITS for the
 #   membership proofs, EARTH_CIRCUITS for the fee bundles' action proofs):
@@ -45,11 +47,11 @@ if [ "$WHAT" = all ] || [ "$WHAT" = passports ]; then
       && bb write_vk -b target/lean_poa_p256_sha256.json -o "$WORK/vk" -t noir-recursive >/dev/null 2>&1 )
   DST="$CHAIN_DIR/x/personhood/testdata/passports"
   rm -rf "$DST"
-  for name in A1 A2 B C1 C2 D1; do
+  for name in A1 A2 A3 SALE B C1 C2 D1; do
     echo "==> passport $name"
     out="$WORK/$name"
     signer=""
-    [ "$name" = A2 ] && signer="signer=$WORK/A1"
+    case "$name" in A2|A3|SALE) signer="signer=$WORK/A1" ;; esac
     # shellcheck disable=SC2046
     ( cd "$CHAIN_DIR" && go run ./tools/poafixtures lean_poa_p256_sha256 "$out" \
         $(go run ./tools/privacyfixtures passport "$name") $signer >/dev/null )
@@ -61,7 +63,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = passports ]; then
              -t noir-recursive >/dev/null 2>&1 )
     mkdir -p "$DST/$name"
     cp "$out/proof/proof" "$out/proof/public_inputs" "$DST/$name/"
-    cp "$out/csca.der" "$out/dsc.der" "$out/expected_dsc_key" "$out/expected_nullifier" "$DST/$name/"
+    cp "$out/csca.der" "$out/dsc.der" "$out/expected_dsc_key" "$out/expected_nullifier" "$out/expected_idc" "$DST/$name/"
   done
   cp "$WORK/vk/vk" "$DST/lean_poa_p256_sha256.vk"
 fi

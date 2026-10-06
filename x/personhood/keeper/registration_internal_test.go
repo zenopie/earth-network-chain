@@ -141,7 +141,7 @@ func passportMsg(t *testing.T, name string) *types.MsgRegister {
 func leanParams(t *testing.T) types.Params {
 	p := types.DefaultParams()
 	p.VerifyingKeys = map[string][]byte{"lean_poa_p256_sha256": readFileAt(t, filepath.Join(passportDir, "lean_poa_p256_sha256.vk"))}
-	p.NullifierIndex, p.DscKeyIndex, p.CurrentDateIndex, p.AddressIndex = 2, 3, 0, 1
+	p.NullifierIndex, p.DscKeyIndex, p.CurrentDateIndex, p.AddressIndex, p.IdcIndex = 2, 3, 0, 1, 4
 	return p
 }
 

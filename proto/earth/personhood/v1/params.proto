@@ -60,6 +60,13 @@ message Params {
   // else's notes.
   uint32 address_index = 20;
 
+  // idc_index is the public-input position of the identity commitment the
+  // register circuit computes from the prover's private id_secret
+  // (idc = H(TAG_ID, id_secret)). The chain requires it to equal
+  // MsgRegister.idc, so a passport registers only to an identity whose
+  // secret its prover holds (audit R2-B1).
+  uint32 idc_index = 28;
+
   // current_date_max_skew_seconds bounds how far the proof's current_date may
   // differ from the block time.
   //

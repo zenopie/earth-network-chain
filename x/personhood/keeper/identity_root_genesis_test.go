@@ -33,7 +33,7 @@ func TestForgedFutureIdentityRootRefused(t *testing.T) {
 	gsWith := func(roots ...types.IdentityRoot) types.GenesisState {
 		return types.GenesisState{
 			Params: types.DefaultParams(), IdentityTreeSize: 1,
-			Registrations: []types.Registration{reg}, IdentityRoots: roots,
+			Registrations: []types.Registration{reg}, IdentityRoots: roots, UsedIdcs: [][]byte{reg.Idc},
 		}
 	}
 
@@ -85,6 +85,7 @@ func TestIdentityRootsRoundTripAfterZeroing(t *testing.T) {
 	params.RegistrationValiditySeconds = 1000
 	gs := types.GenesisState{Params: params, IdentityTreeSize: 2,
 		Registrations: []types.Registration{genesisReg(0, 10_000), genesisReg(1, 10_600)}}
+	gs.UsedIdcs = usedIdcs(gs.Registrations)
 	require.NoError(t, f.keeper.InitGenesis(sdkCtx, gs))
 	before, err := f.keeper.CurrentIdentityRoot(sdkCtx)
 	require.NoError(t, err)

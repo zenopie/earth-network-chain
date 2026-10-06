@@ -101,6 +101,12 @@ type Keeper struct {
 	// leaves by index (circuits/move proves moves along them).
 	PassportsSeen collections.Map[[]byte, []byte]
 	Successions   collections.Map[uint64, types.Succession]
+	// UsedIdcs: every identity commitment ever registered, by any passport.
+	// A registration to one of them is refused (ErrIdcUsed): one idc is in
+	// at most one passport's succession chain, and at most once in it, so a
+	// switch back (A -> B -> A) cannot carry A's moved-out marks forward
+	// (audit R2-B2), nor can two passports share an identity (R2-B1).
+	UsedIdcs collections.KeySet[[]byte]
 
 	// Registration bindings that have landed, refused for reuse until their
 	// expiry, and the expiry order. See registration.go.
@@ -197,6 +203,7 @@ func NewKeeper(
 		HandleLeaseMax:    collections.NewItem(sb, types.HandleLeaseMaxKey, "handle_lease_max", collections.Int64Value),
 		PassportsSeen:     collections.NewMap(sb, types.PassportsSeenKey, "passports_seen", collections.BytesKey, collections.BytesValue),
 		Successions:       collections.NewMap(sb, types.SuccessionsKey, "successions", collections.Uint64Key, codec.CollValue[types.Succession](cdc)),
+		UsedIdcs:          collections.NewKeySet(sb, types.UsedIdcsKey, "used_idcs", collections.BytesKey),
 
 		UsedBindings:      collections.NewMap(sb, types.UsedBindingsKey, "used_bindings", collections.BytesKey, collections.Int64Value),
 		UsedBindingExpiry: collections.NewKeySet(sb, types.UsedBindingExpiryKey, "used_binding_expiry", timeBytes),

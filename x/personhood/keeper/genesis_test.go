@@ -32,6 +32,8 @@ func TestGenesisRoundTripsPopulatedState(t *testing.T) {
 		Registrations:    []types.Registration{r0, r2},
 		ClaimNullifiers:  []types.ClaimNullifier{{Day: 20_000, Nullifier: privacy.FieldBytes(privacy.U64(5))}},
 		CaretakerVotes:   []types.CaretakerVote{{Nullifier: privacy.FieldBytes(privacy.U64(6)), ExpiresAt: 1_700_100_000}},
+		// Plus an idc a retired registration used.
+		UsedIdcs: [][]byte{r0.Idc, r2.Idc, privacy.FieldBytes(privacy.U64(2))},
 	}
 	require.NoError(t, original.Validate())
 	f.ctx = sdk.UnwrapSDKContext(f.ctx).WithBlockTime(time.Unix(1_700_000_500, 0).UTC())
@@ -63,6 +65,7 @@ func TestGenesisRoundTripsPopulatedState(t *testing.T) {
 	require.Equal(t, original.IdentityTreeSize, got.IdentityTreeSize)
 	require.Equal(t, original.ClaimNullifiers, got.ClaimNullifiers)
 	require.Equal(t, original.CaretakerVotes, got.CaretakerVotes)
+	require.ElementsMatch(t, original.UsedIdcs, got.UsedIdcs)
 	require.Len(t, got.IdentityRoots, 1)
 }
 

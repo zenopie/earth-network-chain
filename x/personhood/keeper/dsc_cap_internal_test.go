@@ -163,6 +163,7 @@ func seedReg(t *testing.T, k Keeper, ctx sdk.Context, i int, dsc []byte, at int6
 		RegisteredAt: at, ActivatedAt: at, DscKey: dsc, Idc: idc,
 	}
 	require.NoError(t, k.addRegistration(ctx, reg))
+	require.NoError(t, k.UsedIdcs.Set(ctx, idc)) // as Register does
 	return reg
 }
 
