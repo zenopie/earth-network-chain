@@ -215,8 +215,8 @@ func TestParamsValidate(t *testing.T) {
 		},
 		"bundle of one": func(p *types.Params) { p.MaxActionsPerBundle = 1 },
 		"bundle of 33":  func(p *types.Params) { p.MaxActionsPerBundle = 33; p.MaxPrivateActionsPerBlock = 66 },
-		"block below two max bundles": func(p *types.Params) {
-			p.MaxPrivateActionsPerBlock = 2*p.MaxActionsPerBundle - 1
+		"block below one max bundle": func(p *types.Params) {
+			p.MaxPrivateActionsPerBlock = p.MaxActionsPerBundle - 1
 		},
 		"unknown vk": func(p *types.Params) { p.VerifyingKeys = map[string][]byte{"passport": {1}} },
 		"retired vk": func(p *types.Params) { p.VerifyingKeys = map[string][]byte{"transfer": {1}} },

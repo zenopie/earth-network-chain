@@ -186,7 +186,11 @@ Stateless rules (`types.Bundle.ValidateBasic`, `orchard.Bundle.ValidateBasic`):
   balance of an asset no action touches has no discrete log a signer could
   know).
 - Binding signature exactly 96 bytes.
-- `MaxBundlesPerMsg = 2`.
+- `MaxBundlesPerMsg = 1`: every private msg carries exactly one bundle.
+- Gas params are bounded together: `bundle_gas + max_actions_per_bundle x
+  (proof_verification_gas + 2 x note_gas)` must be at most
+  `MaxBundleShapeGas` (60M of the 100M block), so the largest msg the
+  params allow can always be included.
 
 Only positive balances exist: value enters the pool through `MsgShield` and
 chain mints (`MintNote`), never through a bundle. Only registered denoms may

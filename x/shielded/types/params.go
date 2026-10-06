@@ -62,6 +62,14 @@ const (
 	// force, but the gas prices are governance's too; this keeps a block's
 	// proof verification bounded whatever they are set to.
 	MaxMaxPrivateActionsPerBlock uint32 = 256
+
+	// MaxBundleShapeGas is the most the fixed gas of a largest bundle
+	// (bundle_gas + max_actions_per_bundle x (proof_verification_gas + 2 x
+	// note_gas)) may come to (audit A-5): 60% of the 100M block gas limit,
+	// leaving the rest for a msg's own proofs and writes (a passport proof, a
+	// stake proof) and its tx bytes, so the largest msg the params allow can
+	// always be included. At the defaults it is 36.9M.
+	MaxBundleShapeGas uint64 = 60_000_000
 )
 
 // NewParams creates a new Params instance.
@@ -112,6 +120,10 @@ func (p Params) Validate() error {
 	}
 	if p.MaxActionsPerBundle < MinActionsPerBundle || p.MaxActionsPerBundle > orchard.MaxActions {
 		return fmt.Errorf("max_actions_per_bundle must be %d..%d", MinActionsPerBundle, orchard.MaxActions)
+	}
+	if g := p.BundleGas + uint64(p.MaxActionsPerBundle)*p.ActionGas(); g > MaxBundleShapeGas {
+		return fmt.Errorf("a bundle of max_actions_per_bundle actions costs %d gas at these prices, over %d: lower the prices or the bundle size",
+			g, MaxBundleShapeGas)
 	}
 	if p.MaxPrivateActionsPerBlock < MaxBundlesPerMsg*p.MaxActionsPerBundle {
 		// Below this, a msg of the maximum size could never be included.

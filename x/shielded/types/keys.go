@@ -37,8 +37,9 @@ const (
 	// apart by its action count. Wallets pad with dummy actions.
 	MinActionsPerBundle = 2
 
-	// MaxBundlesPerMsg bounds how many bundles one private msg spends.
-	MaxBundlesPerMsg = 2
+	// MaxBundlesPerMsg bounds how many bundles one private msg spends: one,
+	// which is what every private msg carries.
+	MaxBundlesPerMsg = 1
 
 	// ProofBytes is the exact length of every proof the chain verifies
 	// (zk/ultrahonk.ProofSize): bb v5.0.0 UltraHonk ZK-flavor proofs are

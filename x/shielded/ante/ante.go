@@ -33,9 +33,8 @@
 // encoding of what they decode to (requireCanonicalEncoding), so one msg has
 // one tx encoding and one hash.
 //
-// A msg may spend up to MaxBundlesPerMsg bundles (every current msg spends
-// one); each is checked, proven and executed as a single one is, under the
-// msg's one sighash.
+// A msg spends MaxBundlesPerMsg (one) bundle, checked, proven and executed
+// under the msg's one sighash.
 //
 // A msg of another module may carry an action beyond its bundles (see
 // types.PrivateActionHandler); its checks and proofs run in the same pass,
