@@ -14,9 +14,11 @@
 package ultrahonk
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"math/big"
 	"os"
+	"sync"
 
 	bb "github.com/burnt-labs/barretenberg-go/barretenberg"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -85,11 +87,13 @@ func Verify(vk, proof []byte, publicInputs [][]byte) (bool, error) {
 			return false, fmt.Errorf("public input %d is not a canonical field element", i)
 		}
 	}
-	v, err := bb.NewVerifierFromBytes(vk)
+	v, cached, err := verifierFor(vk)
 	if err != nil {
 		return false, fmt.Errorf("parse verification key: %w", err)
 	}
-	defer v.Close()
+	if !cached {
+		defer v.Close()
+	}
 	declared, err := v.NumPublicInputs()
 	if err != nil {
 		return false, fmt.Errorf("read verification key: %w", err)
@@ -118,4 +122,37 @@ func VerifyRaw(vk, proof, publicInputs []byte) (bool, error) {
 		chunks = append(chunks, c)
 	}
 	return Verify(vk, proof, chunks)
+}
+
+// verifiers caches the parsed verifying keys by sha256 of their bytes (audit
+// A-3): Verify parsed its key natively on every proof, besides the parse
+// bb's verify does itself. A Verifier is safe for concurrent use and a key's
+// parse is deterministic, so the cache changes nothing but cost. Bounded:
+// the chain holds 37 keys; past maxCachedVerifiers a key is parsed per call
+// as before.
+var (
+	verifiersMu sync.Mutex
+	verifiers   = map[[32]byte]*bb.Verifier{}
+)
+
+const maxCachedVerifiers = 128
+
+// verifierFor returns the Verifier for vk, from the cache or freshly parsed,
+// and whether it is cached (never closed); the caller closes one that is not.
+func verifierFor(vk []byte) (*bb.Verifier, bool, error) {
+	h := sha256.Sum256(vk)
+	verifiersMu.Lock()
+	defer verifiersMu.Unlock()
+	if v, ok := verifiers[h]; ok {
+		return v, true, nil
+	}
+	v, err := bb.NewVerifierFromBytes(vk)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(verifiers) >= maxCachedVerifiers {
+		return v, false, nil
+	}
+	verifiers[h] = v
+	return v, true, nil
 }
