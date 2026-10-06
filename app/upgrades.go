@@ -1,12 +1,10 @@
 package app
 
 import (
-	"context"
 	"fmt"
 
 	storetypes "cosmossdk.io/store/types"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
-	"github.com/cosmos/cosmos-sdk/types/module"
 )
 
 // Upgrade is one named, governance-scheduled chain upgrade.
@@ -79,16 +77,5 @@ func (app *App) setupUpgrades() {
 		storeUpgrades := u.StoreUpgrades
 		app.SetStoreLoader(upgradetypes.UpgradeStoreLoader(upgradeInfo.Height, &storeUpgrades))
 		return
-	}
-}
-
-// defaultUpgradeHandler runs the standard module migrations and nothing else.
-// Suitable for any upgrade that changes logic or parameters but not the set of
-// modules.
-//
-// The shape every upgrade starts from.
-func defaultUpgradeHandler(app *App) upgradetypes.UpgradeHandler {
-	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
-		return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
 	}
 }
