@@ -169,15 +169,14 @@ func (k Keeper) retryUnbonding(ctx context.Context, key collections.Triple[int64
 	return nil
 }
 
-// payoutUnbonding prices one matured entry against the pool as it stands now,
-// burns the escrowed shares and sends the assets to the provider, or, for a
-// private withdrawal (no address), mints both legs as notes. A note leg above
-// a note's maximum (2^63-1) is paid as several notes (MintNoteSplit). Returns how many
-// notes it minted.
 // errNoteBudget: the payout would mint more notes than the sweep has left.
 var errNoteBudget = errors.New("lp unbond sweep: note budget spent")
 
-// payoutUnbonding pays a matured withdrawal. budget is how many notes the
+// payoutUnbonding prices one matured entry against the pool as it stands now,
+// burns the escrowed shares and sends the assets to the provider, or, for a
+// private withdrawal (no address), mints both legs as notes. A note leg above
+// a note's maximum (2^63-1) is paid as several notes (MintNoteSplit). Returns
+// how many notes it minted. budget is how many notes the
 // sweep has left: a payout needing more is refused with errNoteBudget before
 // anything is written, unless the sweep has minted none yet (budget is the
 // whole LpUnbondNoteBudget), so that one large payout always goes through.
@@ -202,8 +201,8 @@ func (k Keeper) payoutUnbonding(ctx context.Context, entry types.LpUnbonding, bu
 	// panics rather than erroring and a panic out of the EndBlocker kills the node
 	// without saying why — strictly worse than the error path, and not something
 	// the caller's cache branch can contain, since discarding writes does not
-	// unwind a panic. Genesis validation now refuses these at import; this is the
-	// second line, for state that predates it.
+	// unwind a panic. Genesis validation (ValidateGenesis) refuses these at
+	// import; this is the second line.
 	//
 	// The denom is checked for the same reason MsgRemoveLiquidity checks it
 	// (msg_server_remove_liquidity.go): shares of the wrong pool would burn one

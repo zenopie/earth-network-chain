@@ -45,9 +45,9 @@ var (
 	//
 	// It cannot be produced by MsgRemoveLiquidity, which validates all three
 	// before queueing. It exists for entries that arrive through genesis import,
-	// where none of those checks used to run, and it is deliberately an error
-	// rather than a panic: SweepMaturedUnbondings drops the entry it names
-	// instead of halting the chain on it.
+	// and it is deliberately an error rather than a panic: SweepMaturedUnbondings
+	// reports the payout failure and retries the entry later instead of halting
+	// the chain on it.
 	ErrInvalidUnbonding = errors.Register(ModuleName, 1117,
 		"malformed lp unbonding entry")
 

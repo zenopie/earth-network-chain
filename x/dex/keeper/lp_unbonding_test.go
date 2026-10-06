@@ -179,17 +179,14 @@ func countUnbondings(t *testing.T, k keeper.Keeper, ctx sdk.Context) int {
 // One malformed entry must not take the chain down, and must not block the
 // entries queued behind it.
 //
-// This was a permanent halt. SweepMaturedUnbondings returned the first payout
-// error, module.go propagates it out of EndBlock, and baseapp does not recover
-// EndBlocker errors — so every validator, computing the same state, stops. The
-// entry is removed only after a successful payout, so the next block reached the
-// same head-of-queue entry and failed identically. Nothing but an upgrade could
-// clear it, and every withdrawal behind it was frozen with it.
+// A payout error returned out of EndBlock would be a permanent halt: baseapp
+// does not recover EndBlocker errors, so every validator, computing the same
+// state, stops, and the next block reaches the same head-of-queue entry.
 //
 // The entries here are ones only a genesis import could produce; genesis
-// validation now refuses all three. This is the second line: state that predates
-// that validation, or arrives some way nobody has thought of yet, degrades to a
-// dropped entry and an event rather than to a stopped chain.
+// validation refuses all three. This is the second line: such state, however it
+// arrives, degrades to a failed payout, an event and a later retry rather than
+// to a stopped chain.
 func TestOneBadUnbondingDoesNotHaltTheSweep(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -259,10 +256,10 @@ func TestOneBadUnbondingDoesNotHaltTheSweep(t *testing.T) {
 					reported = true
 				}
 			}
-			require.True(t, reported, "a dropped entry must emit lp_unbond_payout_failed")
+			require.True(t, reported, "a failed payout must emit lp_unbond_payout_failed")
 
-			// Dropped, not retried: a retry changes nothing and the queue would
-			// never move again.
+			// Moved off the head of the queue (retryUnbonding re-files it
+			// later), so the entries behind it are not stalled.
 			_, err = k.LpUnbondings.Get(due, collections.Join3(bad.CompletionTime, bad.PoolId, []byte(addr)))
 			require.ErrorIs(t, err, collections.ErrNotFound, "the bad entry must be removed")
 

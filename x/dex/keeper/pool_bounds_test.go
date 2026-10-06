@@ -44,10 +44,9 @@ func TestHugeVoucherPoolRefused(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrPoolCap)
 }
 
-// Audit 4 PoC 1, second half: state past the cap (as it could have been
-// before the cap existed) no longer panics the EndBlocker's withdrawal
-// payout: the arithmetic is big.Int, and an entry that cannot settle is
-// dropped instead of halting the chain.
+// Audit 4 PoC 1, second half: state past the cap does not panic the
+// EndBlocker's withdrawal payout: the arithmetic is big.Int, and an entry
+// that cannot settle is reported and retried instead of halting the chain.
 func TestUnbondingPayoutOverflowNoHalt(t *testing.T) {
 	k, ctx, bank := initRewardFixture(t)
 	ms := keeper.NewMsgServerImpl(k)

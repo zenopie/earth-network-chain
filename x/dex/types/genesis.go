@@ -201,10 +201,11 @@ func (gs GenesisState) Validate() error {
 	//     paying out of another's reserves, and trips the invariant pointing at
 	//     the wrong module
 	//
-	// SweepMaturedUnbondings no longer halts on any of them — it drops the entry
-	// and says so — but a dropped entry is a provider's liquidity not being
-	// returned. Refusing the file is the outcome that loses nobody anything, and
-	// it is available here because a genesis is inspected before it is run.
+	// SweepMaturedUnbondings does not halt on any of them — it reports the
+	// failure and retries the entry with backoff — but such an entry is a
+	// provider's liquidity never returned. Refusing the file is the outcome that
+	// loses nobody anything, and it is available here because a genesis is
+	// inspected before it is run.
 	unbondSeen := make(map[string]struct{}, len(gs.LpUnbondings))
 	for _, u := range gs.LpUnbondings {
 		if _, ok := poolIndexMap[fmt.Sprint(u.PoolId)]; !ok {
@@ -232,7 +233,7 @@ func (gs GenesisState) Validate() error {
 				u.Address, u.PoolId)
 		}
 		// A pc, when present, is where the token leg is minted as a note; a
-		// malformed one would drop the entry at maturity.
+		// malformed one would fail the payout at maturity, every retry.
 		if len(u.Pc) != 0 {
 			if _, err := privacy.FieldFromBytes(u.Pc); err != nil {
 				return fmt.Errorf("lp unbonding for %s in pool %d: pc: %w", u.Address, u.PoolId, err)
