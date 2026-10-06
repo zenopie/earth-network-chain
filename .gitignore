@@ -38,3 +38,5 @@ __pycache__/
 
 # Genesis ceremony output (a fresh consensus key): never committed.
 .ceremony/
+coverage.out
+coverage.html
