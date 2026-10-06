@@ -100,7 +100,7 @@ var (
 		{Account: icatypes.ModuleName},
 		// The shielded pool: every note's coins, per-denom turnstiles in its
 		// store. Deliberately NOT in blockAccAddrs below — distribution must be
-		// able to pay it once private staking lands. Its own bank send
+		// able to pay it. Its own bank send
 		// restriction (x/shielded/keeper/send_restriction.go) refuses every
 		// deposit that does not go through the keeper, which is what keeps its
 		// balance exactly the turnstiles' In - Out.
@@ -157,9 +157,8 @@ var (
 	// or force the invariant to be weakened to "at least", which stops catching
 	// coins that should have been burned and were not.
 	//
-	// This does NOT leave keeper-level moves untouched, which an earlier version
-	// of this comment claimed and which cost the ANML buyback every trade it ever
-	// tried to make. SendCoinsFromModuleToAccount consults BlockedAddr too, so
+	// This does NOT leave keeper-level moves untouched.
+	// SendCoinsFromModuleToAccount consults BlockedAddr too, so
 	// paying a blocked module account fails with "not allowed to receive funds"
 	// wherever the call is made from. A module trading against the dex has to go
 	// through SendCoinsFromModuleToModule, which does not consult the list — see

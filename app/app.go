@@ -282,11 +282,10 @@ func New(
 	//
 	//   snapshot restoration failed: app version mismatch. Expected: 1, got: 0
 	//
-	// leaving from-genesis replay as the only way in. Measured against earth-1 on
-	// 2026-08-27.
+	// leaving from-genesis replay as the only way in.
 	//
-	// MUST equal networks/genesis/chain.json's app_version, which moves with
-	// every coordinated upgrade. TestAppVersionMatchesGenesis pins the pair
+	// MUST equal networks/genesis/chain.json's app_version.
+	// TestAppVersionMatchesChainJSON (networks/) pins the pair
 	// together, because nothing else would notice them drifting apart until the
 	// next person tried to join.
 	baseAppOptions = append(baseAppOptions, func(bapp *baseapp.BaseApp) {

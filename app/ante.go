@@ -41,21 +41,18 @@ type HandlerOptions struct {
 
 // NewAnteHandler builds this chain's ante chain.
 //
-// Until x/wasm arrived the app used whatever x/auth/tx/config's depinject
-// provider built, which is ante.NewAnteHandler with default options. Contracts
-// make that insufficient: three of the decorators below feed the contract
+// Not the default that x/auth/tx/config's depinject provider builds
+// (ante.NewAnteHandler with default options). Contracts make that
+// insufficient: three of the decorators below feed the contract
 // runtime state it cannot obtain any other way, and one of them is what stops a
 // simulated query from running forever. The order here is wasmd's, and order is
 // consensus — moving a decorator is a state-machine change.
 //
-// Two decorators are new to this chain rather than required by wasm, and are
-// here because their absence was a latent bug:
+// Two decorators are not required by wasm but are needed all the same:
 //
 //   - The circuit breaker. x/circuit is in the module list and its gov messages
 //     work, but without this decorator nothing consults the tripped-message set,
-//     so "disable this message type" silently did nothing. The one lever the
-//     chain has for halting a misbehaving module during an incident was wired to
-//     a switch that was not connected.
+//     so "disable this message type" would silently do nothing.
 //   - The redundant relay filter. It refuses IBC packets that another relayer
 //     already delivered, so a losing relayer pays no fee for the duplicate.
 //     Standard on every IBC chain; without it relaying against earth is more
@@ -149,9 +146,9 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	// shielded pool by the msg's bundles. See x/shielded/ante for why
 	// each SDK decorator missing here cannot run on a tx with no account.
 	//
-	// NOTE: nodes must run the no-op app mempool (app.toml mempool.max-txs =
-	// -1, the default). The SDK's priority and sender-nonce mempools key txs by
-	// signer and sequence and reject a tx with no signers outright.
+	// This needs the no-op app mempool: the SDK's priority and sender-nonce
+	// mempools key txs by signer and sequence and reject a tx with no signers
+	// outright. New forces it whatever app.toml says (app.go).
 	private := sdk.ChainAnteDecorators(
 		ante.NewSetUpContextDecorator(),
 		// Right after SetUpContext: a panic below is an error carrying the

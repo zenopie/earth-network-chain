@@ -39,14 +39,9 @@ func sameDecimal(a, b string) bool {
 // development only. networks/genesis/ is the source of truth for the chain that
 // actually launches.
 //
-// Keeping two of anything is how they diverge, and they already did: commit
-// 6dd49f3 split the pre-mine into a third for the ANML/ERTH pool and two thirds
-// for the liquidity auction, changed networks/genesis.json, and left config.yml
-// seeding the whole 2,522,880,000 ERTH into pool 1 with no auction at all. The
-// dev chain and the launch chain disagreed about the token supply's shape for
-// two days and nothing noticed.
-//
-// So: the parameters both files state must agree. This does not require
+// Keeping two of anything is how they diverge (the shape of the pre-mine split
+// between the ANML/ERTH pool and the liquidity auction, say), and nothing else
+// would notice. So: the parameters both files state must agree. This does not require
 // config.yml to carry everything — it is free to add dev accounts, a faucet and
 // a validator, none of which belong in a launch genesis — only that where the
 // two overlap they say the same thing.

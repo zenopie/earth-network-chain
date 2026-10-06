@@ -38,9 +38,9 @@ import (
 // state, without a transaction, for the gas-grant backend.
 //
 // The backend funds one fee note per passport per month, to a new human whose
-// registration the chain would accept (`registration`). (There is no
-// transparent grant to an address any more, and no "is this address a human"
-// check: nothing on chain links an address to a registration.) The question
+// registration the chain would accept (`registration`). There is no "is this
+// address a human" check: nothing on chain links an address to a
+// registration. The question
 // is the chain's to answer, and answering it with a copy of its logic means the copy
 // drifts at the next circuit or parameter change. So this builds the real
 // personhood and pki keepers over a read-only store whose every read is an

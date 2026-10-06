@@ -20,8 +20,9 @@ const secondsPerYear = 365 * 24 * 60 * 60
 //
 // Only the amount changes. Like the default mint function, this pays the newly
 // minted coins into the fee collector, so x/distribution splits them by voting
-// power under the standard rules and delegators claim with
-// MsgWithdrawDelegatorReward as they would on any other Cosmos chain. Gas fees
+// power under the standard rules (x/shieldedstaking, the only non-self
+// delegator, and each operator's self-bond compound them; see its epoch end).
+// Gas fees
 // also reach the fee collector, and are split by the earth EndBlocker — half
 // burned, half left for the next block's distribution sweep — after distribution
 // has already taken the emission.
@@ -44,12 +45,11 @@ func ProvideEarthMintFn(earthKeeper earthkeeper.Keeper) mintkeeper.MintFn {
 // publishInflation writes this mint function's issuance into x/mint's Minter,
 // which nothing here reads and every third party does.
 //
-// Overriding the mint function left the Minter at its zero value, so
-// /cosmos/mint/v1beta1/inflation and .../annual_provisions both answered
-// 0.000000000000000000. Wallets and explorers derive staking yield from those
-// two fields, and a chain paying stakers 31,536,000 ERTH a year was telling all
-// of them it paid nothing. The app itself is unaffected: both clients compute
-// from the fixed per-second rate directly and never ask.
+// Overriding the mint function would otherwise leave the Minter at its zero
+// value, so /cosmos/mint/v1beta1/inflation and .../annual_provisions would
+// both answer 0. Wallets and explorers derive staking yield from those two
+// fields. The app itself does not read them: its clients compute from the
+// fixed per-second rate directly.
 //
 // What is published is what THIS mint function mints, because that is what the
 // SDK means by these fields. DefaultMintFn (x/mint/keeper/mint.go) sets
