@@ -243,6 +243,19 @@ devnet_chain_on_disk() {
   [ "$DEV_INIT" = "1" ]
 }
 
+# The consensus key on the volume as this boot found it, before any branch below
+# runs `earthd init` (which writes a fresh random one). REQUIRE_NO_CONSENSUS_KEY
+# uses this to tell a key that was already on the disk -- possibly a former
+# validator's -- from the throwaway that init minted a moment ago.
+PVK_FILE="$EARTH_HOME/config/priv_validator_key.json"
+PVK_AT_BOOT=""
+[ -f "$PVK_FILE" ] && PVK_AT_BOOT="$(sha256_of "$PVK_FILE")"
+
+if [ "${REQUIRE_NO_CONSENSUS_KEY:-0}" = "1" ] && [ "$DEV_INIT" = "1" ]; then
+  die "REQUIRE_NO_CONSENSUS_KEY=1 with DEV_INIT=1. A devnet signs with the key
+    it generates, so these contradict."
+fi
+
 if [ "$DEV_INIT" = "1" ] && ! devnet_is_complete; then
   # ── devnet ───────────────────────────────────────────────────────────────
   if [ -f "$EARTH_HOME/config/genesis.json" ]; then
@@ -423,15 +436,44 @@ fi
 # So: refuse to start, loudly, rather than delete. Deleting a consensus key on a
 # node's say-so is worse than halting one that should not have been started, and
 # the operator may be looking at the only copy.
+#
+# A keyless node still has a priv_validator_key.json. `earthd init` writes a
+# random one, and `earthd start` generates one whenever the file is missing
+# (privval.LoadOrGenFilePV in the SDK's start). So "no file" cannot be the
+# test: it made a keyless node impossible to start on a fresh volume (init's
+# key tripped the guard) and impossible to restart (start's key did). The test
+# is instead "the only key on this volume is a throwaway this guard recorded":
+#
+#   - a key init minted during THIS boot (absent, or different, when the boot
+#     began) is random and safe; it is recorded in $THROWAWAY_MARK.
+#   - with no key at all, a throwaway is minted here and recorded, so the one
+#     earthd start would generate never appears unrecorded.
+#   - any other key -- one on the volume before this boot that the mark does not
+#     name byte for byte -- is refused, exactly as before.
+#   - a key whose public half appears in the genesis (a gentx) is refused
+#     whatever the mark says: that is a validator key by definition.
+THROWAWAY_MARK="$EARTH_HOME/config/.keyless-throwaway-key.sha256"
+pvk_pub() { # the base64 pubkey in a priv_validator_key.json
+  tr -d ' \n' < "$1" | sed -n 's/.*"pub_key":{[^}]*"value":"\([^"]*\)".*/\1/p'
+}
 if [ "${REQUIRE_NO_CONSENSUS_KEY:-0}" = "1" ]; then
   if [ -n "${PRIV_VALIDATOR_KEY_B64:-}" ]; then
     die "REQUIRE_NO_CONSENSUS_KEY=1 and PRIV_VALIDATOR_KEY_B64 is set.
       These contradict. One of them is a mistake, and guessing which would
       either strand a validator or start a second one."
   fi
-  if [ -f "$EARTH_HOME/config/priv_validator_key.json" ]; then
-    die "this node is configured to hold NO consensus key, but
-      $EARTH_HOME/config/priv_validator_key.json already exists on the volume.
+  if [ -f "$PVK_FILE" ]; then
+    PVK_NOW="$(sha256_of "$PVK_FILE")"
+    if [ -f "$THROWAWAY_MARK" ] && [ "$(cat "$THROWAWAY_MARK")" = "$PVK_NOW" ]; then
+      say "consensus key on this volume is the recorded throwaway"
+    elif [ "$PVK_NOW" != "$PVK_AT_BOOT" ]; then
+      # Not on the disk when this boot began: earthd init just wrote it.
+      printf '%s\n' "$PVK_NOW" > "$THROWAWAY_MARK"
+      say "recorded the random consensus key earthd init just wrote as a throwaway"
+    else
+      die "this node is configured to hold NO consensus key, but
+      $PVK_FILE already exists on the volume
+      and is not the throwaway this guard recorded.
 
       A key in that file signs whether or not the SDL mentions one. If this
       volume was ever a validator, starting now risks signing at heights another
@@ -439,12 +481,33 @@ if [ "${REQUIRE_NO_CONSENSUS_KEY:-0}" = "1" ]; then
       the voting power.
 
       If this node is genuinely meant to be keyless, move the file aside first:
-        mv $EARTH_HOME/config/priv_validator_key.json \\
-           $EARTH_HOME/config/priv_validator_key.json.REMOVED
+        mv $PVK_FILE \\
+           $PVK_FILE.REMOVED
       (the key is also in .env, so this is reversible.) If this node IS meant to
       sign, drop REQUIRE_NO_CONSENSUS_KEY and pass the key instead."
+    fi
+  else
+    tmp_home="$(mktemp -d)"
+    earthd init keyless-throwaway --home "$tmp_home" >/dev/null 2>&1 \
+      || die "could not mint a throwaway consensus key"
+    [ -f "$tmp_home/config/priv_validator_key.json" ] \
+      || die "earthd init wrote no priv_validator_key.json to copy"
+    mkdir -p "$EARTH_HOME/config"
+    cp "$tmp_home/config/priv_validator_key.json" "$PVK_FILE"
+    chmod 600 "$PVK_FILE"
+    rm -rf "$tmp_home"
+    sha256_of "$PVK_FILE" > "$THROWAWAY_MARK"
+    say "no consensus key on this volume — minted and recorded a throwaway"
   fi
-  say "verified: no consensus key on this volume, this node cannot sign"
+  PVK_PUB="$(pvk_pub "$PVK_FILE")"
+  [ -n "$PVK_PUB" ] || die "cannot read the public key in $PVK_FILE"
+  if [ -f "$EARTH_HOME/config/genesis.json" ] \
+     && grep -qF "\"$PVK_PUB\"" "$EARTH_HOME/config/genesis.json"; then
+    die "the consensus key on this volume ($PVK_PUB) is named in the genesis:
+      it is a validator key, not a throwaway. Refusing to start a node that
+      must not sign while it holds one."
+  fi
+  say "verified: the only consensus key here is a recorded throwaway ($PVK_PUB), this node cannot sign as the validator"
 fi
 
 # priv_validator_state.json is deliberately NOT injected. It tracks the last

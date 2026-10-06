@@ -44,8 +44,20 @@ case "$1" in
     printf '\n[tx_index]\nenable = false\n\n[statesync]\nenable = false\nrpc_servers = ""\ntrust_height = 0\ntrust_hash = ""\ntrust_period = "168h0m0s"\n' >> "$home/config/config.toml"
     printf 'snapshot-interval = 0\nsnapshot-keep-recent = 2\n' > "$home/config/app.toml"
     printf '{"stock":true}\n' > "$home/config/genesis.json"
+    # Like the real init (privval.LoadOrGenFilePV): a random consensus key,
+    # unless one is already there, which init keeps.
+    r="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+    [ -f "$home/config/priv_validator_key.json" ] || printf '{\n  "address": "AB",\n  "pub_key": {\n    "type": "tendermint/PubKeyEd25519",\n    "value": "%s"\n  },\n  "priv_key": {\n    "type": "tendermint/PrivKeyEd25519",\n    "value": "x"\n  }\n}\n' "$r" > "$home/config/priv_validator_key.json"
     ;;
-  start) echo "STARTED $*" >> "$EARTHD_LOG" ;;
+  start)
+    echo "STARTED $*" >> "$EARTHD_LOG"
+    # Like the real start (privval.LoadOrGenFilePV): a missing consensus key is
+    # generated, not an error.
+    home=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--home" ] && j=$((i+1)) && home="${!j}"; done
+    if [ -n "$home" ] && [ ! -f "$home/config/priv_validator_key.json" ]; then
+      printf '{"address":"GEN","pub_key":{"type":"tendermint/PubKeyEd25519","value":"started"},"priv_key":{"value":"x"}}' > "$home/config/priv_validator_key.json"
+    fi
+    ;;
   version) echo "v9.9.9" ;;
 esac
 exit 0
@@ -449,6 +461,50 @@ if run "$H" REQUIRE_NO_CONSENSUS_KEY=1; then
 else
   grep -q "priv_validator_key.json already exists" "$LOG" \
     && ok "keyless: refuses a volume that still holds a consensus key" \
+    || bad "keyless: died for the wrong reason" "$(tail -3 "$LOG")"
+fi
+
+# BD-5 (final audit): init and start both write a random key, so a keyless node
+# must still come up on a fresh volume and keep coming up on restarts.
+H="$WORK/keyless-restart"; mkdir -p "$H"
+run "$H" REQUIRE_NO_CONSENSUS_KEY=1 || true
+if run "$H" REQUIRE_NO_CONSENSUS_KEY=1; then
+  grep -q "recorded throwaway" "$LOG" \
+    && ok "keyless: restarts on its own recorded throwaway key" \
+    || bad "keyless: restart passed for the wrong reason" "$(tail -3 "$LOG")"
+else
+  bad "keyless: a keyless node cannot restart" "$(tail -3 "$LOG")"
+fi
+# The throwaway swapped for another key between boots: refused.
+printf '{"address":"AA","pub_key":{"type":"tendermint/PubKeyEd25519","value":"other"},"priv_key":{"value":"x"}}' \
+  > "$H/config/priv_validator_key.json"
+if run "$H" REQUIRE_NO_CONSENSUS_KEY=1; then
+  bad "keyless: accepted a key the throwaway mark does not name"
+else
+  grep -q "not the throwaway this guard recorded" "$LOG" \
+    && ok "keyless: refuses a key that replaced the recorded throwaway" \
+    || bad "keyless: died for the wrong reason" "$(tail -3 "$LOG")"
+fi
+# The operator moved a key aside on an existing volume: a throwaway is minted.
+mv "$H/config/priv_validator_key.json" "$H/config/priv_validator_key.json.REMOVED"
+if run "$H" REQUIRE_NO_CONSENSUS_KEY=1 && run "$H" REQUIRE_NO_CONSENSUS_KEY=1; then
+  ok "keyless: a key moved aside is replaced by a recorded throwaway, restart-stable"
+else
+  bad "keyless: moving the key aside did not give a startable node" "$(tail -3 "$LOG")"
+fi
+# A key the genesis gentx names is a validator key, mark or no mark.
+H="$WORK/keyless-genesis-key"; mkdir -p "$H"
+run "$H" REQUIRE_NO_CONSENSUS_KEY=1 || true
+GPUB="$(python3 -c 'import json,sys;g=json.load(open(sys.argv[1]));print(g["app_state"]["genutil"]["gen_txs"][0]["body"]["messages"][0]["pubkey"]["key"])' "$GEN")"
+printf '{"address":"AA","pub_key":{"type":"tendermint/PubKeyEd25519","value":"%s"},"priv_key":{"value":"x"}}' "$GPUB" \
+  > "$H/config/priv_validator_key.json"
+sha256_f() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
+sha256_f "$H/config/priv_validator_key.json" > "$H/config/.keyless-throwaway-key.sha256"
+if run "$H" REQUIRE_NO_CONSENSUS_KEY=1; then
+  bad "keyless: started holding the genesis validator's key"
+else
+  grep -q "named in the genesis" "$LOG" \
+    && ok "keyless: refuses the genesis validator's key even if marked" \
     || bad "keyless: died for the wrong reason" "$(tail -3 "$LOG")"
 fi
 
