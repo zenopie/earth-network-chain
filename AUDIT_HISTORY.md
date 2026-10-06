@@ -27,6 +27,7 @@ redesign; the replacement is named.
 | Pre-audit: vote padding | `84921c0b…7acc` | vote (padding nullifier) |
 | Passport coverage | `acb96128…be1c` | 33 register circuits replace the seven |
 | Final-audit fixes | `34fe7441…393b` | move (new: handle and split moves along succession leaves); Groundworks split leases |
+| Round-2 fixes (chain B) | `723549a8…7946` | 33 register circuits (idc output from id_secret); used-idc set |
 
 ## Wave: Orchard phase 1 (2026-10-02)
 

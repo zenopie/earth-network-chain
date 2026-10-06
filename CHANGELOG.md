@@ -15,8 +15,21 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting: final-audit fixes** (new genesis, no migration;
 **genesis.json sha256
-34fe7441b60ba2799d3b428084c6f4219ecfb482e80a18138551d3dfc5fc393b**; a new
-move verifying key, the others unchanged). Wallets and indexers must adopt:
+723549a84aea94b98c391e7ca0a824e923204ed99b57ff826728e14ac08b7946**; a new
+move verifying key and all 33 register circuit keys changed). Wallets,
+backend and indexers must adopt:
+
+- x/personhood: **registration proves knowledge of the identity secret.**
+  Every register circuit takes `id_secret` as a private witness and outputs
+  `idc = H(TAG_ID, id_secret)` as a fifth public input; public_signals are
+  now `[current_date, address, nullifier, dsc_key, idc]` and the chain
+  (new param `idc_index` = 4, field 28) requires idc to equal
+  `MsgRegister.idc`. All 33 verifying keys changed.
+- x/personhood: **an idc registered before, by any passport, is refused**
+  (error 1130 `ErrIdcUsed`): every registration, switch and re-entry needs
+  a fresh identity; a switch back to an earlier identity is refused.
+  Genesis `used_idcs` (23) must hold every registration's, passport's and
+  succession's idc.
 
 - Groundworks splits are **leased** (`groundworks_lease_seconds`, x/allocation
   param 2, default 365 days): a stake position's (`Position.split_expires_at`,
