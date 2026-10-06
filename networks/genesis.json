@@ -517,13 +517,11 @@
     },
     "params": null,
     "personhood": {
-      "caretaker_moved_out": [],
       "caretaker_votes": [],
       "claim_nullifiers": [],
       "country_rates": [],
       "dsc_rates": [],
       "handle_lease_max": "0",
-      "handle_moved_out": [],
       "handles": [],
       "identity_roots": [],
       "identity_tree_size": "0",
