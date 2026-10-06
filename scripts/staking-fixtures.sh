@@ -29,6 +29,16 @@ PROOFS="$CHAIN_DIR/x/shieldedstaking/testdata/proofs"
 rm -rf "$PROOFS"
 mkdir -p "$PROOFS"
 cd "$CHAIN_DIR"
-EARTH_CIRCUITS="$CIRCUITS" go test ./app/ -count=1 -timeout 60m \
-  -run 'TestPrivateStaking|TestTransparentStakingBlocked|TestStakeVote|TestGroundworks|TestSelfBond|TestStakeNotes|TestEpochEndDefers|TestVestingAccount|TestCompoundingNever|TestRedelegate'
+# Every app test that boots the staking env (directly or through one of its
+# wrappers), found from the source rather than a hand-kept list that missed
+# some (a test whose proofs only matched another's by chance). initDexEnv's
+# tests prove into x/dex's directory (scripts/dex-fixtures.sh).
+TESTS="$(awk '
+  /^func Test/ { name = $2; sub(/\(.*/, "", name) }
+  /^func [^T]/ { name = "" }
+  /initStakeEnv\(|initStakeEnvWith\(|initStakeEnvRecover\(|initGwEnv\(|initGwWeightEnv\(|runA7Scenario\(/ {
+    if (name != "") print name
+  }' app/*_test.go | sort -u | paste -sd'|' -)"
+[ -n "$TESTS" ] || { echo "error: no staking app tests found" >&2; exit 1; }
+EARTH_CIRCUITS="$CIRCUITS" go test ./app/ -count=1 -timeout 60m -run "^($TESTS)\$"
 echo "done: $(ls "$PROOFS" | wc -l | tr -d ' ') proofs in $PROOFS"
