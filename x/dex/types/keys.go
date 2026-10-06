@@ -127,7 +127,7 @@ var LpUnbondingKey = collections.NewPrefix("lp_unbonding")
 
 // LpUnbondingByAddrKey indexes the same withdrawals by (address,
 // completion_time, pool_id), so a provider's own can be listed without walking
-// everyone's. Added in v0.9.2; the upgrade builds it from LpUnbondingKey.
+// everyone's.
 var LpUnbondingByAddrKey = collections.NewPrefix("lpu_by_addr")
 
 // Volume scaling and the staleness sweep. See lp_rewards.go for the scheme.
@@ -146,12 +146,9 @@ var (
 
 const (
 	// VolumeWindowDays is how many days of volume a pool's ERTH depth is allowed
-	// to justify — the window in the depth cap, and nothing else.
-	//
-	// It used to be the decay window too. The two were split when the decay was
-	// slowed to track the unbonding period: they answer different questions, and
-	// letting the cap ride along would have doubled what a thin pool may claim
-	// as a side effect of a change about recency.
+	// to justify — the window in the depth cap, and nothing else. It is not
+	// the decay window (VolumeDecayWindowDays): the two answer different
+	// questions.
 	VolumeWindowDays = 7
 
 	// VolumeDecayWindowDays sets how fast recorded volume loses its weight:
@@ -160,9 +157,8 @@ const (
 	//
 	// Two weeks because that is twice DefaultLpUnbondingSeconds. A provider who
 	// wants out waits a week, so the reward signal that drew them in has to stay
-	// meaningful over at least that long — at the previous 7-day window the
-	// weight had halved in 4.5 days and was mostly gone before they could
-	// finish leaving.
+	// meaningful over at least that long (a 7-day window would halve the
+	// weight in 4.5 days).
 	VolumeDecayWindowDays = 14
 
 	// VolumeIndexMaxCatchUpDays bounds the index's catch-up after downtime, so a

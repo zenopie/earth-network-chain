@@ -19,11 +19,7 @@ import (
 // two ever needed to differ, the fix is a hub_denom param on this module, not a
 // second denom read from somewhere else.
 //
-// Keep this interface at one method. It previously declared GetDelegatorBonded,
-// GetDelegation and GetValidator, none of which x/dex ever called; they were
-// implemented only by the test stub, and the comment above them described
-// x/allocation's vote-weight logic, which lives in
-// x/allocation/keeper/keeper.go.
+// Keep this interface at one method: x/dex needs nothing else from staking.
 type StakingKeeper interface {
 	BondDenom(ctx context.Context) (string, error)
 }

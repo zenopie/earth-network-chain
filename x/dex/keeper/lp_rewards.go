@@ -30,13 +30,10 @@ import (
 // `pool.VolumeWeight / LpTotalVolume`, in which the index cancels — so the shares are
 // exact at every instant and nothing has to be aged.
 //
-// That is what fixes the accounting, and it is worth being explicit about what
-// was wrong. Volume used to decay per pool, applied only when something touched
-// that pool, while LpTotalVolume kept the undecayed figure the whole time. The
-// numerator shrank and the denominator did not, so a pool was credited against a
-// total that no longer described it: measured over a year of mixed pool
-// activity, 9-11% of the LP emission was released by the allocation stream and
-// collected by nobody. Inflating new volume instead of shrinking old volume
+// Decaying volume per pool instead would apply only when something touched
+// that pool, while LpTotalVolume kept the undecayed figure: the numerator would
+// shrink and the denominator not, and part of the LP emission would be released
+// by the allocation stream and collected by nobody. Inflating new volume instead of shrinking old volume
 // gives the identical ratio — a pool that traded a week ago is worth
 // (13/14)^7 of one trading today, either way — while leaving every stored
 // number untouched between trades.
@@ -92,7 +89,7 @@ func (k Keeper) getVolumeIndex(ctx context.Context) (math.Int, error) {
 // total, the depth cap is scaled by the same index as the volume it caps — so a
 // uniform division changes nothing anyone is owed.
 //
-// The order is the one the old note on this prescribed for an upgrade handler:
+// The order matters:
 //
 //  1. settle each pool first. Owed rewards are Volume*(index-poolIndex); divide
 //     Volume without settling and every unsettled reward is underpaid by exactly
@@ -255,10 +252,10 @@ func dayOf(blockTime time.Time) uint64 { return uint64(blockTime.Unix()) / 86400
 //
 // A pool with no ERTH reserve caps at zero: there is no depth to justify any
 // weight, and a pool in that state cannot be traded against anyway.
-// The window here is VolumeWindowDays, deliberately NOT the decay window. The
-// two used to be one constant and they answer different questions: this one asks
-// how much volume a given depth can justify, the decay asks how far back trading
-// counts. Slowing the decay must not quietly double what a thin pool may claim.
+// The window here is VolumeWindowDays, deliberately NOT the decay window. They
+// answer different questions: this one asks how much volume a given depth can
+// justify, the decay asks how far back trading counts. Slowing the decay must
+// not quietly double what a thin pool may claim.
 func volumeCap(pool types.Pool, perDay uint64) math.Int {
 	r := pool.ReserveErth.Amount
 	if r.IsNil() || !r.IsPositive() {
@@ -294,8 +291,7 @@ func (k Keeper) capVolume(ctx context.Context, pool types.Pool, scaled math.Int)
 // Every write to a pool's Volume goes through here. LpTotalVolume has to stay
 // equal to the sum of every pool's stored Volume — DistributeLPRewards divides
 // by it, so a drift either mints more than the allocation released or strands
-// part of it — and that equality was previously re-established by hand at each
-// write site. One funnel means a new write site cannot forget it.
+// part of it. One funnel means a new write site cannot forget it.
 func (k Keeper) setPoolVolume(ctx context.Context, pool *types.Pool, v math.Int, day uint64) error {
 	old := pool.VolumeWeight
 	if old.IsNil() {

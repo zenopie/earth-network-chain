@@ -73,7 +73,7 @@ func (am AppModule) DefaultGenesis(codec.JSONCodec) json.RawMessage {
 	return am.cdc.MustMarshalJSON(types.DefaultGenesis())
 }
 
-// ValidateGenesis used to validate the GenesisState, given in its json.RawMessage form.
+// ValidateGenesis validates the GenesisState, given in its json.RawMessage form.
 func (am AppModule) ValidateGenesis(_ codec.JSONCodec, _ client.TxEncodingConfig, bz json.RawMessage) error {
 	var genState types.GenesisState
 	if err := am.cdc.UnmarshalJSON(bz, &genState); err != nil {

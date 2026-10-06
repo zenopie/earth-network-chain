@@ -19,8 +19,8 @@ import (
 // it is coming, and when.
 //
 // The store is keyed by (completion_time, pool_id, address), ordered for the
-// end-blocker's sweep. This used to walk all of it and filter, so one query
-// cost every withdrawal on the chain; it now reads the provider's own entries
+// end-blocker's sweep. Walking all of it and filtering would make one query
+// cost every withdrawal on the chain, so this reads the provider's own entries
 // from the address index and looks each one up.
 func (q queryServer) LpUnbondings(
 	ctx context.Context,

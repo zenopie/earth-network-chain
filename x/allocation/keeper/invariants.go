@@ -199,9 +199,9 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 	// the place the chain halts.
 	//
 	// It also catches the genesis case, where nothing bypasses setOption at all:
-	// InitGenesis rebuilds SummedWeight from the imported options and used to
-	// leave SummedAccrued at zero, which reads as a tolerated surplus rather
-	// than as the blindness it is.
+	// an InitGenesis that rebuilt SummedWeight from the imported options but
+	// left SummedAccrued at zero would read as a tolerated surplus rather than
+	// as the blindness it is.
 	declared, err := k.GetSummedAccrued(ctx)
 	if err != nil {
 		return err

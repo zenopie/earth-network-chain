@@ -407,12 +407,3 @@ func (k Keeper) removeLpUnbonding(ctx context.Context, key collections.Triple[in
 func byAddrKey(key collections.Triple[int64, uint64, []byte]) collections.Triple[[]byte, int64, uint64] {
 	return collections.Join3(key.K3(), key.K1(), key.K2())
 }
-
-// IndexLpUnbondingsByAddr builds LpUnbondingsByAddr from LpUnbondings. For
-// the v0.9.2 upgrade, which adds the index to a store that already holds
-// withdrawals; idempotent.
-func (k Keeper) IndexLpUnbondingsByAddr(ctx context.Context) error {
-	return k.LpUnbondings.Walk(ctx, nil, func(key collections.Triple[int64, uint64, []byte], _ types.LpUnbonding) (bool, error) {
-		return false, k.LpUnbondingsByAddr.Set(ctx, byAddrKey(key))
-	})
-}

@@ -33,14 +33,11 @@ import (
 // recipient either way — so a live recipient has thirty days and a permissionless
 // way to take what is theirs.
 //
-// A forfeited balance is burned. It used to be enough to simply not mint it —
-// rewards were issued at the moment they were claimed, so an unclaimed balance
-// was ERTH that never existed. Emission is now minted as it accrues, so the
+// A forfeited balance is burned. Emission is minted as it accrues, so the
 // coins behind a dead option's balance are real and sitting in this module's
 // account; leaving them there would put the module permanently out of balance
-// with what its options say they hold. Burning reproduces the old economics
-// exactly: supply ends up where it would have been had the option never been
-// paid.
+// with what its options say they hold. Burning puts supply where it would have
+// been had the option never been paid.
 //
 // The stream's own accounting is untouched either way — the invariant is over
 // AmountAllocated, which is zero on anything prunable by definition.

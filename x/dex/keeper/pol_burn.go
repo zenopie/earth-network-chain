@@ -18,7 +18,7 @@ import (
 // The chain starts owning all of its own liquidity: the ANML/ERTH pool's shares
 // are minted to the dex module account at genesis, and the auction pool's are
 // minted there when it settles. That account has no key, so nothing can withdraw
-// them — which used to mean the positions were permanent.
+// them, and left alone the positions would be permanent.
 //
 // They are not. Each is retired on a straight line over PolBurnSeconds, because
 // running a book is active management and the protocol is a bad manager of it:
