@@ -136,9 +136,10 @@ func TestGroundworksLeaseGenesisRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(gwLease), gp.GroundworksLeaseSeconds)
 
-	// Settled past the lease on the imported chain: the split lapses.
+	// A block past the lease on the imported chain: its BeginBlock sweep
+	// retires the split.
 	lctx := fctx.WithBlockTime(time.Unix(exp+10, 0))
-	require.NoError(t, fresh.AllocationKeeper.AdvanceIndex(lctx, allocationtypes.STREAM_ID_GROUNDWORKS))
+	require.NoError(t, fresh.AllocationKeeper.BeginBlocker(lctx))
 	got, err = fresh.ShieldedStakingKeeper.Positions.Get(lctx, p)
 	require.NoError(t, err)
 	require.Empty(t, got.Splits)

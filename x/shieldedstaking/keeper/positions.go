@@ -212,8 +212,15 @@ func (k Keeper) syncValidatorVoter(ctx context.Context, v string) error {
 
 // syncValidatorVoterWith is syncValidatorVoter; settled: the stream is
 // already settled to the moment of the change (a lapse), so the voter is
-// written without settling to the block time.
+// written without settling to the block time. Otherwise the stream is
+// settled first, before the totals are read: nothing between the read and
+// the write may move them (audit round 2, CD-1).
 func (k Keeper) syncValidatorVoterWith(ctx context.Context, v string, settled bool) error {
+	if !settled {
+		if err := k.allocation.AdvanceIndex(ctx, allocationtypes.STREAM_ID_GROUNDWORKS); err != nil {
+			return err
+		}
+	}
 	valBz, err := k.valAddr(v)
 	if err != nil {
 		return err
@@ -247,10 +254,7 @@ func (k Keeper) syncValidatorVoterWith(ctx context.Context, v string, settled bo
 	if err != nil {
 		return err
 	}
-	if settled {
-		return k.allocation.SetWeightedVoterSettled(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.ValidatorVoterKey(valBz), ws)
-	}
-	return k.allocation.SetWeightedVoter(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.ValidatorVoterKey(valBz), ws)
+	return k.allocation.SetWeightedVoterSettled(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.ValidatorVoterKey(valBz), ws)
 }
 
 // resyncValidatorVoter is syncValidatorVoter in its own cache, for EndBlock:
@@ -281,7 +285,15 @@ func (k Keeper) ReweighGroundworks(ctx context.Context) {
 // contribution comes off its validator's totals, the new one goes on in the
 // current epoch, and the validator's voter is re-filed. It returns the
 // position to store.
+//
+// old was read before this call; the stream is settled here, first, and a
+// settle never retires a lease (only x/allocation's BeginBlock sweep does),
+// so old is still what is stored when its contribution comes off (audit
+// round 2, CD-1).
 func (k Keeper) applyPositionSplit(ctx context.Context, old types.Position, splits []allocationtypes.AllocationWeight, existed bool) (types.Position, error) {
+	if err := k.allocation.AdvanceIndex(ctx, allocationtypes.STREAM_ID_GROUNDWORKS); err != nil {
+		return old, err
+	}
 	epoch, err := k.gwEpoch(ctx)
 	if err != nil {
 		return old, err
@@ -589,11 +601,13 @@ func (l positionLapser) Lapse(ctx context.Context, t int64) error {
 		})
 		if err != nil {
 			k.failure(ctx, "lapse_positions", v, err)
+			retry := allocationkeeper.LapseRetryAt(ctx, t)
+			allocationkeeper.EmitLeaseRetireFailed(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, "positions", v, t, retry, err)
 			for _, id := range ids {
 				if err := k.GwLapses.Remove(ctx, collections.Join(t, id)); err != nil {
 					return err
 				}
-				if err := k.GwLapses.Set(ctx, collections.Join(t+allocationkeeper.LapseRetrySeconds, id)); err != nil {
+				if err := k.GwLapses.Set(ctx, collections.Join(retry, id)); err != nil {
 					return err
 				}
 			}

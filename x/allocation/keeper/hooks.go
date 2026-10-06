@@ -38,6 +38,12 @@ func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, re
 			return nil
 		}
 	}
+	// Settled before the voter is read, so nothing between the read and the
+	// write below moves it (a settle never retires a lease anyway: only the
+	// BeginBlock sweep does; audit round 2, CD-1).
+	if err := k.AdvanceIndex(ctx, types.STREAM_ID_GROUNDWORKS); err != nil {
+		return err
+	}
 	voter, err := k.Voters.Get(ctx, voterKey(types.STREAM_ID_GROUNDWORKS, addrBz))
 	if err != nil {
 		return nil // not a voter (or not found) — nothing to do
@@ -54,10 +60,6 @@ func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, re
 	}
 	if voter.Epoch != epoch {
 		return k.Voters.Remove(ctx, voterKey(types.STREAM_ID_GROUNDWORKS, addrBz))
-	}
-
-	if err := k.AdvanceIndex(ctx, types.STREAM_ID_GROUNDWORKS); err != nil {
-		return err
 	}
 
 	weight, bondLeft, err := k.bondedWeight(ctx, delAddr, removeVal)

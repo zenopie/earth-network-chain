@@ -34,7 +34,9 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 }
 
 func (k Keeper) resolveIntegrated(ctx context.Context, stream types.StreamId) error {
-	if err := k.AdvanceIndex(ctx, stream); err != nil {
+	// The only settle that retires leases: every one due by now, in time
+	// order (lease.go).
+	if err := k.SweepLapses(ctx, stream); err != nil {
 		return err
 	}
 	rewardIndex, err := k.getRewardIndex(ctx, stream)

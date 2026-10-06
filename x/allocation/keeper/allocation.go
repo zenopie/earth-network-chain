@@ -243,23 +243,35 @@ func (k Keeper) AdvanceIndexTo(ctx context.Context, stream types.StreamId, t int
 	return k.advanceIndexTo(ctx, stream, at)
 }
 
-// advanceIndexTo settles stream up to now (unix nanos), retiring every lease
-// that lapses on the way at its own time first (settleLapses).
+// advanceIndexTo settles stream up to now (unix nanos). It never retires a
+// lease (only the BeginBlock sweep does, SweepLapses): it moves the index
+// and nothing else, so a caller may read voters and positions before it
+// and write them after. Should a lease be due (never, once this block's
+// sweep has run), it stops at that lapse time (heldTarget).
 func (k Keeper) advanceIndexTo(ctx context.Context, stream types.StreamId, now int64) error {
-	if err := k.settleLapses(ctx, stream, now); err != nil {
+	last, err := k.getLastUpkeep(ctx, stream)
+	if err != nil {
 		return err
+	}
+	if last != 0 {
+		if now, err = k.heldTarget(ctx, stream, now); err != nil {
+			return err
+		}
 	}
 	return k.settleTo(ctx, stream, now)
 }
 
 // settleTo moves stream's reward index to now (unix nanos) over the weight
-// as it stands.
+// as it stands. A now at or before the last settlement is a no-op.
 func (k Keeper) settleTo(ctx context.Context, stream types.StreamId, now int64) error {
 	last, err := k.getLastUpkeep(ctx, stream)
 	if err != nil {
 		return err
 	}
-	if last != 0 && now > last {
+	if last != 0 && now <= last {
+		return nil
+	}
+	if last != 0 {
 		total, err := k.getTotalWeight(ctx, stream)
 		if err != nil {
 			return err

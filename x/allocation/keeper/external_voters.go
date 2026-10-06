@@ -140,6 +140,10 @@ func (k Keeper) ApplySplit(ctx context.Context, stream types.StreamId, key []byt
 // resyncFromBonded). Never refuses a split for naming a struck or pruned
 // option: resyncVoter skips those.
 func (k Keeper) ResyncVoter(ctx context.Context, stream types.StreamId, key []byte) error {
+	// Settled before the voter is read (audit round 2, CD-1).
+	if err := k.AdvanceIndex(ctx, stream); err != nil {
+		return err
+	}
 	voter, err := k.Voters.Get(ctx, voterKey(stream, key))
 	if errors.Is(err, collections.ErrNotFound) {
 		return nil
@@ -164,9 +168,6 @@ func (k Keeper) ResyncVoter(ctx context.Context, stream types.StreamId, key []by
 	}
 	weight, err := src.Weight(ctx, key)
 	if err != nil {
-		return err
-	}
-	if err := k.AdvanceIndex(ctx, stream); err != nil {
 		return err
 	}
 	return k.resyncVoter(ctx, stream, key, voter.Percentages, weight)
