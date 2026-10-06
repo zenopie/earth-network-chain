@@ -13,7 +13,7 @@ module books, validator stake, pool reserves, allocation weights and every
 amount the chain itself computes are public.
 
 Genesis: `networks/genesis.json` sha256
-`acb96128d8b5fedc338a48bd9973095242395e2dda538285e67a7efd527ebe1c`, carrying
+`a381e2c971748d674d4a071dabae55e86000c88f1c234afe5fe1c22b0c8f4731`, carrying
 the action, stake, vote and membership verifying keys
 (`networks/genesis/shielded-verifying-keys/*.vk.b64`) and the passport keys
 (`networks/genesis/verifying-keys/`, 33 register circuits). `make genesis-check` and

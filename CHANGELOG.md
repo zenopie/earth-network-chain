@@ -13,6 +13,32 @@ like, because nodes running different versions cannot agree.
 
 ## [Unreleased]
 
+**Consensus-affecting: final-audit fixes** (new genesis, no migration;
+**genesis.json sha256
+a381e2c971748d674d4a071dabae55e86000c88f1c234afe5fe1c22b0c8f4731**; verifying
+keys unchanged). Wallets and indexers must adopt:
+
+- x/personhood: **MsgMoveHandle and MsgMoveCaretaker are removed** (genesis
+  fields 18 and 20 reserved; errors 1125, 1126 and the `handle_moved` event
+  gone). A switched identity claims and casts under the predecessor bound.
+- x/personhood: a switch must be proven on a later `current_date` than the
+  live registration (`Registration.proof_date`, field 9; else 1128).
+- x/shieldedstaking: a stake proof that spends notes must spend or pad both
+  lane-A slots (`nf_1 != 0` whenever `nf_0 != 0`; padding publishes
+  `H(TAG_NF, nk, rho, 0)` for a fresh rho).
+- x/shielded and x/shieldedstaking: `RootRecord.superseded_at` and
+  `StakeRoot.superseded_at` (field 5); an anchor is valid for the window from
+  when it stopped being the latest.
+- x/shielded: one bundle per msg (`MaxBundlesPerMsg` 1); params whose largest
+  bundle costs over 60M gas are refused. `shield` CLI takes the ciphertext.
+- x/pki: sha224WithRSA DSCs verify; a signature OID of the other key type is
+  refused. Also: InitGenesis validates in every module and dex checks its
+  funding at import; LP withdrawals never fold into a retried entry; slash,
+  escrow, snapshot and sweep fixes (see the commit log).
+- Ops: `scripts/ceremony.sh` requires `--memo-peer` and `--moniker`;
+  `csca/additional/` takes `.der`; `make test` runs; the upgrade rehearsals
+  register a human and cast its YES (needs `CIRCUITS`, nargo, bb).
+
 **Not consensus-affecting.**
 
 - x/shieldedstaking: **Query/Validators** (`/earth/shieldedstaking/v1/validators`,
