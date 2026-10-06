@@ -3,6 +3,8 @@ package keeper
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
@@ -13,6 +15,12 @@ import (
 
 // InitGenesis initializes the module's state from a provided genesis state.
 func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) error {
+	// The SDK's InitChainer does not validate: a genesis that skipped
+	// validate-genesis must not load state the module's Validate refuses
+	// (audit D-2).
+	if err := genState.Validate(); err != nil {
+		return err
+	}
 	var maxID uint64
 	// The LP reward index advances against the sum of stored pool volumes, so an
 	// import has to rebuild that denominator rather than leave it at zero.
@@ -157,6 +165,44 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 		return err
 	}
 
+	return k.assertGenesisFunded(ctx)
+}
+
+// assertGenesisFunded refuses an import the module account cannot back
+// exactly (audit D-2): the ERTH, bid and per-pool token checks the
+// EndBlocker makes, over every pool, and the LP-share backing of in-flight
+// withdrawals and retirements. Without it a mismatched genesis starts and
+// halts at the first EndBlock. Bank runs before dex in InitGenesis, so the
+// balances are real. A keeper built without a bank (unit tests) skips it.
+func (k Keeper) assertGenesisFunded(ctx context.Context) error {
+	if k.bankKeeper == nil {
+		return nil
+	}
+	if err := k.checkErthSolvency(ctx); err != nil {
+		return fmt.Errorf("dex genesis: %w", err)
+	}
+	if err := k.checkAuctionBidSolvency(ctx); err != nil {
+		return fmt.Errorf("dex genesis: %w", err)
+	}
+	var ids []uint64
+	if err := k.Pool.Walk(ctx, nil, func(id uint64, _ types.Pool) (bool, error) {
+		ids = append(ids, id)
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := k.checkPoolTokenSolvency(ctx, id); err != nil {
+			return fmt.Errorf("dex genesis: %w", err)
+		}
+	}
+	rep, err := k.CheckShareBacking(ctx)
+	if err != nil {
+		return err
+	}
+	if rep.Broken() {
+		return fmt.Errorf("dex genesis: lp shares are not backed: %s", strings.Join(rep.Problems, "; "))
+	}
 	return nil
 }
 

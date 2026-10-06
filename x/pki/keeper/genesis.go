@@ -8,6 +8,12 @@ import (
 
 // InitGenesis initializes the module state from genesis.
 func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) error {
+	// The SDK's InitChainer does not validate: a genesis that skipped
+	// validate-genesis must not load state the module's Validate refuses
+	// (audit D-2).
+	if err := genState.Validate(); err != nil {
+		return err
+	}
 	if err := k.Params.Set(ctx, genState.Params); err != nil {
 		return err
 	}

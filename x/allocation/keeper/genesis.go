@@ -20,6 +20,12 @@ import (
 // hand out option id 1 a second time and silently repoint every voter who had
 // allocated to the first one.
 func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) error {
+	// The SDK's InitChainer does not validate: a genesis that skipped
+	// validate-genesis must not load state the module's Validate refuses
+	// (audit D-2).
+	if err := genState.Validate(); err != nil {
+		return err
+	}
 	if err := k.initGenesis(ctx, genState); err != nil {
 		return err
 	}

@@ -13,7 +13,7 @@ import (
 func TestGenesis(t *testing.T) {
 	genesisState := types.GenesisState{
 		Params:  types.DefaultParams(),
-		PoolMap: []types.Pool{{PoolId: 0}, {PoolId: 1}}}
+		PoolMap: []types.Pool{validPool(0, "utokena"), validPool(1, "utokenb")}}
 
 	f := initFixture(t)
 	err := f.keeper.InitGenesis(f.ctx, genesisState)
@@ -38,7 +38,7 @@ func TestGenesisRoundTripsUnbondings(t *testing.T) {
 
 	genesisState := types.GenesisState{
 		Params:  types.DefaultParams(),
-		PoolMap: []types.Pool{{PoolId: 1}},
+		PoolMap: []types.Pool{validPool(1, "utokena")},
 		LpUnbondings: []types.LpUnbonding{{
 			Address:        addr,
 			PoolId:         1,
@@ -51,4 +51,17 @@ func TestGenesisRoundTripsUnbondings(t *testing.T) {
 	got, err := f.keeper.ExportGenesis(f.ctx)
 	require.NoError(t, err)
 	require.EqualExportedValues(t, genesisState.LpUnbondings, got.LpUnbondings)
+}
+
+// validPool is an empty (drained) pool of token against uerth, as Validate
+// accepts.
+func validPool(id uint64, token string) types.Pool {
+	return types.Pool{PoolId: id, ReserveErth: sdk.NewInt64Coin("uerth", 0), ReserveToken: sdk.NewInt64Coin(token, 0)}
+}
+
+// Audit D-2: InitGenesis validates the state it loads.
+func TestInitGenesisValidates(t *testing.T) {
+	f := initFixture(t)
+	bad := types.GenesisState{Params: types.DefaultParams(), PoolMap: []types.Pool{{PoolId: 0}}}
+	require.Error(t, f.keeper.InitGenesis(f.ctx, bad), "a pool with nil reserves")
 }

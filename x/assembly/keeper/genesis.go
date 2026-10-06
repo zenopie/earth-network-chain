@@ -16,6 +16,12 @@ import (
 // anyone noticing — the ballot would then close on a figure no set of votes
 // supports.
 func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
+	// The SDK's InitChainer does not validate: a genesis that skipped
+	// validate-genesis must not load state the module's Validate refuses
+	// (audit D-2).
+	if err := gs.Validate(); err != nil {
+		return err
+	}
 	// Removal ballots keep their ids (their scope is derived from it), so the
 	// sequence resumes past every id already handed out.
 	if err := k.BallotSeq.Set(ctx, gs.BallotSeq); err != nil {
