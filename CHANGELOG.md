@@ -25,6 +25,13 @@ like, because nodes running different versions cannot agree.
   (operator earth1n6amvk…, devnet faucet and gas wallet removed, gentx,
   genesis_time, rebuild). Not yet run: `TestLaunchCeremony` reports PENDING
   CEREMONY until it is.
+- CLI: no `earthd tx` commands are generated for private msgs any more
+  (personhood move-caretaker/bind-handle/move-handle, shieldedstaking
+  restake, all three assembly msgs); they could never build a valid tx.
+  Wallets build them. Queries are unchanged.
+- Pre-relaunch cleanup: dead code, the SDK random-simulation tests (the
+  simulator's staking and distribution ops are refused by design) and stale
+  comments and docs removed. No behaviour change; genesis unchanged.
 
 **Consensus-affecting.**
 
@@ -37,7 +44,9 @@ like, because nodes running different versions cannot agree.
   commits its exponent under tag 10 (tag 7 retired). x/pki: explicit curve
   parameters name a curve only when all match; RSA-PSS with a mask other
   than MGF1 over the message hash, or a trailer other than 1, is refused;
-  sha224WithRSAEncryption accepted. New genesis (no state migration).
+  sha224WithRSAEncryption accepted. New genesis (no state migration;
+  **genesis.json sha256
+  acb96128d8b5fedc338a48bd9973095242395e2dda538285e67a7efd527ebe1c**).
 
 - Stake vote padding (**new vote circuit and verifying key; genesis.json
   sha256 84921c0b360c3b3da84dd9c136481536fecae8dc503eada6ede475927cb77acc**).
@@ -563,12 +572,15 @@ like, because nodes running different versions cannot agree.
   notes; new blind stake ciphertext, salt "earth.stake.v1", version 0x03,
   for stake notes: `StakeProof.spc_ciphertext`, bound last in the stake
   fields). MsgShield's ciphertext is required (gas grant included).
+  *Superseded for stake notes:* the chain mints no stake note; every stake
+  note carries the wallet's own 201-byte ciphertext and
+  `spc_ciphertext` (field 8) is reserved.
 - **Wallet format change: one fee rule.** Private msgs pay their fee from
   their bundles' uerth balance less what they move; staking and dex `fee`
   fields removed; new MsgDelegate.amount, MsgNoteSwap.denom_in/amount_in,
   MsgAddLiquidityShielded.erth_amount; MsgNoteSwap.fee_from_output removed
-  (only MsgClaimUnbonding pays from its output; MsgSend keeps its explicit
-  fee).
+  (only MsgClaimUnbonding paid from its output, and it has since been
+  retired; MsgSend keeps its explicit fee).
 
 **Operators.** Rate-limit CheckTx per peer on public nodes (sentries,
 connection and RPC broadcast limits): a junk private tx now costs one proof
@@ -594,6 +606,8 @@ verification, but CheckTx is still free.
   input (RegistrationBinding) now also binds the two note ciphertexts:
   `H(TAG_REG, idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
   Bytes(ciphertext_erth), affiliate)`. No circuit or verifying-key change.
+  (Since extended with the chain id: `H(TAG_REG, Bytes(chain_id), idc, …)`,
+  zk/privacy.RegistrationBinding.)
 - x/personhood: the expiry, caretaker and referrer sweeps each have a
   reserved share of the per-block retirement budget, so a large revoked-signer
   purge cannot starve them.
