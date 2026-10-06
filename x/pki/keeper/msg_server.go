@@ -58,7 +58,7 @@ func (k msgServer) AddCsca(ctx context.Context, req *types.MsgAddCsca) (*types.M
 
 // RevokeDsc withdraws trust from a Document Signer. Governance-gated: an
 // erroneous revocation would lock out every holder whose passport that signer
-// issued, so it is not permissionless the way submission is.
+// issued.
 func (k msgServer) RevokeDsc(ctx context.Context, req *types.MsgRevokeDsc) (*types.MsgRevokeDscResponse, error) {
 	if err := k.checkAuthority(req.Authority); err != nil {
 		return nil, err

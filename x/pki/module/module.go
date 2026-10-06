@@ -24,7 +24,8 @@ var (
 	_ appmodule.AppModule = (*AppModule)(nil)
 )
 
-// AppModule implements the passport-PKI / DSC-registry module.
+// AppModule implements the passport-PKI module (the CSCA trust store and
+// Document Signer revocation).
 type AppModule struct {
 	cdc    codec.Codec
 	keeper keeper.Keeper

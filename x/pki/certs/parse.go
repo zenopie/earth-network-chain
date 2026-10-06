@@ -449,18 +449,10 @@ func VerifySignedBy(cert *Cert, signer *PublicKey) error {
 // IsSelfIssued reports whether issuer == subject (a self-signed root candidate).
 func (c *Cert) IsSelfIssued() bool { return bytes.Equal(c.IssuerRaw, c.SubjectRaw) }
 
-// KeyType returns the DSC/CSCA public-key algorithm (selects the registry leaf
-// encoding and, for the user proof, the SOD->DSC circuit variant).
-func (pk *PublicKey) KeyType() KeyType {
-	if pk.IsRSA {
-		return KeyRSA
-	}
-	return KeyECDSA
-}
-
-// CanonicalBytes returns the bytes hashed into the registry Merkle leaf, matching
-// the circuit: ECDSA -> x‖y (each coordinate padded to the curve byte length),
-// RSA -> the modulus in big-endian.
+// CanonicalBytes returns the key's canonical bytes (what the DSC commitment
+// absorbs, and what revocation hashes), matching the circuit: ECDSA -> x‖y
+// (each coordinate padded to the curve byte length), RSA -> the modulus in
+// big-endian.
 //
 // These bytes are absorbed one-per-field-element into the same Poseidon2 sponge
 // on both sides (DscCommitment here, poa_core::dsc_commitment in the circuit),

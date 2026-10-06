@@ -24,11 +24,10 @@ type Keeper struct {
 	// CSCA master list (governance-managed).
 	//
 	// Keyed by certID — sha256 of the certificate's own DER — so the store holds
-	// one entry per certificate. It used to be keyed by SKI, which is one entry
-	// per *signing key*, and the master list carries several certificates per key:
-	// 536 certificates under 366 SKIs, the extras being renewals and link
-	// certificates. Keying by SKI meant they overwrote each other and 170
-	// certificate bodies were dropped at InitGenesis, never reaching the chain.
+	// one entry per certificate. Not by SKI: that is one entry per *signing key*,
+	// and the master list carries several certificates per key (536 certificates
+	// under 366 SKIs, the extras being renewals and link certificates), which
+	// would overwrite each other.
 	Cscas collections.Map[[]byte, types.Csca] // certID -> Csca
 
 	// CscaBySKI is the primary issuer lookup. A DSC's AuthorityKeyIdentifier is

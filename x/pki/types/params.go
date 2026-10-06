@@ -1,8 +1,6 @@
 package types
 
-// NewParams creates a new Params instance. The module currently has no
-// parameters: tree_depth and root_history_size configured the DSC-registry
-// Merkle tree, which registration no longer uses.
+// NewParams creates a new Params instance. The module has no parameters.
 func NewParams() Params { return Params{} }
 
 // DefaultParams returns default module parameters.

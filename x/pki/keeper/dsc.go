@@ -43,8 +43,8 @@ func dnKey(dn []byte) []byte {
 
 // VerifyDsc checks that a DER-encoded Document Signer certificate is currently
 // valid, chains to a CSCA in the trust store, and has not been revoked. It
-// returns the DSC's canonical public-key bytes (ECDSA: x‖y, RSA: modulus
-// big-endian) so callers can derive the commitment the register circuit exposes.
+// returns the DSC's parsed public key so callers can derive the commitment the
+// register circuit exposes (certs.DscCommitment).
 //
 // This is the whole trust decision for a registration: the circuit proves the
 // passport's SOD was signed by this key, and this proves the key is a genuine,
@@ -68,10 +68,9 @@ func (k Keeper) VerifyDsc(ctx context.Context, der []byte) (*certs.PublicKey, er
 // signature, or "" if that CSCA names none.
 //
 // The issuer's country and not the DSC's own. A Document Signer's subject is
-// whatever its CSCA wrote into it, and the per-country registration cap was
-// keyed by that — so a signer could be issued under one country's root while
-// naming another, and draw on the second country's allowance, or name none
-// and be under no country cap at all. The CSCA is in the trust store because
+// whatever its CSCA wrote into it, so keyed by that a signer could be issued
+// under one country's root while naming another, and draw on the second
+// country's allowance, or name none and be under no country cap at all. The CSCA is in the trust store because
 // governance put it there as that country's root; its country is the one that
 // answers for the signer.
 func (k Keeper) VerifyDscIssuer(ctx context.Context, der []byte) (*certs.PublicKey, string, error) {
@@ -89,9 +88,9 @@ func (k Keeper) VerifyDscIssuer(ctx context.Context, der []byte) (*certs.PublicK
 	}
 	// It has to be a Document Signer, not an issuer. The chain check below
 	// only asks whether some trusted key signed this certificate, and a CSCA
-	// signs its own self-signed root and its link certificates — so a CSCA
-	// certificate used to pass as a DSC, making the country's root key a
-	// "signer" that registrations could be made under. A DSC is not a CA,
+	// signs its own self-signed root and its link certificates — so without
+	// this a CSCA certificate would pass as a DSC, making the country's root
+	// key a "signer" that registrations could be made under. A DSC is not a CA,
 	// may not sign certificates, and is issued by someone other than itself.
 	if dsc.IsCA || dsc.CertSign || dsc.IsSelfIssued() {
 		return nil, "", types.ErrNotDsc
@@ -121,7 +120,7 @@ func (k Keeper) VerifyDscIssuer(ctx context.Context, der []byte) (*certs.PublicK
 			continue
 		}
 		if certs.VerifySignedBy(dsc, csca.PublicKey) == nil {
-			// The parsed key rather than its bytes: the DSC commitment now needs
+			// The parsed key rather than its bytes: the DSC commitment needs
 			// the curve as well as the coordinates, and the bytes alone cannot
 			// say which curve produced them — which is the whole point of the
 			// tag. See certs.DscCommitment.
@@ -267,9 +266,8 @@ func (k Keeper) IsCscaRevoked(ctx context.Context, pubkey []byte) (bool, error) 
 // Both lookups go through an index rather than a direct Get, because one key and
 // one DN can each name several certificates — renewals and link certificates for
 // the same signing identity. They share a public key, so for verification any of
-// them does; the reason to return all is that the store now holds all, and a
-// lookup that silently picked one would put the old collapse back at a different
-// layer.
+// them does; the reason to return all is that the store holds all, and a
+// lookup that silently picked one would collapse them at a different layer.
 //
 // The revocation filter belongs here rather than in VerifyDsc because this is
 // the one place every trust decision about an issuer passes through. Filtering
