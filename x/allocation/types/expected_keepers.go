@@ -19,11 +19,12 @@ type WeightSource interface {
 	Weight(ctx context.Context, addr []byte) (math.Int, error)
 }
 
-// Lapser retires leased weight in a stream at the exact time it lapses. The
-// stream's index is settled up to each lapse time before Lapse runs, and
-// Lapse writes voters without settling further (SetWeightedVoterSettled),
-// so the emission after a lapse is never shared with the lapsed weight,
-// whoever triggers the settle. x/shieldedstaking's stake positions are one.
+// Lapser retires leased weight in a stream at the exact time it lapses.
+// Lapse runs only from x/allocation's BeginBlock sweep (SweepLapses), never
+// from a tx-time settle. The stream's index is settled up to each lapse
+// time before Lapse runs, and Lapse writes voters without settling further
+// (SetWeightedVoterSettled), so the emission after a lapse is never shared
+// with the lapsed weight. x/shieldedstaking's stake positions are one.
 type Lapser interface {
 	// NextLapse is the earliest pending lapse time (unix seconds) at or
 	// before t, if any.
