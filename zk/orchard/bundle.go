@@ -137,8 +137,8 @@ var ErrMalformedBundle = errors.New("orchard: malformed bundle")
 
 // ValidateBasic is the stateless shape check: 1..MaxActions actions, every cv
 // a curve point, nullifiers distinct, balances positive with distinct
-// assets, a binding signature of the right length. Callers add their own
-// policy (x/shielded: at least two actions, a param maximum).
+// assets, a binding signature of the right length. (x/shielded applies its
+// own, stricter checks in types.Bundle.ValidateBasic and does not call this.)
 func (b *Bundle) ValidateBasic() error {
 	if len(b.Actions) == 0 || len(b.Actions) > MaxActions {
 		return fmt.Errorf("%w: 1..%d actions", ErrMalformedBundle, MaxActions)

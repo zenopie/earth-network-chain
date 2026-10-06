@@ -12,7 +12,7 @@ func el(v uint64) fr.Element {
 	return e
 }
 
-// naiveRoot hashes a full level-by-level tree over leaves padded with zeros.
+// root is tr's root, failing the test on error.
 func root(t *testing.T, tr *Tree) fr.Element {
 	t.Helper()
 	r, err := tr.Root()
@@ -31,6 +31,7 @@ func leaf(t *testing.T, tr *Tree, i uint64) fr.Element {
 	return l
 }
 
+// naiveRoot hashes a full level-by-level tree over leaves padded with zeros.
 func naiveRoot(leaves []fr.Element) fr.Element {
 	level := append([]fr.Element(nil), leaves...)
 	for d := 0; d < Depth; d++ {

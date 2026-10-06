@@ -1,7 +1,7 @@
 package app
 
 // x/dex's note paths on the real app, with real proofs: swaps between notes
-// through the launch genesis's ANML/ERTH pool, fees paid from swap outputs,
+// through the launch genesis's ANML/ERTH pool, fees paid from the bundle,
 // ANML bought with transparent ERTH, pool-1 liquidity added from notes with
 // the shares as a note and withdrawn privately as notes, and the refusals of
 // every transparent ANML leg and of every route around the private ante.

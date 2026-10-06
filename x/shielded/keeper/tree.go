@@ -74,7 +74,7 @@ func (k Keeper) CurrentRoot(ctx context.Context) ([]byte, error) {
 	return privacy.FieldBytes(r), nil
 }
 
-// Commitment returns the leaf at position (for genesis export and tests).
+// Commitment returns the leaf at position (tests).
 func (k Keeper) Commitment(ctx context.Context, position uint64) ([]byte, error) {
 	t, err := k.tree(ctx)
 	if err != nil {

@@ -15,8 +15,8 @@ import (
 )
 
 // Note ciphertexts ("earth note v1"). The chain treats a ciphertext as opaque
-// bytes (at most 1024, bound into the signal so a relay cannot swap it); this
-// is the layout every wallet and tool writes:
+// bytes of a fixed length, bound into the signal so a relay cannot swap it;
+// this is the layout every wallet and tool writes:
 //
 //	ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 12 zero bytes, aad = none, pt)
 //	key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.note.v1", info = epk || cm)
@@ -289,8 +289,7 @@ func decryptBlind(salt []byte, version byte, ct []byte, ek [32]byte) (BlindNote,
 // 201 bytes; the label fields are zero for an unlabelled note, so a note's
 // ciphertext does not say whether it holds a redelegation's exposure. The
 // wallet defines the AEAD (wallet stake note v2); the chain only checks the
-// length. The blind stake ciphertext ("earth stake v1", for notes the chain
-// minted) is retired with chain-minted stake notes.
+// length.
 
 // WalletStakeCiphertextBytes is the length of every stake proof output's
 // ciphertext: 32 + 1 + 32 + 8 + 32 + 32 + 32 + 8 + 8 + 16.

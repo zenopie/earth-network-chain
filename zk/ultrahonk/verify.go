@@ -60,8 +60,8 @@ const PairingPointInputs = 8
 // library checks neither. A value of p or more is reduced mod p inside the
 // verifier, so p+x verifies wherever x does — two encodings of one input, and
 // any caller comparing the bytes it passed in against something else is then
-// comparing the wrong thing. The count went unchecked on the Go side and was
-// left to the native code to notice.
+// comparing the wrong thing. So both are checked here, before the native
+// code runs.
 func Verify(vk, proof []byte, publicInputs [][]byte) (bool, error) {
 	if len(proof) != ProofSize {
 		return false, fmt.Errorf("proof is %d bytes, want %d", len(proof), ProofSize)

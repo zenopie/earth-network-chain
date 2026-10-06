@@ -16,7 +16,7 @@ import (
 // msg that asks for it. The chain mints no stake note: every stake note is a
 // stake proof output carrying the wallet's own ciphertext. The wallet
 // finds every note it owns by trial-decrypting ciphertexts and checking the
-// cm against the published amount; it keeps no self-mint counter. One
+// cm against the published amount. One
 // exception, an open note (Keeper.MintOpenNote: the referral note the chain
 // mints to a referrer handle's address): no ciphertext; its shielded_mint
 // event carries owner_pk, rho and rcm, and the wallet takes the notes whose
@@ -48,7 +48,7 @@ func CheckBlindCiphertext(what string, ct []byte) error {
 //
 // MintNoteSplit pays a value above it as ceil(v / MaxNoteValue) notes to one
 // pc, each a full MaxNoteValue but the last, at most MaxSplitNotes of them:
-// 128 x (2^63-1), about 2^70, the same capacity the 64 x (2^64-1) split had.
+// 128 x (2^63-1), about 2^70.
 // Each note is its own position, so its nullifier H(nk, rho, position)
 // differs from its siblings' even when their commitments are equal; the
 // owner finds each by its ciphertext (the same one) and the amount published

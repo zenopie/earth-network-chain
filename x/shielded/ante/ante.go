@@ -9,10 +9,14 @@
 // signers[0] and panics with none), and the SDK's ValidateBasic refuses any
 // unsigned tx, so the private chain replaces them:
 //
-//	SetUpContext, LimitSimulationGas, CircuitBreaker  (as the normal chain)
+//	SetUpContext      (as the normal chain)
+//	Recover           a panic below is an error carrying the gas charged
+//	LimitSimulationGas, CircuitBreaker  (as the normal chain)
 //	ValidateTx        tx shape (no timeout_timestamp); bundle shapes; fee ==
 //	                  the msg's fee, in uerth
-//	TxTimeoutHeight, ValidateMemo, ConsumeGasForTxSize  (as the normal chain)
+//	TxTimeoutHeight   (as the normal chain)
+//	ExpiredTimeout    the tx's expiry
+//	ValidateMemo, ConsumeGasForTxSize  (as the normal chain)
 //	PrivateMsg        record the bound tx fields; fixed gas; block cap; fee
 //	                  floor; state checks; the action's proofs, binding
 //	                  signatures, action proofs; spend + append; fee to

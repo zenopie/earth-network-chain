@@ -15,7 +15,7 @@ import (
 //
 //	charge PrivateMsgGas + PrivateActionGas
 //	bundle state checks, CheckPrivateAction
-//	binding signatures and action proofs, VerifyPrivateAction  (not on recheck or simulate)
+//	VerifyPrivateAction, then binding signatures and action proofs  (not on recheck or simulate)
 //	spend, append, pay the fee; record the authorization
 //
 // Nothing is written until every check and both proofs have passed, so a tx

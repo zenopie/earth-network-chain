@@ -57,8 +57,9 @@ var (
 
 // BurnedKey prefixes the cumulative burn counters, keyed by (source, denom).
 //
-// The chain destroys supply in five places across four modules, and three of
-// them run in EndBlock where nothing indexes them. Nobody can reconstruct the
+// The chain destroys supply in several places across several modules (the
+// Source* consts below), and some of them run in a Begin/EndBlocker where
+// nothing indexes them. Nobody can reconstruct the
 // figure after the fact — x/bank tracks what supply remains, never what left —
 // so it is counted as it happens or not at all. See keeper/burns.go.
 var BurnedKey = collections.NewPrefix("burned")
@@ -94,7 +95,7 @@ const (
 	// SourceWasm is a contract destroying coins it holds, via CosmWasm's
 	// BankMsg::Burn. Any denom a contract can hold can appear here.
 	//
-	// Unlike the four above, this one is not a mechanism this chain designed.
+	// Unlike the ones above, this one is not a mechanism this chain designed.
 	// It is a standard CosmWasm message, x/wasm is permissionless here (see
 	// app/wasm.go), and wasmd burns through its own module account without
 	// telling anyone — so it is counted by a decorator in app/wasm.go rather

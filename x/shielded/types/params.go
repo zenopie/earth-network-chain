@@ -39,8 +39,7 @@ const (
 
 	// DefaultMaxPrivateActionsPerBlock caps the proofs of a block's private
 	// txs: 32 action proofs are ~74M gas with their notes, leaving a quarter
-	// of the block for everything else (the same proof budget as the 32
-	// one-proof transfers the cap allowed before bundles).
+	// of the block for everything else.
 	DefaultMaxPrivateActionsPerBlock uint32 = 32
 
 	// DefaultMaxActionsPerBundle bounds one bundle: a send spending up to 16

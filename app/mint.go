@@ -10,7 +10,8 @@ import (
 )
 
 // secondsPerYear is the 365-day year the pillars are sized against: a quarter of
-// the pre-mine is 630,720,000 ERTH, which is 1 ERTH/sec across five of these.
+// the pre-mine is 630,720,000 ERTH, which is the four pillars' 4 ERTH/sec for
+// five of these.
 // Using 365.25 here would report an issuance rate the token supply was never
 // built from.
 const secondsPerYear = 365 * 24 * 60 * 60

@@ -18,8 +18,9 @@ import (
 // answer does not work here. There the burn is one mechanism — the EIP-1559
 // base fee — and its size is a product of two fields in the block header, so
 // anyone can total it by walking headers and nothing has to be stored. This
-// chain burns in five places for five different reasons, and three of them run
-// in EndBlock as a function of the clock and of pool reserves. Nothing in a
+// chain burns in several places for different reasons (types.Source*), and
+// some of them run in a Begin/EndBlocker as a function of the clock and of
+// pool reserves. Nothing in a
 // header or a transaction says how much went. x/bank knows only what supply
 // remains.
 //
