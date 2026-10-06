@@ -1,26 +1,13 @@
-# Dockerfile — single-validator earth node.
-#
-# Runs under docker-compose (plain Docker host or SecretVM) and on Akash;
-# both use the same entrypoint.
+# Dockerfile — earth node.
 #
 # Two stages: build earthd, then ship it on a slim base. The runtime carries no
-# Go toolchain, no Ignite and no source.
+# Go toolchain and no source.
 #
-# Genesis comes from networks/genesis.json, generated once with `ignite chain init`
-# and committed. It holds everything config.yml describes — the 539 CSCAs, the
-# seven register verifying keys, the seeded ANML/ERTH pool, the governance
-# parameters — with the gentx and the dev accounts stripped, so no key that only
-# ever existed on a developer's machine is baked into a public image. The
-# entrypoint creates the validator with stock earthd genesis commands.
-#
-# An earlier version ran `ignite chain init` inside the container instead. That
-# cannot work against a mounted volume: init removes and recreates the home
-# directory, and /data is a mount point, so it fails with
-#
-#     Unlinkat //data: device or resource busy
-#
-# It also made the image multi-gigabyte, which is what made pushing it to ghcr
-# flaky.
+# Genesis is networks/genesis.json, built by `make genesis` from
+# networks/genesis/ and committed with its sha256: the 536 CSCAs, the 33
+# passport register and four privacy verifying keys, the seeded ANML/ERTH pool,
+# the governance parameters and the genesis validator's gentx. The entrypoint
+# joins that chain by default (docker/README.md).
 
 # ---- build ----------------------------------------------------------------
 # trixie for the compiler: Aztec's C++20 headers do not compile with bookworm's

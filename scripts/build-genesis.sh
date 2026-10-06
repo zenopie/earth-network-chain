@@ -4,10 +4,8 @@
 #
 # The genesis file is a build artifact, not something anyone edits. Every node on
 # the network has to agree on it byte for byte, so the only safe way to produce
-# it is a command that runs the same way twice. It used to be `ignite chain init`
-# followed by hand-stripping gentxs and dev accounts and recomputing bank supply
-# by eye — three chances to ship a file whose supply does not equal its balances,
-# with a consensus failure at the end of it.
+# it is a command that runs the same way twice: no hand-stripped gentxs or dev
+# accounts, and bank supply derived from the balances rather than by eye.
 #
 # What goes in:
 #

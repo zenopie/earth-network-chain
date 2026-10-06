@@ -12,13 +12,8 @@
 # takes, which also exercises validator-set changes at runtime rather than only
 # at genesis.
 #
-# This used to shell out to `ignite chain init`. ignite is no longer part of
-# building this chain — `make proto-gen` calls buf directly — and this script was
-# the last thing dragging it back in, so the local testnet stopped working the
-# moment ignite's own toolchain handling broke (it tries to fetch a pinned Go
-# version and fails if it is not there). Building genesis from the file we
-# actually ship removes the dependency and tests something closer to the real
-# chain.
+# Genesis is built from the file the network ships (networks/genesis.json), so
+# the local testnet is as close to the real chain as it can be.
 #
 # Voting power is deliberately uneven (see STAKES): it makes the >2/3 liveness
 # threshold observable — losing the largest validator halts the chain, losing a
@@ -31,10 +26,8 @@ EARTHD="${EARTHD:-$HOME/go/bin/earthd}"
 # id. This is a throwaway local network, and sharing the mainnet chain id would
 # make a transaction signed here replayable there.
 #
-# It is set once, here, and every transaction below is signed for it. This used
-# to be assumed rather than set, and was wrong: every tx came back "signature
-# verification failed", the script discarded the output, nodes 1 and 2 silently
-# never joined the validator set, and `up` reported success anyway.
+# It is set once, here, and every transaction below is signed for it (a wrong
+# chain id fails every tx with "signature verification failed").
 CHAIN_ID="${CHAIN_ID:-earth-3val}"
 BASE=/tmp/earth-3val
 GENESIS_SRC="$CHAIN_DIR/networks/genesis.json"
@@ -54,11 +47,9 @@ say() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 # tx runs a transaction and fails the script if the chain rejected it.
 #
-# These used to end in `>/dev/null`. A transaction can be delivered and still
-# fail — CheckTx reports a non-zero `code` in a JSON body on stdout with exit
-# status 0 — so discarding the output discards the only report of what happened.
-# That is how a wrong chain id became a script that finished happily with one
-# validator instead of three.
+# A transaction can be delivered and still fail — CheckTx reports a non-zero
+# `code` in a JSON body on stdout with exit status 0 — so the output is read,
+# never discarded: it is the only report of what happened.
 tx() {
   local out code
   out="$("$@" -y -o json 2>&1)" || {
@@ -74,12 +65,9 @@ except Exception:
 
 # wait_blocks waits for node0 to advance N blocks.
 #
-# This replaces a `sleep 4` between transactions. A fixed sleep is a bet on the
-# block time, and it lost the moment genesis stopped coming from ignite: the
-# launch genesis leaves CometBFT's 5s timeout_commit alone, 4s is less than one
-# block, and the second transaction from the same key was therefore built
-# against a sequence the first had not yet consumed. It failed with "account
-# sequence mismatch, expected 2, got 1" and took the whole script down with it.
+# Not a fixed sleep: that is a bet on the block time, and a second transaction
+# from the same key built before the first is in a block fails with "account
+# sequence mismatch".
 wait_blocks() {
   local want="$1" start now
   start=$(node0_height)

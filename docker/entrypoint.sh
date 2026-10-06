@@ -16,9 +16,8 @@
 #              doing this makes a DIFFERENT chain, which is exactly what a local
 #              devnet wants and exactly what a network cannot tolerate.
 #
-# The join path is the whole point. The old behaviour was DEV_INIT with no way
-# to turn it off: each node stamped its own genesis_time and minted its own
-# validator, so two containers from the same image could never share a chain.
+# The join path is the whole point: two containers from the same image share
+# a chain.
 #
 # State lives entirely under $EARTH_HOME, which is a mounted volume. The genesis
 # check is what makes a redeploy resume the existing chain rather than silently
@@ -37,8 +36,8 @@ MONIKER="${MONIKER:-earth-node}"
 # than a governance vote.
 #
 # 0uerth means free transactions, which means free spam. 0.005 is ~500uerth on a
-# typical transaction — nothing to a user, especially since ads-for-gas sponsors
-# them — while filling every block for a day would cost a spammer real ERTH.
+# typical transaction — nothing to a user — while filling every block for a day
+# would cost a spammer real ERTH.
 MIN_GAS_PRICES="${MIN_GAS_PRICES:-0.005uerth}"
 
 # Browser access, which the two RPC surfaces handle very differently.
@@ -301,9 +300,9 @@ if [ "$DEV_INIT" = "1" ] && ! devnet_is_complete; then
     earthd genesis add-genesis-account validator "$VALIDATOR_COINS" $KEYRING
   fi
   earthd genesis gentx validator "$VALIDATOR_BONDED" --chain-id "$CHAIN_ID" $KEYRING >/dev/null
-  # NOT >/dev/null 2>&1. This is the step whose failure used to be invisible:
-  # with both streams discarded, a collect that died took its reason with it and
-  # left a genesis that looked fine until earthd refused to start.
+  # NOT >/dev/null 2>&1: with both streams discarded, a collect that died
+  # would take its reason with it and leave a genesis that looked fine until
+  # earthd refused to start.
   earthd genesis collect-gentxs --home "$EARTH_HOME" >/dev/null
 
   # Refuse to hand earthd a genesis that cannot produce a block, rather than

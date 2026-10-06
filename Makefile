@@ -63,27 +63,8 @@ install:
 ###  Protobuf  ###
 ##################
 
-# Use this target if you do not want to use Ignite for generating proto files
-
-proto-deps:
-	@echo "Installing proto deps"
-	@echo "Proto deps present, run 'go tool' to see them"
-
-# buf directly, not `ignite generate proto-go`.
-#
-# Ignite only ever orchestrated buf with the template below, moved the output
-# into place, and ran `go mod tidy`. Verified 2026-08-27: buf on this template
-# reproduces all 37 generated files byte-for-byte.
-#
-# Dropping it removes a global binary from the build requirements -- ignite is
-# not in go.mod, so it was the one tool nobody could pin -- and with it a trap.
-# Ignite shells out to a binary named after go.mod's `go` line, literally
-# `go1.25.10`, and nothing ever creates a file by that name: GOTOOLCHAIN
-# downloads that toolchain into the module cache and dispatches to it internally
-# rather than putting it on PATH. So `make proto-gen` failed with
-#   go mod tidy: go: cannot find "go1.25.10" in PATH
-# on every machine, whatever its toolchain, until someone put a shim there.
-# buf's plugins are `go tool` invocations, which use the go on PATH normally.
+# buf directly with the template below: it reproduces the generated files byte
+# for byte, and buf's plugins are `go tool` invocations, pinned in go.mod.
 PROTO_OUT := .proto-gen
 proto-gen:
 	@echo "Generating protobuf files..."
