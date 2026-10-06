@@ -306,7 +306,9 @@ registration (live, or lapsed: `PassportsSeen` keeps the last idc) was to
 another `idc_old`, the chain appends `H(TAG_SUCC, idc_old, idc_new)` (`TAG_SUCC`
 = "earth.succ") to the identity tree right after the new identity leaf. It is
 never zeroed and is exported in genesis (`successions`, with `passports`
-carrying each passport's last idc). Another tag and arity than an identity
+carrying each passport's last idc). Every idc is registered at most once, by
+one passport (6.1, `used_idcs`), so a succession always links two identities
+of one passport and an identity appears in at most one chain, once. Another tag and arity than an identity
 leaf, so no membership proof can use one. Both idcs are already public in
 the passport's registration records, so the leaf discloses nothing new; a
 move proof shows one is in the tree without saying which.
@@ -703,6 +705,27 @@ it cannot swap the notes, ciphertexts or referrer. The chain verifies the DSC
 against the CSCA trust store, binds it to the proof's dsc_key, pins
 current_date to block time and dedups on the passport nullifier.
 
+**The registrant knows the identity's secret.** The register circuit takes
+the identity secret as a private witness and outputs `idc = H(TAG_ID,
+id_secret)` as its fifth public input (`params.idc_index`, 4); the chain
+requires it to equal `MsgRegister.idc`, or refuses with `ErrBadPublicInputs`.
+This holds for a first registration, a re-entry and a switch alike. Without
+it a holder could register her passport to an idc that someone else chose,
+whose secret only they know (audit R2-B1): the succession the chain then
+writes would let them move her handle or caretaker split to that identity,
+from which she could never move it back.
+
+**Fresh identities only.** An idc that has ever been registered, by any
+passport, is refused (`ErrIdcUsed` 1130, in the ante, before the proof): the
+chain keeps the set `UsedIdcs` (genesis `used_idcs`, field 23, which must
+hold every registration's, passport's and succession's idc). So one idc is
+never in two passports' chains, and a switch back to an earlier identity
+(A → B → A) is refused: it used to carry A's moved-out marks onto the live
+identity and strand a handle or split moved to B (audit R2-B2). Every
+registration, switch and re-entry uses a fresh identity secret; a wallet
+never re-registers a retired one. The set also cannot be used to block
+someone: occupying an idc needs its secret.
+
 **Register circuits.** `params.verifying_keys` maps a variant id (the msg's
 `signature_algorithm`) to its key; genesis carries 33, one per DSC key
 type, signature padding and hash profile (the mobile repo's
@@ -710,8 +733,9 @@ type, signature padding and hash profile (the mobile repo's
 with PKCS#1 v1.5 or PSS and any exponent in [3, 2^17), ECDSA on P-224, P-256,
 P-384, P-521 and brainpoolP224r1/256r1/384r1/512r1, each with the data-group,
 eContent and signature hashes real passports carry (SHA-1 to SHA-512, mixed
-where they mix). Every variant has the same four public inputs, so the
-registration path is one. The variant a prover names is not trusted for
+where they mix). Every variant has the same five public inputs
+(current_date, address, nullifier, dsc_key, idc), so the registration path
+is one. The variant a prover names is not trusted for
 anything: a proof under a hash or padding the passport does not use needs a
 preimage or a forged signature, and the key type is bound by the
 commitment. SHA-1 is accepted (issuer-formed inputs: a forgery needs a
@@ -756,7 +780,8 @@ registration unreferred. The `register` event carries `handle`, `referral`
 
 A registration for a passport with a live registration is a **switch**: the
 old leaf is zeroed, the new one appended, nothing paid. A switch to the same
-idc is refused (`ErrRegistrationReplay` 1123). A switch whose DSC differs
+idc is refused (`ErrRegistrationReplay` 1123); to any other idc registered
+before, `ErrIdcUsed` 1130. A switch whose DSC differs
 from the live registration's is refused (`ErrSwitchSignerMismatch` 1127); a
 switch counts against its signer's daily cap (shared with registrations; the
 network and country counters do not move; over it, 1113).
@@ -824,8 +849,32 @@ proof in the handle scope.
   identities of one passport, and the successor's live leaf; each identity
   holds at most one; a moved-out identity takes no more; and claims and
   casts still need the predecessor bound. A move to another person's
-  identity has no succession leaf, so no proof; knowing both secrets is
-  also required, so a buyer cannot be named as recipient.
+  identity has no succession leaf, so no proof.
+- **What a move guarantees, and what it does not (audit R2-B1).** A holder
+  cannot make a buyer's identity her successor: registration proves
+  knowledge of the idc's secret, and an idc is registered once (6.1). So
+  every identity in a passport's chain is one whose secret the passport's
+  holder had when she registered it, and whatever moves along the chain
+  stays hers to move again: after her next switch she can move it on from
+  any identity she held, with secrets she knows. A buyer gets no on-chain
+  assurance. To receive a split or handle he needs the secret of her
+  successor identity, which she keeps knowing (she can move it away after
+  her next switch). Sharing a secret remains possible, but only as an
+  unenforceable promise, as with any key. What remains is selling the
+  passport itself: a seller who hands the buyer her passport data (DG1 and
+  SOD, which NFC reads with the MRZ) and her old secret lets him register
+  her passport to his own identity and move her split or handle there, for
+  one lease. That is a sale of the personhood, name and document number
+  included, which no passport-based scheme can stop; a register proof run
+  as a multi-party computation (her passport, his id_secret) would do the
+  same without showing him the data. Both are listed in 13.
+- **A move is one step.** It goes from an identity to its immediate
+  successor, and only while that successor is live (its leaf in a recent
+  root). There is no succession (A, C) after A → B → C, and A → B needs B
+  live, so a handle or split still at A after the next switch can no
+  longer move: it lapses at its lease end. Wallets move before switching
+  again, and warn (or block) a switch while the current identity's
+  predecessor still holds a handle or split.
 - `HandleEntry.owner` (Query/Handle, Query/Handles, field 6): the
   handle-scope nullifier holding it, 64 lowercase hex characters, "" for a
   handle never claimed. Events `handle_bound` and `handle_released` carry
@@ -880,7 +929,20 @@ order: `root, scope, old_nullifier, new_nullifier, signal`. Constraints:
 Nothing else is revealed: not which leaves, not the idcs, no passport data.
 The successor must still be live at a recent root, so a move is made while
 the successor holds the passport's live registration (before it switches
-again); a wallet moves right after a switch. Replays: the sighash binds the
+again; one step only, 6.2).
+
+**When to move (wallets).** The successor stays live until the passport's
+next switch, so there is no need to move at once, and a move right after a
+switch links them by timing: switches are rare public MsgRegister txs (both
+idcs and the passport nullifier are on the registration record), and a
+`handle_moved` or `move_caretaker` a few blocks later ties the handle, its
+`owner_pk`, or the split to that passport for anyone who can compute the
+passport nullifier. The move's anonymity set is the successions whose
+successor is still live, small at first. So the wallet, once a switch has
+landed, suggests waiting a random delay (hours to days) before moving and
+lets the user choose when to move; it never sends a move on its own (a move
+spends a fee, which only the user starts). It reminds the user to move
+before switching again, since a move is one step. Replays: the sighash binds the
 fee bundle (spent once) and the handle; the scope separates handle from
 split moves; the old nullifier is moved out. nargo tests (12): the move,
 one step of a chain, and refusals for another passport's identity,
@@ -1584,7 +1646,16 @@ Accepted:
 - Action count shows a bundle's shape; wallets pad.
 - Fee amounts are wallet-chosen (wallets should round to a fixed schedule).
 - Timing between a move and a switch, or a registration and a claim, can link
-  a passport to a handle (wallets should randomize delays).
+  a passport to a handle. Wallets suggest a random delay before a move and
+  let the user choose when (6.6); they never move automatically.
+- Selling the passport: a holder who gives a buyer her passport data (DG1,
+  SOD) and an old identity secret lets him register her passport to his own
+  identity and move her split or handle to it for one lease (6.2); a
+  register proof run as a multi-party computation (her passport, his
+  id_secret) does the same without showing him the data. Registration
+  proves knowledge of the identity's secret, not who holds the passport;
+  nothing on chain can tell. Without the passport data no sale is
+  enforceable (audit R2-B1).
 - Private stake votes keep their expedited-round vote after a demotion while
   human votes rescope.
 - derth is owner-locked, but nk can be sold off-chain. If whole-account sales
