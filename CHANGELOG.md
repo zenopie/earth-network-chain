@@ -34,7 +34,13 @@ backend and indexers must adopt:
 - Groundworks splits are **leased** (`groundworks_lease_seconds`, x/allocation
   param 2, default 365 days): a stake position's (`Position.split_expires_at`,
   field 11) and an operator's (`Voter.expires_at`, field 5). Re-casting
-  renews; a lapsed split comes out at its exact lapse time.
+  renews; a lapsed split comes out at its exact lapse time. Leases retire
+  only in x/allocation's BeginBlock sweep, which drains every due lease
+  (uncapped; after a long halt the first block is slower); no tx-time
+  settle retires one (audit round 2, CD-1). Genesis refuses an operator's
+  Groundworks split with no `expires_at` (CD-2). Alert on events
+  `lease_retire_failed` and `lease_settle_held`; `lease_backlog_drained`
+  is informational (ORCHARD_DESIGN.md section 9).
 - x/personhood: **MsgMoveHandle and MsgMoveCaretaker carry a move proof**
   (circuits/move; `MoveProof{proof, root, old_nullifier, new_nullifier}`,
   public inputs root, scope, old_nullifier, new_nullifier, signal) instead of
@@ -58,7 +64,9 @@ backend and indexers must adopt:
   refused. Also: InitGenesis validates in every module and dex checks its
   funding at import; LP withdrawals never fold into a retried entry; slash,
   escrow, snapshot and sweep fixes (see the commit log).
-- Ops: `scripts/ceremony.sh` requires `--memo-peer` and `--moniker`;
+- Ops: `scripts/ceremony.sh` requires `--memo-peer` and `--moniker`; the
+  memo host must be a global IP (CGNAT 100.64.0.0/10 refused) or a DNS name
+  resolving to public addresses only (CD-4);
   `csca/additional/` takes `.der`; `make test` runs; the upgrade rehearsals
   register a human and cast its YES (needs `CIRCUITS`, nargo, bb).
 

@@ -1366,19 +1366,50 @@ validator (1118). The only way to take income out is to unbond the self-bond.
   (`MsgSetAllocations`, `Voter.expires_at` field 5) alike. Operators get the
   same rule because their vote is the same kind of power (stake directing
   public money); one param keeps the stream uniform. Casting again renews
-  the lease (from that block); a resync at a new weight keeps it. A lapsed
-  split comes out at its exact lapse time: every settle of the stream
-  (`advanceIndexTo`, whoever triggers it: BeginBlock, a tx, a staking hook)
-  first walks the leases lapsing up to its target in time order
-  (`VoterLapses` here, x/shieldedstaking's `GwLapses` through the
-  registered `Lapser`), settles the index to each lapse time and retires that
-  weight there (`SetWeightedVoterSettled` / `writeVoter`, no further
-  settle), then settles the rest: the emission after a lapse is never
-  shared with the lapsed weight. At most `MaxLapsesPerSettle` (1000) lapse
-  times per settle; a lease whose retirement fails is re-queued a day later
-  (`LapseRetrySeconds`), counting meanwhile and evented, never halting.
-  Events: `split_lapsed` (operators), `position` with action `split_lapsed`
-  (positions; every position event carries `split_expires_at`).
+  the lease (from that block); a resync at a new weight keeps it. Genesis
+  refuses an account's Groundworks split with no `expires_at`, as it refuses
+  a position's split with no `split_expires_at`.
+  - **Where a lease retires: only x/allocation's BeginBlock sweep**
+    (`SweepLapses`, from the BeginBlocker's settle of each stream). It walks
+    every lease due by the block time in time order (`VoterLapses` here,
+    x/shieldedstaking's `GwLapses` through the registered `Lapser`), settles
+    the index to each lapse time and retires that weight there
+    (`SetWeightedVoterSettled` / `writeVoter`, no further settle), then
+    settles to the block time: the emission after a lapse is never shared
+    with the lapsed weight. It drains the whole due queue, uncapped, so
+    after it nothing is due for the rest of the block. After a halt of H
+    seconds that is the retirements of the splits cast in an H-long window a
+    lease earlier, in one (slower) block.
+  - **Every other settle** (a tx, a staking hook, an EndBlock resync:
+    `AdvanceIndex` / `advanceIndexTo`) moves the index only and never
+    touches a voter, position or total, so a caller that reads a position
+    or voter, settles, then writes cannot undo or double a lapse. Callers
+    also settle before they read. Should a lease ever be due at such a
+    settle (only a module settling Groundworks in BeginBlock before
+    x/allocation could cause it; none does), it stops the index at that
+    lapse time instead of passing it. (Audit round 2, CD-1: before, any
+    settle retired leases, capped at 1000 lapse seconds; a backlog past the
+    cap left leases due at tx time, where read-settle-write callers
+    resurrected lapsed weight, subtracted a position twice so its option's
+    last position could never unlock, or re-filed a lapsed operator vote
+    with no lease.)
+  - A lease whose retirement fails is re-queued a day after the block it
+    failed in (`LapseRetryAt`, `LapseRetrySeconds`), counting meanwhile,
+    never halting. A deterministic failure therefore keeps its weight, and
+    its options keep earning on it, for good: alert on it.
+  - Events: `split_lapsed` (operators), `position` with action
+    `split_lapsed` (positions; every position event carries
+    `split_expires_at`).
+  - **Alerting** (x/allocation/types/events.go; none halts anything):
+
+    | event | attributes | meaning | alert |
+    | --- | --- | --- | --- |
+    | `lease_retire_failed` | `stream`, `lapser` (`account` / `positions`), `key` (voter / valoper), `expires_at`, `retry_at`, `error` | a due lease could not be retired; it counts until `retry_at` and retries daily for ever | any occurrence (page) |
+    | `lease_settle_held` | `stream`, `expires_at` | a settle other than the sweep met a due lease and held the index there; should never happen | any occurrence (page) |
+    | `lease_backlog_drained` | `stream`, `lapse_seconds` | one sweep walked more than 1000 lapse seconds (a halt's backlog), exact but slow | informational |
+
+    x/shieldedstaking also emits `shieldedstaking_epoch_failure` (`stage`
+    `lapse_positions`) alongside `lease_retire_failed`.
 - The gov module account is on the blocked list.
 
 ---
@@ -1518,6 +1549,16 @@ devnet faucet and gas wallet removed, genesis rebuilt. The genesis sha256
 at the top of this document is the placeholder's; the ceremony prints the
 launch one. `TestLaunchCeremony` reports PENDING CEREMONY until then
 (`EARTH_REQUIRE_CEREMONY=1` fails instead).
+
+The `--memo-peer` host is the launch genesis's only advertised peer, so it
+must be dialable from anywhere: a global IP (private, CGNAT 100.64.0.0/10,
+loopback, link-local, reserved, documentation and multicast ranges are
+refused, IPv4-mapped ones too), or a fully qualified DNS name that **must
+resolve to public addresses only**. The script resolves a name and refuses
+it if it does not resolve or any address is not global, and refuses
+internal suffixes (`.local`, `.internal`, `.lan`, `.home.arpa`, ...). It
+cannot see split-horizon DNS: use a name only if it resolves the same,
+publicly, everywhere; prefer the public IP. (Audit round 2, CD-4.)
 
 ---
 

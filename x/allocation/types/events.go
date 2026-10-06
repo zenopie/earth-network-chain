@@ -1,6 +1,6 @@
 package types
 
-// Lease events, for alerting (docs/ALLOCATION.md, "Groundworks leases").
+// Lease events, for alerting (ORCHARD_DESIGN.md section 9, Leases).
 // None of them halts anything; each one means weight is counting, or
 // emission is moving, other than the lease rule says.
 const (
