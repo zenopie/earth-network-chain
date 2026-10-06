@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"strconv"
 	"time"
 
@@ -607,13 +608,43 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 		return nil
 	}
 	total := value.Mul(s).Quo(b.Add(value))
-	booked := math.ZeroInt()
-	for _, o := range moves {
-		mv := o.mv
+	// Each move owes floor(total x weight / burnt), within its retained
+	// value. The flooring's remainder (under one derth per move; a capped
+	// move's excess is not passed on) goes, one derth each, to the moves
+	// owing most that still have retained value: rounding favours the book,
+	// not the movers (audit C-9).
+	debts := make([]math.Int, len(moves))
+	floors := math.ZeroInt()
+	for i, o := range moves {
 		d := math.LegacyNewDecFromInt(total).Mul(o.weight).Quo(burnt).TruncateInt()
-		if d.GT(mv.Retained) {
-			d = mv.Retained
+		floors = floors.Add(d)
+		if d.GT(o.mv.Retained) {
+			d = o.mv.Retained
 		}
+		debts[i] = d
+	}
+	if rem := total.Sub(floors); rem.IsPositive() {
+		order := make([]int, len(moves))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(x, y int) bool {
+			return moves[order[x]].weight.GT(moves[order[y]].weight)
+		})
+		for _, i := range order {
+			if !rem.IsPositive() {
+				break
+			}
+			if debts[i].LT(moves[i].mv.Retained) {
+				debts[i] = debts[i].AddRaw(1)
+				rem = rem.SubRaw(1)
+			}
+		}
+	}
+	booked := math.ZeroInt()
+	for i, o := range moves {
+		mv := o.mv
+		d := debts[i]
 		if !d.IsPositive() {
 			continue
 		}
