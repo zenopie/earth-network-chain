@@ -3,9 +3,10 @@ package networks
 import (
 	"encoding/base64"
 	"fmt"
-	"net"
 	"net/netip"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -35,34 +36,45 @@ const (
 )
 
 // publicPeer refuses a gentx memo that is not ID@HOST:PORT with a public
-// host, matching scripts/ceremony.sh: a global IP, or a fully qualified DNS
-// name outside the internal suffixes. The script also resolves a name and
-// refuses non-public answers; a test cannot rely on DNS, so this check is the
-// looser of the two and the script remains the gate.
+// host, mirroring scripts/ceremony.sh rule for rule: a lower-case 40-hex node
+// id, a port in 1..65535, and a host that is a global IP (IPv4-mapped
+// addresses judged as IPv4) or a fully qualified DNS name of valid labels
+// whose last label is not one of the script's internal suffixes (nor under
+// home.arpa). The script also resolves a name and refuses non-public
+// answers; a test cannot rely on DNS, so that one step is the script's alone.
+var (
+	peerRE  = regexp.MustCompile(`^([0-9a-f]{40})@(.+):([0-9]{1,5})$`)
+	labelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	// internalTLDs is ceremony.sh's list, in its order.
+	internalTLDs = []string{"localhost", "local", "internal", "lan", "home", "corp", "intranet", "test", "invalid", "example"}
+)
+
 func publicPeer(memo string) error {
-	id, hostport, ok := strings.Cut(memo, "@")
-	if !ok || len(id) != 40 || strings.Trim(strings.ToLower(id), "0123456789abcdef") != "" {
+	m := peerRE.FindStringSubmatch(memo)
+	if m == nil {
 		return fmt.Errorf("not <40-hex node id>@HOST:PORT")
 	}
-	host, port, err := net.SplitHostPort(hostport)
-	if err != nil || port == "" {
-		return fmt.Errorf("not HOST:PORT: %v", err)
+	host := m[2]
+	if n, _ := strconv.Atoi(m[3]); n < 1 || n > 65535 {
+		return fmt.Errorf("port %s is out of range", m[3])
 	}
-	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-		return fmt.Errorf("port %s is out of range", port)
+	bare := host
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		bare = host[1 : len(host)-1]
 	}
-	if ip, err := netip.ParseAddr(host); err == nil {
+	if ip, err := netip.ParseAddr(bare); err == nil {
 		if !globalIP(ip.Unmap()) {
 			return fmt.Errorf("host %s is not a public address", host)
 		}
 		return nil
 	}
-	h := strings.TrimSuffix(strings.ToLower(host), ".")
-	if !strings.Contains(h, ".") {
-		return fmt.Errorf("host %s is not a fully qualified DNS name", host)
+	name := strings.ToLower(strings.TrimRight(host, "."))
+	labels := strings.Split(name, ".")
+	if len(labels) < 2 || slices.Contains(internalTLDs, labels[len(labels)-1]) || strings.HasSuffix(name, ".home.arpa") {
+		return fmt.Errorf("host %s is not a public DNS name", host)
 	}
-	for _, suffix := range []string{".local", ".localhost", ".internal", ".lan", ".home", ".home.arpa", ".corp", ".test", ".example", ".invalid"} {
-		if strings.HasSuffix(h, suffix) {
+	for _, l := range labels {
+		if !labelRE.MatchString(l) {
 			return fmt.Errorf("host %s is not a public DNS name", host)
 		}
 	}
@@ -290,6 +302,15 @@ func TestPublicPeer(t *testing.T) {
 		id + "@node:26656":                          false,
 		id + "@8.8.8.8:0":                           false,
 		strings.Repeat("zz", 20) + "@8.8.8.8:26656": false,
+		strings.Repeat("AB", 20) + "@8.8.8.8:26656": false, // the script takes lower-case only
+		id + "@node.intranet:26656":                 false,
+		id + "@node.localhost:26656":                false,
+		id + "@router.home.arpa:26656":              false,
+		id + "@P2P.Erth.Network.:26656":             true,
+		id + "@bad_label.erth.network:26656":        false,
+		id + "@-x.erth.network:26656":               false,
+		id + "@[2606:4700::1111]:26656":             true,
+		id + "@8.8.8.8:123456":                      false,
 	} {
 		if got := publicPeer(memo) == nil; got != want {
 			t.Errorf("publicPeer(%q) = %v, want %v", memo, got, want)
