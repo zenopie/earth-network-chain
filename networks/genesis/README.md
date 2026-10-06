@@ -9,24 +9,17 @@ sha256 and the code that produced it all travel together.
 
     make genesis          rebuild networks/genesis.json + .sha256
     make genesis-check    fail if the artifact no longer matches these sources
-    go test ./deploy/...  check the committed file is self-consistent
+    go test ./networks/   check the committed file is self-consistent
 
 ## Why it is built rather than edited
 
 A network launch is one genesis file that every node agrees on byte for byte.
-The previous process was `ignite chain init`, then hand-stripping the gentx and
-the dev accounts, then "recompute bank supply" — three manual steps, each of
-which fails as a mismatched app hash at height 1 on somebody else's machine
-rather than as an error here.
-
-Two things this already caught:
-
-- `config.yml` and `networks/genesis.json` had disagreed about the shape of the
-  token supply since commit `6dd49f3` — the pre-mine was split a third to the
-  ANML/ERTH pool and two thirds to the liquidity auction in one file and not the
-  other. `TestConfigYmlAgreesWithGenesisSources` now fails on that.
-- `bank.supply` was maintained separately from `bank.balances`. It is now derived
-  from them and never written by hand.
+Every manual step (stripping a gentx or dev accounts, recomputing the bank
+supply) would fail as a mismatched app hash at height 1 on somebody else's
+machine rather than as an error here. So `bank.supply` is derived from
+`bank.balances`, never written by hand, and `TestConfigYmlAgreesWithGenesisSources`
+fails if `config.yml` (the dev chain) disagrees with these sources about
+anything both state.
 
 ## The sources
 
@@ -35,8 +28,8 @@ Two things this already caught:
 | `chain.json` | chain id, genesis time, app version — the header a network agrees on before anything else |
 | `app_state.json` | every parameter this chain deliberately sets, merged *over* `earthd init`'s defaults |
 | `accounts.json` | every balance that exists at height 1, and nothing else may hold one |
-| `verifying-keys/*.vk.b64` | one base64 UltraHonk verifying key per register circuit; the filename is the circuit id |
-| `shielded-verifying-keys/{transfer,membership}.vk.b64` | x/shielded's keys for every private tx, written by `scripts/privacy-vks.sh` from the circuits (`make privacy-vks-check` verifies them) |
+| `verifying-keys/*.vk.b64` | one base64 UltraHonk verifying key per passport register circuit (33); the filename is the circuit id. Written by `scripts/privacy-vks.sh` |
+| `shielded-verifying-keys/{action,membership,stake,vote}.vk.b64` | x/shielded's keys for every private tx, written by `scripts/privacy-vks.sh` from the circuits (`make privacy-vks-check` verifies them) |
 | `gentx/*.json` | signed gentxs to collect. Empty means launching with no validator set |
 | `../../csca/` | the CSCA trust store, regenerated through `tools/pki-genesis` |
 
@@ -49,11 +42,12 @@ instead of silently going missing.
 
 1. Edit the file in this directory.
 2. `make genesis`.
-3. `go test ./deploy/...`.
+3. `go test ./networks/`.
 4. Commit the source and the regenerated `networks/genesis.json` together.
 
-Swapping a verifying key is a file drop: overwrite `verifying-keys/<circuit>.b64`
-and rebuild. Adding a CSCA means adding the certificate under `csca/` — the
+Verifying keys are written from the circuits by `scripts/privacy-vks.sh`
+(`make privacy-vks`), then `make genesis`; `make privacy-vks-check` fails if a
+committed key differs from what the circuits produce. Adding a CSCA means adding the certificate under `csca/` — the
 trust store on disk and the one in genesis cannot disagree, because one is
 generated from the other.
 
@@ -86,8 +80,8 @@ the script and a release build run) fails instead.
 
 ## Still to decide before this is a real launch
 
-These are in `docs/LAUNCH_CHECKLIST.md` and none of them is a thing this script
-can decide for you:
+These are on the launch checklist ([docs.erth.network](https://docs.erth.network))
+and none of them is a thing this script can decide for you:
 
 - **`genesis_time`** must be a real UTC instant near the actual launch (the
   ceremony sets it), and the container entrypoint must not rewrite it at boot.
