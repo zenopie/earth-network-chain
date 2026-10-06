@@ -26,7 +26,7 @@ redesign; the replacement is named.
 | Staking wave, change 4 / audit 7 | `ffb269c5…6b59` | stake v2, vote v2 |
 | Pre-audit: vote padding | `84921c0b…7acc` | vote (padding nullifier) |
 | Passport coverage | `acb96128…be1c` | 33 register circuits replace the seven |
-| Final-audit fixes | `01298d6b…941b` | move (new: handle and split moves along succession leaves) |
+| Final-audit fixes | `34fe7441…393b` | move (new: handle and split moves along succession leaves); Groundworks split leases |
 
 ## Wave: Orchard phase 1 (2026-10-02)
 

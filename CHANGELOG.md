@@ -15,9 +15,13 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting: final-audit fixes** (new genesis, no migration;
 **genesis.json sha256
-01298d6b5e4f26d3b335b08cc5024c2a1470d256418830220107e634b10d941b**; a new
+34fe7441b60ba2799d3b428084c6f4219ecfb482e80a18138551d3dfc5fc393b**; a new
 move verifying key, the others unchanged). Wallets and indexers must adopt:
 
+- Groundworks splits are **leased** (`groundworks_lease_seconds`, x/allocation
+  param 2, default 365 days): a stake position's (`Position.split_expires_at`,
+  field 11) and an operator's (`Voter.expires_at`, field 5). Re-casting
+  renews; a lapsed split comes out at its exact lapse time.
 - x/personhood: **MsgMoveHandle and MsgMoveCaretaker carry a move proof**
   (circuits/move; `MoveProof{proof, root, old_nullifier, new_nullifier}`,
   public inputs root, scope, old_nullifier, new_nullifier, signal) instead of

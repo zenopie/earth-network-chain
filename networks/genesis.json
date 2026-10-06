@@ -6,7 +6,8 @@
     "07-tendermint": null,
     "allocation": {
       "params": {
-        "address_option_fee": "1000000"
+        "address_option_fee": "1000000",
+        "groundworks_lease_seconds": "0"
       },
       "registration_reward_seed": "630720000000000",
       "residue": "0",

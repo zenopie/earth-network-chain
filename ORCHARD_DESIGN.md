@@ -13,7 +13,7 @@ module books, validator stake, pool reserves, allocation weights and every
 amount the chain itself computes are public.
 
 Genesis: `networks/genesis.json` sha256
-`01298d6b5e4f26d3b335b08cc5024c2a1470d256418830220107e634b10d941b`, carrying
+`34fe7441b60ba2799d3b428084c6f4219ecfb482e80a18138551d3dfc5fc393b`, carrying
 the action, stake, vote, membership and move verifying keys
 (`networks/genesis/shielded-verifying-keys/*.vk.b64`) and the passport keys
 (`networks/genesis/verifying-keys/`, 33 register circuits). `make genesis-check` and
@@ -1124,9 +1124,17 @@ split_epoch}`: `MsgLockPosition` moves derth out of a note into it
 created before the snapshot's block; replaceable), `MsgUnlockPosition`
 merges its derth back into the owner's note. Each proves the owner tag.
 Positions are uncapped. A position keeps its Groundworks weight whatever
-its validator's status (jailed, unbonding, unbonded): it is the holder's
-private stake, not the validator's power. Only an operator's self-bond is
-gated to Bonded validators (section 9). Decided, not an oversight.
+its validator's status (jailed, unbonding, unbonded) until its lease ends:
+it is the holder's private stake, not the validator's power. Only an
+operator's self-bond is gated to Bonded validators (section 9). Decided, not
+an oversight.
+
+A position's split is leased: `split_expires_at` = cast or renewed +
+`groundworks_lease_seconds` (section 9), 0 without a split. Lock and Update
+set it (Update with the same split renews); at the lapse the split is cleared
+and comes off its validator's totals at that exact time (section 9,
+Leases). Query/Position(s) and the `position` events show it, so a wallet
+reminds from its own positions; nothing new ties a position to an owner.
 
 Weighed per validator: x/shieldedstaking keeps `T[v][o]` = Σ over v's live
 positions of derth × percent (`GwTotals`, exact integers); Lock, Update and
@@ -1289,6 +1297,26 @@ validator (1118). The only way to take income out is to unbond the self-bond.
   self-bond withdrawn takes its weight with it.
 - A voter's split drops options pruned since it was cast (at its next resync
   and in the export).
+- **Leases.** Every Groundworks split is leased for
+  `groundworks_lease_seconds` (x/allocation param 2; 0 = default 365 days;
+  else 1 day to 2 years), as a caretaker split is for caretaker_vote_seconds:
+  a stake position's (`Position.split_expires_at`, 8.6) and an operator's
+  (`MsgSetAllocations`, `Voter.expires_at` field 5) alike. Operators get the
+  same rule because their vote is the same kind of power (stake directing
+  public money); one param keeps the stream uniform. Casting again renews
+  the lease (from that block); a resync at a new weight keeps it. A lapsed
+  split comes out at its exact lapse time: every settle of the stream
+  (`advanceIndexTo`, whoever triggers it: BeginBlock, a tx, a staking hook)
+  first walks the leases lapsing up to its target in time order
+  (`VoterLapses` here, x/shieldedstaking's `GwLapses` through the
+  registered `Lapser`), settles the index to each lapse time and retires that
+  weight there (`SetWeightedVoterSettled` / `writeVoter`, no further
+  settle), then settles the rest: the emission after a lapse is never
+  shared with the lapsed weight. At most `MaxLapsesPerSettle` (1000) lapse
+  times per settle; a lease whose retirement fails is re-queued a day later
+  (`LapseRetrySeconds`), counting meanwhile and evented, never halting.
+  Events: `split_lapsed` (operators), `position` with action `split_lapsed`
+  (positions; every position event carries `split_expires_at`).
 - The gov module account is on the blocked list.
 
 ---
