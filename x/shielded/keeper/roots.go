@@ -14,10 +14,12 @@ import (
 	"github.com/earth-network/earth/x/shielded/types"
 )
 
-// A root becomes an anchor at the end of the block that produced it and stays
-// one for root_window_seconds from that block's time. The latest recorded
-// root never expires: a chain that went quiet for longer than the window must
-// not strand every note.
+// A root becomes an anchor at the end of the block that produced it. The
+// latest recorded root never expires, and a root stays an anchor for
+// root_window_seconds after a newer one replaced it (superseded_at): a chain
+// that went quiet for longer than the window must not strand every note, nor
+// every proof made against the root that was latest all that time (audit
+// A-1).
 //
 // Anchors are recorded per block rather than per append. A proof can only
 // target a root that existed at the end of some block, which is also the only
@@ -42,9 +44,43 @@ func (k Keeper) recordRoot(ctx context.Context) error {
 	if bytes.Equal(latest, root[:]) {
 		return nil
 	}
+	if len(latest) > 0 {
+		if err := k.supersede(ctx, latest, sdkCtx.BlockTime().Unix()); err != nil {
+			return err
+		}
+	}
 	return k.putRoot(ctx, types.RootRecord{
 		Root: root[:], Height: sdkCtx.BlockHeight(), Time: sdkCtx.BlockTime().Unix(), TreeSize: t.Size(),
 	}, true)
+}
+
+// windowStart is when rec's anchor window starts: when it was superseded,
+// or (for the latest, which never expires) when it was recorded. RootsByTime
+// is ordered by it.
+func windowStart(rec types.RootRecord) int64 {
+	if rec.SupersededAt != 0 {
+		return rec.SupersededAt
+	}
+	return rec.Time
+}
+
+// supersede marks the record of root (the latest until now) as replaced at
+// t, moving its by-time entry to t.
+func (k Keeper) supersede(ctx context.Context, root []byte, t int64) error {
+	rec, err := k.Roots.Get(ctx, root)
+	if errors.Is(err, collections.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := k.RootsByTime.Remove(ctx, collections.Join(windowStart(rec), rec.Root)); err != nil {
+		return err
+	}
+	rec.SupersededAt = t
+	if err := k.Roots.Set(ctx, rec.Root, rec); err != nil {
+		return err
+	}
+	return k.RootsByTime.Set(ctx, collections.Join(windowStart(rec), rec.Root))
 }
 
 // putRoot stores a record (and, when latest, makes it the newest anchor).
@@ -52,7 +88,7 @@ func (k Keeper) putRoot(ctx context.Context, rec types.RootRecord, latest bool) 
 	if err := k.Roots.Set(ctx, rec.Root, rec); err != nil {
 		return err
 	}
-	if err := k.RootsByTime.Set(ctx, collections.Join(rec.Time, rec.Root)); err != nil {
+	if err := k.RootsByTime.Set(ctx, collections.Join(windowStart(rec), rec.Root)); err != nil {
 		return err
 	}
 	if latest {
@@ -68,8 +104,8 @@ func (k Keeper) putRoot(ctx context.Context, rec types.RootRecord, latest bool) 
 	return nil
 }
 
-// pruneRoots deletes up to limit records older than the window, oldest first,
-// never the latest.
+// pruneRoots deletes up to limit records whose window has closed (superseded
+// more than the window ago), oldest first, never the latest.
 func (k Keeper) pruneRoots(ctx context.Context, window uint64, limit int) error {
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
 	latest, err := k.LatestRoot.Get(ctx)
@@ -120,7 +156,7 @@ func (k Keeper) Anchor(ctx context.Context, root []byte) (valid bool, rec types.
 	if err != nil {
 		return false, rec, 0, err
 	}
-	expiresAt = rec.Time + int64(params.RootWindowSeconds)
+	expiresAt = windowStart(rec) + int64(params.RootWindowSeconds)
 	return sdk.UnwrapSDKContext(ctx).BlockTime().Unix() <= expiresAt, rec, expiresAt, nil
 }
 

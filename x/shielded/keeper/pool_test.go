@@ -578,11 +578,26 @@ func TestRootWindow(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, has, "pruned")
 
-	// Once superseded, an old latest root expires by its own age.
+	// Once superseded, the old latest root stays an anchor for the window
+	// from when it was superseded, not from when it was recorded (audit A-1:
+	// it lapsed at once after a quiet spell, stranding every proof against
+	// the only root a wallet could have synced).
 	f.shieldScenario(shieldedtest.Scenario{Shields: s.Shields[1:]})
 	f.nextBlock(5 * time.Second)
+	ok, rec, expiresAt, _ := f.k.Anchor(f.ctx, r1)
+	require.True(t, ok, "superseded just now: still inside its window")
+	require.NotZero(t, rec.SupersededAt)
+	require.Equal(t, rec.SupersededAt+int64(params.RootWindowSeconds), expiresAt)
+	f.nextBlock(window - time.Minute)
 	ok, _, _, _ = f.k.Anchor(f.ctx, r1)
-	require.False(t, ok)
+	require.True(t, ok)
+	f.nextBlock(2 * time.Minute)
+	ok, _, _, _ = f.k.Anchor(f.ctx, r1)
+	require.False(t, ok, "the window after it was superseded has passed")
+	f.nextBlock(5 * time.Second)
+	has, err = f.k.Roots.Has(f.ctx, r1)
+	require.NoError(t, err)
+	require.False(t, has, "pruned")
 }
 
 // The block cap counts actions, not txs.

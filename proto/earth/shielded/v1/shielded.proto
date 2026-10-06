@@ -83,8 +83,13 @@ message RootRecord {
   bytes root = 1;
   // height of the block that produced it.
   int64 height = 2;
-  // time of that block, unix seconds. The window is measured from here.
+  // time of that block, unix seconds.
   int64 time = 3;
   // tree_size is the leaf count at this root.
   uint64 tree_size = 4;
+  // superseded_at is the time (unix seconds) of the block whose root
+  // replaced this one as the latest, 0 while it is the latest. The anchor
+  // window runs from here: a root stays an anchor for root_window_seconds
+  // after it stopped being the latest, however long it was the latest.
+  int64 superseded_at = 5;
 }

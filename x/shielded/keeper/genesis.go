@@ -45,8 +45,13 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	genesisTime := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
 	want := make(map[uint64][]byte, len(gs.Roots))
 	for i, r := range gs.Roots {
-		if r.Time > genesisTime {
-			return fmt.Errorf("root %d: time %d is after genesis time %d", i, r.Time, genesisTime)
+		if r.Time > genesisTime || r.SupersededAt > genesisTime {
+			return fmt.Errorf("root %d: time %d (superseded %d) is after genesis time %d", i, r.Time, r.SupersededAt, genesisTime)
+		}
+		// The latest (last) is not superseded; every other one is, no
+		// earlier than it was recorded.
+		if last := i == len(gs.Roots)-1; last != (r.SupersededAt == 0) || (!last && r.SupersededAt < r.Time) {
+			return fmt.Errorf("root %d: superseded_at %d does not fit its place (latest: %t) and time %d", i, r.SupersededAt, last, r.Time)
 		}
 		if prev, dup := want[r.TreeSize]; dup && !bytes.Equal(prev, r.Root) {
 			return fmt.Errorf("root %d: tree_size %d already has a different root", i, r.TreeSize)
