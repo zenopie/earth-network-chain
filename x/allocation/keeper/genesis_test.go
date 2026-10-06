@@ -338,3 +338,40 @@ func TestGenesisDoesNotCarryTheUpkeepClock(t *testing.T) {
 				"index by the whole downtime in one block", st.Stream)
 	}
 }
+
+// Audit round 2, CD-2: an account's Groundworks split imported with no
+// lease would never be queued and would count for ever; refused, as a
+// position's split with no lease is. A weighted voter (a module's
+// aggregate, its splits leased in that module) and a cleared voter need
+// none.
+func TestGenesisRequiresAGroundworksLease(t *testing.T) {
+	e := newTestEnv(t)
+	_, voterStr := e.addr("voter-one")
+	gs := func(v types.Voter) types.GenesisState {
+		return types.GenesisState{
+			Params: types.DefaultParams(),
+			Streams: []types.StreamState{{
+				Stream:      types.STREAM_ID_GROUNDWORKS,
+				RewardIndex: math.ZeroInt(),
+				TotalWeight: math.ZeroInt(),
+				OptionSeq:   1,
+				Options: []types.AllocationOption{{
+					Id: 1, Stream: types.STREAM_ID_GROUNDWORKS, Kind: types.ALLOCATION_KIND_ADDRESS,
+					AmountAllocated: math.ZeroInt(), Accumulated: math.ZeroInt(), LastRewardIndex: math.ZeroInt(),
+					Description: "a good", Recipient: voterStr,
+				}},
+				Voters: []types.VoterEntry{{Address: voterStr, Voter: v}},
+			}},
+		}
+	}
+	split := []types.AllocationWeight{{OptionId: 1, Percent: 100}}
+	g := gs(types.Voter{Percentages: split, Weight: math.ZeroInt()})
+	err := g.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no lease")
+
+	g = gs(types.Voter{Percentages: split, Weight: math.ZeroInt(), ExpiresAt: 2_000_000_000})
+	require.NoError(t, g.Validate())
+	g = gs(types.Voter{Weight: math.ZeroInt()})
+	require.NoError(t, g.Validate())
+}

@@ -118,9 +118,9 @@ func TestExportDropsPrunedOptions(t *testing.T) {
 	require.NoError(t, k.Voters.Set(ctx, voterKey(gw, []byte("gwpos/98765432109876543210")),
 		types.Voter{OptionWeights: []types.OptionWeight{ow(9, 2)}, Weight: math.NewInt(2)}))
 	require.NoError(t, k.Voters.Set(ctx, voterKey(gw, []byte("addr-a")),
-		types.Voter{Percentages: []types.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 9, Percent: 40}}, Weight: math.NewInt(10)}))
+		types.Voter{Percentages: []types.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 9, Percent: 40}}, Weight: math.NewInt(10), ExpiresAt: 2_000_000_000}))
 	require.NoError(t, k.Voters.Set(ctx, voterKey(gw, []byte("addr-b")),
-		types.Voter{Percentages: []types.AllocationWeight{{OptionId: 9, Percent: 100}}, Weight: math.NewInt(10)}))
+		types.Voter{Percentages: []types.AllocationWeight{{OptionId: 9, Percent: 100}}, Weight: math.NewInt(10), ExpiresAt: 2_000_000_000}))
 	gs, err := k.ExportGenesis(ctx)
 	require.NoError(t, err)
 	require.NoError(t, gs.Validate())
