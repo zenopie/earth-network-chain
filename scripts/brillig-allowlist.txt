@@ -7,18 +7,27 @@
 # bump or an edit that moves a site needs this file re-reviewed, not edited
 # blindly.
 #
-# site <TAB> justification
-action/src/main.nr:67	hash_to_point_hint(TAG_GEN, s_asset): point_at recomputes x = h3(tag, asset, ctr) in-circuit, ctr is a range-checked u32, y*y == x^3-17 and canonical y are asserted; a non-least ctr only unbalances the prover's own bundle
-action/src/main.nr:69	hash_to_point_hint(TAG_GEN, o_asset): as :67, for the output asset
-noir-lang/sha256/v0.3.0/src/sha256.nr:167	build_msg_block_helper: every one of the 16 words is rebuilt from the message bytes and assert_eq'd (sha256.nr:170-189); upstream noir-lang/sha256#54, #61 (false positive)
-zac-williamson/sha1/v0.11/src/base4_decoding.nr:27	__split_into_base4_5bit_slices: slices index [Field; 1024] tables (range check) and the 70-bit reconstruction is assert_eq'd (:38), so the decomposition is unique
-zac-williamson/sha1/v0.11/src/base4_decoding.nr:50	as :27 (reconstruction asserted at :59)
-zac-williamson/sha1/v0.11/src/base4_decoding.nr:62	as :27 (reconstruction asserted at :71)
-zac-williamson/sha1/v0.11/src/base4_decoding.nr:81	as :27 (reconstruction asserted at :90)
-zkpassport/sha512/v0.2.0/src/encoding.nr:319	__decompose_e: 9 slices summing to 64 bits, each indexing a table of exactly 2^k entries, reconstruction assert_eq'd (:340)
-zkpassport/sha512/v0.2.0/src/encoding.nr:404	__decompose_a: as :319 (reconstruction asserted at :425)
-zkpassport/sha512/v0.2.0/src/encoding.nr:497	13 x 10-bit slices into [Field; 1024] tables, 130-bit reconstruction assert_eq'd (:509)
-zkpassport/sha512/v0.2.0/src/encoding.nr:534	as :497 (reconstruction asserted at :555)
-zkpassport/sha512/v0.2.0/src/encoding.nr:560	as :497 (reconstruction asserted at :581)
-zkpassport/sha512/v0.2.0/src/encoding.nr:595	as :497 (reconstruction asserted at :616)
-zkpassport/noir_bigcurve/v0.14.0-2/src/ops/msm.nr:215	MSM transcript hint: every entry is replayed by constrained incomplete add/double steps with x1 != x2 asserted, curves have odd prime order, callers validate r, s, key and r_point_x; upstream noir-lang/noir#13600
+# Each site also pins how many warnings it produces across the workspace, and
+# the build fails when that count changes either way (audit R3C-1): a new
+# caller of an allowlisted library site must be reviewed, not inherited. A
+# site whose soundness depends on its callers (msm.nr:215: callers validate
+# r, s, key and r_point_x) also pins exactly which circuits reach it (the
+# outermost frame of each warning's call stack); `*` means the site is
+# self-contained (the library asserts its own reconstruction) and only the
+# count is pinned.
+#
+# site <TAB> count <TAB> circuits (comma-separated, or *) <TAB> justification
+action/src/main.nr:67	1	*	hash_to_point_hint(TAG_GEN, s_asset): point_at recomputes x = h3(tag, asset, ctr) in-circuit, ctr is a range-checked u32, y*y == x^3-17 and canonical y are asserted; a non-least ctr only unbalances the prover's own bundle
+action/src/main.nr:69	1	*	hash_to_point_hint(TAG_GEN, o_asset): as :67, for the output asset
+noir-lang/sha256/v0.3.0/src/sha256.nr:167	8	*	build_msg_block_helper: every one of the 16 words is rebuilt from the message bytes and assert_eq'd (sha256.nr:170-189); upstream noir-lang/sha256#54, #61 (false positive)
+zac-williamson/sha1/v0.11/src/base4_decoding.nr:27	7	*	__split_into_base4_5bit_slices: slices index [Field; 1024] tables (range check) and the 70-bit reconstruction is assert_eq'd (:38), so the decomposition is unique
+zac-williamson/sha1/v0.11/src/base4_decoding.nr:50	7	*	as :27 (reconstruction asserted at :59)
+zac-williamson/sha1/v0.11/src/base4_decoding.nr:62	7	*	as :27 (reconstruction asserted at :71)
+zac-williamson/sha1/v0.11/src/base4_decoding.nr:81	7	*	as :27 (reconstruction asserted at :90)
+zkpassport/sha512/v0.2.0/src/encoding.nr:319	13	*	__decompose_e: 9 slices summing to 64 bits, each indexing a table of exactly 2^k entries, reconstruction assert_eq'd (:340)
+zkpassport/sha512/v0.2.0/src/encoding.nr:404	13	*	__decompose_a: as :319 (reconstruction asserted at :425)
+zkpassport/sha512/v0.2.0/src/encoding.nr:497	13	*	13 x 10-bit slices into [Field; 1024] tables, 130-bit reconstruction assert_eq'd (:509)
+zkpassport/sha512/v0.2.0/src/encoding.nr:534	13	*	as :497 (reconstruction asserted at :555)
+zkpassport/sha512/v0.2.0/src/encoding.nr:560	13	*	as :497 (reconstruction asserted at :581)
+zkpassport/sha512/v0.2.0/src/encoding.nr:595	13	*	as :497 (reconstruction asserted at :616)
+zkpassport/noir_bigcurve/v0.14.0-2/src/ops/msm.nr:215	12	lean_poa_bp224_sha1,lean_poa_bp224_sha224,lean_poa_bp256_sha256,lean_poa_bp384_sha256,lean_poa_bp384_sha384,lean_poa_bp512_sha384,lean_poa_bp512_sha512,lean_poa_p224_sha256_sha224_sha224,lean_poa_p224_sha256_sha256_sha224,lean_poa_p384_sha256,lean_poa_p384_sha384,lean_poa_p521_sha512	MSM transcript hint: every entry is replayed by constrained incomplete add/double steps with x1 != x2 asserted, curves have odd prime order, callers validate r, s, key and r_point_x; upstream noir-lang/noir#13600

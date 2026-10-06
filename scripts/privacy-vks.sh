@@ -56,41 +56,70 @@ rm -rf "$WORK/circuits/target"
 # Audit R2C-1: nargo reports every Brillig call it cannot see constrained.
 # The known sites are false positives (scripts/brillig-allowlist.txt, each
 # with its justification); any other site fails this script, in both modes,
-# so a real unconstrained hint cannot hide among the known ones.
+# so a real unconstrained hint cannot hide among the known ones. Each site's
+# warning count is pinned too, and a caller-dependent site's set of circuits
+# (audit R3C-1), so a new caller of a listed library site fails rather than
+# being inherited.
 python3 - "$WORK/compile.log" "$CHAIN_DIR/scripts/brillig-allowlist.txt" <<'PY'
 import re, sys
+from collections import Counter
 log = re.sub(r'\x1b\[[0-9;]*m', '', open(sys.argv[1], encoding='utf-8', errors='replace').read())
-allowed = {}
+# site -> (pinned count, pinned circuit set or None for '*')
+pinned = {}
 for line in open(sys.argv[2], encoding='utf-8'):
     line = line.rstrip('\n')
     if not line or line.startswith('#'):
         continue
-    site, _, why = line.partition('\t')
-    if not why.strip():
-        sys.exit(f'brillig-allowlist.txt: {site} has no justification')
-    allowed[site] = 0
-lines = log.splitlines()
-new = {}
-for i, line in enumerate(lines):
-    if "Brillig function call isn't properly covered" not in line:
-        continue
-    m = next((re.search(r'┌─ (\S+):(\d+):\d+', l) for l in lines[i + 1:i + 4] if '┌─' in l), None)
+    cols = line.split('\t', 3)
+    if len(cols) != 4 or not cols[3].strip():
+        sys.exit(f'brillig-allowlist.txt: {cols[0]} needs site, count, circuits and a justification, TAB-separated')
+    site, count, circuits, _ = cols
+    if not count.isdigit() or int(count) < 1:
+        sys.exit(f'brillig-allowlist.txt: {site} has a bad count {count!r}')
+    if site in pinned:
+        sys.exit(f'brillig-allowlist.txt: {site} is listed twice')
+    pinned[site] = (int(count), None if circuits == '*' else set(circuits.split(',')))
+
+def short(path):
+    return path.split('/github.com/', 1)[1] if '/github.com/' in path else path
+
+# Each warning: its site (first span) and the circuit it was compiled for
+# (the package of the call stack's outermost frame, `1: main`).
+seen = {}
+blocks = re.split(r"^bug: Brillig function call isn't properly covered[^\n]*\n", log, flags=re.M)
+if len(blocks) - 1 != log.count("Brillig function call isn't properly covered"):
+    sys.exit('privacy-vks: unparsed Brillig warning (not at a line start)')
+for n, b in enumerate(blocks[1:], 1):
+    head = b.split('\nbug:', 1)[0].split('\nwarning:', 1)[0]
+    m = re.search(r'^\s*┌─ (\S+):(\d+):\d+', head, flags=re.M)
     if not m:
-        sys.exit(f'privacy-vks: unparsed Brillig warning near log line {i + 1}')
-    path = m.group(1)
-    if '/github.com/' in path:
-        path = path.split('/github.com/', 1)[1]
-    site = f'{path}:{m.group(2)}'
-    if site in allowed:
-        allowed[site] += 1
-    else:
-        new[site] = new.get(site, 0) + 1
-if new:
-    for site, n in sorted(new.items()):
-        print(f'unreviewed Brillig warning: {site} ({n}x)', file=sys.stderr)
-    sys.exit('a Brillig call nargo cannot see constrained is not in scripts/brillig-allowlist.txt: '
-             'review it (constrain the hint, or justify and list the site)')
-print(f'Brillig warnings: {sum(allowed.values())} at {sum(1 for n in allowed.values() if n)} allowlisted sites, none new', file=sys.stderr)
+        sys.exit(f'privacy-vks: Brillig warning #{n} has no parseable span')
+    site = f'{short(m.group(1))}:{m.group(2)}'
+    stack = head.split('= Call stack:', 1)
+    frames = re.findall(r'^\s*\d+: \S+\s*\n\s*at (\S+):\d+:\d+', stack[1], flags=re.M) if len(stack) == 2 else []
+    circuit = short(frames[0]).split('/', 1)[0] if frames else None
+    seen.setdefault(site, []).append(circuit)
+
+fail = False
+for site, circuits in sorted(seen.items()):
+    if site not in pinned:
+        print(f'unreviewed Brillig warning: {site} ({len(circuits)}x)', file=sys.stderr)
+        fail = True
+for site, (count, want) in sorted(pinned.items()):
+    got = seen.get(site, [])
+    if len(got) != count:
+        print(f'Brillig site {site}: {len(got)} warnings, allowlist pins {count}', file=sys.stderr)
+        fail = True
+    if want is not None:
+        have = Counter(got)
+        if None in have or set(have) != want or any(v != 1 for v in have.values()):
+            print(f'Brillig site {site}: reached from {sorted(map(str, have.elements()))}, '
+                  f'allowlist pins {sorted(want)}', file=sys.stderr)
+            fail = True
+if fail:
+    sys.exit('a Brillig call nargo cannot see constrained is not as scripts/brillig-allowlist.txt pins it: '
+             'review it (constrain the hint, or justify and update the site, its count and its circuits)')
+print(f'Brillig warnings: {sum(len(v) for v in seen.values())} at {len(seen)} allowlisted sites, counts and callers as pinned', file=sys.stderr)
 PY
 for c in action membership stake vote move; do
   bb write_vk -b "$WORK/circuits/target/$c.json" -o "$WORK/vk-$c" -t noir-recursive >/dev/null 2>&1
