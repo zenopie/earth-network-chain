@@ -36,9 +36,6 @@ const MaxPublicSignals = 16
 // MaxDscDerBytes bounds the Document Signer certificate a registration carries.
 const MaxDscDerBytes = 8 * 1024
 
-// MaxNoteCiphertextBytes bounds a note ciphertext, as the shielded pool does.
-const MaxNoteCiphertextBytes = shieldedtypes.MaxCiphertextBytes
-
 // Field parses a 32-byte canonical field element, wrapping the error.
 func Field(what string, b []byte) (fr.Element, error) {
 	e, err := privacy.FieldFromBytes(b)
@@ -119,9 +116,6 @@ func (m *MsgRegister) PrivateBundles() []*shieldedtypes.Bundle {
 
 // PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
 func (m *MsgRegister) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
-
-// MaxAddressBytes bounds a bech32 address string in a msg.
-const MaxAddressBytes = 128
 
 // AffiliateField is the affiliate's place in the registration binding and
 // signal: 0 when the registration names no referrer, and

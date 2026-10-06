@@ -9,10 +9,6 @@ import (
 
 // GenerateGenesisState creates a randomized GenState of the module.
 func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
-	accs := make([]string, len(simState.Accounts))
-	for i, acc := range simState.Accounts {
-		accs[i] = acc.Address.String()
-	}
 	personhoodGenesis := types.GenesisState{
 		Params: types.DefaultParams(),
 	}

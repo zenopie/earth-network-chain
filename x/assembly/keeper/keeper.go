@@ -117,9 +117,6 @@ func NewKeeper(
 	return k
 }
 
-// ChamberAddress is the address x/allocation checks a removal against.
-func (k Keeper) ChamberAddress() []byte { return k.chamberAddr }
-
 // castVote records one vote into a (ballot, nullifier) -> option map and moves
 // the tally to match, handling the case where this registration has already
 // voted and is changing its mind.

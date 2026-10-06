@@ -20,9 +20,6 @@ const (
 	// DefaultHandleLeaseSeconds is the default lease (Params.handle_lease_seconds).
 	DefaultHandleLeaseSeconds = 365 * 24 * 60 * 60
 
-	// HandleSweepLimit bounds the released handles one block deletes.
-	HandleSweepLimit = 200
-
 	// HandleQueryDefaultLimit and HandleQueryMaxLimit page Query/Handles.
 	HandleQueryDefaultLimit = 100
 	HandleQueryMaxLimit     = 1000

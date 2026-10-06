@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
-	"cosmossdk.io/core/address"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
@@ -56,12 +55,6 @@ type ShieldedKeeper interface {
 	RegisterPrivateAction(msgTypeURL string, h shieldedtypes.PrivateActionHandler)
 	VerifyCircuit(ctx context.Context, circuit string, proof []byte, publicInputs [][]byte) error
 	PrivateGasPrices(ctx context.Context) (proof, note uint64, err error)
-}
-
-// AuthKeeper defines the expected interface for the Auth module.
-type AuthKeeper interface {
-	AddressCodec() address.Codec
-	GetAccount(context.Context, sdk.AccAddress) sdk.AccountI // only used for simulation
 }
 
 // BankKeeper defines the expected interface for the Bank module.

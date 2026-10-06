@@ -42,7 +42,6 @@ type ModuleInputs struct {
 	Cdc          codec.Codec
 	AddressCodec address.Codec
 
-	AuthKeeper types.AuthKeeper
 	BankKeeper types.BankKeeper
 	DexKeeper  dexkeeper.Keeper
 	PkiKeeper  pkikeeper.Keeper
@@ -84,10 +83,10 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.EarthKeeper,
 		in.ShieldedKeeper,
 	)
-	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
+	m := NewAppModule(in.Cdc, k)
 
-	// Register, ClaimAnml and SetCaretaker are private msgs: their proofs are
-	// checked in the private ante, with the fee bundle they embed.
+	// Every user msg of this module is a private msg: its proofs are checked
+	// in the private ante, with the fee bundle it embeds.
 	k.RegisterPrivateActions(in.ShieldedKeeper)
 	// Revoking a Document Signer starts retiring the registrations made under it.
 	in.PkiKeeper.RegisterRevocationListener(k)

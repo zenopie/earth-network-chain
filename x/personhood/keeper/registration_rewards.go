@@ -27,7 +27,6 @@ type rewardNote struct {
 // (privacy.ReferralOpening), so the registrant names the handle and nothing
 // else about where the note goes.
 type referralNote struct {
-	handle   string
 	ownerPK  fr.Element
 	rho, rcm fr.Element
 }
@@ -51,7 +50,7 @@ func (k Keeper) referralNoteFor(ctx context.Context, handle string, nullifier []
 		return nil, err
 	}
 	rho, rcm := privacy.ReferralOpening(nf, leafIndex)
-	return &referralNote{handle: handle, ownerPK: ownerPK, rho: rho, rcm: rcm}, nil
+	return &referralNote{ownerPK: ownerPK, rho: rho, rcm: rcm}, nil
 }
 
 // registrationPayout is what payRegistrationReward minted.

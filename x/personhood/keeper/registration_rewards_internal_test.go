@@ -58,7 +58,7 @@ func TestRegistrationRewardSplitsWithReferrer(t *testing.T) {
 	alloc := &recordingAllocation{payout: math.NewInt(1001)}
 	var minted []sdk.Coin
 	k, ctx := rewardKeeper(t, alloc, &minted)
-	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, &referralNote{handle: "amy"})
+	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, &referralNote{})
 	require.NoError(t, err)
 	require.Equal(t, int64(types.RegistrationRewardPpm), alloc.drawnAtPpm)
 	require.Equal(t, math.NewInt(501), got.registrant)
@@ -86,7 +86,7 @@ func TestRegistrationRewardEmptyPool(t *testing.T) {
 	alloc := &recordingAllocation{payout: math.ZeroInt()}
 	var minted []sdk.Coin
 	k, ctx := rewardKeeper(t, alloc, &minted)
-	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, &referralNote{handle: "amy"})
+	got, err := k.payRegistrationReward(ctx, rewardNote{pc: []byte{1}}, &referralNote{})
 	require.NoError(t, err)
 	require.True(t, got.registrant.IsZero())
 	require.Empty(t, minted)
