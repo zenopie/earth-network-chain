@@ -333,9 +333,5 @@ func (k Keeper) rotateSolvencyCheck(ctx context.Context) error {
 	return k.SolvencyCursor.Set(ctx, next)
 }
 
-// SolvencyProbe exposes the bounded check for tests, which use it alongside the
-// exhaustive AssertInvariants to confirm the two agree.
-func (k Keeper) SolvencyProbe(ctx context.Context) error { return k.AssertBoundedSolvency(ctx) }
-
 // overCap reports whether a non-nil a exceeds types.MaxPoolAmount.
 func overCap(a math.Int) bool { return !a.IsNil() && a.GT(types.MaxPoolAmount) }

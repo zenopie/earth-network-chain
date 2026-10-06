@@ -200,12 +200,6 @@ func (m *MsgRemoveLiquidityShielded) PrivateBundles() []*shieldedtypes.Bundle {
 // PrivateFee is the fee rule's: the bundle's whole uerth balance.
 func (m *MsgRemoveLiquidityShielded) PrivateFee() uint64 { return shieldedtypes.FeeAfter(m, 0) }
 
-// Shares is the LP shares withdrawn: the bundle's dexlp/<pool_id> balance.
-func (m *MsgRemoveLiquidityShielded) Shares() sdk.Coin {
-	denom := LPShareDenom(m.PoolId)
-	return sdk.NewCoin(denom, math.NewIntFromUint64(m.Bundle.Balance(denom)))
-}
-
 // WithdrawalID keys the withdrawal in place of an account: 0x00 || the first
 // nullifier the bundle spends, unique for ever.
 func (m *MsgRemoveLiquidityShielded) WithdrawalID() []byte {

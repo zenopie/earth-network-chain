@@ -36,13 +36,8 @@ const (
 // import these; nothing here imports them.
 const (
 	// EmissionPerSecondPerPillar is one pillar's rate in uerth (1 ERTH/sec).
+	// Four pillars emit at it, so the chain issues 4 ERTH/sec in all.
 	EmissionPerSecondPerPillar = 1_000_000
-
-	// Pillars is how many streams emit at that rate.
-	Pillars = 4
-
-	// TotalEmissionPerSecond is the chain's entire issuance rate, in uerth.
-	TotalEmissionPerSecond = EmissionPerSecondPerPillar * Pillars
 )
 
 // ParamsKey is the prefix to retrieve all Params

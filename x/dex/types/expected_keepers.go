@@ -3,18 +3,10 @@ package types
 import (
 	"context"
 
-	"cosmossdk.io/core/address"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 )
-
-// AuthKeeper defines the expected interface for the Auth module.
-type AuthKeeper interface {
-	AddressCodec() address.Codec
-	GetAccount(context.Context, sdk.AccAddress) sdk.AccountI // only used for simulation
-	// Methods imported from account should be defined here
-}
 
 // StakingKeeper is a denom oracle, and nothing else. x/dex does not cross
 // staking: no pool, swap, auction or reward path reads a delegation, and this
@@ -51,12 +43,6 @@ type BankKeeper interface {
 	SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins) error
 	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 	BurnCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
-}
-
-// ParamSubspace defines the expected Subspace interface for parameters.
-type ParamSubspace interface {
-	Get(context.Context, []byte, interface{})
-	Set(context.Context, []byte, interface{})
 }
 
 // BurnRecorder is x/earth's cumulative burn counters, narrowed to the one call

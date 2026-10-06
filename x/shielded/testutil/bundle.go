@@ -195,6 +195,3 @@ func FeePlan(seed string, tree *merkle.Tree, note PlanSpend, fee uint64, changeP
 		{Out: PlanOutput{Denom: types.FeeDenom, PC: privacy.H(privacy.AssetID("bundle-plan/"+seed+"/dummy-pc"), privacy.U64(0))}},
 	}}
 }
-
-// ProverFunc adapts p to a ProveFunc.
-func (p *Prover) ProverFunc() ProveFunc { return p.TryProve }

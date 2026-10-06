@@ -3,7 +3,6 @@ package types
 import (
 	"context"
 
-	"cosmossdk.io/core/address"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -26,12 +25,6 @@ type WeightSource interface {
 // it (the default bonded-stake source) tracks every account.
 type BondedTracker interface {
 	TracksBonded(key []byte) bool
-}
-
-// AuthKeeper defines the expected interface for the Auth module.
-type AuthKeeper interface {
-	AddressCodec() address.Codec
-	GetAccount(context.Context, sdk.AccAddress) sdk.AccountI // only used for simulation
 }
 
 // StakingKeeper defines the expected interface for the Staking module. It

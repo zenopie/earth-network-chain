@@ -57,12 +57,3 @@ func (k Keeper) AssetID(ctx context.Context, denom string) ([]byte, error) {
 	}
 	return id, err
 }
-
-// DenomOf returns the denom registered under an asset id.
-func (k Keeper) DenomOf(ctx context.Context, assetID []byte) (string, error) {
-	d, err := k.AssetsByID.Get(ctx, assetID)
-	if errors.Is(err, collections.ErrNotFound) {
-		return "", errorsmod.Wrapf(types.ErrAssetNotRegistered, "asset id %X", assetID)
-	}
-	return d, err
-}

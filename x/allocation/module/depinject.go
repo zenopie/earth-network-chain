@@ -35,7 +35,6 @@ type ModuleInputs struct {
 	Cdc          codec.Codec
 	AddressCodec address.Codec
 
-	AuthKeeper    types.AuthKeeper
 	BankKeeper    types.BankKeeper
 	StakingKeeper types.StakingKeeper
 	// EarthKeeper owns the chain's tokenomics, and is taken here only for its
@@ -74,7 +73,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.StakingKeeper,
 		in.EarthKeeper,
 	)
-	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
+	m := NewAppModule(in.Cdc, k)
 
 	return ModuleOutputs{
 		AllocationKeeper: k,

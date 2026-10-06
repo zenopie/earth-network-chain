@@ -164,15 +164,6 @@ func (k Keeper) ResyncVoter(ctx context.Context, stream types.StreamId, key []by
 	return k.resyncVoter(ctx, stream, key, voter.Percentages, weight)
 }
 
-// RemoveVoter clears key's vote in stream, returning its weight to the
-// stream, after settling the stream's index.
-func (k Keeper) RemoveVoter(ctx context.Context, stream types.StreamId, key []byte) error {
-	if err := k.AdvanceIndex(ctx, stream); err != nil {
-		return err
-	}
-	return k.ClearVoter(ctx, stream, key)
-}
-
 // SetWeightedVoter files key in stream as a weighted voter: an absolute
 // weight on each option (zero entries dropped) instead of a split at one
 // weight, replacing whatever key carried before. No weights clears key's

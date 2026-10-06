@@ -41,7 +41,6 @@ type ModuleInputs struct {
 	Cdc          codec.Codec
 	AddressCodec address.Codec
 
-	AuthKeeper    types.AuthKeeper
 	BankKeeper    types.BankKeeper
 	StakingKeeper types.StakingKeeper
 	// AllocationKeeper owns the capital emission stream. The LP-rewards option
@@ -86,7 +85,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	keeper.RegisterPrivateActions(in.ShieldedKeeper.RegisterPrivateAction, keeper.NewActionHandler(k))
 	// LP shares held as notes leave the pool only by a private withdrawal.
 	in.ShieldedKeeper.RegisterPoolLockedPrefix(types.LPShareDenomPrefix)
-	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
+	m := NewAppModule(in.Cdc, k)
 
 	in.AllocationKeeper.RegisterIntegratedHandler(allocationtypes.STREAM_ID_GROUNDWORKS, allocationtypes.HandlerLPRewards,
 		func(ctx context.Context, accrued math.Int) (math.Int, error) {

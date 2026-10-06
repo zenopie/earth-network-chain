@@ -19,10 +19,6 @@ import (
 // may only be lower.
 const MaxActions = 32
 
-// ActionPublicInputs is the action circuit's public input count:
-// anchor, nf, cm_out, cv_x, cv_y, sighash.
-const ActionPublicInputs = 6
-
 // Action is one spend and one output, either of which may be a dummy, with
 // the note-tree root its spend is proven against.
 type Action struct {

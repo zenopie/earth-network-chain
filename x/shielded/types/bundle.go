@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	errorsmod "cosmossdk.io/errors"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/earth-network/earth/zk/orchard"
@@ -123,15 +122,6 @@ func (b *Bundle) ToOrchard() (*orchard.Bundle, error) {
 		out.Balances[i] = orchard.Balance{Asset: privacy.AssetID(bal.Denom), Value: bal.Amount}
 	}
 	return out, nil
-}
-
-// Digest is zk/orchard's bundle digest of b. Call after ValidateBasic.
-func (b *Bundle) Digest() (fr.Element, error) {
-	o, err := b.ToOrchard()
-	if err != nil {
-		return fr.Element{}, err
-	}
-	return o.Digest(), nil
 }
 
 // Nullifiers is every action's nullifier, in order.
