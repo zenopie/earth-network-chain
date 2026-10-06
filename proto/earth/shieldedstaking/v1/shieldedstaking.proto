@@ -286,6 +286,12 @@ message Position {
   // cast in. A governance reset bumps that epoch, and a split from an older
   // one no longer counts (the owner votes again with MsgUpdatePosition).
   uint64 split_epoch = 10;
+  // split_expires_at is when the split stops counting (unix seconds): cast
+  // or renewed (MsgLockPosition, MsgUpdatePosition) + x/allocation
+  // groundworks_lease_seconds; 0 without a split. At that time the split is
+  // dropped from its validator's totals (the stream settled to the expiry
+  // first), and the owner re-casts with MsgUpdatePosition.
+  int64 split_expires_at = 11;
 }
 
 // StakeRoot is a stake-tree root recorded at the end of a block that changed

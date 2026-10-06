@@ -197,6 +197,9 @@ var (
 	WatchSrcKey    = collections.NewPrefix(55)
 	WatchSharesKey = collections.NewPrefix(56)
 	WatchCallsKey  = collections.NewPrefix(57)
+	// GwLapsesKey orders positions' Groundworks split leases by when they
+	// lapse: (split_expires_at, position id).
+	GwLapsesKey = collections.NewPrefix(58)
 )
 
 // MoveTimeSlackSeconds is how far a redelegation's block time may be after

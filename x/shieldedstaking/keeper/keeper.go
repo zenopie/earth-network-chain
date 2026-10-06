@@ -125,6 +125,9 @@ type Keeper struct {
 	// allocation epoch each validator's totals belong to.
 	GwTotals collections.Map[collections.Pair[string, uint64], math.Int]
 	GwEpoch  collections.Map[string, uint64]
+	// GwLapses: (split_expires_at, position id) for every position with a
+	// split (positions.go, the Groundworks Lapser).
+	GwLapses collections.KeySet[collections.Pair[int64, uint64]]
 	// RetiringEscrows: (release time ns, validator) for operators that
 	// removed their whole self-bond; PendingReleases: removed validators
 	// whose escrow release failed and is retried (escrow.go).
@@ -259,6 +262,8 @@ func NewKeeper(
 		GwTotals: collections.NewMap(sb, types.GwTotalsKey, "gw_totals",
 			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key), sdk.IntValue),
 		GwEpoch: collections.NewMap(sb, types.GwEpochKey, "gw_epoch", collections.StringKey, collections.Uint64Value),
+		GwLapses: collections.NewKeySet(sb, types.GwLapsesKey, "gw_lapses",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
 		RetiringEscrows: collections.NewKeySet(sb, types.RetiringEscrowsKey, "retiring_escrows",
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
 		PendingReleases: collections.NewKeySet(sb, types.PendingReleasesKey, "pending_releases", collections.BytesKey),

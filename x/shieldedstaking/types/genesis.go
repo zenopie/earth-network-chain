@@ -99,6 +99,10 @@ func (gs GenesisState) Validate() error {
 		if _, err := privacy.FieldFromBytes(p.OwnerTag); err != nil {
 			return fmt.Errorf("position %d owner_tag: %w", p.Id, err)
 		}
+		// A split is leased (split_expires_at > 0); no split, no lease.
+		if (len(p.Splits) > 0) != (p.SplitExpiresAt > 0) {
+			return fmt.Errorf("position %d: split_expires_at %d does not fit its %d splits", p.Id, p.SplitExpiresAt, len(p.Splits))
+		}
 	}
 	snaps := map[uint64]bool{}
 	seqs := map[uint64]bool{}

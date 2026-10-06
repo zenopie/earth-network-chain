@@ -8,6 +8,7 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 
+	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
@@ -28,15 +29,54 @@ import (
 // per validator: the work grows with validators, never with positions, so
 // positions need no cap.
 //
+// A split is leased (x/allocation groundworks_lease_seconds, a year by
+// default, as a caretaker split): it counts until split_expires_at, and the
+// owner renews it by casting again (MsgUpdatePosition, the same split or
+// another). At the lapse the split comes off its validator's totals at that
+// exact time: x/allocation settles the stream to it first (positionLapser,
+// a types.Lapser). A position at a jailed or unbonded validator keeps its
+// weight until then (audit C-8, decided).
+//
 // A governance reset of the stream (ResetAllocations) bumps its epoch. A
 // position's split counts only in the epoch it was cast in (split_epoch), and
 // a validator's totals only in the epoch recorded for them (GwEpoch): after a
 // reset both are stale, treated as zero, and the owner votes again with
 // MsgUpdatePosition, as any voter does after a reset.
 
+// setPosition stores p, keeping its lease in the lapse queue.
 func (k Keeper) setPosition(ctx context.Context, p types.Position) error {
+	if err := k.unqueueLapse(ctx, p.Id); err != nil {
+		return err
+	}
+	if len(p.Splits) > 0 && p.SplitExpiresAt > 0 {
+		if err := k.GwLapses.Set(ctx, collections.Join(p.SplitExpiresAt, p.Id)); err != nil {
+			return err
+		}
+	}
 	p.Weight = math.ZeroInt() // not stored: withLiveWeight
 	return k.Positions.Set(ctx, p.Id, p)
+}
+
+// removePosition deletes position id and its lease.
+func (k Keeper) removePosition(ctx context.Context, id uint64) error {
+	if err := k.unqueueLapse(ctx, id); err != nil {
+		return err
+	}
+	return k.Positions.Remove(ctx, id)
+}
+
+// unqueueLapse drops the stored position id's lease from the lapse queue.
+func (k Keeper) unqueueLapse(ctx context.Context, id uint64) error {
+	old, err := k.Positions.Get(ctx, id)
+	if errors.Is(err, collections.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if old.SplitExpiresAt > 0 {
+		return k.GwLapses.Remove(ctx, collections.Join(old.SplitExpiresAt, id))
+	}
+	return nil
 }
 
 // gwEpoch is the Groundworks stream's allocation epoch.
@@ -167,6 +207,13 @@ func (k Keeper) existingSplits(ctx context.Context, splits []allocationtypes.All
 // syncValidatorVoter re-files v's Groundworks voter from its totals at its
 // epoch rate; stale totals (a reset since) are deleted and the voter cleared.
 func (k Keeper) syncValidatorVoter(ctx context.Context, v string) error {
+	return k.syncValidatorVoterWith(ctx, v, false)
+}
+
+// syncValidatorVoterWith is syncValidatorVoter; settled: the stream is
+// already settled to the moment of the change (a lapse), so the voter is
+// written without settling to the block time.
+func (k Keeper) syncValidatorVoterWith(ctx context.Context, v string, settled bool) error {
 	valBz, err := k.valAddr(v)
 	if err != nil {
 		return err
@@ -199,6 +246,9 @@ func (k Keeper) syncValidatorVoter(ctx context.Context, v string) error {
 	ws, err := k.validatorOptionWeights(ctx, v, epoch)
 	if err != nil {
 		return err
+	}
+	if settled {
+		return k.allocation.SetWeightedVoterSettled(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.ValidatorVoterKey(valBz), ws)
 	}
 	return k.allocation.SetWeightedVoter(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, types.ValidatorVoterKey(valBz), ws)
 }
@@ -244,9 +294,15 @@ func (k Keeper) applyPositionSplit(ctx context.Context, old types.Position, spli
 	p := old
 	p.Splits, p.SplitEpoch = splits, epoch
 	if len(splits) == 0 {
-		p.Splits, p.SplitEpoch = nil, 0
-	} else if err := k.addPositionTotals(ctx, p, 1, epoch); err != nil {
-		return old, err
+		p.Splits, p.SplitEpoch, p.SplitExpiresAt = nil, 0, 0
+	} else {
+		// Cast or renewed: a new lease.
+		if p.SplitExpiresAt, err = k.allocation.GroundworksLeaseEnd(ctx); err != nil {
+			return old, err
+		}
+		if err := k.addPositionTotals(ctx, p, 1, epoch); err != nil {
+			return old, err
+		}
 	}
 	if existed && positionLive(old, epoch) || len(splits) > 0 {
 		if err := k.syncValidatorVoter(ctx, p.Validator); err != nil {
@@ -438,6 +494,110 @@ func (k Keeper) assertGwTotals(ctx context.Context) error {
 	}
 	if seen != len(want) {
 		return types.ErrInvariant.Wrapf("%d groundworks totals stored, positions give %d", seen, len(want))
+	}
+	return nil
+}
+
+// positionLapser retires positions' Groundworks splits at their lease end
+// (x/allocation settles the stream to that time first; types.Lapser).
+type positionLapser struct{ k Keeper }
+
+// NewPositionLapser returns the lapser to register with x/allocation for the
+// Groundworks stream.
+func NewPositionLapser(k Keeper) allocationtypes.Lapser { return positionLapser{k: k} }
+
+func (l positionLapser) NextLapse(ctx context.Context, t int64) (int64, bool, error) {
+	it, err := l.k.GwLapses.Iterate(ctx, new(collections.Range[collections.Pair[int64, uint64]]).
+		EndExclusive(collections.Join(t+1, uint64(0))))
+	if err != nil {
+		return 0, false, err
+	}
+	defer it.Close()
+	if !it.Valid() {
+		return 0, false, nil
+	}
+	key, err := it.Key()
+	if err != nil {
+		return 0, false, err
+	}
+	return key.K1(), true, nil
+}
+
+// Lapse drops every split whose lease ends at t: off its validator's totals,
+// the split cleared, the validator's voter re-filed (settled: the stream is
+// at t). Per validator in its own cache; a validator whose lapse fails keeps
+// those splits counting a day longer (re-queued) instead of stalling.
+func (l positionLapser) Lapse(ctx context.Context, t int64) error {
+	k := l.k
+	byVal := map[string][]uint64{}
+	var vals []string
+	if err := k.GwLapses.Walk(ctx, collections.NewPrefixedPairRange[int64, uint64](t),
+		func(key collections.Pair[int64, uint64]) (bool, error) {
+			p, err := k.Positions.Get(ctx, key.K2())
+			v := ""
+			if err == nil {
+				v = p.Validator
+			} else if !errors.Is(err, collections.ErrNotFound) {
+				return true, err
+			}
+			if _, ok := byVal[v]; !ok {
+				vals = append(vals, v)
+			}
+			byVal[v] = append(byVal[v], key.K2())
+			return false, nil
+		}); err != nil {
+		return err
+	}
+	for _, v := range vals {
+		ids := byVal[v]
+		err := k.guarded(ctx, func(cc context.Context) error {
+			epoch, err := k.gwEpoch(cc)
+			if err != nil {
+				return err
+			}
+			touched := false
+			for _, id := range ids {
+				if err := k.GwLapses.Remove(cc, collections.Join(t, id)); err != nil {
+					return err
+				}
+				p, err := k.Positions.Get(cc, id)
+				if errors.Is(err, collections.ErrNotFound) {
+					continue
+				} else if err != nil {
+					return err
+				}
+				// Renewed since (its new lease is queued), or no split left.
+				if len(p.Splits) == 0 || p.SplitExpiresAt > t {
+					continue
+				}
+				if positionLive(p, epoch) {
+					if err := k.addPositionTotals(cc, p, -1, epoch); err != nil {
+						return err
+					}
+					touched = true
+				}
+				p.Splits, p.SplitEpoch, p.SplitExpiresAt = nil, 0, 0
+				if err := k.setPosition(cc, p); err != nil {
+					return err
+				}
+				k.positionEvent(sdk.UnwrapSDKContext(cc), "split_lapsed", p)
+			}
+			if touched {
+				return k.syncValidatorVoterWith(cc, v, true)
+			}
+			return nil
+		})
+		if err != nil {
+			k.failure(ctx, "lapse_positions", v, err)
+			for _, id := range ids {
+				if err := k.GwLapses.Remove(ctx, collections.Join(t, id)); err != nil {
+					return err
+				}
+				if err := k.GwLapses.Set(ctx, collections.Join(t+allocationkeeper.LapseRetrySeconds, id)); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }

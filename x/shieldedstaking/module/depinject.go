@@ -90,6 +90,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// epoch rate), and an operator's self-bond while its validator is
 	// Bonded; this module's own delegations carry none.
 	in.AllocationKeeper.RegisterWeightSource(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewPositionWeightSource(k))
+	in.AllocationKeeper.RegisterLapser(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewPositionLapser(k))
 
 	return ModuleOutputs{
 		ShieldedStakingKeeper: k,

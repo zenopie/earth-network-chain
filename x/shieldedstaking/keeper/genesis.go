@@ -476,7 +476,7 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 				return true, err
 			}
 			if len(kept) == 0 {
-				p.Splits, p.SplitEpoch = nil, 0
+				p.Splits, p.SplitEpoch, p.SplitExpiresAt = nil, 0, 0
 			} else {
 				p.Splits = kept
 			}

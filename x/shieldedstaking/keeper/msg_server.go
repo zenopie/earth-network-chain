@@ -256,7 +256,7 @@ func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosit
 	if err != nil {
 		return nil, err
 	}
-	if err := k.Positions.Remove(ctx, p.Id); err != nil {
+	if err := k.removePosition(ctx, p.Id); err != nil {
 		return nil, err
 	}
 	if err := k.PositionsByVal.Remove(ctx, collections.Join(p.Validator, p.Id)); err != nil {
@@ -297,6 +297,7 @@ func (k Keeper) positionEvent(ctx sdk.Context, action string, p types.Position) 
 		sdk.NewAttribute(types.AttributeKeyValidator, p.Validator),
 		sdk.NewAttribute(types.AttributeKeyDerth, p.Derth.String()),
 		sdk.NewAttribute(types.AttributeKeyWeight, p.Weight.String()),
+		sdk.NewAttribute(types.AttributeKeySplitExpiresAt, strconv.FormatInt(p.SplitExpiresAt, 10)),
 	))
 }
 
