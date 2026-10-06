@@ -27,7 +27,9 @@
 #   2. builds a "new" binary that has one, packages it as bin/<daemon> at the
 #      archive root, and serves it over 127.0.0.1
 #   3. starts the chain under cosmovisor, pointed at the old binary
-#   4. passes a MsgSoftwareUpgrade whose info names the served URL and its sha256
+#   4. passes a MsgSoftwareUpgrade whose info names the served URL and its
+#      sha256, voted YES by the validator and by one registered human
+#      (scripts/lib/rehearsal-human.sh)
 #   5. leaves it alone, and checks cosmovisor halted, downloaded, verified,
 #      swapped and resumed — with nobody intervening
 #
@@ -65,6 +67,8 @@ trap cleanup EXIT
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$*"; }
 die()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; exit 1; }
+# shellcheck source=scripts/lib/rehearsal-human.sh
+. "$REPO/scripts/lib/rehearsal-human.sh"
 
 OLD="$WORK/earthd-old"
 NEW="$WORK/earthd-new"
@@ -141,18 +145,19 @@ step "lay out the chain and the cosmovisor directories"
 VAL="$("$OLD" keys show val -a $KR)"
 cp "$REPO/networks/genesis.json" "$HOME_DIR/config/genesis.json"
 
-python3 - "$HOME_DIR/config/genesis.json" "$CHAIN_ID" <<'PY'
+python3 - "$HOME_DIR/config/genesis.json" "$CHAIN_ID" "$RH_VOTING_PERIOD" <<'PY'
 import json, sys, datetime
 p, chain_id = sys.argv[1], sys.argv[2]
 g = json.load(open(p))
 g['chain_id'] = chain_id
 g['genesis_time'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 gov = g['app_state']['gov']['params']
-gov['voting_period'] = '20s'
+gov['voting_period'] = sys.argv[3]
 gov['expedited_voting_period'] = '10s'
 gov['max_deposit_period'] = '60s'
 json.dump(g, open(p, 'w'), indent=2)
 PY
+human_prepare "$HOME_DIR/config/genesis.json"
 
 "$OLD" genesis add-genesis-account "$VAL" 200000000000uerth $KR >/dev/null
 "$OLD" genesis gentx val 100000000000uerth --chain-id "$CHAIN_ID" $KR >/dev/null 2>&1
@@ -183,9 +188,13 @@ done
 [ -n "${H:-}" ] || die "chain did not start under cosmovisor — see $WORK/cv.log"
 ok "producing blocks under cosmovisor (height $H)"
 
+step "register one human (a proposal needs a human YES too)"
+human_register
+
 step "propose the upgrade, with the download URL in info"
 GOV="$("$OLD" query auth module-account gov $Q -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"]["value"]["address"])')"
-UPGRADE_HEIGHT=$(( H + 150 ))
+H="$(current_height)"
+UPGRADE_HEIGHT=$(( H + 400 ))
 
 # info is JSON, keyed by GOOS/GOARCH. Prose here is the single most common way a
 # plan is accepted by governance and then fails every node at the halt.
@@ -218,14 +227,15 @@ sleep 5
 PID_NUM="$("$OLD" query gov proposals $Q -o json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["proposals"][-1]["id"])' 2>/dev/null || true)"
 [ -n "$PID_NUM" ] || die "no proposal found after submit. tx said: $TXOUT"
 "$OLD" tx gov vote "$PID_NUM" yes --from val $KR $TXFLAGS >/dev/null 2>&1
-sleep 25
+human_vote "$PID_NUM"
+wait_voting_end "$OLD" "$Q" "$PID_NUM"
 STATUS="$("$OLD" query gov proposal "$PID_NUM" $Q -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["proposal"]["status"])')"
 [ "$STATUS" = "PROPOSAL_STATUS_PASSED" ] || die "proposal did not pass: $STATUS"
 ok "proposal $PID_NUM passed, targeting height $UPGRADE_HEIGHT"
 
 step "hands off — cosmovisor should do the rest"
 FINAL=""
-for _ in $(seq 1 180); do
+for _ in $(seq 1 400); do
   FINAL="$(curl -s --max-time 2 localhost:26657/status 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["sync_info"]["latest_block_height"])' 2>/dev/null || true)"
   [ -n "$FINAL" ] && [ "$FINAL" -gt "$UPGRADE_HEIGHT" ] 2>/dev/null && break
   sleep 1

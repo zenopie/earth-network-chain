@@ -13,8 +13,11 @@
 #
 # What it does:
 #
-#   1. starts a single-validator chain from networks/genesis.json
-#   2. passes a MsgSoftwareUpgrade proposal for a plan a few blocks out
+#   1. starts a single-validator chain from networks/genesis.json, with one
+#      registered human (scripts/lib/rehearsal-human.sh: a proposal passes only
+#      with two thirds of the human votes cast, and never with none)
+#   2. passes a MsgSoftwareUpgrade proposal for a plan a few blocks out, voted
+#      YES by the validator and by the human
 #   3. waits for the chain to halt with UPGRADE "<name>" NEEDED
 #   4. rebuilds earthd with a matching entry in Upgrades
 #   5. restarts, and checks the chain continues past the halt height
@@ -45,11 +48,13 @@ trap cleanup EXIT
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$*"; }
 die()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; exit 1; }
+# shellcheck source=scripts/lib/rehearsal-human.sh
+. "$REPO/scripts/lib/rehearsal-human.sh"
 
 E="$WORK/earthd"
 KR="--keyring-backend test --home $HOME_DIR"
-# The node enforces a 0.005uerth floor, so every tx here has to pay it. An
-# operator hits the same wall; see docs/JOIN.md.
+# The node enforces a 0.005uerth floor, so every tx here has to pay it, as an
+# operator's do.
 TXFLAGS="--chain-id $CHAIN_ID --node tcp://127.0.0.1:26657 --gas auto --gas-adjustment 1.6 --gas-prices 0.005uerth -y"
 Q="--home $HOME_DIR --node tcp://127.0.0.1:26657"
 
@@ -73,18 +78,19 @@ cp "$REPO/networks/genesis.json" "$HOME_DIR/config/genesis.json"
 
 # Rewrite what a rehearsal needs: its own chain id, a voting period measured in
 # seconds rather than a week, and a genesis_time of now so nothing catches up.
-python3 - "$HOME_DIR/config/genesis.json" "$CHAIN_ID" <<'PY'
+python3 - "$HOME_DIR/config/genesis.json" "$CHAIN_ID" "$RH_VOTING_PERIOD" <<'PY'
 import json, sys, datetime
 p, chain_id = sys.argv[1], sys.argv[2]
 g = json.load(open(p))
 g['chain_id'] = chain_id
 g['genesis_time'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 gov = g['app_state']['gov']['params']
-gov['voting_period'] = '20s'
+gov['voting_period'] = sys.argv[3]
 gov['expedited_voting_period'] = '10s'
 gov['max_deposit_period'] = '60s'
 json.dump(g, open(p, 'w'), indent=2)
 PY
+human_prepare "$HOME_DIR/config/genesis.json"
 
 "$E" genesis add-genesis-account "$VAL" 200000000000uerth $KR >/dev/null
 "$E" genesis gentx val 100000000000uerth --chain-id "$CHAIN_ID" $KR >/dev/null 2>&1
@@ -103,6 +109,9 @@ done
 [ -n "${H:-}" ] || die "chain did not start — see $WORK/node.log"
 ok "producing blocks (height $H)"
 
+step "register one human (a proposal needs a human YES too)"
+human_register
+
 step "propose the upgrade"
 GOV="$("$E" query auth module-account gov $Q -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"]["value"]["address"])')"
 ok "gov authority is $GOV (a module account — nobody holds its key)"
@@ -110,12 +119,13 @@ ok "gov authority is $GOV (a module account — nobody holds its key)"
 # The plan height has to be beyond the END of the voting period, not beyond now.
 # x/upgrade rejects a plan whose height is already past when the proposal
 # executes, and the proposal then reads PROPOSAL_STATUS_FAILED — passed the vote,
-# failed to apply. At 500ms blocks a 20s vote is ~40 blocks, so this leaves room.
+# failed to apply. At 500ms blocks the 90s vote is ~180 blocks, so this leaves room.
 #
 # On mainnet the same rule bites much harder: a 7-day voting period is ~120,000
 # blocks at 5s, so a real MsgSoftwareUpgrade has to target a height at least that
 # far out. Getting it wrong costs another 7 days.
-UPGRADE_HEIGHT=$(( H + 150 ))
+H="$(current_height)"
+UPGRADE_HEIGHT=$(( H + 400 ))
 cat > "$WORK/plan.json" <<JSON
 {
   "messages": [
@@ -145,7 +155,8 @@ PID_NUM="$("$E" query gov proposals $Q -o json 2>/dev/null | python3 -c 'import 
 ok "proposal $PID_NUM targets height $UPGRADE_HEIGHT"
 
 "$E" tx gov vote "$PID_NUM" yes --from val $KR $TXFLAGS >/dev/null 2>&1
-sleep 25
+human_vote "$PID_NUM"
+wait_voting_end "$E" "$Q" "$PID_NUM"
 STATUS="$("$E" query gov proposal "$PID_NUM" $Q -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["proposal"]["status"])')"
 if [ "$STATUS" = "PROPOSAL_STATUS_FAILED" ]; then
   die "proposal passed the vote but failed to execute — almost always a plan
@@ -156,7 +167,7 @@ fi
 ok "passed"
 
 step "wait for the halt"
-for _ in $(seq 1 90); do
+for _ in $(seq 1 400); do
   grep -q "UPGRADE \"$NAME\" NEEDED" "$WORK/node.log" && break
   sleep 1
 done
