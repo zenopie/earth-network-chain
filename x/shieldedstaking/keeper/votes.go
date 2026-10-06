@@ -250,8 +250,9 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 	// block's recording succeeded. If it failed, a note spent since by a
 	// position lock is still unspent under the recorded nf root, and the
 	// position votes too: the snapshot takes no roots, so no note votes on
-	// this proposal (positions still do). Not attacker-reachable; a failure
-	// is a store error (audit 6 C-L4).
+	// this proposal; positions still do (openSnapshot with notes false), and
+	// with no note votes none can be counted twice. Not attacker-reachable;
+	// a failure is a store error (audit 6 C-L4).
 	stale, err := k.RootsStale.Has(ctx)
 	if err != nil {
 		return err
@@ -298,8 +299,11 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 }
 
 // openSnapshot returns proposalID's snapshot and valoper's derth supply as
-// of it, if the proposal is still open to stake votes.
-func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper string) (types.ProposalSnapshot, math.Int, error) {
+// of it, if the proposal is still open to stake votes. notes: the vote is a
+// note's (MsgStakeVote), which proves against the snapshot's roots; a
+// position's (MsgPositionVote) needs none, so a snapshot taken without roots
+// (RootsStale) still takes position votes.
+func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper string, notes bool) (types.ProposalSnapshot, math.Int, error) {
 	snap, err := k.Snapshots.Get(ctx, proposalID)
 	if errors.Is(err, collections.ErrNotFound) {
 		return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d has no stake-vote snapshot", proposalID)
@@ -309,8 +313,21 @@ func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper str
 	if sdk.UnwrapSDKContext(ctx).BlockTime().UnixNano() >= snap.VotingEnd {
 		return snap, math.Int{}, types.ErrNoVoting.Wrapf("voting on proposal %d has ended", proposalID)
 	}
-	if len(snap.Root) == 0 {
-		return snap, math.Int{}, types.ErrNoVoting.Wrap("the stake tree was empty when voting began")
+	// The snapshot outlives a proposal x/gov ended early (MsgCancelProposal
+	// deletes it): no tally will run, so no vote is taken (audit C-7).
+	if k.gov.k != nil {
+		prop, err := k.gov.k.Proposals.Get(ctx, proposalID)
+		if errors.Is(err, collections.ErrNotFound) {
+			return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d no longer exists", proposalID)
+		} else if err != nil {
+			return snap, math.Int{}, err
+		}
+		if prop.Status != v1.StatusVotingPeriod {
+			return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d is not in its voting period", proposalID)
+		}
+	}
+	if notes && len(snap.Root) == 0 {
+		return snap, math.Int{}, types.ErrNoVoting.Wrap("the snapshot has no stake root (the tree was empty, or its roots were not recorded)")
 	}
 	supply, err := k.snapshotSupply(ctx, snap, valoper)
 	if err != nil {

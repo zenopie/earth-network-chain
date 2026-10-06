@@ -361,7 +361,9 @@ When an x/gov proposal enters voting, x/shieldedstaking takes a
 of the end of the last block that changed it, so they describe one moment. A
 note under `root` was unspent then iff its nullifier is absent under
 `nf_root`. A snapshot taken after a failed root recording (`RootsStale`) takes
-no roots: no note votes on that proposal. Per-validator supply is
+no roots: no note votes on that proposal (position votes still count; with no
+note votes none is counted twice). A proposal x/gov cancelled takes no stake
+or position votes. Per-validator supply is
 checkpointed lazily (`SupplyCheckpoints`) for the tally.
 
 ---

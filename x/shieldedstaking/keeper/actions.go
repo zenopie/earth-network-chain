@@ -364,7 +364,7 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (type
 	if _, err := k.valAddr(m.Validator); err != nil {
 		return types.ProposalSnapshot{}, math.Int{}, err
 	}
-	snap, supply, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
+	snap, supply, err := k.openSnapshot(ctx, m.ProposalId, m.Validator, true)
 	if err != nil {
 		return snap, math.Int{}, err
 	}
@@ -457,7 +457,7 @@ func (k Keeper) checkPositionVote(ctx context.Context, m *types.MsgPositionVote)
 	if err != nil {
 		return p, math.Int{}, err
 	}
-	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, p.Validator)
+	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, p.Validator, false)
 	if err != nil {
 		return p, vs, err
 	}

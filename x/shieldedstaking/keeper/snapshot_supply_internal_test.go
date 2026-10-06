@@ -69,3 +69,29 @@ func TestSnapshotSupplyIsStartOfBlock(t *testing.T) {
 	require.Equal(t, int64(1_507), supply(at(30), s2))
 	require.Equal(t, math.NewInt(1_407), k.Supply(at(30), val))
 }
+
+// Audit C-1: a snapshot taken without roots (RootsStale) refuses note votes,
+// which prove against its roots, and still takes position votes.
+func TestRootlessSnapshotTakesPositionVotes(t *testing.T) {
+	key := storetypes.NewKVStoreKey(types.StoreKey)
+	ctx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("tt")).Ctx
+	enc := moduletestutil.MakeTestEncodingConfig()
+	k := NewKeeper(runtime.NewKVStoreService(key), enc.Codec, addresscodec.NewBech32Codec("earth"),
+		authtypes.NewModuleAddress("gov"), nil, nil, nil, nil, nil, nil, shieldedkeeper.Keeper{}, allocationkeeper.Keeper{})
+	const val = "earthvaloper1test"
+	c := ctx.WithBlockHeight(10)
+	vs, err := k.ValidatorState(c, val)
+	require.NoError(t, err)
+	vs.DerthSupply = math.NewInt(1_000)
+	require.NoError(t, k.Validators.Set(c, val, vs))
+	c = ctx.WithBlockHeight(20)
+	snap := types.ProposalSnapshot{ProposalId: 1, Height: 20, Seq: 1, VotingEnd: c.BlockTime().UnixNano() + 1e12}
+	require.NoError(t, k.Snapshots.Set(c, 1, snap))
+	require.NoError(t, k.SnapshotsBySeq.Set(c, collections.Join(snap.Seq, uint64(1))))
+
+	_, _, err = k.openSnapshot(c, 1, val, true)
+	require.ErrorIs(t, err, types.ErrNoVoting, "a note vote needs the snapshot's roots")
+	_, supply, err := k.openSnapshot(c, 1, val, false)
+	require.NoError(t, err, "a position vote does not")
+	require.Equal(t, int64(1_000), supply.Int64())
+}
