@@ -60,7 +60,7 @@ gap can be measured against it:
 decides who counts as a person and what the caretaker stream may fund, the
 capital axis decides the same for itself, and neither writes the other's rules.
 
-*The persons axis now has an organ.* `x/assembly` makes governance bicameral:
+*The persons axis has an organ.* `x/assembly` makes governance bicameral:
 every `x/gov` proposal also needs **two thirds of the human votes cast on it**,
 one live registration to a vote, and a proposal that does not get them is failed
 before x/gov tallies it. There are no capital-only proposals. The two levers
@@ -111,18 +111,17 @@ would be decorative. Changing it means shipping a binary every validator chooses
 to run, which is the same protection the emission split gets and for the same
 reason.
 
-*A third lever is gone.* `MsgResetAllocations` used to take either stream, so
-bonded stake could retire the caretaker slate; it now rejects
-`STREAM_ID_CARETAKER` outright. A reset confiscated nothing — accrued ERTH stays
-with its options and humans can vote again — but a stream with no votes accrues
-to nothing, so a repeatable reset was a mute button on the fund, and registered
-humans held no matching power over the groundworks slate. The caretaker slate is
-now redirected only the way it was meant to be: by humans voting.
+*Stake cannot reset the caretaker slate.* `MsgResetAllocations` rejects
+`STREAM_ID_CARETAKER` outright. A reset would confiscate nothing — accrued ERTH
+stays with its options and humans can vote again — but a stream with no votes
+accrues to nothing, so a repeatable reset would be a mute button on the fund, and
+registered humans hold no matching power over the groundworks slate. The
+caretaker slate is redirected only the way it is meant to be: by humans voting.
 
-*What that costs.* The reset was also the sybil backstop. A bad verifying key, a
+*What that costs.* A reset would also be a sybil backstop. A bad verifying key, a
 compromised DSC, or a circuit flaw is a sybil break, and a caretaker stream
-captured by counterfeit humans can no longer be cleared by proposal — recovery
-is a binary upgrade. That is deliberate: a reset is a live weapon pointed at the
+captured by counterfeit humans cannot be cleared by proposal — recovery is a
+binary upgrade. That is deliberate: a reset is a live weapon pointed at the
 persons axis every day, while a sybil break is a contingency, and the two
 remaining levers still let stake decide what counts as a valid registration
 going forward.
@@ -158,10 +157,13 @@ ERTH is emitted at a **fixed 4 ERTH/sec** (prorated by block time), as four inde
 The **base staking** stream is the only part of issuance that touches the SDK's own
 reward machinery, and it uses it unmodified: `x/earth` mints its 1 ERTH/sec into the fee
 collector during `BeginBlock` and `x/distribution` takes it from there — split by voting
-power, validator commission withheld at each validator's configured rate, and claimed with
-the usual `MsgWithdrawDelegatorReward` / `MsgWithdrawValidatorCommission`. The only thing
-this chain changes is *how much* is minted (a fixed per-second rate instead of
-bonded-ratio inflation), never who may claim it or on what terms.
+power, validator commission withheld at each validator's configured rate. Nobody claims it
+with a withdraw msg. `x/shieldedstaking` is the only delegator besides each operator's own
+self-bond, so delegators' rewards accrue to its per-validator book and raise the rate every
+stake note redeems at; an operator's commission and self-bond rewards are compounded into
+its self-bond each epoch, and `MsgWithdrawDelegatorReward` (operator),
+`MsgWithdrawValidatorCommission` and `MsgSetWithdrawAddress` are refused
+([ORCHARD_DESIGN.md](ORCHARD_DESIGN.md) §8, §8.8).
 
 **`community_tax` is 0.** The SDK default skims 2% of staking rewards into a pool
 governance then votes to spend; the two allocation streams already do that job, with their
@@ -273,6 +275,8 @@ bug.
 
 **Parameters** (`earthd q dex params`)
 - `swap_fee` — swap fee as a percent (default `0.3` = 0.3%).
+- `lp_unbonding_seconds` — how long removed liquidity waits before it pays out (default
+  `604800`, 7 days).
 
 **Messages / CLI** (`earthd tx dex ...`)
 | Command | Effect |
@@ -283,7 +287,11 @@ bug.
 | `swap [token-in] [denom-out] [min-amount-out]` | Swap routed through the ERTH hub (1 or 2 hops), with per-hop fee/burn and a slippage guard. |
 
 **Queries**: `earthd q dex list-pool`, `earthd q dex get-pool [id]`, `earthd q dex params`,
-`earthd q dex pol-burns`.
+`earthd q dex pol-burns`, `earthd q dex simulate-swap [offer-denom] [offer-amount] [ask-denom]`.
+
+ANML exists only as shielded notes, so these signed commands refuse any ANML leg. ANML
+trades through the private msgs `MsgNoteSwap`, `MsgBuyAnml`, `MsgAddLiquidityShielded` and
+`MsgRemoveLiquidityShielded`, which wallets build ([ORCHARD_DESIGN.md](ORCHARD_DESIGN.md) §10).
 
 **Pool creation is locked until the liquidity auction settles.** The auction has
 to be able to claim its bid denom and cannot defend it on its own: there is one
@@ -298,14 +306,12 @@ creation is permissionless for good. `MsgCreatePool` returns
 is on. A chain with no auction in genesis is never locked.
 
 Because `config.yml` seeds the auction as `PENDING`, a dev chain starts locked
-too, with the genesis ANML/ERTH pool (pool 1) as its only market:
+too, with the genesis ANML/ERTH pool (pool 1) as its only market — traded only through
+the private msgs, since its spoke is ANML:
 ```
 earthd q dex list-pool
-# spoke -> hub against the genesis pool (burns ERTH on the hop)
-earthd tx dex swap 1000000uanml uerth 1 --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
-# deposit into it, then start the 7-day unbonding to leave
-earthd tx dex add-liquidity 1 1000000uerth 10uanml --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
 earthd q dex get-pool 1
+earthd q dex simulate-swap uerth 1000000 uanml
 ```
 To exercise a second spoke or a token→token route locally, settle an auction
 first (`start-liquidity-auction`, bid, wait out the deadline), or drop the
@@ -320,7 +326,7 @@ protocol rules, one per axis, and both run the same engine in **`x/allocation`**
 | Stream | Who may vote | Weight |
 | --- | --- | --- |
 | `caretaker` | anyone with a live proof-of-personhood registration | flat, identical for every human |
-| `groundworks` | anyone with bonded stake | their bonded stake |
+| `groundworks` | validator operators, and Groundworks positions (owner-locked stake) | an operator's self-bond while its validator is Bonded; a position's locked stake |
 
 Voters set percentages (summing to 100) across that stream's *allocation options*; each
 option accrues ERTH pro-rata to the weight pointed at it, tracked with a reward index
@@ -329,10 +335,12 @@ totals and epochs are per stream — the caretaker stream's option #1 and the
 groundworks stream's option #1 are two different options, and a governance
 reset of one slate leaves the other standing.
 
-Groundworks-stream weights are kept in sync with live bonded stake via staking hooks
-(`x/allocation/keeper/hooks.go`) — delegating/undelegating re-weights your vote
-automatically, no re-vote needed. Caretaker-stream weights are cleared when a registration
-lapses, by `x/personhood`'s expiry sweep.
+Groundworks-stream weights are kept in sync with live stake, no re-vote needed: an
+operator's self-bond through the staking hooks (`x/allocation/keeper/hooks.go`), and each
+validator's positions through `x/shieldedstaking`, which files them as one weighted voter
+(`x/allocation/keeper/external_voters.go`; [ORCHARD_DESIGN.md](ORCHARD_DESIGN.md) §8.6, §9).
+Caretaker splits are cast privately with `x/personhood`'s `MsgSetCaretaker` under a
+caretaker nullifier, and cleared when the registration's lease lapses.
 
 There are two kinds of allocation option, differing in how they deliver their ERTH:
 
@@ -350,10 +358,8 @@ There are two kinds of allocation option, differing in how they deliver their ER
     Volume is stored **scaled, not decayed**: one global index grows 14/13 each day and a
     pool records `traded x index`, so recent volume outweighs old volume — half-life about
     9.4 days, twice the LP unbonding period — without anything ever having to go back and
-    reduce a stored number. Decaying per pool required walking a set anyone can add to, so
-    the old code decayed lazily on touch while the shared denominator kept the undecayed
-    figure; the two stopped describing the same thing and 9-11% of the LP emission was
-    released to nobody. Scaled volume never reaches zero on its own, so trading starts a
+    reduce a stored number (decaying per pool would mean walking a set anyone can add to).
+    Scaled volume never reaches zero on its own, so trading starts a
     60-day timer and a capped per-block sweep retires the weight of pools that stop.
   - **caretaker option #1 (`registration_rewards`, seeded at genesis)** — resolves nothing per
     block; the pool stacks and is drawn down on each new registration, **50% registree /
@@ -392,14 +398,16 @@ There are two kinds of allocation option, differing in how they deliver their ER
 
 | Command | Effect |
 | --- | --- |
-| `earthd tx allocation set-allocations [stream] --percentages '{"option_id":2,"percent":100}'` | Set your split in that stream (must sum to 100; empty clears it). |
+| `earthd tx allocation set-allocations groundworks --percentages '{"option_id":2,"percent":100}'` | Set an operator's split of its self-bond weight (must sum to 100; empty clears it). The caretaker stream is refused: its splits are `MsgSetCaretaker`. |
 | `earthd tx allocation claim-allocation [stream] [option-id]` | Pay an ADDRESS option's accrued ERTH to its recipient. |
 | `earthd tx allocation add-address-option [stream] [recipient] [description] [--claimer addr]` | Add an ADDRESS option. Permissionless on the caretaker stream (burns the fee); groundworks entry is governance-gated. |
 | `earthd tx allocation add-integrated-option` | Governance-gated (authority = x/gov): add an INTEGRATED option. |
 | `earthd tx allocation reset-allocations` | Governance-gated: retire the groundworks slate of votes. Caretaker is rejected. |
 
-**The assembly** — the democratic chamber (`x/assembly`). Every command needs a live
-proof-of-personhood registration, and each one counts for exactly one vote:
+**The assembly** — the democratic chamber (`x/assembly`). Every msg needs a live
+proof-of-personhood registration, proven with a membership proof and paid from a shielded
+fee bundle, and each one counts for exactly one vote. The msgs are unsigned private msgs
+that wallets build; the tx commands below show the msg shapes:
 
 | Command | What it does |
 | --- | --- |
@@ -416,10 +424,10 @@ voting come to the same arithmetic.
 `earthd q allocation voter [stream] [address]`, `earthd q allocation params`.
 
 ```
-# vote 100% of your stake weight to volume-weighted LP rewards
+# an operator votes 100% of its self-bond weight to volume-weighted LP rewards
 earthd tx allocation set-allocations groundworks --percentages '{"option_id":1,"percent":100}' \
-  --from alice --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
-earthd q allocation option groundworks 1   # amount_allocated tracks your bonded stake
+  --from validator --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
+earthd q allocation option groundworks 1
 ```
 
 ## The persons axis — `x/personhood` (proof-of-personhood)
@@ -431,33 +439,37 @@ and generates a **zk proof** on-device; the chain verifies a **Barretenberg
 UltraHonk** proof (`zk/ultrahonk`) against the
 governance-set verifying key selected by `signature_algorithm`
 (`params.verifying_keys`), pins `current_date` to block time, requires the proof's
-`address` public input to equal the transaction signer, and dedups on the nullifier.
+`address` public input to equal the registration binding (chain id, identity
+commitment, the notes it pays and their ciphertexts, the referrer handle), and dedups on
+the nullifier. `MsgRegister` is an unsigned private msg: no account is named.
 The Document Signer travels with the message: the chain verifies the certificate
 against the CSCA trust store in `x/pki`, recomputes its Poseidon2 commitment, and
 requires the proof's `dsc_key` to match — which is what binds a proof to one
 specific, CSCA-verified signer, and what lets governance revoke one. The passport
-register circuits (`lean_poa` + per-DSC-algorithm variants) live in
-`earth-network-mobile/circuits`.
+register circuits (33 `lean_poa_*` variants, one per DSC key type, signature scheme and
+hash profile) live in `earth-network-mobile/circuits`.
 
 - **ANML token** (`uanml`, 1 ANML = 1e6 uanml) — minted 1/day per registered human.
 - **Buyback-and-burn (1 ERTH/sec)** — `BeginBlock` mints ERTH, swaps it for ANML on the
-  dex (`dexKeeper.SwapExactIn`), and burns the ANML (deflationary for ANML).
+  dex (`dexKeeper.SwapExactInForModule`), and burns the ANML (deflationary for ANML).
 - **The caretaker allocation stream (1 ERTH/sec)** — the collective half of the axis —
   lives in `x/allocation`; this module only
   supplies its weight source (one live registration = one vote), clears a lapsed human's
   vote, and draws down the registration-reward pool.
 
-**Messages / CLI** (`earthd tx personhood ...`): `register --proof <b64> --public-signals <s,s,…> --signature-algorithm <id> [--affiliate <addr>]`,
-`claim-anml`. **Queries**: `personhood registration [addr]`, `personhood registration-count`,
-`personhood params`.
+**Messages**: `MsgRegister` (naming a referrer by `affiliate_handle`), `MsgClaimAnml`,
+`MsgSetCaretaker` and the handle msgs are private msgs that wallets build; there are no CLI
+commands for them. **Queries** (`earthd q personhood ...`): `registration [passport-nullifier-hex]`,
+`registration-count`, `identity-tree`, `identity-leaves`, `caretaker-voter-count`,
+`lease-bounds`, `params`.
 
 The registration nullifier is derived deterministically in-circuit from the passport
-(document number + date of birth), and the proof is bound to the registering account,
-so it cannot be lifted out of a block and replayed from another wallet. A renewed
+(document number + date of birth), and the proof is bound to its registration binding,
+so it cannot be lifted out of a block and replayed with other notes. A renewed
 passport therefore yields a *different* nullifier: uniqueness is bounded by the cost
 of renewing a passport rather than absolute. That is a deliberate trade for
-unlinkability — a name and a birth date are not secrets, so deriving from them let
-anyone holding a candidate pair confirm which address belongs to that person. See
+unlinkability — a name and a birth date are not secrets, so deriving from them would let
+anyone holding a candidate pair confirm that person's registration. See
 finding #1 in the circuit's SECURITY.md.
 
 ## Smart contracts — CosmWasm (`x/wasm`)
@@ -472,15 +484,16 @@ Contracts get the standard CosmWasm vocabulary (bank, staking, distribution,
 gov, IBC, wasm-to-wasm) plus two doors into this chain specifically:
 
 - **Messages.** A contract sends any module's `Msg` as `CosmosMsg::Any`, routed
-  through the same `MsgServiceRouter` a transaction uses. A contract can swap on
-  the dex, vote an allocation stream, or claim ANML — with the module's own
-  validation applying unchanged. There is nothing a contract can send that its
-  sender could not have sent themselves.
-- **Queries.** An allowlist, in `wasmAcceptedQueries` (`app/wasm.go`). The one
-  that matters is `/earth.personhood.v1.Query/Registration` — "is this address a
-  live verified human" — which is what a sybil-resistant airdrop or a
-  one-human-one-vote contract needs and cannot get on any other chain. Pool
-  reserves, allocation options and voter splits are there too.
+  through the same `MsgServiceRouter` a transaction uses — a swap on the dex, for
+  example — with the module's own validation applying unchanged. There is nothing
+  a contract can send that its sender could not have sent themselves. Private msgs
+  (anything carrying a bundle or a proof: ClaimAnml, caretaker splits, private
+  staking) pass only the private ante, so a contract cannot send them.
+- **Queries.** An allowlist, in `wasmAcceptedQueries` (`app/wasm.go`): aggregate
+  personhood counts and handles (there is no "is this address a human" query —
+  nothing on chain links an address to a registration), the shielded pool's tree,
+  roots and nullifiers, a validator's live staking rate, pool reserves, allocation
+  options and voter splits.
 
 The allowlist is short on purpose: a contract reading a protobuf response is
 frozen to that response's wire shape, so every path on it is a compatibility
@@ -557,7 +570,7 @@ regenerate what a change actually invalidated.
 
 | | |
 | --- | --- |
-| `make privacy-vks-check` | fail unless every committed action, membership, stake and vote key equals what the circuits produce |
+| `make privacy-vks-check` | fail unless every committed action, membership, stake, vote and passport register key equals what the circuits produce |
 | `scripts/privacy-vks.sh` (`make privacy-vks`) | after a circuit change: write those keys to genesis sources, `config.yml` and test copies; then `make genesis` |
 | `scripts/shielded-fixtures.sh` | action proofs for x/shielded's scenario and app tests (`x/shielded/testdata/proofs`) |
 | `scripts/staking-fixtures.sh` | action, stake and vote proofs for the private staking app tests (`x/shieldedstaking/testdata/proofs`) |
@@ -568,9 +581,7 @@ regenerate what a change actually invalidated.
 | `scripts/regen-poa-fixtures.sh` | passport circuit fixtures for every variant (`zk/ultrahonk/testdata/lean_poa*`) |
 
 After a circuit change: `scripts/privacy-vks.sh`, then every fixture script
-whose circuit changed, then `make genesis`. The passport circuits' genesis keys
-(`networks/genesis/verifying-keys/`) are copied in by hand from the same
-`bb write_vk` output.
+whose circuit changed, then `make genesis`.
 
 ## Releasing
 
