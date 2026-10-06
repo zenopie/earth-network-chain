@@ -59,12 +59,14 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod: "UpdateParams",
 					Skip:      true, // skipped because authority gated
 				},
-				// Register, ClaimAnml and SetCaretaker are unsigned private msgs
-				// carrying proofs; the CLI cannot build them. Wallets build the
-				// raw tx and broadcast it.
+				// Every other msg is an unsigned private msg carrying proofs; the
+				// CLI cannot build them. Wallets build the raw tx and broadcast it.
 				{RpcMethod: "Register", Skip: true},
 				{RpcMethod: "ClaimAnml", Skip: true},
 				{RpcMethod: "SetCaretaker", Skip: true},
+				{RpcMethod: "MoveCaretaker", Skip: true},
+				{RpcMethod: "BindHandle", Skip: true},
+				{RpcMethod: "MoveHandle", Skip: true},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

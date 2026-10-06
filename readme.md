@@ -406,14 +406,14 @@ There are two kinds of allocation option, differing in how they deliver their ER
 
 **The assembly** — the democratic chamber (`x/assembly`). Every msg needs a live
 proof-of-personhood registration, proven with a membership proof and paid from a shielded
-fee bundle, and each one counts for exactly one vote. The msgs are unsigned private msgs
-that wallets build; the tx commands below show the msg shapes:
+fee bundle, and each one counts for exactly one vote. They are unsigned private msgs that
+wallets build (no CLI):
 
-| Command | What it does |
+| Msg / query | What it does |
 | --- | --- |
-| `earthd tx assembly vote-proposal [proposal-id] [yes\|no]` | Vote as a human on a governance proposal. Two thirds of the votes cast are required before x/gov's result takes effect. |
-| `earthd tx assembly propose-removal [option-id]` | Open a ballot to remove a groundworks allocation option. No deposit; stake gets no say. |
-| `earthd tx assembly vote-removal [option-id] [yes\|no]` | Vote on an open removal ballot. |
+| `MsgVoteProposal` | Vote as a human on a governance proposal. Two thirds of the votes cast are required before x/gov's result takes effect. |
+| `MsgProposeRemoval` | Open a ballot to remove a groundworks allocation option. No deposit; stake gets no say. |
+| `MsgVoteRemoval` | Vote on an open removal ballot. |
 | `earthd q assembly proposal-tally [proposal-id]` | The human tally on a proposal, and whether it clears two thirds. |
 | `earthd q assembly removal-ballots` | Open removal ballots. |
 
