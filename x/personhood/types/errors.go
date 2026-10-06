@@ -33,12 +33,6 @@ var (
 	// ErrBindingUsed: this registration (its exact binding: idc, notes,
 	// ciphertexts, affiliate) has landed before. A replay of a public proof.
 	ErrBindingUsed = errors.Register(ModuleName, 1124, "this registration has already been used")
-	// ErrHandleMovedOut: this handle nullifier moved its handle away
-	// (MsgMoveHandle) and may never hold another; or a move's new owner did.
-	ErrHandleMovedOut = errors.Register(ModuleName, 1125, "this identity moved its handle away")
-	// ErrCaretakerMovedOut: this caretaker nullifier moved its split away
-	// (MsgMoveCaretaker) and may never cast another; or a move's new owner did.
-	ErrCaretakerMovedOut = errors.Register(ModuleName, 1126, "this identity moved its caretaker split away")
 	// ErrSwitchSignerMismatch: an identity switch whose proof is signed by a
 	// different Document Signer from the live registration's. A re-proof of
 	// the same passport is signed by the same signer.

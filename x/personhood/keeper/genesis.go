@@ -135,16 +135,6 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 	}
-	for _, nf := range genState.HandleMovedOut {
-		if err := k.HandleMovedOut.Set(ctx, nf); err != nil {
-			return err
-		}
-	}
-	for _, nf := range genState.CaretakerMovedOut {
-		if err := k.CaretakerMovedOut.Set(ctx, nf); err != nil {
-			return err
-		}
-	}
 	if err := k.HandleLeaseMax.Set(ctx, leaseMax); err != nil {
 		return err
 	}
@@ -267,18 +257,6 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	}
 	if err := k.PassportsSeen.Walk(ctx, nil, func(nf []byte) (bool, error) {
 		genesis.PassportsSeen = append(genesis.PassportsSeen, nf)
-		return false, nil
-	}); err != nil {
-		return nil, err
-	}
-	if err := k.HandleMovedOut.Walk(ctx, nil, func(nf []byte) (bool, error) {
-		genesis.HandleMovedOut = append(genesis.HandleMovedOut, nf)
-		return false, nil
-	}); err != nil {
-		return nil, err
-	}
-	if err := k.CaretakerMovedOut.Walk(ctx, nil, func(nf []byte) (bool, error) {
-		genesis.CaretakerMovedOut = append(genesis.CaretakerMovedOut, nf)
 		return false, nil
 	}); err != nil {
 		return nil, err

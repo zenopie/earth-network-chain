@@ -290,10 +290,6 @@ func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f *shieldedtest
 		x.Membership = mem
 	case *personhoodtypes.MsgBindHandle:
 		x.Membership = mem
-	case *personhoodtypes.MsgMoveHandle:
-		x.Membership = mem
-	case *personhoodtypes.MsgMoveCaretaker:
-		x.Membership = mem
 	case *assemblytypes.MsgVoteProposal:
 		x.Membership = mem
 	case *assemblytypes.MsgProposeRemoval:
@@ -391,16 +387,6 @@ func (e *phEnv) caretaker(name, reg string, maxPred int64, split []allocationtyp
 	return msg
 }
 
-// moveCaretaker hands reg's split to the caretaker nullifier of to.
-func (e *phEnv) moveCaretaker(name, reg, to string) *personhoodtypes.MsgMoveCaretaker {
-	e.t.Helper()
-	f := e.feeFor("move-caretaker/" + name)
-	owner := privacy.ScopeNullifier(personhoodtest.Registrations[to].IDSecret(), privacy.CaretakerScope())
-	msg := &personhoodtypes.MsgMoveCaretaker{Fee: e.bundle(f), NewOwner: privacy.FieldBytes(owner)}
-	e.prove("move-caretaker/"+name, msg, f, &member{reg: reg, scope: privacy.CaretakerScope(), maxAct: noBound, maxPred: noBound})
-	return msg
-}
-
 // bindHandle binds handle to human's shielded address (or releases, handle
 // "") as registration reg, proving max_predecessor maxPred.
 func (e *phEnv) bindHandle(name, reg, handle, human string, maxPred int64) *personhoodtypes.MsgBindHandle {
@@ -411,16 +397,6 @@ func (e *phEnv) bindHandle(name, reg, handle, human string, maxPred int64) *pers
 		msg.Address = personhoodtest.ShieldedAddress(human).Encode()
 	}
 	e.prove("handle/"+name, msg, f, &member{reg: reg, scope: privacy.HandleScope(), maxAct: noBound, maxPred: maxPred})
-	return msg
-}
-
-// moveHandle hands reg's handle to the handle nullifier of to.
-func (e *phEnv) moveHandle(name, reg, handle, to string) *personhoodtypes.MsgMoveHandle {
-	e.t.Helper()
-	f := e.feeFor("move-handle/" + name)
-	owner := privacy.ScopeNullifier(personhoodtest.Registrations[to].IDSecret(), privacy.HandleScope())
-	msg := &personhoodtypes.MsgMoveHandle{Fee: e.bundle(f), Handle: handle, NewOwner: privacy.FieldBytes(owner)}
-	e.prove("move-handle/"+name, msg, f, &member{reg: reg, scope: privacy.HandleScope(), maxAct: noBound, maxPred: noBound})
 	return msg
 }
 
@@ -782,26 +758,17 @@ func TestPrivatePersonhood(t *testing.T) {
 	e.at(dayStart(d2).Add(40 * time.Minute))
 	a1Tomorrow := e.claim("A1-d3", "A1", d2+1, -1)
 
-	// ---------------------------------------------------- moves before a switch
-	// A keeps its split and handle across the switch by moving them to A2's
-	// nullifiers first. A1's last split lapsed, so it casts one again (no
-	// wait: no predecessor), then moves it and "alice" to A2. Having moved
-	// them away, A1 may cast or claim neither again.
+	// --------------------------------------------------------- before a switch
+	// A1's last split lapsed, so it casts one again (no wait: no
+	// predecessor), and changes "alice" to "amy" (a live holder: unbounded;
+	// the old handle is freed at once). Neither can move to A2 (there are no
+	// moves, audit B-4): both stay A1's, still counting and resolving, until
+	// their leases end.
 	e.at(dayStart(d2).Add(45 * time.Minute))
 	e.mustDeliver(e.caretaker("A-again", "A1", 0, split))
-	fb = e.mustDeliver(e.moveCaretaker("A1-A2", "A1", "A2"))
-	require.Equal(t, uint64(1), e.caretakers(), "moved, not added")
-	mv := e.moveHandle("A1-A2", "A1", "alice", "A2")
-	fb = e.mustDeliver(mv)
-	require.Equal(t, "live", e.handle("alice").Status)
-	require.Equal(t, hex.EncodeToString(mv.NewOwner), e.handle("alice").Owner, "the move's (public) new_owner")
-	movedEv := eventsOf(fb.TxResults[0].Events, "handle_moved")[0]
-	require.Equal(t, hex.EncodeToString(mv.NewOwner), movedEv["owner"])
-	require.Equal(t, hex.EncodeToString(mv.Membership.Nullifier), movedEv["previous_owner"])
-	res = e.checkTx(e.tx(e.caretaker("A1-again", "A1", 0, split)))
-	require.Equal(t, personhoodtypes.ErrCaretakerMovedOut.ABCICode(), res.Code, res.Log)
-	res = e.checkTx(e.tx(e.bindHandle("A1-again", "A1", "alice-2", "A", 0)))
-	require.Equal(t, personhoodtypes.ErrHandleMovedOut.ABCICode(), res.Code, res.Log)
+	e.mustDeliver(e.bindHandle("A1-amy", "A1", "amy", "A", noBound))
+	require.Equal(t, "free", e.handle("alice").Status)
+	amyOwner := e.handle("amy").Owner
 
 	// ---------------------------------------------------------------- switch
 	// A re-registers the same passport under a new identity secret: the old
@@ -818,14 +785,21 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Equal(t, e.now.Unix(), a2.ActivatedAt)
 	require.Equal(t, e.now.Unix(), a2.PredecessorAt, "a switch: the leaf records it")
 
-	// A2 holds the moved split and handle and refreshes both with no wait
-	// (any max_predecessor: it creates neither). It may not vote on the
+	// A2 holds no split and no handle, and its predecessor (A1) does: it
+	// may cast a split or claim a handle only once everything A1 could hold
+	// has lapsed (a statement over its own predecessor_at is refused). One
+	// split and one live handle per passport. A1's split still counts and
+	// "amy" still resolves to A1's nullifier. A2 may not vote on the
 	// proposal A1 voted on: its predecessor is after the ballot opened (an
 	// honest statement fails; the chain's bound is refused).
 	e.at(e.now.Add(30 * time.Minute))
-	e.mustDeliver(e.caretaker("A2", "A2", noBound, split))
+	res = e.checkTx(e.tx(e.caretaker("A2-early", "A2", a2.PredecessorAt, split)))
+	require.Equal(t, personhoodtypes.ErrInvalidMsg.ABCICode(), res.Code, res.Log)
+	res = e.checkTx(e.tx(e.bindHandle("A2-early", "A2", "a-two", "A", a2.PredecessorAt)))
+	require.Equal(t, personhoodtypes.ErrInvalidMsg.ABCICode(), res.Code, res.Log)
 	require.Equal(t, uint64(1), e.caretakers())
-	e.mustDeliver(e.bindHandle("A2-renew", "A2", "alice", "A", noBound))
+	require.Equal(t, "live", e.handle("amy").Status)
+	require.Equal(t, amyOwner, e.handle("amy").Owner)
 	inA2 := e.ballotInputs(&assemblytypes.QueryBallotInputsRequest{ProposalId: pid})
 	res = e.checkTx(e.tx(e.voteProposalAs("A2-dbl", "A2", pid, assemblytypes.VOTE_OPTION_YES,
 		member{scope: field(t, inA2.Scope), maxAct: noBound, maxPred: a2.PredecessorAt})))
@@ -860,11 +834,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	// Naming a handle nobody holds is refused before the passport proof.
 	res = e.checkTx(e.tx(e.register("C2")))
 	require.Equal(t, personhoodtypes.ErrNoReferrer.ABCICode(), res.Code, res.Log)
-	// A2 changes "alice" to "amy": the old handle is freed at once.
-	e.mustDeliver(e.bindHandle("A2", "A2", "amy", "A", noBound))
-	require.Equal(t, "free", e.handle("alice").Status)
-	require.Equal(t, "live", e.handle("amy").Status)
-	// C2 names "amy": the chain mints the referrer's half as a note to the
+	// C2 names "amy" (still A1's, claimed before the switch): the chain mints the referrer's half as a note to the
 	// handle's registered address (A's), with an opening it derives from the
 	// passport nullifier and leaf index and publishes on the mint event; the
 	// registrant's half is C2's own note. The passport binding commits to the
@@ -900,24 +870,21 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.True(t, ok && rewardD1.IsPositive())
 	requireReferral(t, fb.TxResults[0], regEv, "amy", personhoodtest.Registrations["D1"])
 
-	// Rebinding the same nullifier may change the address and keep the
-	// handle. A change to another handle frees the old one at once: D1, a
-	// fresh registrant, claims it in the same block.
+	// D1, a fresh registrant, claims "dee" at once. Rebinding the same
+	// nullifier may change the address and keep the handle. A change to
+	// another handle frees the old one at once.
 	e.at(e.now.Add(time.Minute))
-	e.mustDeliver(e.bindHandle("A2-addr", "A2", "amy", "A-alt", noBound))
-	require.Equal(t, personhoodtest.ShieldedAddress("A-alt").Encode(), e.handle("amy").Address, "the handle follows the address")
-	change := e.bindHandle("A2-change", "A2", "amy-2", "A-alt", noBound)
-	takeOld := e.bindHandle("D1-amy", "D1", "amy", "D", 0)
-	fb = e.finalize(e.tx(change), e.tx(takeOld))
-	requireOK(t, fb.TxResults[0])
-	requireOK(t, fb.TxResults[1])
-	require.Equal(t, personhoodtest.ShieldedAddress("D").Encode(), e.handle("amy").Address)
-	require.Equal(t, "live", e.handle("amy-2").Status)
+	e.mustDeliver(e.bindHandle("D1-dee", "D1", "dee", "D", 0))
+	e.mustDeliver(e.bindHandle("D1-addr", "D1", "dee", "D-alt", noBound))
+	require.Equal(t, personhoodtest.ShieldedAddress("D-alt").Encode(), e.handle("dee").Address, "the handle follows the address")
+	e.mustDeliver(e.bindHandle("D1-change", "D1", "dee-2", "D-alt", noBound))
+	require.Equal(t, "free", e.handle("dee").Status)
+	require.Equal(t, "live", e.handle("dee-2").Status)
 	cnt, _ = k.RegCount.Get(ctxNow())
 	require.Equal(t, uint64(3), cnt)
 	dir, err := personhoodkeeper.NewQueryServerImpl(k).Handles(ctxNow(), &personhoodtypes.QueryHandlesRequest{})
 	require.NoError(t, err)
-	require.Len(t, dir.Handles, 2) // amy (D1), amy-2 (A2)
+	require.Len(t, dir.Handles, 2) // amy (A1), dee-2 (D1)
 
 	require.NoError(t, e.app.ShieldedKeeper.AssertInvariants(ctxNow()))
 

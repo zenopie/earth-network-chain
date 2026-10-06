@@ -106,7 +106,7 @@ func (gs GenesisState) Validate() error {
 	if err := validateHandles(gs.Handles); err != nil {
 		return err
 	}
-	for what, list := range map[string][][]byte{"passports_seen": gs.PassportsSeen, "handle_moved_out": gs.HandleMovedOut, "caretaker_moved_out": gs.CaretakerMovedOut} {
+	for what, list := range map[string][][]byte{"passports_seen": gs.PassportsSeen} {
 		seen := map[string]bool{}
 		for _, nf := range list {
 			if what == "passports_seen" {

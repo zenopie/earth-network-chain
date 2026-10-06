@@ -463,8 +463,8 @@ Scopes (`H(TAG_SCOPE, Bytes(kind), args…)`):
 | Scope | Args | Used by |
 | --- | --- | --- |
 | `claim` | UTC day | MsgClaimAnml |
-| `caretaker` | — | MsgSetCaretaker, MsgMoveCaretaker |
-| `handle` | — | MsgBindHandle, MsgMoveHandle |
+| `caretaker` | — | MsgSetCaretaker |
+| `handle` | — | MsgBindHandle |
 | `proposal` | proposal_id, round (0, or 1 after the chamber demoted an expedited proposal) | MsgVoteProposal |
 | `removal` | ballot_id | MsgVoteRemoval |
 | `propose_removal` | option_id, UTC day | MsgProposeRemoval (nullifier not recorded) |
@@ -659,8 +659,7 @@ excluded (`ExcludeAssetPrefix`).
 All personhood private msgs carry `Bundle fee = 1` (its only balance is the
 uerth fee) and, except MsgRegister, a membership proof whose signal is the
 sighash. Gas: `proof_verification_gas + writes × note_gas` with writes:
-MsgClaimAnml 2, MsgSetCaretaker 4, MsgMoveCaretaker 6, MsgBindHandle 9,
-MsgMoveHandle 4; MsgRegister: passport proof gas + DSC verification gas +
+MsgClaimAnml 2, MsgSetCaretaker 4, MsgBindHandle 9; MsgRegister: passport proof gas + DSC verification gas +
 5 × note_gas.
 
 | Msg | sighash fields |
@@ -669,8 +668,6 @@ MsgMoveHandle 4; MsgRegister: passport proof gas + DSC verification gas +
 | MsgClaimAnml | day, pc, Bytes(ciphertext) |
 | MsgSetCaretaker | (option_id, percent) per entry |
 | MsgBindHandle | Bytes(handle), owner_pk, Bytes(ek_pub) (Bytes of nothing for a release) |
-| MsgMoveCaretaker | new_owner |
-| MsgMoveHandle | Bytes(handle), new_owner |
 
 ### 6.1 Registration
 
@@ -791,13 +788,19 @@ proof in the handle scope.
   has lapsed. A prover holding a live handle renews or changes it unbounded.
   One live handle per passport across identity switches.
 - A change frees the old handle at once; a release frees it at once.
-  `MsgMoveHandle` hands a live handle, lease and all, to another handle
-  nullifier (how a switch keeps its handle); a nullifier that moved its
-  handle away may never claim again (`ErrHandleMovedOut` 1125).
+- **No moves.** A handle (and a caretaker split) never passes to another
+  nullifier. The chain cannot tell a move to the holder's own next identity
+  from a move to someone else's, and a recipient's consent does not help: a
+  person switching identities once a day could take one handed-over handle
+  or split on each new identity, each counting until its lease ends. So an
+  identity that replaced another claims under the claim bound like any
+  other; the predecessor's handle resolves, unrenewable, until its lease
+  ends. (A move that kept the invariant would need a proof that one prover
+  knows both identity secrets, a new circuit.)
 - `HandleEntry.owner` (Query/Handle, Query/Handles, field 6): the
   handle-scope nullifier holding it, 64 lowercase hex characters, "" for a
   handle never claimed. Events `handle_bound` and `handle_released` carry
-  `owner`; `handle_moved` carries `owner` (new) and `previous_owner`.
+  `owner`.
 - Self-referral residual: a lapsed registrant still holding a live handle may
   re-register and name it, paying the referral half to themself; bounded by
   per-passport re-entry and the referral half.
@@ -807,8 +810,10 @@ proof in the handle scope.
 `MsgSetCaretaker` files a split in the caretaker scope (a refresh replaces
 it); a new split (one the prover does not hold live) needs
 `max_predecessor < now − caretaker lease − activation margin`. A split past
-its expiry that the sweep has not reached is not held. `MsgMoveCaretaker`
-moves it (`ErrCaretakerMovedOut` 1126 afterwards).
+its expiry that the sweep has not reached is not held. A split does not move
+(see 6.2, no moves): after a switch the predecessor's split keeps counting,
+unchangeable, until its lease ends, and the new identity casts once the
+bound has passed.
 
 ### 6.4 Lease bounds
 

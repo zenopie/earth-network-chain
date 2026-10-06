@@ -159,8 +159,8 @@ func TestHandleLifecycle(t *testing.T) {
 
 // A claim by a nullifier holding no handle bounds the predecessor (now -
 // the longest lease ever - margin); holders renew or change under any
-// bound; a move hands the handle on and bars the mover from claiming again.
-func TestHandlePredecessorAndMove(t *testing.T) {
+// bound.
+func TestHandlePredecessorBound(t *testing.T) {
 	k, ctx := handleKeeper(t)
 	require.NoError(t, k.noteHandleLease(ctx, types.DefaultParams())) // a longer lease once in force
 	p, err := k.Params.Get(ctx)
@@ -171,7 +171,6 @@ func TestHandlePredecessorAndMove(t *testing.T) {
 	require.Equal(t, ctx.BlockTime().Unix()-types.DefaultHandleLeaseSeconds-types.ActivationMarginSeconds, bound)
 
 	nfA := privacy.FieldBytes(privacy.U64(1))
-	nfA2 := privacy.FieldBytes(privacy.U64(2))
 	addr := personhoodtest.ShieldedAddress("A")
 	claim := func(nf []byte, h string, maxPred int64) error {
 		_, err := k.handleStatement(ctx, &types.MsgBindHandle{Fee: feeStub(), Handle: h, Address: addr.Encode(),
@@ -186,21 +185,6 @@ func TestHandlePredecessorAndMove(t *testing.T) {
 	require.NoError(t, claim(nfA, "alice", types.NoBound), "renewing: any bound")
 	require.NoError(t, claim(nfA, "alice-2", types.NoBound), "changing: any bound")
 
-	// Move to A2: lease kept; A may never claim again; A2 renews at once.
-	before, err := k.Handles.Get(ctx, "alice")
-	require.NoError(t, err)
-	require.NoError(t, k.applyMoveHandle(ctx, nfA, "alice", nfA2))
-	after, err := k.Handles.Get(ctx, "alice")
-	require.NoError(t, err)
-	require.Equal(t, before.ExpiresAt, after.ExpiresAt)
-	require.Equal(t, nfA2, after.Nullifier)
-	require.ErrorIs(t, claim(nfA, "other", 0), types.ErrHandleMovedOut)
-	require.NoError(t, claim(nfA2, "alice", types.NoBound))
-	require.ErrorIs(t, k.applyMoveHandle(ctx, nfA2, "alice", nfA), types.ErrHandleMovedOut, "nor receive one")
-	nfB := privacy.FieldBytes(privacy.U64(3))
-	_, err = k.applyBindHandle(ctx, nfB, "bob", personhoodtest.ShieldedAddress("B"))
-	require.NoError(t, err)
-	require.ErrorIs(t, k.applyMoveHandle(ctx, nfA2, "alice", nfB), types.ErrHandleTaken, "the new owner holds one")
 }
 
 // Audit 5 P2: one live handle per passport. The PoC: A claims "alice", the
@@ -208,11 +192,10 @@ func TestHandlePredecessorAndMove(t *testing.T) {
 // bound passes (alice is then in its renewal period), the passport switches
 // back to A (predecessor_at = now), and A renewed alice unbounded: two live
 // handles. A holder whose handle is not live now renews under the claim
-// bound, and a handle that is not live cannot be moved.
+// bound.
 func TestRenewalPeriodNeedsTheClaimBound(t *testing.T) {
 	k, ctx := handleKeeper(t)
 	nfA := privacy.FieldBytes(privacy.U64(1))
-	nfB := privacy.FieldBytes(privacy.U64(2))
 	addr := personhoodtest.ShieldedAddress("A")
 	bind := func(c sdk.Context, nf []byte, h string, maxPred int64) error {
 		_, err := k.handleStatement(c, &types.MsgBindHandle{Fee: feeStub(), Handle: h, Address: addr.Encode(),
@@ -243,11 +226,6 @@ func TestRenewalPeriodNeedsTheClaimBound(t *testing.T) {
 	// Release needs no bound.
 	require.NoError(t, bind(lapsed, nfA, "", types.NoBound))
 
-	// A handle in its renewal period does not move.
-	_, err = k.checkMoveHandle(lapsed, &types.MsgMoveHandle{Fee: feeStub(), Handle: "alice", NewOwner: nfB,
-		Membership: types.Membership{Nullifier: nfA}})
-	require.ErrorIs(t, err, types.ErrInvalidMsg)
-	require.Contains(t, err.Error(), "not live")
 }
 
 // The caretaker twin: a split past its expiry that the sweep has not reached

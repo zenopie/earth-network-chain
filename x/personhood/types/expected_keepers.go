@@ -33,9 +33,6 @@ type AllocationKeeper interface {
 	// ClearVoter retires a voter's split in a stream, returning its weight to
 	// the stream. Called when a caretaker split lapses.
 	ClearVoter(ctx context.Context, stream allocationtypes.StreamId, voter []byte) error
-	// MoveVoter files from's split under to and clears from (a caretaker
-	// move), settling the stream first.
-	MoveVoter(ctx context.Context, stream allocationtypes.StreamId, from, to []byte) error
 	// DrawFromOption settles an option and withdraws `ppm` parts-per-million of
 	// its accrued ERTH for the caller to pay out.
 	DrawFromOption(ctx context.Context, stream allocationtypes.StreamId, optionID uint64, ppm int64) (math.Int, error)

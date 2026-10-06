@@ -136,9 +136,8 @@ func TestCaretakerLeaseAndSweep(t *testing.T) {
 // A new caretaker split refuses a max_predecessor at or after now - R -
 // activation margin (an identity that replaced another cannot vote beside
 // its predecessor's live split); activation is not bounded (a fresh
-// registrant casts at once). A prover holding a split (cast, or moved to
-// it) refreshes it under any max_predecessor; one that moved its split
-// away may not cast again.
+// registrant casts at once). A prover holding a split refreshes it under
+// any max_predecessor.
 func TestCaretakerPredecessorBound(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
 	now := ctx.BlockTime().Unix()
@@ -162,27 +161,6 @@ func TestCaretakerPredecessorBound(t *testing.T) {
 	_, err = k.caretakerStatement(ctx, m)
 	require.NoError(t, err)
 
-	// A move hands the split (and expiry) to the new owner; the mover may
-	// never cast again; the new owner refreshes with no wait.
-	owner := privacy.FieldBytes(privacy.U64(78))
-	exp, err := k.applyMoveCaretaker(ctx, nf, owner)
-	require.NoError(t, err)
-	require.Equal(t, now+1000, exp)
-	has, err := k.CaretakerVotes.Has(ctx, nf)
-	require.NoError(t, err)
-	require.False(t, has)
-	m.MaxPredecessor = 0
-	_, err = k.caretakerStatement(ctx, m)
-	require.ErrorIs(t, err, types.ErrCaretakerMovedOut)
-	_, err = k.applyMoveCaretaker(ctx, owner, nf)
-	require.ErrorIs(t, err, types.ErrCaretakerMovedOut, "nor receive one")
-	mo := &types.MsgSetCaretaker{Fee: feeStub(), MaxPredecessor: uint64(types.NoBound), Percentages: split,
-		Membership: types.Membership{Nullifier: owner}}
-	_, err = k.caretakerStatement(ctx, mo)
-	require.NoError(t, err)
-	n, err := k.getCaretakerCount(ctx)
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), n, "moved, not added")
 }
 
 // A claim is for today only, once per nullifier, with an identity activated

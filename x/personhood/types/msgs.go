@@ -18,15 +18,11 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgClaimAnml)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgSetCaretaker)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgBindHandle)(nil)
-	_ shieldedtypes.PrivateMsg = (*MsgMoveHandle)(nil)
-	_ shieldedtypes.PrivateMsg = (*MsgMoveCaretaker)(nil)
 
 	_ sdk.HasValidateBasic = (*MsgRegister)(nil)
 	_ sdk.HasValidateBasic = (*MsgClaimAnml)(nil)
 	_ sdk.HasValidateBasic = (*MsgSetCaretaker)(nil)
 	_ sdk.HasValidateBasic = (*MsgBindHandle)(nil)
-	_ sdk.HasValidateBasic = (*MsgMoveHandle)(nil)
-	_ sdk.HasValidateBasic = (*MsgMoveCaretaker)(nil)
 )
 
 // MaxPublicSignals bounds a passport proof's public input count. The lean_poa
@@ -346,75 +342,6 @@ func (m *MsgBindHandle) ValidateBasic() error {
 		if _, _, err := m.ShieldedAddress(); err != nil {
 			return err
 		}
-	}
-	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
-		return err
-	}
-	return m.Membership.ValidateBasic()
-}
-
-// --- MsgMoveCaretaker ----------------------------------------------------
-
-// PrivateBundles implements PrivateMsg: the fee bundle.
-func (m *MsgMoveCaretaker) PrivateBundles() []*shieldedtypes.Bundle {
-	return []*shieldedtypes.Bundle{&m.Fee}
-}
-
-// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
-func (m *MsgMoveCaretaker) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
-
-// SighashFields implements PrivateMsg: new_owner.
-func (m *MsgMoveCaretaker) SighashFields(address.Codec) ([]fr.Element, error) {
-	owner, err := Field("new_owner", m.NewOwner)
-	if err != nil {
-		return nil, err
-	}
-	return []fr.Element{owner}, nil
-}
-
-// ValidateBasic checks everything that needs no state.
-func (m *MsgMoveCaretaker) ValidateBasic() error {
-	if _, err := Field("new_owner", m.NewOwner); err != nil {
-		return err
-	}
-	if string(m.NewOwner) == string(m.Membership.Nullifier) {
-		return errorsmod.Wrap(ErrInvalidMsg, "new_owner is the prover")
-	}
-	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
-		return err
-	}
-	return m.Membership.ValidateBasic()
-}
-
-// --- MsgMoveHandle -------------------------------------------------------
-
-// PrivateBundles implements PrivateMsg: the fee bundle.
-func (m *MsgMoveHandle) PrivateBundles() []*shieldedtypes.Bundle {
-	return []*shieldedtypes.Bundle{&m.Fee}
-}
-
-// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
-func (m *MsgMoveHandle) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
-
-// SighashFields implements PrivateMsg: Bytes(handle), new_owner.
-func (m *MsgMoveHandle) SighashFields(address.Codec) ([]fr.Element, error) {
-	owner, err := Field("new_owner", m.NewOwner)
-	if err != nil {
-		return nil, err
-	}
-	return []fr.Element{privacy.Bytes([]byte(m.Handle)), owner}, nil
-}
-
-// ValidateBasic checks everything that needs no state.
-func (m *MsgMoveHandle) ValidateBasic() error {
-	if err := ValidateHandle(m.Handle); err != nil {
-		return errorsmod.Wrapf(ErrInvalidMsg, "handle: %v", err)
-	}
-	if _, err := Field("new_owner", m.NewOwner); err != nil {
-		return err
-	}
-	if string(m.NewOwner) == string(m.Membership.Nullifier) {
-		return errorsmod.Wrap(ErrInvalidMsg, "new_owner is the prover")
 	}
 	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err

@@ -15,8 +15,7 @@ option go_package = "github.com/earth-network/earth/x/personhood/types";
 
 // Msg defines the Msg service.
 //
-// Register, ClaimAnml, SetCaretaker, MoveCaretaker, BindHandle and MoveHandle are
-// private msgs:
+// Register, ClaimAnml, SetCaretaker and BindHandle are private msgs:
 // unsigned, carried
 // alone in a tx, their fee paid from the shielded pool by the earth.shielded
 // Bundle each embeds as `fee` (see x/shielded PrivateMsg), whose only balance
@@ -41,18 +40,15 @@ service Msg {
   // SetCaretaker casts or refreshes a registered human's caretaker split.
   rpc SetCaretaker(MsgSetCaretaker) returns (MsgSetCaretakerResponse);
 
-  // BindHandle claims, refreshes, moves or releases a registered human's
+  // BindHandle claims, refreshes, changes or releases a registered human's
   // handle: a name in the public directory for a shielded address.
   rpc BindHandle(MsgBindHandle) returns (MsgBindHandleResponse);
 
-  // MoveHandle transfers the prover's handle to another owner nullifier: a
-  // switch of identity that keeps its handle.
-  rpc MoveHandle(MsgMoveHandle) returns (MsgMoveHandleResponse);
-
-  // MoveCaretaker transfers the prover's live caretaker split (and its
-  // expiry) to another owner nullifier: a switch of identity that keeps its
-  // vote.
-  rpc MoveCaretaker(MsgMoveCaretaker) returns (MsgMoveCaretakerResponse);
+  // There is no move of a handle or a caretaker split between nullifiers:
+  // the chain cannot tell a move to the holder's own next identity from one
+  // to another person's, so moves broke one handle (and one split) per
+  // passport. An identity that replaced another claims or casts under the
+  // predecessor bound, like any other.
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -187,10 +183,9 @@ message MsgClaimAnmlResponse {
 // lowered it) - 86400 (one day, the largest identity root window). A fresh
 // registrant (predecessor_at 0) casts at once; an identity that replaced
 // another waits until every split its predecessor could have cast has
-// lapsed (a switch that keeps its split moves it: MsgMoveCaretaker). The
-// bound applies only to a prover holding no split: refreshing or changing
-// one it holds (cast, or moved to it) takes any max_predecessor. A prover
-// that moved its split away may never cast again. The wallet names the bound (rounded down, say to the hour, so it
+// lapsed. The bound applies only to a prover holding no split: refreshing
+// or changing one it holds takes any max_predecessor. The wallet names the
+// bound (rounded down, say to the hour, so it
 // says nothing about when the tx was made) because the chain's own changes
 // every block and a proof must be made before its block is known. The split
 // counts until now + caretaker_vote_seconds; the wallet refreshes it before
@@ -213,30 +208,6 @@ message MsgSetCaretakerResponse {
   int64 expires_at = 1;
 }
 
-// MsgMoveCaretaker transfers the prover's live caretaker split, percentages
-// and expiry unchanged, to new_owner: the caretaker-scope nullifier of the
-// identity that is to hold it, H(TAG_SN, new_id_secret, Scope("caretaker")),
-// which that identity reveals when it next proves in the caretaker scope (to
-// refresh or change it). How an identity switch keeps its vote with no wait.
-// Nothing ties either nullifier to the passport.
-//
-// membership is proven with scope Scope("caretaker") by the current owner,
-// excluded_dsc and excluded_country 0, max_activation and max_predecessor
-// NoBound (2^63 - 1). new_owner must hold no split and must not have moved
-// one away. The prover may never cast a split again (it moved its one away).
-//
-// sighash fields: new_owner.
-message MsgMoveCaretaker {
-  earth.shielded.v1.Bundle fee = 1 [(gogoproto.nullable) = false];
-  Membership membership = 2 [(gogoproto.nullable) = false];
-  bytes new_owner = 3;
-}
-
-// MsgMoveCaretakerResponse reports the moved split's expiry (unix seconds).
-message MsgMoveCaretakerResponse {
-  int64 expires_at = 1;
-}
-
 // MsgBindHandle claims, renews, changes or releases the prover's handle
 // (types.Handle): a name in the public directory for a shielded address.
 //
@@ -253,10 +224,8 @@ message MsgMoveCaretakerResponse {
 //   - handle and address set, the prover holding none: claim a free handle.
 //     max_predecessor must be strictly below now - the longest
 //     handle_lease_seconds ever set - 86400: an identity that replaced
-//     another waits until any handle its predecessor held has lapsed (a
-//     switch that keeps its handle moves it: MsgMoveHandle). A fresh
-//     registrant claims at once. A prover that moved its handle away may
-//     never claim again.
+//     another waits until any handle its predecessor held has lapsed. A
+//     fresh registrant claims at once.
 //   - both empty: release the prover's handle at once.
 //
 // A handle held by another nullifier (live, or in its renewal period) is
@@ -285,28 +254,3 @@ message MsgBindHandle {
 message MsgBindHandleResponse {
   int64 expires_at = 1;
 }
-
-// MsgMoveHandle transfers the prover's live handle (one in its renewal
-// period must be renewed first) to new_owner: the handle-scope nullifier of the identity that is to
-// hold it, H(TAG_SN, new_id_secret, Scope("handle")), which that identity
-// reveals when it next proves in the handle scope (to renew it). The lease
-// is unchanged. It is how an identity switch keeps its handle: the wallet
-// moves it to the new identity's handle nullifier before (or within a root
-// window after) the switch. Nothing ties either nullifier to the passport.
-//
-// membership is proven with scope Scope("handle") by the current owner,
-// excluded_dsc and excluded_country 0, max_activation and max_predecessor
-// NoBound (2^63 - 1). new_owner must hold no handle and must not have moved
-// one away. The prover may never claim a handle again (it moved its one
-// away).
-//
-// sighash fields: Bytes(handle), new_owner.
-message MsgMoveHandle {
-  earth.shielded.v1.Bundle fee = 1 [(gogoproto.nullable) = false];
-  Membership membership = 2 [(gogoproto.nullable) = false];
-  string handle = 3;
-  bytes new_owner = 4;
-}
-
-// MsgMoveHandleResponse is empty.
-message MsgMoveHandleResponse {}

@@ -25,8 +25,6 @@ func (k Keeper) RegisterPrivateActions(sk types.ShieldedKeeper) {
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgClaimAnml{}), claimAction{k})
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgSetCaretaker{}), caretakerAction{k})
 	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgBindHandle{}), handleAction{k})
-	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgMoveHandle{}), moveHandleAction{k})
-	sk.RegisterPrivateAction(sdk.MsgTypeURL(&types.MsgMoveCaretaker{}), moveCaretakerAction{k})
 }
 
 // --- MsgRegister ---------------------------------------------------------
@@ -139,7 +137,7 @@ func (k Keeper) caretakerStatement(ctx context.Context, m *types.MsgSetCaretaker
 	// successor activated at the bound could file a lease in the very block
 	// its predecessor's last lease lapses, both counted until the sweep.
 	// Only a new split is bounded: refreshing, changing or clearing a live
-	// one the prover holds (cast, or moved to it) creates none. A lapsed
+	// one the prover holds creates none. A lapsed
 	// split the sweep has not reached yet is not held (audit 5 P2, the
 	// handle's switch-and-switch-back: refreshing it unbounded would revive
 	// it beside a successor's).
@@ -151,11 +149,6 @@ func (k Keeper) caretakerStatement(ctx context.Context, m *types.MsgSetCaretaker
 		return MembershipStatement{}, err
 	}
 	if !holds && len(m.Percentages) > 0 {
-		if moved, err := k.CaretakerMovedOut.Has(ctx, nf); err != nil {
-			return MembershipStatement{}, err
-		} else if moved {
-			return MembershipStatement{}, types.ErrCaretakerMovedOut
-		}
 		if err := checkPredecessorBound(m.MaxPredecessor, bound); err != nil {
 			return MembershipStatement{}, err
 		}

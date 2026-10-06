@@ -40,9 +40,6 @@ func (stubAllocation) AdvanceIndexTo(context.Context, allocationtypes.StreamId, 
 func (stubAllocation) ClearVoter(context.Context, allocationtypes.StreamId, []byte) error {
 	return nil
 }
-func (stubAllocation) MoveVoter(context.Context, allocationtypes.StreamId, []byte, []byte) error {
-	return nil
-}
 func (stubAllocation) ValidateSplit(context.Context, allocationtypes.StreamId, []allocationtypes.AllocationWeight) error {
 	return nil
 }

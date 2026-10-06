@@ -64,9 +64,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{RpcMethod: "Register", Skip: true},
 				{RpcMethod: "ClaimAnml", Skip: true},
 				{RpcMethod: "SetCaretaker", Skip: true},
-				{RpcMethod: "MoveCaretaker", Skip: true},
 				{RpcMethod: "BindHandle", Skip: true},
-				{RpcMethod: "MoveHandle", Skip: true},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},
