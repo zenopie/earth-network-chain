@@ -8,12 +8,13 @@ import (
 	"testing"
 )
 
-// TestLeanPoaDeviceProof verifies a REAL proof of the large lean_poa passport
-// circuit (~130k gates) generated on the user's Pixel 6 by noir_android (bb
-// v5.0.0 final, barretenberg-rs 5.0.0) against the chain verifier (bb v5.0.0
-// final). This confirms the full on-device -> on-chain loop for the actual
-// circuit that guards registration, not just the toy e2e circuit — and that the
-// prover/chain bb versions are aligned on final (no nightly skew).
+// TestLeanPoaDeviceProof verifies a REAL proof generated on a Pixel 6 by
+// noir_android (bb v5.0.0, barretenberg-rs 5.0.0) against the chain verifier
+// (bb v5.0.0), with the vk it was proven under: a cross-platform check that the
+// on-device prover and the chain's verifier agree. The circuit is an earlier
+// lean_poa (~130k gates, public inputs registry_root, current_date,
+// nullifier), not one of the register variants in genesis; those are covered
+// by variant_proofs_test.go.
 func TestLeanPoaDeviceProof(t *testing.T) {
 	ph, err := os.ReadFile("testdata/lean_device_proof.hex")
 	if err != nil {

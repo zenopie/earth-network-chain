@@ -106,30 +106,7 @@ func TestPerBlockWorkBudget(t *testing.T) {
 //
 //	x/dex         EndBlock    solvency -> O(1) for ERTH, plus the pools this
 //	                          block wrote and a fixed rotation of a few others.
-//	                          See TestPoolSetIsNoLongerUnbounded.
+//	                          See x/dex/keeper/solvency.go and solvency_test.go.
 func TestEveryPerBlockLoopHasACap(t *testing.T) {
 	t.Log("see the comment above: this is a checklist, reviewed when a per-block loop is added")
-}
-
-// TestPoolSetIsNoLongerUnbounded records why the pool set stopped mattering.
-//
-// x/dex asserts solvency every block, and that check used to walk every pool —
-// twice, since comparing against GetAllBalances is O(denoms held) as well. With
-// CreatePool permissionless, one pool per denom, no minimum liquidity and no
-// scarcity of denoms behind IBC, a pool was a one-time gas-metered cost that
-// bought permanent unmetered work on every future block, including after its
-// creator withdrew and left.
-//
-// It now decomposes by asset instead: ERTH is commingled so it carries a running
-// total compared against one bank balance, and every other denom belongs to
-// exactly one pool, so a pool's own reserve is the whole obligation for it. Only
-// the pools a block actually wrote are checked, which is sound because the dex
-// module account is blocked from receiving outside transfers — nothing but the
-// module can move its coins, so an untouched pool cannot have drifted. A fixed
-// rotation re-checks a few others per block as a backstop.
-//
-// The measurement lives in x/dex/keeper/solvency_test.go, which pins the cost as
-// flat in the pool count rather than merely small today.
-func TestPoolSetIsNoLongerUnbounded(t *testing.T) {
-	t.Log("solvency is O(1) plus pools-written-this-block; see x/dex/keeper/solvency.go")
 }
