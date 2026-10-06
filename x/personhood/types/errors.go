@@ -16,9 +16,6 @@ var (
 	// ErrRegistrationRateLimited is a deferral, not a rejection of the proof:
 	// the registration is valid and the holder may retry once the day rolls.
 	ErrRegistrationRateLimited = errors.Register(ModuleName, 1113, "daily registration limit reached for this document signer or country")
-	// ErrDscRevoked is returned once governance has withdrawn trust from the
-	// Document Signer a registration was made under.
-	ErrDscRevoked = errors.Register(ModuleName, 1114, "the document signer behind this registration has been revoked")
 
 	ErrInvalidMsg          = errors.Register(ModuleName, 1116, "invalid private msg")
 	ErrUnknownIdentityRoot = errors.Register(ModuleName, 1117, "root is not a recent identity-tree root")
