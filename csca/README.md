@@ -9,7 +9,7 @@ accept a DSC that chains to one of these, so this directory decides which
 passports can ever register. Nothing else the chain does is as load-bearing.
 
     masterlist/allowlist.ml   ICAO master list — 536 CSCAs
-    additional/*.cer          hand-added CSCAs ICAO does not distribute (none)
+    additional/*.cer, *.der   hand-added CSCAs ICAO does not distribute (none)
 
 `additional/` is currently empty, so the ICAO master list is the entire trust
 store. It held three Israeli CSCAs until they were removed on purpose — a CSCA
@@ -22,7 +22,7 @@ Regenerate the genesis block with:
 
     go run ./tools/pki-genesis \
       csca/masterlist/allowlist.ml \
-      csca/additional/*.cer
+      csca/additional/*.cer csca/additional/*.der
 
 Certificates that share a signing key are intentionally **not** collapsed: the
 keeper indexes issuers by subject DN as well as by SKI, and one SKI here appears

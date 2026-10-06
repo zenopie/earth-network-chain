@@ -72,7 +72,14 @@ func main() {
 		added := 0
 		for _, d := range ders {
 			if _, err := certs.ParseCert(d); err != nil {
-				skipped++ // skip certs even our lenient parser cannot read
+				// A certificate named on its own was put there on purpose:
+				// one the parser cannot read fails the build. A master list
+				// entry is skipped.
+				if len(ders) == 1 && !strings.EqualFold(filepath.Ext(path), ".ml") {
+					fmt.Fprintf(os.Stderr, "parse certificate %s: %v\n", path, err)
+					os.Exit(1)
+				}
+				skipped++ // skip master-list certs even our lenient parser cannot read
 				continue
 			}
 			h := sha256.Sum256(d)

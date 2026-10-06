@@ -72,8 +72,16 @@ say "generating pki.cscas from csca/"
 # directory passes the literal `*.cer` through as a filename and the build dies
 # on a file that does not exist; the `[@]+` form is because `set -u` treats an
 # empty array as unbound on bash 3.2, which is what macOS ships.
+# DER certificates as .cer or .der; any other file (README.md aside) fails the
+# build rather than being left out of the trust store unnoticed.
 shopt -s nullglob
-extra_cscas=("$REPO"/csca/additional/*.cer)
+extra_cscas=("$REPO"/csca/additional/*.cer "$REPO"/csca/additional/*.der)
+for f in "$REPO"/csca/additional/*; do
+  case "$f" in
+    *.cer|*.der|*/README.md) ;;
+    *) echo "error: csca/additional/$(basename "$f") is not a .cer or .der certificate" >&2; exit 1 ;;
+  esac
+done
 shopt -u nullglob
 go run "$REPO/tools/pki-genesis" \
   "$REPO/csca/masterlist/allowlist.ml" ${extra_cscas[@]+"${extra_cscas[@]}"} \
