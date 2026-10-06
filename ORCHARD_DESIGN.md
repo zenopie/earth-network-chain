@@ -310,7 +310,7 @@ shielded-only for every transparent path; the dex refuses it). Stake notes are
 **owner-locked**: the stake circuit outputs only stake pcs of the spender's
 own owner_pk. **The chain mints no stake note**: every stake note is an
 output of a stake proof (section 8). Root window `stake_root_window_seconds`
-(default 14 days). The tree records its empty root at the first block (a
+(default 14 days, from when a root stopped being the latest, as in 3.1). The tree records its empty root at the first block (a
 first delegation pads its input and proves against an anchor before any note
 exists). Roots and size are recorded at the end of every block that changed
 them (`StakeLatestRoot`).

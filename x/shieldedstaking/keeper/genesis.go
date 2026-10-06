@@ -281,8 +281,11 @@ func (k Keeper) initStakeTree(ctx context.Context, gs types.GenesisState) error 
 	n := uint64(len(gs.StakeCommitments))
 	want := map[uint64][][]byte{} // tree_size -> roots claimed there
 	for i, r := range gs.StakeRoots {
-		if r.Time > genesisTime {
-			return fmt.Errorf("stake root %d: time %d is after genesis time %d", i, r.Time, genesisTime)
+		if r.Time > genesisTime || r.SupersededAt > genesisTime {
+			return fmt.Errorf("stake root %d: time %d (superseded %d) is after genesis time %d", i, r.Time, r.SupersededAt, genesisTime)
+		}
+		if last := i == len(gs.StakeRoots)-1; last != (r.SupersededAt == 0) || (!last && r.SupersededAt < r.Time) {
+			return fmt.Errorf("stake root %d: superseded_at %d does not fit its place (latest: %t) and time %d", i, r.SupersededAt, last, r.Time)
 		}
 		if r.TreeSize > n {
 			return fmt.Errorf("stake root %d: tree_size %d is past the tree's %d", i, r.TreeSize, n)

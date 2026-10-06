@@ -293,9 +293,13 @@ message Position {
 message StakeRoot {
   bytes root = 1;
   int64 height = 2;
-  // time of that block, unix seconds; the window runs from here.
+  // time of that block, unix seconds.
   int64 time = 3;
   uint64 tree_size = 4;
+  // superseded_at is the time (unix seconds) of the block whose root
+  // replaced this one as the latest, 0 while it is the latest. The window
+  // runs from here (as x/shielded's RootRecord).
+  int64 superseded_at = 5;
 }
 
 // ProposalSnapshot is taken when an x/gov proposal enters voting.

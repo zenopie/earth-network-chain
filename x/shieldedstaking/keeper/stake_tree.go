@@ -191,6 +191,11 @@ func (k Keeper) recordStakeRoot(ctx context.Context) error {
 		return err
 	}
 	if !bytes.Equal(latest, root) {
+		if len(latest) > 0 {
+			if err := k.supersedeStakeRoot(ctx, latest, sdkCtx.BlockTime().Unix()); err != nil {
+				return err
+			}
+		}
 		rec := types.StakeRoot{Root: root, Height: sdkCtx.BlockHeight(), Time: sdkCtx.BlockTime().Unix(), TreeSize: t.Size()}
 		if err := k.putStakeRoot(ctx, rec, true); err != nil {
 			return err
@@ -203,11 +208,41 @@ func (k Keeper) recordStakeRoot(ctx context.Context) error {
 	return k.pruneStakeRoots(ctx, params.StakeRootWindowSeconds, 100)
 }
 
+// stakeWindowStart is when rec's anchor window starts: when a newer root
+// replaced it, or (for the latest, which never expires) when it was
+// recorded. A root stays an anchor for the window after it stopped being the
+// latest, however long it was the latest (audit A-1, as x/shielded).
+func stakeWindowStart(rec types.StakeRoot) int64 {
+	if rec.SupersededAt != 0 {
+		return rec.SupersededAt
+	}
+	return rec.Time
+}
+
+// supersedeStakeRoot marks root's record (the latest until now) as replaced
+// at t, moving its by-time entry to t.
+func (k Keeper) supersedeStakeRoot(ctx context.Context, root []byte, t int64) error {
+	rec, err := k.StakeRoots.Get(ctx, root)
+	if errors.Is(err, collections.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := k.StakeRootsByTime.Remove(ctx, collections.Join(stakeWindowStart(rec), rec.Root)); err != nil {
+		return err
+	}
+	rec.SupersededAt = t
+	if err := k.StakeRoots.Set(ctx, rec.Root, rec); err != nil {
+		return err
+	}
+	return k.StakeRootsByTime.Set(ctx, collections.Join(stakeWindowStart(rec), rec.Root))
+}
+
 func (k Keeper) putStakeRoot(ctx context.Context, rec types.StakeRoot, latest bool) error {
 	if err := k.StakeRoots.Set(ctx, rec.Root, rec); err != nil {
 		return err
 	}
-	if err := k.StakeRootsByTime.Set(ctx, collections.Join(rec.Time, rec.Root)); err != nil {
+	if err := k.StakeRootsByTime.Set(ctx, collections.Join(stakeWindowStart(rec), rec.Root)); err != nil {
 		return err
 	}
 	if !latest {
@@ -273,7 +308,7 @@ func (k Keeper) checkStakeAnchor(ctx context.Context, root []byte) error {
 	if err != nil {
 		return err
 	}
-	if sdk.UnwrapSDKContext(ctx).BlockTime().Unix() > rec.Time+int64(params.StakeRootWindowSeconds) {
+	if sdk.UnwrapSDKContext(ctx).BlockTime().Unix() > stakeWindowStart(rec)+int64(params.StakeRootWindowSeconds) {
 		return types.ErrStakeTree.Wrapf("stake root %X has left the window", root)
 	}
 	return nil
