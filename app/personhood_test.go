@@ -757,6 +757,10 @@ func TestPrivatePersonhood(t *testing.T) {
 	// A1 proves tomorrow's claim now, before switching away.
 	e.at(dayStart(d2).Add(40 * time.Minute))
 	a1Tomorrow := e.claim("A1-d3", "A1", d2+1, -1)
+	// Naming a handle nobody holds ("amy", before A1 takes it below) is
+	// refused before the passport proof.
+	res = e.checkTx(e.tx(e.register("D1")))
+	require.Equal(t, personhoodtypes.ErrNoReferrer.ABCICode(), res.Code, res.Log)
 
 	// --------------------------------------------------------- before a switch
 	// A1's last split lapsed, so it casts one again (no wait: no
@@ -831,9 +835,6 @@ func TestPrivatePersonhood(t *testing.T) {
 	_, ok = e.registration("C1")
 	require.False(t, ok)
 	require.True(t, e.leaf(c1Index).IsZero())
-	// Naming a handle nobody holds is refused before the passport proof.
-	res = e.checkTx(e.tx(e.register("C2")))
-	require.Equal(t, personhoodtypes.ErrNoReferrer.ABCICode(), res.Code, res.Log)
 	// C2 names "amy" (still A1's, claimed before the switch): the chain mints the referrer's half as a note to the
 	// handle's registered address (A's), with an opening it derives from the
 	// passport nullifier and leaf index and publishes on the mint event; the

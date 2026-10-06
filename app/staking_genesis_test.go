@@ -114,8 +114,12 @@ func stakeGenesisWith(t *testing.T, roots [][]byte, snapRoot []byte, snapHeight 
 		require.NoError(t, json.Unmarshal(appState[sstypes.ModuleName], &gs))
 		gs["stake_commitments"] = []any{b64(cm)}
 		var rs []any
-		for _, r := range roots {
-			rs = append(rs, map[string]any{"root": b64(r), "height": "1", "time": ts, "tree_size": "1"})
+		for i, r := range roots {
+			rec := map[string]any{"root": b64(r), "height": "1", "time": ts, "tree_size": "1"}
+			if i < len(roots)-1 {
+				rec["superseded_at"] = ts // every record but the latest was superseded
+			}
+			rs = append(rs, rec)
 		}
 		gs["stake_roots"] = rs
 		gs["snapshot_seq"] = "1"

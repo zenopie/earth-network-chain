@@ -389,7 +389,8 @@ func TestStakeVoteConcurrentProposals(t *testing.T) {
 		s, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), p)
 		require.NoError(t, err)
 		require.NotEmpty(t, s.NfRoot)
-		require.Equal(t, uint64(5), s.NfSize, "the sentinel, the three delegations' padding nullifiers and m's")
+		// Every lane-A spend publishes both slots (audit C-2: slot 1 pads).
+		require.Equal(t, uint64(9), s.NfSize, "the sentinel, the three delegations' two padding nullifiers each, and m's two")
 		snaps[p] = s
 	}
 	require.Equal(t, snaps[prop1].NfRoot, snaps[prop2].NfRoot)
@@ -650,4 +651,28 @@ func TestSnapshotSkipsStaleRoots(t *testing.T) {
 	snap, err = k.Snapshots.Get(e.ctx(), again)
 	require.NoError(t, err)
 	require.NotEmpty(t, snap.NfRoot)
+}
+
+// Audit C-7: a proposal x/gov cancelled keeps its snapshot until its old
+// voting end, but takes no stake vote: no tally will ever run.
+func TestCancelledProposalTakesNoStakeVotes(t *testing.T) {
+	e := initStakeEnv(t)
+	vA, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(2_000 * ssErth))
+	for range 4 {
+		e.shield(uint64(100 * ssErth))
+	}
+	n := e.delegate(vA, uint64(1_000*ssErth))
+	e.days(1)
+	prop := e.submitProposal()
+	e.next(5 * time.Second)
+	_, err := e.app.ShieldedStakingKeeper.Snapshots.Get(e.ctx(), prop)
+	require.NoError(t, err, "the snapshot was taken")
+
+	res := e.run(e.signedTx(e.user, 500_000, 5_000, v1.NewMsgCancelProposal(prop, e.bech(e.userAddr()))))
+	require.Equal(t, uint32(0), res.Code, res.Log)
+	m, _, _ := e.stakeVoteMsg(n, prop, v1.NewNonSplitVoteOption(v1.OptionYes), 0, false)
+	ck := e.checkTx(e.privateTx(m))
+	require.Equal(t, sstypes.ErrNoVoting.ABCICode(), ck.Code, ck.Log)
 }
