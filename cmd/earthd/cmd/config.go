@@ -11,13 +11,7 @@ import (
 // initCometBFTConfig helps to override default CometBFT Config values.
 // return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
-	cfg := cmtcfg.DefaultConfig()
-
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
-
-	return cfg
+	return cmtcfg.DefaultConfig()
 }
 
 // initAppConfig helps to override default appConfig template and configs.
@@ -34,22 +28,9 @@ func initAppConfig() (string, interface{}) {
 		Wasm wasmtypes.NodeConfig `mapstructure:"wasm"`
 	}
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	// MinGasPrices is left empty: every validator sets its own in app.toml
+	// (the node refuses to start without one).
 	srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value) inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In tests, we set the min gas prices to 0.
-	// srvCfg.MinGasPrices = "0stake"
 
 	// The app mempool must be the no-op one (mempool.max-txs = -1, the SDK
 	// default, pinned here so the template every node writes says so).

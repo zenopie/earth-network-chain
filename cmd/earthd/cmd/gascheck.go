@@ -12,7 +12,6 @@ import (
 	"sort"
 	"time"
 
-	"cosmossdk.io/core/address"
 	corestore "cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
@@ -91,7 +90,6 @@ func gasCheckCmd() *cobra.Command {
 type gasCheckEnv struct {
 	ctx        sdk.Context
 	cdc        codec.Codec
-	addrCodec  address.Codec
 	personhood personhoodkeeper.Keeper
 	height     int64
 }
@@ -141,7 +139,7 @@ func newGasCheckEnv(cmd *cobra.Command) (*gasCheckEnv, error) {
 		WithGasMeter(storetypes.NewInfiniteGasMeter()).
 		WithEventManager(sdk.NewEventManager())
 
-	return &gasCheckEnv{ctx: ctx, cdc: cdc, addrCodec: addrCodec, personhood: personhood, height: height}, nil
+	return &gasCheckEnv{ctx: ctx, cdc: cdc, personhood: personhood, height: height}, nil
 }
 
 // gasCheckCodec decodes what the backend pipes in: a MsgRegister (its fee
