@@ -13,7 +13,7 @@ module books, validator stake, pool reserves, allocation weights and every
 amount the chain itself computes are public.
 
 Genesis: `networks/genesis.json` sha256
-`723549a84aea94b98c391e7ca0a824e923204ed99b57ff826728e14ac08b7946`, carrying
+`bae959be55a37e9c9c06c97207c91b92068202c6b20cacb51c30882c155f2779`, carrying
 the action, stake, vote, membership and move verifying keys
 (`networks/genesis/shielded-verifying-keys/*.vk.b64`) and the passport keys
 (`networks/genesis/verifying-keys/`, 33 register circuits). `make genesis-check` and
@@ -707,8 +707,13 @@ current_date to block time and dedups on the passport nullifier.
 
 **The registrant knows the identity's secret.** The register circuit takes
 the identity secret as a private witness and outputs `idc = H(TAG_ID,
-id_secret)` as its fifth public input (`params.idc_index`, 4); the chain
-requires it to equal `MsgRegister.idc`, or refuses with `ErrBadPublicInputs`.
+id_secret)` as its fifth public input (index 4); the chain requires it to
+equal `MsgRegister.idc`, or refuses with `ErrBadPublicInputs`. The register
+layout `[current_date, address, nullifier, dsc_key, idc]` is code
+(`types.Register*Input`), not a param, and a proof with any other number of
+public inputs is refused: a governance swap of the nullifier and idc
+positions would otherwise make the fresh idc serve as the passport nullifier,
+so one passport could register without limit (audit R3-C3).
 This holds for a first registration, a re-entry and a switch alike. Without
 it a holder could register her passport to an idc that someone else chose,
 whose secret only they know (audit R2-B1): the succession the chain then
@@ -1380,6 +1385,23 @@ validator (1118). The only way to take income out is to unbond the self-bond.
     after it nothing is due for the rest of the block. After a halt of H
     seconds that is the retirements of the splits cast in an H-long window a
     lease earlier, in one (slower) block.
+    **Bound** (audit R3-C1): a lease ends at cast block time + L, so one
+    block's casts share one lapse second and only a halt packs several
+    blocks' worth into one sweep. Position casts (Lock / Update) are private
+    actions, at most `max_private_actions_per_block` per block (32 by
+    default, 256 at most); account leases are operators' only, one per
+    operator. The first block after a halt of H seconds therefore retires at
+    most `max_private_actions_per_block` x H / block_time positions (32 per
+    block of halt: a 6 h halt at 6 s blocks, about 115k, each some 10-20 KV
+    operations and one event), plus at most one lease per operator. The
+    total work is what those blocks would have done; only its spreading is
+    lost. It cannot be weaponised: reaching the bound needs every block of
+    the matching window, one lease (365 days) before the halt, full of
+    paid position casts, which crowds out every other private action for
+    that window and, since a position holds one lease, means about
+    32 x L / block_time (~1.7e8) live positions renewed round-robin, all to
+    hit a halt no one can schedule a year ahead. The worst case is one
+    slow, event-heavy block, not a halt.
   - **Every other settle** (a tx, a staking hook, an EndBlock resync:
     `AdvanceIndex` / `advanceIndexTo`) moves the index only and never
     touches a voter, position or total, so a caller that reads a position
