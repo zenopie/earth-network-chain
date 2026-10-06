@@ -271,9 +271,13 @@ func countedEntries(es []stakingtypes.RedelegationEntry) int {
 // MergeTries pairs, and saves red. The merged entry takes the later
 // creation height (a slash for an infraction between the two heights now
 // charges the older entry's moves too: never less than x/staking would) and
-// the earlier completion (it matures before any of its moves' labels can
-// clear: no slash reaches a cleared label). Its moves' entry height and
-// completion follow. Returns false, with nothing changed, when no pair
+// the later completion (audit C-2: the earlier one let x/staking complete
+// the merged entry before the newer moves' slash window closed, so their
+// share of a late slash fell on src's holders). Each entry's queue slot
+// stays, and the one at the later completion completes it. Labels still
+// clear only after move_time + the longest unbonding time + slack, past
+// either completion, so no slash reaches a cleared label. Its moves' entry
+// height and completion follow. Returns false, with nothing changed, when no pair
 // qualifies.
 func (k Keeper) mergeOldEntries(ctx context.Context, red *stakingtypes.Redelegation) (bool, error) {
 	id := entryID(red.ValidatorSrcAddress, red.ValidatorDstAddress)
@@ -304,7 +308,7 @@ func (k Keeper) mergeOldEntries(ctx context.Context, red *stakingtypes.Redelegat
 		if ei.CreationHeight > m.CreationHeight {
 			m.CreationHeight = ei.CreationHeight
 		}
-		if ei.CompletionTime.Before(m.CompletionTime) {
+		if ei.CompletionTime.After(m.CompletionTime) {
 			m.CompletionTime = ei.CompletionTime
 		}
 		m.InitialBalance = ei.InitialBalance.Add(ej.InitialBalance)

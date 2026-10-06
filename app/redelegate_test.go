@@ -1072,8 +1072,10 @@ func (e *stakeEnv) undelegateUnproven(val sdk.ValAddress, in *snote, amount uint
 }
 
 // fillEntryCap fills the module's (a, b) redelegation to
-// MaxEntryHeightsPerPair entries, at the heights after its single entry's,
-// entry i owned by moves[i] fake moves of 1,000 shares each (1 if unset).
+// MaxEntryHeightsPerPair entries, at the heights after its single entry's
+// and completing i seconds after it (each with its queue slot, as a real
+// entry has), entry i owned by moves[i] fake moves of 1,000 shares each (1
+// if unset).
 // Test-only: that many blocks of moves would take minutes.
 func (e *stakeEnv) fillEntryCap(a, b sdk.ValAddress, moves map[int]int) stakingtypes.Redelegation {
 	e.t.Helper()
@@ -1090,6 +1092,7 @@ func (e *stakeEnv) fillEntryCap(a, b sdk.ValAddress, moves map[int]int) stakingt
 		}
 		en := last
 		en.CreationHeight = last.CreationHeight + int64(i)
+		en.CompletionTime = last.CompletionTime.Add(time.Duration(i) * time.Second)
 		en.InitialBalance = math.NewInt(int64(1_000 * n))
 		en.SharesDst = math.LegacyNewDec(int64(1_000 * n))
 		en.UnbondingId = last.UnbondingId + 10_000 + uint64(i)
@@ -1104,6 +1107,9 @@ func (e *stakeEnv) fillEntryCap(a, b sdk.ValAddress, moves map[int]int) stakingt
 		}
 	}
 	require.NoError(e.t, e.app.StakingKeeper.SetRedelegation(ctx, red))
+	for _, en := range red.Entries[1:] {
+		require.NoError(e.t, e.app.StakingKeeper.InsertRedelegationQueue(ctx, red, en.CompletionTime))
+	}
 	// Past the filled heights, as if those blocks had passed.
 	for e.height <= red.Entries[len(red.Entries)-1].CreationHeight {
 		e.next(time.Second)
@@ -1113,7 +1119,7 @@ func (e *stakeEnv) fillEntryCap(a, b sdk.ValAddress, moves map[int]int) stakingt
 }
 
 // At MaxEntryHeightsPerPair entries for a pair, a bonded move first merges
-// the two oldest entries (the later height, the earlier completion, their
+// the two oldest entries (the later height, the later completion, their
 // moves re-filed under it) and then adds its own entry at its own height:
 // a move is never in an entry older than itself, so a slash for an
 // infraction before it always reaches it (audit 7: joining the latest entry
@@ -1154,7 +1160,8 @@ func TestRedelegateEntryCap(t *testing.T) {
 	require.Len(t, red.Entries, sstypes.MaxEntryHeightsPerPair)
 	merged := red.Entries[0]
 	require.Equal(t, e1.CreationHeight, merged.CreationHeight, "the later height")
-	require.True(t, e0.CompletionTime.Equal(merged.CompletionTime), "the earlier completion")
+	require.True(t, e1.CompletionTime.Equal(merged.CompletionTime), "the later completion (audit C-2)")
+	require.True(t, e1.CompletionTime.After(e0.CompletionTime))
 	require.Equal(t, e0.InitialBalance.Add(e1.InitialBalance), merged.InitialBalance)
 	require.Equal(t, e0.SharesDst.Add(e1.SharesDst), merged.SharesDst)
 	require.Equal(t, e1.UnbondingId, merged.UnbondingId)
