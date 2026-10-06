@@ -43,10 +43,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{RpcMethod: "Send", Skip: true},
 				{
 					RpcMethod: "Shield",
-					Use:       "shield [amount] [pc-base64]",
+					Use:       "shield [amount] [pc-base64] [ciphertext-base64]",
 					Short:     "Move coins into the shielded pool as a note to pc",
+					Long: "Move coins into the shielded pool as a note to pc, with the note's " +
+						"177-byte amount-blind ciphertext (zk/privacy EncryptBlindNote), " +
+						"which a wallet builds from the owner's shielded address.",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
-						{ProtoField: "amount"}, {ProtoField: "pc"},
+						{ProtoField: "amount"}, {ProtoField: "pc"}, {ProtoField: "ciphertext"},
 					},
 				},
 			},
