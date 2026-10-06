@@ -52,7 +52,46 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cp -R "$CIRCUITS_SRC" "$WORK/circuits"
 rm -rf "$WORK/circuits/target"
-( cd "$WORK/circuits" && nargo compile --workspace >/dev/null )
+( cd "$WORK/circuits" && nargo compile --workspace >/dev/null 2>"$WORK/compile.log" ) || { cat "$WORK/compile.log" >&2; exit 1; }
+# Audit R2C-1: nargo reports every Brillig call it cannot see constrained.
+# The known sites are false positives (scripts/brillig-allowlist.txt, each
+# with its justification); any other site fails this script, in both modes,
+# so a real unconstrained hint cannot hide among the known ones.
+python3 - "$WORK/compile.log" "$CHAIN_DIR/scripts/brillig-allowlist.txt" <<'PY'
+import re, sys
+log = re.sub(r'\x1b\[[0-9;]*m', '', open(sys.argv[1], encoding='utf-8', errors='replace').read())
+allowed = {}
+for line in open(sys.argv[2], encoding='utf-8'):
+    line = line.rstrip('\n')
+    if not line or line.startswith('#'):
+        continue
+    site, _, why = line.partition('\t')
+    if not why.strip():
+        sys.exit(f'brillig-allowlist.txt: {site} has no justification')
+    allowed[site] = 0
+lines = log.splitlines()
+new = {}
+for i, line in enumerate(lines):
+    if "Brillig function call isn't properly covered" not in line:
+        continue
+    m = next((re.search(r'┌─ (\S+):(\d+):\d+', l) for l in lines[i + 1:i + 4] if '┌─' in l), None)
+    if not m:
+        sys.exit(f'privacy-vks: unparsed Brillig warning near log line {i + 1}')
+    path = m.group(1)
+    if '/github.com/' in path:
+        path = path.split('/github.com/', 1)[1]
+    site = f'{path}:{m.group(2)}'
+    if site in allowed:
+        allowed[site] += 1
+    else:
+        new[site] = new.get(site, 0) + 1
+if new:
+    for site, n in sorted(new.items()):
+        print(f'unreviewed Brillig warning: {site} ({n}x)', file=sys.stderr)
+    sys.exit('a Brillig call nargo cannot see constrained is not in scripts/brillig-allowlist.txt: '
+             'review it (constrain the hint, or justify and list the site)')
+print(f'Brillig warnings: {sum(allowed.values())} at {sum(1 for n in allowed.values() if n)} allowlisted sites, none new', file=sys.stderr)
+PY
 for c in action membership stake vote move; do
   bb write_vk -b "$WORK/circuits/target/$c.json" -o "$WORK/vk-$c" -t noir-recursive >/dev/null 2>&1
   base64 < "$WORK/vk-$c/vk" | tr -d '\n' > "$WORK/$c.vk.b64"
