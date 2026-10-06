@@ -335,16 +335,13 @@ elif [ -f "$EARTH_HOME/config/genesis.json" ] \
      && [ "${RESET_ON_GENESIS_MISMATCH:-0}" = "1" ]; then
   # ── reset ────────────────────────────────────────────────────────────────
   #
-  # The volume holds a different chain from the one this image ships. Normally
-  # that is a mistake worth stopping for, which is what the branch below does.
-  # With RESET_ON_GENESIS_MISMATCH=1 it is instead a deliberate cutover: throw
-  # the old chain away and join the image's one.
-  #
-  # This is safe to leave switched on, which is the point of keying it to the
-  # hash rather than to a plain WIPE=1. It fires exactly once — on the first
-  # boot after the genesis changes — and every restart afterwards sees matching
-  # hashes and resumes normally. A knob that wiped on every restart would be a
-  # loaded gun in a config file.
+  # The volume holds a different chain from the one this image ships. On a
+  # live chain that is the wrong image, and the branch below stops for it.
+  # RESET_ON_GENESIS_MISMATCH=1 is for throwaway devnets only: throw the old
+  # chain away and join the image's one. The validator SDL refuses it
+  # (build-sdl.py). Keyed to the hash rather than a plain WIPE=1, it fires
+  # once, on the first boot after the genesis changes; restarts afterwards
+  # see matching hashes and resume.
   say "genesis on this volume does not match the image, and RESET_ON_GENESIS_MISMATCH=1"
   say "  on disk: $(sha256_of "$EARTH_HOME/config/genesis.json")"
   say "  image:   $(sha256_of "$GENESIS_SRC")"
@@ -361,10 +358,11 @@ elif [ -f "$EARTH_HOME/config/genesis.json" ]; then
     die "the genesis on this volume is not the one in this image
       on disk: $ON_DISK
       image:   $IN_IMAGE
-    These are two different chains. Resuming would keep running the old one
-    while every published artefact describes the new one. Set
-    RESET_ON_GENESIS_MISMATCH=1 to destroy the volume's chain and join the
-    image's, or deploy an image whose genesis matches this volume."
+    These are two different chains. On a live validator or node this means
+    the wrong image was deployed: stop and investigate, and deploy the image
+    whose genesis matches this volume. Do not wipe the volume to make this
+    go away; its chain state (and a validator's signing state) is not
+    recoverable. RESET_ON_GENESIS_MISMATCH=1 is for throwaway devnets only."
   fi
   say "existing genesis found — resuming chain at $EARTH_HOME"
   say "genesis sha256 $ON_DISK"
