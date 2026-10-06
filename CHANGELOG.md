@@ -15,7 +15,7 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting: final-audit fixes** (new genesis, no migration;
 **genesis.json sha256
-723549a84aea94b98c391e7ca0a824e923204ed99b57ff826728e14ac08b7946**; a new
+bae959be55a37e9c9c06c97207c91b92068202c6b20cacb51c30882c155f2779**; a new
 move verifying key and all 33 register circuit keys changed). Wallets,
 backend and indexers must adopt:
 
@@ -23,8 +23,14 @@ backend and indexers must adopt:
   Every register circuit takes `id_secret` as a private witness and outputs
   `idc = H(TAG_ID, id_secret)` as a fifth public input; public_signals are
   now `[current_date, address, nullifier, dsc_key, idc]` and the chain
-  (new param `idc_index` = 4, field 28) requires idc to equal
-  `MsgRegister.idc`. All 33 verifying keys changed.
+  requires idc (index 4) to equal `MsgRegister.idc`. All 33 verifying keys
+  changed.
+- x/personhood: **the register public-input positions are code, not
+  params** (audit R3-C3). Params `nullifier_index` (4), `dsc_key_index`
+  (5), `current_date_index` (6), `address_index` (20) are removed and
+  reserved (as is the never-launched `idc_index`, 28); genesis and
+  MsgUpdateParams no longer carry them. A register proof must have exactly
+  five public inputs.
 - x/personhood: **an idc registered before, by any passport, is refused**
   (error 1130 `ErrIdcUsed`): every registration, switch and re-entry needs
   a fresh identity; a switch back to an earlier identity is refused.

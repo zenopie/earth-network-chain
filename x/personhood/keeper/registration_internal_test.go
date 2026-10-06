@@ -141,7 +141,6 @@ func passportMsg(t *testing.T, name string) *types.MsgRegister {
 func leanParams(t *testing.T) types.Params {
 	p := types.DefaultParams()
 	p.VerifyingKeys = map[string][]byte{"lean_poa_p256_sha256": readFileAt(t, filepath.Join(passportDir, "lean_poa_p256_sha256.vk"))}
-	p.NullifierIndex, p.DscKeyIndex, p.CurrentDateIndex, p.AddressIndex, p.IdcIndex = 2, 3, 0, 1, 4
 	return p
 }
 
@@ -274,6 +273,26 @@ func TestRegistrationCurrentDatePinning(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrBadPublicInputs)
 }
 
+// The register layout is fixed in code (audit R3-C3): a proof with more or
+// fewer public inputs than [current_date, address, nullifier, dsc_key, idc]
+// is refused before anything is read from it.
+func TestRegistrationPublicInputCountIsFixed(t *testing.T) {
+	k, ctx := regKeeper(t, stubPki{pubkey: dscKeyOf(t, "A1")})
+	for _, n := range []int{types.RegisterPublicInputs - 1, types.RegisterPublicInputs + 1} {
+		m := passportMsg(t, "A1")
+		signals := append([]string(nil), m.PublicSignals...)
+		if n < len(signals) {
+			signals = signals[:n]
+		} else {
+			signals = append(signals, "0")
+		}
+		m.PublicSignals = signals
+		_, err := k.checkRegistration(ctx, m)
+		require.ErrorIs(t, err, types.ErrBadPublicInputs, n)
+		require.ErrorContains(t, err, "public inputs", n)
+	}
+}
+
 // A tampered proof fails verification.
 func TestRegistrationProofMustVerify(t *testing.T) {
 	k, ctx := regKeeper(t, stubPki{pubkey: dscKeyOf(t, "A1")})
@@ -319,4 +338,15 @@ func TestYYMMDDToUnix(t *testing.T) {
 	wrapped.FillBytes(buf[:])
 	_, err = yymmddToUnix(buf[:])
 	require.Error(t, err)
+	// Anything at or past 2^32 is refused before it is read as an integer
+	// (cleanup-chain #5); the circuits' current_date is a u32.
+	for _, v := range []*big.Int{
+		new(big.Int).Lsh(big.NewInt(1), 32),
+		new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 32), big.NewInt(250101)),
+	} {
+		var b [32]byte
+		v.FillBytes(b[:])
+		_, err = yymmddToUnix(b[:])
+		require.ErrorContains(t, err, "not a YYMMDD value", v.String())
+	}
 }

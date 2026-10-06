@@ -100,13 +100,8 @@
   },
   "personhood": {
     "params": {
-      "address_index": 1,
-      "current_date_index": 0,
       "current_date_max_skew_seconds": "172800",
-      "dsc_key_index": 3,
-      "idc_index": 4,
       "registration_sweep_limit": "100",
-      "nullifier_index": 2,
       "registration_validity_seconds": "31536000"
     }
   },

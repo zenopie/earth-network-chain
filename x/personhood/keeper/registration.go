@@ -62,13 +62,9 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		return preparedRegistration{}, types.ErrNoVerifyingKey.Wrapf("algorithm %q", msg.SignatureAlgorithm)
 	}
 	n := len(msg.PublicSignals)
-	for name, idx := range map[string]uint32{
-		"nullifier": params.NullifierIndex, "address": params.AddressIndex, "current_date": params.CurrentDateIndex,
-		"idc": params.IdcIndex,
-	} {
-		if int(idx) >= n {
-			return preparedRegistration{}, types.ErrBadPublicInputs.Wrapf("%s index %d out of range", name, idx)
-		}
+	if n != types.RegisterPublicInputs {
+		return preparedRegistration{}, types.ErrBadPublicInputs.Wrapf(
+			"a register proof has %d public inputs, got %d", types.RegisterPublicInputs, n)
 	}
 
 	// Public inputs arrive as decimal field elements; UltraHonk wants 32-byte
@@ -92,7 +88,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		return preparedRegistration{}, err
 	}
 	bindingBytes := privacy.FieldBytes(binding)
-	if !bytes.Equal(pubInputs[params.AddressIndex], bindingBytes) {
+	if !bytes.Equal(pubInputs[types.RegisterAddressInput], bindingBytes) {
 		return preparedRegistration{}, types.ErrBadPublicInputs.Wrap(
 			"proof is bound to a different identity and notes than this msg names")
 	}
@@ -116,7 +112,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	// buyer move her handle or caretaker split to an identity she can never
 	// move it back from (audit R2-B1). A tampered msg.Idc would also fail
 	// the binding; this check names the actual cause.
-	if !bytes.Equal(pubInputs[params.IdcIndex], msg.Idc) {
+	if !bytes.Equal(pubInputs[types.RegisterIdcInput], msg.Idc) {
 		return preparedRegistration{}, types.ErrBadPublicInputs.Wrap(
 			"proof's identity commitment is not this msg's idc: the prover must hold the idc's secret")
 	}
@@ -128,7 +124,7 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		return preparedRegistration{}, types.ErrBadPublicInputs.Wrap(
 			"current_date_max_skew_seconds is unset; registration is disabled until governance sets it")
 	}
-	proofUnix, err := yymmddToUnix(pubInputs[params.CurrentDateIndex])
+	proofUnix, err := yymmddToUnix(pubInputs[types.RegisterCurrentDateInput])
 	if err != nil {
 		return preparedRegistration{}, types.ErrBadPublicInputs.Wrap(err.Error())
 	}
@@ -146,10 +142,6 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 	// must equal the proof's dsc_key input.
 	var facts dscFacts
 	if k.pkiKeeper != nil {
-		dscIndex := int(params.DscKeyIndex)
-		if dscIndex >= n {
-			return preparedRegistration{}, types.ErrBadPublicInputs.Wrapf("dsc key index %d out of range", dscIndex)
-		}
 		if len(msg.DscDer) == 0 {
 			return preparedRegistration{}, types.ErrBadPublicInputs.Wrap("dsc certificate is required")
 		}
@@ -162,14 +154,14 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 			return preparedRegistration{}, types.ErrBadPublicInputs.Wrap(err.Error())
 		}
 		want := commitment.Bytes()
-		if !bytes.Equal(pubInputs[dscIndex], want[:]) {
+		if !bytes.Equal(pubInputs[types.RegisterDscKeyInput], want[:]) {
 			return preparedRegistration{}, types.ErrBadPublicInputs.Wrap("proof is not bound to the supplied DSC")
 		}
 		facts.key = append([]byte(nil), want[:]...)
 		facts.country = country
 	}
 
-	nullifier := pubInputs[params.NullifierIndex]
+	nullifier := pubInputs[types.RegisterNullifierInput]
 	switched, err := k.isLiveRegistration(ctx, nullifier)
 	if err != nil {
 		return preparedRegistration{}, err
@@ -294,9 +286,10 @@ func verifyRegistrationProofWith(verify func(vk, proof []byte, in [][]byte) (boo
 // digit year is interpreted as 2000-2099 (passports do not predate 2000).
 func yymmddToUnix(b []byte) (int64, error) {
 	v := new(big.Int).SetBytes(b)
-	// Bit length first: Int64 of a value past 63 bits is its low bits, so
-	// 2^64*k + 250101 would read as 2025-01-01 (the circuits' u32 type rules
-	// such a proof out; this does not lean on it).
+	// Refuse >= 2^32 before reading it as an integer: Int64 of a value past
+	// 63 bits is its low bits, so 2^64*k + 250101 would read as 2025-01-01
+	// (the circuits' u32 type rules such a proof out; this does not lean on
+	// it; cleanup-chain #5).
 	if v.BitLen() > 32 {
 		return 0, errors.New("current_date is not a YYMMDD value")
 	}

@@ -34,38 +34,14 @@ message Params {
   // it must be renewed.
   uint64 registration_validity_seconds = 3;
 
-  // nullifier_index is the public-input position of the nullifier
-  // (zkPassport's scoped_nullifier) in the register circuit's public inputs.
-  uint32 nullifier_index = 4;
-
-  // dsc_key_index is the public-input position of the DSC commitment —
-  // Poseidon2 over the Document Signer's canonical public key. The chain
-  // recomputes it from the certificate in MsgRegister and requires equality,
-  // which is what binds the proof to a specific, CSCA-verified signer.
-  uint32 dsc_key_index = 5;
-
-  // current_date_index is the public-input position of the prover-supplied
-  // current_date (YYMMDD) in the register circuit's public inputs. The circuit
-  // proves the passport expiry >= current_date; the chain pins current_date to
-  // block time (see current_date_max_skew_seconds) so an expired passport
-  // cannot be registered by backdating current_date.
-  uint32 current_date_index = 6;
-
-  // address_index is the public-input position of the circuit's `address`
-  // input, which carries zk/privacy.RegistrationBinding(idc, pc_anml,
-  // ciphertext_anml, pc_erth, ciphertext_erth, affiliate): the identity
-  // commitment, the notes the registration pays (and their ciphertexts) and
-  // the referrer it pays. The chain recomputes it from MsgRegister's fields, so a proof read
-  // out of a block cannot register anyone else's identity or pay anyone
-  // else's notes.
-  uint32 address_index = 20;
-
-  // idc_index is the public-input position of the identity commitment the
-  // register circuit computes from the prover's private id_secret
-  // (idc = H(TAG_ID, id_secret)). The chain requires it to equal
-  // MsgRegister.idc, so a passport registers only to an identity whose
-  // secret its prover holds (audit R2-B1).
-  uint32 idc_index = 28;
+  // Reserved: the register circuit's public-input positions (nullifier,
+  // dsc_key, current_date, address, idc) were governance params. They are
+  // code constants now (types.Register*Input): a proposal swapping two of
+  // them passed validation and made the per-registration idc serve as the
+  // passport nullifier, so one passport could register any number of times
+  // (audit R3-C3). A circuit with another layout needs a chain release anyway.
+  reserved 4, 5, 6, 20, 28;
+  reserved "nullifier_index", "dsc_key_index", "current_date_index", "address_index", "idc_index";
 
   // current_date_max_skew_seconds bounds how far the proof's current_date may
   // differ from the block time.

@@ -177,7 +177,7 @@ func TestRegistrationNeedsTheIdcSecret(t *testing.T) {
 	a1 := passportMsg(t, "A1")
 	p, err := k.checkRegistration(ctx, a1)
 	require.NoError(t, err)
-	require.Equal(t, a1.Idc, p.pubInputs[leanParams(t).IdcIndex], "the proof's idc output is the msg's")
+	require.Equal(t, a1.Idc, p.pubInputs[types.RegisterIdcInput], "the proof's idc output is the msg's")
 	commitment, err := certs.DscCommitmentOf(dscKeyOf(t, "A1"))
 	require.NoError(t, err)
 	dsc := commitment.Bytes()

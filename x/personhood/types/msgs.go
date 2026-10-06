@@ -29,9 +29,25 @@ var (
 	_ sdk.HasValidateBasic = (*MsgMoveCaretaker)(nil)
 )
 
-// MaxPublicSignals bounds a passport proof's public input count. The lean_poa
-// circuits have four.
+// MaxPublicSignals bounds a passport proof's public input count in
+// ValidateBasic. checkRegistration requires exactly RegisterPublicInputs.
 const MaxPublicSignals = 16
+
+// The register (lean_poa) circuit's public inputs, in Noir's order: the pub
+// parameters `current_date: pub u32, address: pub Field`, then the returned
+// `(nullifier, dsc_key, idc)`. Code, not params: the positions decide which
+// value the chain treats as the passport nullifier and which as the identity,
+// and a governance swap of the two (which no validation can tell from a
+// legitimate relayout) let one passport register any number of times (audit
+// R3-C3). A circuit with another layout ships with a chain release.
+const (
+	RegisterCurrentDateInput = 0
+	RegisterAddressInput     = 1
+	RegisterNullifierInput   = 2
+	RegisterDscKeyInput      = 3
+	RegisterIdcInput         = 4
+	RegisterPublicInputs     = 5
+)
 
 // MaxDscDerBytes bounds the Document Signer certificate a registration carries.
 const MaxDscDerBytes = 8 * 1024

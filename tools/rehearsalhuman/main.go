@@ -82,7 +82,6 @@ type state struct {
 	DscDer      string   `json:"dsc_der"` // base64
 	Commitments []string `json:"commitments"`
 	NotePos     []uint64 `json:"note_positions"`
-	NullifierAt uint32   `json:"nullifier_index"`
 }
 
 func main() {
@@ -280,11 +279,6 @@ func prepare(chainID, genesisPath, circuits, work string) error {
 	if err := credit(appState["bank"].(map[string]any), authtypes.NewModuleAddress(shieldedtypes.ModuleName).String(), added); err != nil {
 		return err
 	}
-	ni, err := json.Number(fmt.Sprint(get(appState, "personhood", "params", "nullifier_index"))).Int64()
-	if err != nil {
-		return err
-	}
-	st.NullifierAt = uint32(ni)
 
 	out, err := json.MarshalIndent(g, "", "  ")
 	if err != nil {
@@ -493,7 +487,7 @@ func vote(chainID, node, work string, proposal uint64) error {
 	if err := query(c, "/earth.assembly.v1.Query/BallotInputs", &assemblytypes.QueryBallotInputsRequest{ProposalId: proposal}, &in); err != nil {
 		return err
 	}
-	nfDec, ok := new(big.Int).SetString(st.Signals[st.NullifierAt], 10)
+	nfDec, ok := new(big.Int).SetString(st.Signals[personhoodtypes.RegisterNullifierInput], 10)
 	if !ok {
 		return errors.New("bad nullifier signal")
 	}

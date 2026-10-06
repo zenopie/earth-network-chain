@@ -8,19 +8,16 @@ import (
 	"github.com/earth-network/earth/x/personhood/types"
 )
 
-func TestParamsValidateBoundsValidityAndIndexes(t *testing.T) {
+func TestParamsValidateBoundsValidity(t *testing.T) {
 	live := types.DefaultParams()
 	live.VerifyingKeys = map[string][]byte{"lean": {1}}
-	live.NullifierIndex, live.DscKeyIndex, live.CurrentDateIndex, live.AddressIndex, live.IdcIndex = 2, 3, 0, 1, 4
 	if err := live.Validate(); err != nil {
-		t.Fatalf("earth-1's layout: %v", err)
+		t.Fatalf("live: %v", err)
 	}
 
 	for name, mutate := range map[string]func(*types.Params){
 		"zero validity":       func(p *types.Params) { p.RegistrationValiditySeconds = 0 },
 		"unbounded validity":  func(p *types.Params) { p.RegistrationValiditySeconds = 1 << 63 },
-		"shared index":        func(p *types.Params) { p.AddressIndex = p.NullifierIndex },
-		"idc shares an index": func(p *types.Params) { p.IdcIndex = p.DscKeyIndex },
 	} {
 		p := live
 		mutate(&p)
@@ -29,7 +26,6 @@ func TestParamsValidateBoundsValidityAndIndexes(t *testing.T) {
 		}
 	}
 
-	// No verifying key, registration off: the zero indexes are fine.
 	if err := types.DefaultParams().Validate(); err != nil {
 		t.Fatalf("defaults: %v", err)
 	}
