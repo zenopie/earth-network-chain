@@ -30,10 +30,5 @@ func padCT(label string, n int) []byte {
 // only checks its length): types.BlindCiphertextBytes bytes derived from
 // label, so fixtures stay deterministic.
 func BlindCT(label string) []byte {
-	out := make([]byte, 0, types.BlindCiphertextBytes+sha256.Size)
-	for i := byte(0); len(out) < types.BlindCiphertextBytes; i++ {
-		h := sha256.Sum256(append([]byte("blind-ct/"+label+"/"), i))
-		out = append(out, h[:]...)
-	}
-	return out[:types.BlindCiphertextBytes]
+	return padCT("blind-ct/"+label, types.BlindCiphertextBytes)
 }
