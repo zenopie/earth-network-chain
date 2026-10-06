@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/earth-network/earth/x/personhood/types"
+	"github.com/earth-network/earth/x/pki/certs"
 	pkikeeper "github.com/earth-network/earth/x/pki/keeper"
 	pkitypes "github.com/earth-network/earth/x/pki/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
@@ -87,4 +88,54 @@ func TestRegistrationABAReplayRefused(t *testing.T) {
 	require.False(t, has)
 	_, err = k.checkRegistration(ctx3, replayed)
 	require.ErrorIs(t, err, types.ErrBadPublicInputs, "past the entry's expiry the proof's current_date is out of the skew")
+}
+
+// Audit B-1/B-3: a switch must be proven on a later date than the live
+// registration. A proof that reached a block but failed (so its binding was
+// never marked used) cannot be replayed over the registration its holder
+// made in its place the same day; and one passport switches at most once
+// per proof date, so a holder cannot fill its signer's shared daily cap.
+func TestSwitchNeedsALaterProofDate(t *testing.T) {
+	encCfg := moduletestutil.MakeTestEncodingConfig()
+	ac := addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
+	pkiStore := storetypes.NewKVStoreKey(pkitypes.StoreKey)
+	phStore := storetypes.NewKVStoreKey(types.StoreKey)
+	ctx := testutil.DefaultContextWithKeys(map[string]*storetypes.KVStoreKey{
+		pkitypes.StoreKey: pkiStore, types.StoreKey: phStore,
+	}, nil, nil).WithBlockTime(passportTime).WithChainID(shieldedtest.ChainID)
+	ctx = shieldedtypes.WithTxFields(ctx, shieldedtypes.TxFields{})
+	pki := pkikeeper.NewKeeper(runtime.NewKVStoreService(pkiStore), encCfg.Codec, ac, authtypes.NewModuleAddress(pkitypes.GovModuleName))
+	require.NoError(t, pki.InitGenesis(ctx, pkitypes.GenesisState{
+		Params: pkitypes.NewParams(),
+		Cscas:  []pkitypes.Csca{{CertificateDer: readFileAt(t, filepath.Join(passportDir, "A1", "csca.der"))}},
+	}))
+	k := NewKeeper(runtime.NewKVStoreService(phStore), encCfg.Codec, ac, authtypes.NewModuleAddress(types.GovModuleName),
+		nil, stubDex{}, pki, stubAllocation{}, &burnLog{}, stubShielded{})
+	require.NoError(t, k.Params.Set(ctx, leanParams(t)))
+
+	failed := passportMsg(t, "A1") // reached a block, failed in the ante: public, binding unused
+	nf, _, err := k.CheckRegistration(ctx, failed)
+	require.NoError(t, err)
+	p, err := k.checkRegistration(ctx, failed)
+	require.NoError(t, err)
+	commitment, err := certs.DscCommitmentOf(dscKeyOf(t, "A1"))
+	require.NoError(t, err)
+	dsc := commitment.Bytes()
+
+	// The holder registered again the same day, to idc B, proven that day.
+	live := types.Registration{Nullifier: nf, RegisteredAt: ctx.BlockTime().Unix(), ActivatedAt: ctx.BlockTime().Unix(),
+		Idc: privacy.FieldBytes(privacy.U64(424242)), DscKey: dsc[:], ProofDate: p.proofDate}
+	require.NoError(t, k.addRegistration(ctx, live))
+	_, err = k.checkRegistration(ctx, failed)
+	require.ErrorIs(t, err, types.ErrSwitchProofStale, "a same-day proof cannot replace the live registration")
+	_, _, err = k.CheckRegistration(ctx, failed)
+	require.ErrorIs(t, err, types.ErrSwitchProofStale)
+
+	// Proven a day earlier than the proof, the live registration can be
+	// switched from (a holder's own later switch).
+	live.ProofDate = p.proofDate - 86400
+	require.NoError(t, k.Registrations.Set(ctx, nf, live))
+	got, err := k.checkRegistration(ctx, failed)
+	require.NoError(t, err)
+	require.True(t, got.switched)
 }

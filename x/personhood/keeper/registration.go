@@ -182,6 +182,18 @@ func (k Keeper) checkRegistration(ctx context.Context, msg *types.MsgRegister) (
 		if !bytes.Equal(live.DscKey, facts.key) {
 			return preparedRegistration{}, types.ErrSwitchSignerMismatch
 		}
+		// A switch is proven on a later date than the live registration
+		// (audit B-1, B-3). Proof dates move forward a day at a time, so one
+		// passport switches at most once a day (plus the skew's few dates at
+		// the start): a holder cannot spend its signer's daily cap, shared by
+		// every holder of that signer, on switches. And a proof that reached a
+		// block but failed (its bytes are public, its binding never marked
+		// used) cannot be replayed over the registration its holder made in
+		// its place: that one is dated the same day or later.
+		if proofUnix <= live.ProofDate {
+			return preparedRegistration{}, types.ErrSwitchProofStale.Wrapf(
+				"proof dated %d, live registration proven %d", proofUnix, live.ProofDate)
+		}
 	}
 	// A paid registration's affiliate handle must be live (it resolves). A
 	// switch pays nothing, so its affiliate is not looked at. The binding
@@ -253,8 +265,15 @@ func verifyRegistrationProofWith(verify func(vk, proof []byte, in [][]byte) (boo
 // circuit encodes current_date) into a UTC unix timestamp at midnight. The two-
 // digit year is interpreted as 2000-2099 (passports do not predate 2000).
 func yymmddToUnix(b []byte) (int64, error) {
-	n := new(big.Int).SetBytes(b).Int64()
-	if n < 0 || n > 999999 {
+	v := new(big.Int).SetBytes(b)
+	// Bit length first: Int64 of a value past 63 bits is its low bits, so
+	// 2^64*k + 250101 would read as 2025-01-01 (the circuits' u32 type rules
+	// such a proof out; this does not lean on it).
+	if v.BitLen() > 32 {
+		return 0, errors.New("current_date is not a YYMMDD value")
+	}
+	n := v.Int64()
+	if n > 999999 {
 		return 0, errors.New("current_date is not a YYMMDD value")
 	}
 	yy := int(n / 10000)

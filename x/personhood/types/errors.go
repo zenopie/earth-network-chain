@@ -43,4 +43,8 @@ var (
 	// different Document Signer from the live registration's. A re-proof of
 	// the same passport is signed by the same signer.
 	ErrSwitchSignerMismatch = errors.Register(ModuleName, 1127, "identity switch must be proven under the live registration's document signer")
+	// A switch's proof must carry a later current_date than the live
+	// registration's (Registration.proof_date): at most one switch per
+	// passport per day, and no replay of a proof older than the live one.
+	ErrSwitchProofStale = errors.Register(ModuleName, 1128, "identity switch must be proven on a later date than the live registration")
 )

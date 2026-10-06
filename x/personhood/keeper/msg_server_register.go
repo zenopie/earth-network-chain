@@ -104,6 +104,7 @@ func (k msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*typ
 		DscKey:        p.dsc.key,
 		Country:       p.dsc.country,
 		Idc:           msg.Idc,
+		ProofDate:     p.proofDate,
 	}); err != nil {
 		return nil, err
 	}

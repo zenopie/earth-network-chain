@@ -190,7 +190,9 @@ func (k Keeper) recordRegistrationRate(ctx context.Context, dscKey []byte, count
 // its registrations (it is not a new person, so the network and country
 // counters do not move): the cap bounds everything one signer can do in a day,
 // which is what a stolen signing key could do between the compromise and the
-// revocation. A genuine switch (a lost wallet) is rare.
+// revocation. A genuine switch (a lost wallet) is rare, and one passport
+// switches at most once per proof date (Registration.proof_date), so no one
+// holder can fill the cap the signer's other holders share.
 func (k Keeper) checkSwitchRate(ctx context.Context, dscKey []byte) error {
 	if len(dscKey) == 0 {
 		return nil

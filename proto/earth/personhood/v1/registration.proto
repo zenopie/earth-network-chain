@@ -43,6 +43,13 @@ message Registration {
   // until anything its predecessor could hold there has lapsed; a fresh one
   // does not.
   int64 predecessor_at = 8;
+  // proof_date is the registration proof's current_date (unix seconds,
+  // midnight UTC). A switch must be proven on a strictly later date: a proof
+  // can then move a passport's registration forward only once per day (one
+  // holder cannot spend its signer's daily cap on switches), and a proof
+  // that reached a block but failed can never be replayed over a registration
+  // its holder made since.
+  int64 proof_date = 9;
 }
 
 // RateCounter is a self-resetting daily counter, used to bound how many

@@ -743,6 +743,20 @@ from the live registration's is refused (`ErrSwitchSignerMismatch` 1127); a
 switch counts against its signer's daily cap (shared with registrations; the
 network and country counters do not move; over it, 1113).
 
+**Per-passport switch rule.** A switch's proof must carry a `current_date`
+strictly later than the live registration's (`Registration.proof_date`;
+otherwise `ErrSwitchProofStale` 1128). Proof dates are days pinned to block
+time within the skew, so one passport switches at most once per day (after a
+burst of at most the few dates the skew admits): a single holder cannot fill
+the signer cap its signer's other holders share; filling it takes about a
+cap's worth of distinct passports under that signer. The same rule makes a
+registration proof that reached a block but failed (public, binding never
+marked used) unreplayable once its holder has registered again that day or
+later; a third party cannot force a switch with it. Wallets: prove a switch
+on today's UTC date, and keep the id_secret of any broadcast registration
+until its `current_date` has left the skew window (a failed one may still
+land within it).
+
 Known lag: membership checks the anchor, not the registration's expiry; an
 expired registration proves until the expiry sweep zeroes its leaf (at least
 budget/8 per block; normally the block it expires).

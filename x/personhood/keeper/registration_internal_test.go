@@ -313,4 +313,10 @@ func TestYYMMDDToUnix(t *testing.T) {
 		_, err := yymmddToUnix(f(bad))
 		require.Error(t, err, bad)
 	}
+	// Past 64 bits Int64 would read the low bits: 2^64 + 250101 is not 250101.
+	wrapped := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(250101))
+	var buf [32]byte
+	wrapped.FillBytes(buf[:])
+	_, err = yymmddToUnix(buf[:])
+	require.Error(t, err)
 }
