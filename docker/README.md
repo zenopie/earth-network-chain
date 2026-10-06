@@ -1,27 +1,16 @@
-# Container deployment — single-validator earth node
+# Container image — earth node
 
-The image and the entrypoint here are the deployment. `docker-compose.yaml` runs
-them on a plain Docker host or on SecretVM; `deploy/akash/` runs the same image
-on Akash and shares this entrypoint. Anything below that is not about compose
-specifically applies to both.
+The image and the entrypoint here are what a node runs. Deployment (compose
+files, the Akash SDL, secrets) lives in a separate private repository, which
+resolves tag -> digest from the registry when it deploys.
 
-Mirrors `earth-network-backend`: pushing a `v*.*.*` tag has CI build the image,
-push it to `ghcr.io/zenopie/earth-network-chain` and rewrite
-`docker-compose.yaml` with the pinned digest. Tags only — a plain push
-to `master` builds nothing.
-
-**`docker-compose.yaml` is generated**, so edit the heredoc in the
-workflow rather than the file — anything written directly into it is overwritten
-by the next build.
-
-The same release step also pins `deploy/akash/deploy.yaml`, but that file is
-hand-maintained rather than generated: only its `image:` line is rewritten, and
-everything else you put there survives.
+Pushing a `v*.*.*` tag has CI build the image and push it to
+`ghcr.io/zenopie/earth-network-chain`. Tags only — a plain push to `master`
+builds nothing, and CI writes the digest nowhere.
 
     Dockerfile                          builds earthd on a slim runtime
-    docker/entrypoint.sh         first-boot genesis, then earthd start
-    docker-compose.yaml                 the deployed unit
-    .github/workflows/docker-build.yml  builds and pins the digest
+    docker/entrypoint.sh                first-boot genesis, then earthd start
+    .github/workflows/docker-build.yml  builds and pushes the image
 
 ## Ports
 
@@ -53,16 +42,13 @@ existing. The entrypoint decides which case it is purely by whether
 
 `networks/genesis.json` is a build artifact, written by `scripts/build-genesis.sh`
 from the sources in `networks/genesis/` and committed alongside its sha256. See
-`networks/genesis/README.md`. It used to be `ignite chain init` followed by
-hand-stripping and a manual "recompute bank supply", which is how `config.yml`
-and the genesis file came to disagree about the pre-mine for two days without
-anyone noticing.
+`networks/genesis/README.md`.
 
-It carries the 536 CSCAs, the seven register verifying keys, the four privacy
-circuit keys (action, membership, stake, vote), the ANML/ERTH pool,
-the liquidity auction, the retirement schedules and the governance parameters —
-and no validator set, because a gentx is bound to a consensus key and shipping
-that key in a public image would let anyone sign as the validator.
+It carries the 536 CSCAs, the 33 passport register verifying keys, the four
+privacy circuit keys (action, membership, stake, vote), the ANML/ERTH pool, the
+liquidity auction, the retirement schedules, the governance parameters and the
+genesis validator's gentx. The gentx names only the validator's consensus
+*public* key; the private key never ships in the image.
 
 ## Three boot paths
 
@@ -75,15 +61,13 @@ the difference between joining a network and creating one.
 | otherwise (default) | **join** — install `/etc/earth/genesis.json`, verify it against `/etc/earth/genesis.json.sha256`, start. No key created, no timestamp rewritten |
 | `DEV_INIT=1` | **devnet** — generate a validator, stamp `genesis_time` to now, collect a gentx. A *new chain* every time |
 
-The join path is the default because the old behaviour had no way to turn it off:
-every node stamped its own `genesis_time` and minted its own validator, so two
-containers from the same image could never share a chain. A hash mismatch is
-fatal — a genesis swapped into the image after the fact fails loudly instead of
-quietly forking whoever runs it.
+The join path is the default: every container from the same image joins the
+same chain. A hash mismatch is fatal — a genesis swapped into the image after the
+fact fails loudly instead of quietly forking whoever runs it.
 
-`DEV_INIT=1` is the old behaviour, unchanged, and it is what you want for a
-throwaway devnet. It is deliberately not set in the SDL or the compose file. It
-also rewrites the genesis, so a devnet's genesis can never be mistaken for the
+`DEV_INIT=1` is for a throwaway devnet and must never be set on a network node:
+each node would stamp its own `genesis_time` and mint its own validator. It
+rewrites the genesis, so a devnet's genesis can never be mistaken for the
 release: the hash no longer matches.
 
 ## Browser access
@@ -97,8 +81,7 @@ The two surfaces behave differently and only one can be scoped.
 
 **`RPC_CORS_ORIGINS` closes a gap that has always been open.** CometBFT ships
 `cors_allowed_origins = []`, so a browser could never reach the RPC
-cross-origin — confirmed against the live devnet, which returns no CORS headers
-there from the node or from Cloudflare. CosmJS talks to the RPC, so anything the
+cross-origin. CosmJS talks to the RPC, so anything the
 page does itself was blocked. Keplr masks it: signing is in the extension and
 `keplr.sendTx` broadcasts from its background context, neither subject to page
 CORS.
@@ -110,48 +93,38 @@ Two flags are off unless asked for:
 
 - **`API_UNSAFE_CORS=1`** — any origin may read the LCD *and broadcast through
   it*. Fine on a public read-only node, wrong on a block producer.
-- **`--keyring-backend test`** only appears on the `DEV_INIT` path now. The join
+- **`--keyring-backend test`** only appears on the `DEV_INIT` path. The join
   path creates no keys at all, and a real validator's consensus key belongs
   behind `PRIV_VALIDATOR_LADDR`.
 
 Run `docker/entrypoint_test.sh` to exercise all of it without building a
 container.
 
-Two accounts are seeded with 100k ERTH each so a fresh deployment is testable
-without hunting for the validator's mnemonic: the development handset, and the
-ads-for-gas hot wallet. Both are devnet keys with no value; drop them from
-`networks/genesis.json` for anything real.
+Until the launch ceremony, `networks/genesis/accounts.json` is the placeholder
+set, which includes two devnet accounts (the faucet and the ads-for-gas hot
+wallet, 10,000 ERTH each); `scripts/ceremony.sh` removes them. See
+`networks/genesis/README.md`.
 
-`genesis_time` is stamped to the current time by the entrypoint before the
-validator is created. The committed file carries the timestamp of the machine
-that generated it, and CometBFT gives block 1 exactly that time while block 2
-gets the wall clock — so the emission, prorated against elapsed time, would pay
-the whole gap out in a single block. Left alone, a genesis committed a day
-earlier minted 125,485 ERTH at height 2, and the lump grew for as long as the
-file sat unchanged.
+On the `DEV_INIT` path the entrypoint stamps `genesis_time` to the current time
+before the validator is created: CometBFT gives block 1 exactly the genesis time
+while block 2 gets the wall clock, so the emission, prorated against elapsed
+time, would otherwise pay the whole gap out in a single block. The join path
+keeps the release's `genesis_time`.
 
-Regenerate it with `make genesis` after any change to its sources in
+Regenerate `networks/genesis.json` with `make genesis` after any change to its sources in
 `networks/genesis/`; `make genesis-check` fails if it has drifted.
 
-An earlier version ran `ignite chain init` inside the container instead. It
-cannot work: init removes and recreates the home directory, and `/data` is a
-mount point, so it fails with `Unlinkat //data: device or resource busy`.
+## After the first boot (DEV_INIT)
 
-## After the first boot
-
-Dev accounts live in the test keyring on the volume:
+The devnet validator's key lives in the test keyring on the volume:
 
     earthd keys list --keyring-backend test --home /data
-    earthd keys export alice --keyring-backend test --home /data
 
-Fund the ads-for-gas hot wallet from `alice`, and point the backend at this
-node's LCD:
+Point the backend at this node's LCD:
 
     EARTH_NODE_URL=rest+https://<host>:1317
 
-## Devnet posture
+## Defaults
 
-`--api.enabled-unsafe-cors` is on so the web app can read the LCD straight from a
-browser, and `--minimum-gas-prices 0uerth` accepts zero-fee transactions. Both
-are fine for a throwaway chain and both want revisiting before anything real
-runs on it.
+`MIN_GAS_PRICES` defaults to `0.005uerth` and `API_UNSAFE_CORS` to off; both are
+environment variables read on every start (`docker/entrypoint.sh`).
