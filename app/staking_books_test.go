@@ -61,12 +61,12 @@ func (e *stakeEnv) exactDerth(val sdk.ValAddress, amt uint64) uint64 {
 }
 
 // fakeStake is a well-formed stake proof for a handler driven with the ante
-// faked (no proof is read): lane A spends a nullifier of its own and creates
-// a note; with credit, the credit lane likewise (a redelegation's).
+// faked (no proof is read): lane A spends two nullifiers of its own (a note
+// and the second slot's padding) and creates a note; with credit, the credit lane likewise (a redelegation's).
 func fakeStake(label string, credit bool) sstypes.StakeProof {
 	z := make([]byte, 32)
 	p := sstypes.StakeProof{Anchor: z, OwnerTag: z, DebtRoot: z,
-		Nullifiers: [][]byte{privacy.FieldBytes(ssDet("fake-snf/"+label, 0)), z},
+		Nullifiers: [][]byte{privacy.FieldBytes(ssDet("fake-snf/"+label, 0)), privacy.FieldBytes(ssDet("fake-snf/"+label, 2))},
 		Commitment: privacy.FieldBytes(ssDet("fake-scm/"+label, 0)), Ciphertext: shieldedtest.StakeCT("fake/" + label),
 		CreditNullifier: z, CreditCommitment: z}
 	if credit {

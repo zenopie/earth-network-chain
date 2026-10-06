@@ -942,8 +942,11 @@ Every staking msg: `bundle` (fee: whole uerth balance, except MsgDelegate),
 | PositionVote {bundle 1, position_id 2, proposal_id 3, options 4, stake 6} | 0 | – | – | nothing | position_id, proposal_id, Bytes(OptionsBytes(options)) |
 | Redelegate {bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7} | derth/<src> | v_out = amount | derth/<dst>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes | Bytes(src), Bytes(dst), amount, dst_derth, move_time |
 
-"spend" = nf_0 non-zero (nf_1 optional: a second note merged); "create" = cm
-non-zero. Position msgs prove the position's owner tag. `MsgRestake` merges
+"spend" = nf_0 **and** nf_1 non-zero: each slot spends a note or pads with
+its own would-be nullifier `H(TAG_NF, nk, rho, 0)` for a fresh random rho
+(amount 0), so a merge of two notes and a spend of one look the same; a zero
+nf_1 beside a non-zero nf_0 is refused (a format change from "nf_1
+optional"; wallets always pad slot 1). "create" = cm non-zero. Position msgs prove the position's owner tag. `MsgRestake` merges
 an owner's second note at a validator (two devices, a labelled note beside an
 unlabelled credit); it never splits.
 

@@ -176,8 +176,9 @@ type stakePlan struct {
 	salt    fr.Element
 	atSize  uint64
 	proof   sstypes.StakeProof
-	// filled by stake: the padding input and zero output, the debt witness.
+	// filled by stake: the padding inputs and zero output, the debt witness.
 	pad     *snote
+	pad1    *snote
 	zeroOut *snote
 	debtW   *debt.Witness
 }
@@ -246,6 +247,12 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 		// A padding input: the owner's own would-be nullifier.
 		sp.pad = e.freshStake(sp.denom, 0)
 		nfs[0] = privacy.StakeNF(e.w.nk, sp.pad.rho, 0)
+	}
+	if !sp.noSpend && len(sp.ins) < 2 {
+		// The second slot is always spent too (padding with a fresh rho), so
+		// a merge of two notes looks like a spend of one.
+		sp.pad1 = e.freshStake(sp.denom, 0)
+		nfs[1] = privacy.StakeNF(e.w.nk, sp.pad1.rho, 0)
 	}
 	p.Nullifiers = [][]byte{privacy.FieldBytes(nfs[0]), privacy.FieldBytes(nfs[1])}
 	// Lane A's output: a kept label goes with it.
@@ -336,6 +343,9 @@ func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, lanes sstyp
 	ins := pad2(sp.ins, none)
 	if sp.pad != nil {
 		ins[0] = sp.pad
+	}
+	if sp.pad1 != nil {
+		ins[1] = sp.pad1
 	}
 	tree := e.stakeTree(sp.atSize)
 	var b strings.Builder

@@ -95,15 +95,19 @@ func TestStakeProofForm(t *testing.T) {
 	}
 }
 
-// Every msg of a kind has one shape: lane A spends (a note or padding) and
+// Every msg of a kind has one shape: lane A spends in both slots (notes or
+// padding) and
 // creates (the merged note, the change or a zero note); the credit lane is
 // used exactly by a redelegation; position updates and votes use nothing.
 func TestStakeProofShape(t *testing.T) {
 	z := make([]byte, 32)
 	ct := make([]byte, privacy.WalletStakeCiphertextBytes)
 	notes := StakeProof{Proof: make([]byte, 14_656), Anchor: z, OwnerTag: z, DebtRoot: z,
-		Nullifiers: [][]byte{el32(1), z}, Commitment: el32(7), Ciphertext: ct, CreditNullifier: z, CreditCommitment: z}
+		Nullifiers: [][]byte{el32(1), el32(3)}, Commitment: el32(7), Ciphertext: ct, CreditNullifier: z, CreditCommitment: z}
 	require.NoError(t, notes.shape(true, false))
+	oneSlot := notes
+	oneSlot.Nullifiers = [][]byte{el32(1), z}
+	require.Error(t, oneSlot.shape(true, false), "the second slot is always spent or padded (audit C-2)")
 	require.Error(t, notes.shape(false, false), "a position msg spends nothing")
 	require.Error(t, notes.shape(true, true), "the credit lane is required")
 	noSpend := notes

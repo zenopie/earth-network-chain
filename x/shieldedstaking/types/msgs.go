@@ -287,9 +287,10 @@ func (p *StakeProof) Outputs() (cms, cts [][]byte) {
 }
 
 // shape checks the slots a msg uses, so that every msg of a kind looks the
-// same. notes: lane A spends (nf_0 non-zero: the owner's note, or padding;
-// nf_1 optional, a second note being merged) and creates (the merged note,
-// the change, or a padding zero note); without notes, lane A is all zero (a
+// same. notes: lane A spends in both slots (nf_0 and nf_1 non-zero: the
+// owner's notes, or padding publishing its own would-be nullifier, so a
+// second note merged looks like none) and creates (the merged note, the
+// change, or a padding zero note); without notes, lane A is all zero (a
 // position's update or vote). credit: the credit lane spends (the owner's
 // note of the credited asset, or padding) and creates the merged note; else
 // it is zero.
@@ -298,8 +299,11 @@ func (p *StakeProof) shape(notes, credit bool) error {
 		return err
 	}
 	if notes {
-		if isZero(p.Nullifiers[0]) {
-			return errorsmod.Wrap(ErrInvalidMsg, "the stake proof spends a note (or pads with its own nullifier) in its first slot")
+		if isZero(p.Nullifiers[0]) || isZero(p.Nullifiers[1]) {
+			// Audit C-2 (circuits): a zero nf_1 told an observer that
+			// only one note was spent, and a second note at a validator
+			// mostly sits beside a labelled redelegation credit.
+			return errorsmod.Wrap(ErrInvalidMsg, "the stake proof spends a note (or pads with its own nullifier) in both slots")
 		}
 		if isZero(p.Commitment) {
 			return errorsmod.Wrap(ErrInvalidMsg, "the stake proof creates a note (the merged note, the change or a zero note)")
