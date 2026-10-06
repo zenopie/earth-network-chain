@@ -124,7 +124,7 @@ var (
 	SnapshotsBySeqKey    = collections.NewPrefix(24)
 	// EpochSweepKey is the epoch-end sweep's state (epoch.go).
 	EpochSweepKey = collections.NewPrefix(25)
-	// 26 was PositionCountKey (positions are no longer counted or capped).
+	// 26 is reserved (was PositionCountKey).
 	// RetiringEscrowsKey schedules (time, validator) the release of a reward
 	// escrow whose operator removed its whole self-bond (escrow.go);
 	// PendingReleasesKey holds removed validators whose release failed.
@@ -221,7 +221,7 @@ const ClearBeforeSlackSeconds = 3600
 // entries small enough to merge, the move joins the latest entry instead,
 // as a last resort, and an infraction between that entry's height and the
 // move's falls on the source's stake). Each bonded move rewrites the pair's whole record, and pays gas for it
-// (GasPerRedelegationEntry). Entries at height 0 or below (a zero-height
+// (gasPerRedelegationEntry). Entries at height 0 or below (a zero-height
 // export's) are never slashed again, are not counted and never merge.
 const MaxEntryHeightsPerPair = 1024
 

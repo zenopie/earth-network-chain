@@ -533,10 +533,10 @@ func TestDonationInflationHarmless(t *testing.T) {
 	require.True(t, loss.MulRaw(ssErth).LTE(math.NewIntFromUint64(big)), "loss %s of %d", loss, big)
 }
 
-// AUDIT3 D: a validator's unbond records grow with every matured record
-// nobody has claimed yet, and the epoch end walked all of them twice per
-// validator (orphan sweep, orphan check). Orphans are indexed now: the epoch
-// end's cost does not grow with a validator's unclaimed records.
+// AUDIT3 D: a validator's unbond records can be many, and walking all of them
+// twice per validator at the epoch end (orphan sweep, orphan check) would make
+// its cost grow with them. Orphans are indexed: the epoch end's cost does not
+// grow with a validator's records.
 func TestEpochEndCostIndependentOfUnclaimedRecords(t *testing.T) {
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)
@@ -566,7 +566,7 @@ func TestEpochEndCostIndependentOfUnclaimedRecords(t *testing.T) {
 	// Both past InvariantBookLimit, so the (bounded) invariant check costs
 	// the same in each.
 	few, many := epochEndGas(sstypes.InvariantBookLimit+100), epochEndGas(sstypes.InvariantBookLimit+5_100)
-	t.Logf("epoch end gas: %d unclaimed records %d, %d records %d", sstypes.InvariantBookLimit+100, few,
+	t.Logf("epoch end gas: %d records %d, %d records %d", sstypes.InvariantBookLimit+100, few,
 		sstypes.InvariantBookLimit+5_100, many)
 	require.InDelta(t, float64(few), float64(many), 5_000)
 }

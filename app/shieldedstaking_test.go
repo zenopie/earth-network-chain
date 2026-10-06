@@ -271,7 +271,7 @@ func (e *stakeEnv) record(val sdk.ValAddress, epoch uint64) sstypes.UnbondRecord
 }
 
 // Delegate -> epoch -> rewards raise the rate -> undelegate -> epoch ->
-// 21 days -> claim, on the real genesis path, with real proofs.
+// 21 days -> payout, on the real genesis path, with real proofs.
 func TestPrivateStakingLifecycle(t *testing.T) {
 	e := initStakeEnv(t)
 	vB, _ := e.createValidator(1000 * ssErth)
@@ -360,7 +360,7 @@ func TestPrivateStakingLifecycle(t *testing.T) {
 
 // A slash reaches private stakers three ways: through the delegation (the
 // rate falls at once), through SDK unbonding entries created after the
-// infraction (their claims pay less), and through this epoch's pending
+// infraction (their payouts are smaller), and through this epoch's pending
 // undelegations (their target is cut in the slash hook). An entry created
 // before the infraction is untouched. The slashed validator then refuses new
 // delegations.

@@ -19,13 +19,13 @@ import (
 //
 // MsgUndelegate books the derth's live ERTH value u into its epoch's record
 // (validator, epoch) and queues an UnbondPayout {u, pc, ciphertext}. Nothing
-// is minted then: no claim note, no claim msg. Once the record is MATURED
-// (its SDK unbonding entry paid the module, or the epoch end settled it from
-// the queue), the chain mints u x payout / requested ERTH to pc as ordinary
-// pool notes, by itself, in a later block's EndBlocker: the same economics a
-// claim had (a slash of the entry, or of the pending record, reaches every
-// payout pro rata; the floor division's dust goes to the community pool when
-// the record's last payout is made), with no fee and no tx from the owner.
+// is minted then. Once the record is MATURED (its SDK unbonding entry paid
+// the module, or the epoch end settled it from the queue), the chain mints
+// u x payout / requested ERTH to pc as ordinary pool notes, by itself, in a
+// later block's EndBlocker (a slash of the entry, or of the pending record,
+// reaches every payout pro rata; the floor division's dust goes to the
+// community pool when the record's last payout is made), with no fee and no
+// tx from the owner.
 //
 // The sweep runs before matureRecords in the EndBlocker: a record matured
 // by matureRecords is paid by x/staking's EndBlocker after this module's, so

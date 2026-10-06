@@ -105,7 +105,7 @@ type Keeper struct {
 	StakeNfLatestSize collections.Item[uint64]
 	// RootsStale: the last end-of-block recording of the stake roots failed,
 	// so the latest recorded roots may predate notes spent since (see
-	// takeSnapshot). Not exported: InitGenesis records the roots afresh.
+	// snapshotProposal). Not exported: InitGenesis records the roots afresh.
 	RootsStale collections.Item[bool]
 
 	// RewardEscrows maps each validator's reward escrow account to the

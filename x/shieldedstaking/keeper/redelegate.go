@@ -92,9 +92,10 @@ const gasRedelegate uint64 = 700_000
 // gasPerRedelegationEntry is what each entry of the pair's x/staking record
 // adds: a bonded move reads the record twice and writes it whole (x/staking
 // keeps a pair's entries in one record; ~70 bytes an entry, at 3 gas a byte
-// read and 30 written, and its decoding). gasMergeEntries is added while
-// the pair holds MaxEntryHeightsPerPair entries: the merge writes the record
-// once more and re-files up to MaxMergeMoves moves (audit 7, A7-L1).
+// read and 30 written, and its decoding). While the pair holds
+// MaxEntryHeightsPerPair entries, gasPerMergedEntry per entry and
+// gasMergeMove per MaxMergeMoves are added: the merge writes the record once
+// more and re-files up to MaxMergeMoves moves (audit 7, A7-L1).
 const (
 	gasPerRedelegationEntry uint64 = 2_500
 	gasPerMergedEntry       uint64 = 2_500

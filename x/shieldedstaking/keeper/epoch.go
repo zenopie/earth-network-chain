@@ -40,9 +40,11 @@ import (
 //     re-weigh positions; sweep non-ERTH rewards to the community pool.
 //  3. forget proposals whose voting has ended (x/gov has tallied them).
 //
-// First of all it records the stake tree's root and the stake nullifier
-// tree's, if the block moved them (a root is an anchor from the end of the
-// block that made it; a snapshot takes both from the end of the same block).
+// Before those it settles any unfinished slash watch, restores sheltered
+// unbondings, prunes matured moves, and records the stake tree's root and the
+// stake nullifier tree's if the block moved them (a root is an anchor from the
+// end of the block that made it; a snapshot takes both from the end of the
+// same block).
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	// Never needed (the BeginBlocker did both), but nothing below may see a
 	// slash unsettled or the module's unbondings set aside.
@@ -632,8 +634,7 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 }
 
 // orphanUnbonding undelegates shares that back no derth and no record (a
-// book left with a delegation and no derth, as books could be before audit
-// F5's fix) into an orphan record: requested and outstanding zero, so no
+// book left with a delegation and no derth; audit F5) into an orphan record: requested and outstanding zero, so no
 // payout is queued against it; sweepOrphanRecords sends its payout to the community
 // pool once it matures. Skipped (left for a later epoch) if v already has a
 // record for maxEpoch.

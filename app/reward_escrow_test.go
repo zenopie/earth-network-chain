@@ -99,9 +99,10 @@ func TestEscrowPoisonedByLockedAccount(t *testing.T) {
 	require.Equal(t, int64(1), e.app.BankKeeper.GetBalance(e.ctx(), escrow, "uerth").Amount.Int64())
 }
 
-// failingEscrow sets up a validator address whose escrow release always
-// fails (its operator account is itself a recorded escrow, which takes coins
-// only from distribution), with 1 spendable uerth in its escrow.
+// audit3Escrow sets up a validator address with 1 spendable uerth in its
+// escrow. With failing, the escrow's release always fails (its operator
+// account is itself a recorded escrow, which takes coins only from
+// distribution).
 func (e *stakeEnv) audit3Escrow(prefix byte, i int, failing bool) sdk.ValAddress {
 	ctx := e.ctx()
 	b := make([]byte, 20)

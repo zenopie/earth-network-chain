@@ -11,10 +11,10 @@ import (
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
-// StakingMsgFilterDecorator refuses MsgDelegate, MsgUndelegate,
-// MsgBeginRedelegate and MsgCancelUnbondingDelegation — top level or inside
-// an authz MsgExec — unless the delegator is the validator's own operator
-// account (a public self-bond). MsgCreateValidator passes.
+// StakingMsgFilterDecorator refuses MsgDelegate, MsgUndelegate and
+// MsgCancelUnbondingDelegation — top level or inside an authz MsgExec —
+// unless the delegator is the validator's own operator account (a public
+// self-bond), and MsgBeginRedelegate always. MsgCreateValidator passes.
 //
 // This is the early, readable refusal. The enforcement nothing can route
 // around (group and gov proposals, ICA host txs, contracts) is the staking
