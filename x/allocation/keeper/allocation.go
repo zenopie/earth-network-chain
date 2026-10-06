@@ -243,7 +243,18 @@ func (k Keeper) AdvanceIndexTo(ctx context.Context, stream types.StreamId, t int
 	return k.advanceIndexTo(ctx, stream, at)
 }
 
+// advanceIndexTo settles stream up to now (unix nanos), retiring every lease
+// that lapses on the way at its own time first (settleLapses).
 func (k Keeper) advanceIndexTo(ctx context.Context, stream types.StreamId, now int64) error {
+	if err := k.settleLapses(ctx, stream, now); err != nil {
+		return err
+	}
+	return k.settleTo(ctx, stream, now)
+}
+
+// settleTo moves stream's reward index to now (unix nanos) over the weight
+// as it stands.
+func (k Keeper) settleTo(ctx context.Context, stream types.StreamId, now int64) error {
 	last, err := k.getLastUpkeep(ctx, stream)
 	if err != nil {
 		return err
@@ -408,6 +419,12 @@ func voterContributions(v types.Voter) []contribution {
 // or the stake weight the capital stream's weight source reports. Nothing here knows which stream it is
 // working on, which is the point.
 func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz []byte, percentages []types.AllocationWeight, weight math.Int) error {
+	return k.resyncVoterAt(ctx, stream, addrBz, percentages, weight, 0)
+}
+
+// resyncVoterAt is resyncVoter with the split's lease end (0: keep the
+// stored one, for a replay at a new weight; see writeVoter).
+func (k Keeper) resyncVoterAt(ctx context.Context, stream types.StreamId, addrBz []byte, percentages []types.AllocationWeight, weight math.Int, expiresAt int64) error {
 	// Options pruned since the vote leave the split here (audit 6 D-L-A1):
 	// they took nothing (writeVoter skips a missing option) and a stored
 	// split naming one fails genesis validation on export.
@@ -415,7 +432,7 @@ func (k Keeper) resyncVoter(ctx context.Context, stream types.StreamId, addrBz [
 	if err != nil {
 		return err
 	}
-	rec := types.Voter{Percentages: percentages, Weight: weight}
+	rec := types.Voter{Percentages: percentages, Weight: weight, ExpiresAt: expiresAt}
 	keep := len(percentages) > 0 && weight.IsPositive()
 	return k.writeVoter(ctx, stream, addrBz, rec, splitContributions(percentages, weight), keep)
 }
@@ -465,6 +482,21 @@ func (k Keeper) writeVoter(ctx context.Context, stream types.StreamId, addrBz []
 	}
 	epoch, err := k.getEpoch(ctx, stream)
 	if err != nil {
+		return err
+	}
+
+	// The lease: a replay (rec.ExpiresAt 0) keeps the stored record's, a cast
+	// sets a new one; the lapse queue follows the record.
+	if old, err := k.Voters.Get(ctx, voterKey(stream, addrBz)); err == nil {
+		if old.ExpiresAt != 0 {
+			if err := k.VoterLapses.Remove(ctx, collections.Join3(old.ExpiresAt, uint32(stream), addrBz)); err != nil {
+				return err
+			}
+		}
+		if rec.ExpiresAt == 0 && old.Epoch == epoch {
+			rec.ExpiresAt = old.ExpiresAt
+		}
+	} else if !errors.Is(err, collections.ErrNotFound) {
 		return err
 	}
 
@@ -538,6 +570,11 @@ func (k Keeper) writeVoter(ctx context.Context, stream types.StreamId, addrBz []
 		return k.Voters.Remove(ctx, voterKey(stream, addrBz))
 	}
 	rec.Epoch = epoch
+	if rec.ExpiresAt != 0 {
+		if err := k.VoterLapses.Set(ctx, collections.Join3(rec.ExpiresAt, uint32(stream), addrBz)); err != nil {
+			return err
+		}
+	}
 	return k.Voters.Set(ctx, voterKey(stream, addrBz), rec)
 }
 

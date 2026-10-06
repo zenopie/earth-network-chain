@@ -71,6 +71,10 @@ var (
 	// moved their tokens (BeforeValidatorSlashed fires before it does).
 	// Emptied every EndBlock.
 	SlashedValidatorsKey = collections.NewPrefix("slashed_validators") // valoper bytes
+
+	// VoterLapsesKey orders leased account splits by when they lapse:
+	// (expires_at unix, stream, voter key).
+	VoterLapsesKey = collections.NewPrefix("voter_lapses")
 )
 
 const (

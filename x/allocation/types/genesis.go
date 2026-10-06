@@ -147,6 +147,11 @@ func (gs GenesisState) Validate() error {
 			if v.Voter.Weight.IsNil() || v.Voter.Weight.IsNegative() {
 				return fmt.Errorf("stream %s: voter %s has a negative weight", st.Stream, v.Address)
 			}
+			// Only an account's Groundworks split is leased (a weighted
+			// voter's splits carry their own leases in their module).
+			if v.Voter.ExpiresAt < 0 || (v.Voter.ExpiresAt != 0 && (st.Stream != STREAM_ID_GROUNDWORKS || len(v.Voter.OptionWeights) > 0)) {
+				return fmt.Errorf("stream %s: voter %s has expires_at %d where no lease applies", st.Stream, v.Address, v.Voter.ExpiresAt)
+			}
 			var pct uint64
 			for _, w := range v.Voter.Percentages {
 				if _, ok := seenOption[w.OptionId]; !ok {

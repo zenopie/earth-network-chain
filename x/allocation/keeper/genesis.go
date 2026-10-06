@@ -254,6 +254,13 @@ func (k Keeper) restoreStream(ctx context.Context, st types.StreamState) error {
 		if err := k.Voters.Set(ctx, voterKey(st.Stream, addrBz), v.Voter); err != nil {
 			return err
 		}
+		// A leased split's lapse is queued again (a lapse time already past
+		// retires at the first settle, at its own time).
+		if v.Voter.ExpiresAt != 0 {
+			if err := k.VoterLapses.Set(ctx, collections.Join3(v.Voter.ExpiresAt, uint32(st.Stream), addrBz)); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil

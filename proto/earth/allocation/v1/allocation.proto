@@ -130,6 +130,11 @@ message Voter {
   // (x/shieldedstaking files every Groundworks position of a validator as
   // one voter, SetWeightedVoter). Never set together with percentages.
   repeated OptionWeight option_weights = 4 [(gogoproto.nullable) = false];
+  // expires_at is when an account's Groundworks split stops counting (unix
+  // seconds): cast or renewed + groundworks_lease_seconds. 0 for a split
+  // without a lease (a module's weighted voter, whose own splits carry
+  // theirs, and the caretaker stream, whose leases x/personhood keeps).
+  int64 expires_at = 5;
 }
 
 // OptionWeight is one option's absolute weight in a weighted voter.

@@ -19,6 +19,21 @@ type WeightSource interface {
 	Weight(ctx context.Context, addr []byte) (math.Int, error)
 }
 
+// Lapser retires leased weight in a stream at the exact time it lapses. The
+// stream's index is settled up to each lapse time before Lapse runs, and
+// Lapse writes voters without settling further (SetWeightedVoterSettled),
+// so the emission after a lapse is never shared with the lapsed weight,
+// whoever triggers the settle. x/shieldedstaking's stake positions are one.
+type Lapser interface {
+	// NextLapse is the earliest pending lapse time (unix seconds) at or
+	// before t, if any.
+	NextLapse(ctx context.Context, t int64) (int64, bool, error)
+	// Lapse retires everything lapsing at exactly t. It must leave no entry
+	// at t behind (one it cannot retire it re-files later), so the next
+	// NextLapse moves on.
+	Lapse(ctx context.Context, t int64) error
+}
+
 // BondedTracker is implemented by a weight source whose account voters weigh
 // their bonded stake only for some keys. The staking hooks resync a voter
 // from its bonded stake only when TracksBonded(key) holds; a source without

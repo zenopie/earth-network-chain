@@ -120,7 +120,15 @@ func (k Keeper) ApplySplit(ctx context.Context, stream types.StreamId, key []byt
 	if err := k.AdvanceIndex(ctx, stream); err != nil {
 		return math.Int{}, err
 	}
-	if err := k.resyncVoter(ctx, stream, key, percentages, weight); err != nil {
+	// A Groundworks split is leased: it counts until now +
+	// groundworks_lease_seconds, and casting again renews it.
+	expiresAt := int64(0)
+	if stream == types.STREAM_ID_GROUNDWORKS && len(percentages) > 0 {
+		if expiresAt, err = k.GroundworksLeaseEnd(ctx); err != nil {
+			return math.Int{}, err
+		}
+	}
+	if err := k.resyncVoterAt(ctx, stream, key, percentages, weight, expiresAt); err != nil {
 		return math.Int{}, err
 	}
 	return weight, nil
@@ -199,6 +207,31 @@ func (k Keeper) SetWeightedVoter(ctx context.Context, stream types.StreamId, key
 	if err := k.AdvanceIndex(ctx, stream); err != nil {
 		return err
 	}
+	return k.writeWeightedVoter(ctx, stream, key, ws, sum)
+}
+
+// SetWeightedVoterSettled is SetWeightedVoter for a caller that has settled
+// the stream to the moment the weights change: it does not settle to the
+// block time first. For a Lapser (the stream is settled to the lapse time).
+func (k Keeper) SetWeightedVoterSettled(ctx context.Context, stream types.StreamId, key []byte, weights []types.OptionWeight) error {
+	if err := ValidateStream(stream); err != nil {
+		return err
+	}
+	var ws []types.OptionWeight
+	sum := math.ZeroInt()
+	for _, w := range weights {
+		if w.Weight.IsNil() || w.Weight.IsNegative() {
+			return errorsmod.Wrapf(types.ErrBadPercentages, "option %d has a negative weight", w.OptionId)
+		}
+		if w.Weight.IsPositive() {
+			ws = append(ws, w)
+			sum = sum.Add(w.Weight)
+		}
+	}
+	return k.writeWeightedVoter(ctx, stream, key, ws, sum)
+}
+
+func (k Keeper) writeWeightedVoter(ctx context.Context, stream types.StreamId, key []byte, ws []types.OptionWeight, sum math.Int) error {
 	add := make([]contribution, len(ws))
 	for i, w := range ws {
 		add[i] = contribution{w.OptionId, w.Weight}

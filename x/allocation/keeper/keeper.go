@@ -72,6 +72,9 @@ type Keeper struct {
 	// SlashedValidators are this block's slashed validators, for EndBlock's
 	// resync of their operators' weight. See hooks.go.
 	SlashedValidators collections.KeySet[[]byte]
+	// VoterLapses orders leased account splits (Groundworks) by when they
+	// lapse: (expires_at, stream, key). See lease.go.
+	VoterLapses collections.KeySet[collections.Triple[int64, uint32, []byte]]
 
 	// weightSources and integratedHandlers are maps rather than fields because
 	// they are populated after construction, by the modules that own the
@@ -81,6 +84,8 @@ type Keeper struct {
 	// by every copy.
 	weightSources      map[types.StreamId]types.WeightSource
 	integratedHandlers map[string]integratedHandler
+	// lapsers retire other modules' leased weight per stream (see lease.go).
+	lapsers map[types.StreamId][]types.Lapser
 
 	// chamber holds the address x/assembly registers itself under. A pointer
 	// because the keeper is passed by value and RegisterChamber is called after
@@ -143,9 +148,12 @@ func NewKeeper(
 			collections.TripleKeyCodec(collections.Int64Key, collections.Uint32Key, collections.Uint64Key)),
 		PruneDue:          collections.NewMap(sb, types.PruneDueKey, "prune_due", streamOption, collections.Int64Value),
 		SlashedValidators: collections.NewKeySet(sb, types.SlashedValidatorsKey, "slashed_validators", collections.BytesKey),
+		VoterLapses: collections.NewKeySet(sb, types.VoterLapsesKey, "voter_lapses",
+			collections.TripleKeyCodec(collections.Int64Key, collections.Uint32Key, collections.BytesKey)),
 
 		weightSources:      map[types.StreamId]types.WeightSource{},
 		integratedHandlers: map[string]integratedHandler{},
+		lapsers:            map[types.StreamId][]types.Lapser{},
 		chamber:            &chamberRef{},
 		residueSink:        &residueSink{},
 	}
@@ -182,6 +190,12 @@ type chamberRef struct{ addr []byte }
 // module wiring, by whichever module owns the notion of weight for that stream.
 func (k Keeper) RegisterWeightSource(stream types.StreamId, src types.WeightSource) {
 	k.weightSources[stream] = src
+}
+
+// RegisterLapser attaches a module's leased weight in stream (see Lapser).
+// Called once, from module wiring.
+func (k Keeper) RegisterLapser(stream types.StreamId, l types.Lapser) {
+	k.lapsers[stream] = append(k.lapsers[stream], l)
 }
 
 // RegisterIntegratedHandler registers an INTEGRATED handler for one stream.

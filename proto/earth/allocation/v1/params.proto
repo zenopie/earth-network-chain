@@ -16,4 +16,12 @@ message Params {
   // deters spam. Groundworks entry is governance-gated and pays no fee — a
   // proposal deposit is its brake.
   uint64 address_option_fee = 1;
+
+  // groundworks_lease_seconds is how long a Groundworks split counts after
+  // it was cast or last renewed: an operator's (MsgSetAllocations) and a
+  // stake position's (x/shieldedstaking MsgLockPosition, MsgUpdatePosition)
+  // alike, as a caretaker split lapses after caretaker_vote_seconds. Casting
+  // again renews it. Zero falls back to the default (365 days); otherwise one
+  // day to two years. A change applies to splits cast after it.
+  uint64 groundworks_lease_seconds = 2;
 }
