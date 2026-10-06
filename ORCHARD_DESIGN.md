@@ -826,8 +826,9 @@ never from Params.
 
 ### 6.5 Sweeps
 
-One retirement budget per block shared by five sweeps, in order: revoked-DSC
-purge, registration expiry, caretaker splits, used bindings, handles. The
+Lapsed caretaker splits are swept first on their own limit. Then one
+retirement budget per block is shared by four sweeps, in order: revoked-DSC
+purge, registration expiry, used bindings, handles. The
 purge gets the largest share; each later sweep is guaranteed budget/8 (at
 least 1); a second round hands what is left to sweeps that used their whole
 allowance. A registration a sweep cannot retire is passed over for

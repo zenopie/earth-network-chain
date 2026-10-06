@@ -120,6 +120,11 @@ func (k Keeper) removalInputs(ctx context.Context, optionID uint64) (personhoodt
 	} else if err != nil {
 		return st, ballot, err
 	}
+	// Closed from closes_at on, as the EndBlocker counts it: a vote in the
+	// block that first reaches closes_at is not one more vote (audit B-12).
+	if sdk.UnwrapSDKContext(ctx).BlockTime().Unix() >= ballot.ClosesAt {
+		return st, ballot, errorsmod.Wrapf(types.ErrBallotNotFound, "option %d: the ballot closed at %d", optionID, ballot.ClosesAt)
+	}
 	st.Scope = privacy.RemovalScope(ballot.BallotId)
 	st.MaxActivation = personhoodtypes.NoBound
 	st.MaxPredecessor = ballot.OpenedAt - personhoodtypes.ActivationMarginSeconds

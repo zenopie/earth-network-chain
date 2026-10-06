@@ -70,18 +70,21 @@ func (k Keeper) runSweep(ctx context.Context, sweep func(context.Context, int) (
 
 // sweepReserveDivisor sets each later sweep's guaranteed share of the block's
 // retirement budget: budget/sweepReserveDivisor (at least 1) apiece for the
-// expiry, caretaker, used-binding and handle sweeps.
+// expiry, used-binding and handle sweeps.
 const sweepReserveDivisor = 8
 
-// runSweeps shares one block's retirement budget among the five sweeps.
+// runSweeps shares one block's retirement budget among four sweeps. Lapsed
+// caretaker splits are not among them: BeginBlocker sweeps those first, on
+// their own CaretakerSweepLimit (a second pass here found nothing and only
+// took a share of this budget).
 //
 // The revoked-signer purge comes first and gets the largest share (see
 // purgeRevokedDscs for why it outranks expiry), but not all of it: the expiry,
-// caretaker, used-binding and handle sweeps each have a reserved share, so a revoked
+// used-binding and handle sweeps each have a reserved share, so a revoked
 // signer with many registrations (a purge lasting many blocks) cannot starve
-// them. A lapsed registration that keeps its leaf, a lapsed caretaker split
-// that keeps its weight, or a released handle still reserved is
-// each a wrong of its own, and none of them should wait on another's backlog.
+// them. A lapsed registration that keeps its leaf or a released handle still
+// reserved is each a wrong of its own, and neither should wait on another's
+// backlog.
 //
 // Round one runs each sweep in priority order with its share plus whatever the
 // sweeps before it left unused. Round two hands what is still left, in the
@@ -94,7 +97,6 @@ func (k Keeper) runSweeps(ctx context.Context, budget int) error {
 	sweeps := []func(context.Context, int) (int, error){
 		k.purgeRevokedDscs,
 		k.sweepExpiredRegistrations,
-		k.sweepCaretakerVotes,
 		k.sweepUsedBindings,
 		k.sweepHandles,
 	}

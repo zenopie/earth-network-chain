@@ -105,6 +105,9 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			return err
 		}
 	}
+	if k.gov == nil {
+		return nil
+	}
 	return k.gov.VotingPeriodProposals.Walk(ctx, nil, func(id uint64, _ []byte) (bool, error) {
 		p, err := k.gov.Proposals.Get(ctx, id)
 		if err != nil {

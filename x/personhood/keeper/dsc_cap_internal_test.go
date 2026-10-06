@@ -300,3 +300,43 @@ func TestLiveRegistrationIsASwitch(t *testing.T) {
 		t.Fatalf("lapsed registration: live=%v err=%v", live, err)
 	}
 }
+
+// Audit B-7: registration_sweep_capped is emitted only when the purge used
+// its whole budget, not on every batch.
+func TestPurgeCappedEventOnlyWhenCapped(t *testing.T) {
+	k, _, ctx := capKeeper(t)
+	for i := 0; i < 5; i++ {
+		seedReg(t, k, ctx, i, testDsc, ctx.BlockTime().Unix())
+	}
+	require.NoError(t, k.StartDscPurge(ctx, testDsc))
+	capped := func(c sdk.Context) bool {
+		for _, ev := range c.EventManager().Events() {
+			if ev.Type == "registration_sweep_capped" {
+				return true
+			}
+		}
+		return false
+	}
+	c1 := ctx.WithEventManager(sdk.NewEventManager())
+	used, err := k.purgeRevokedDscs(c1, 3)
+	require.NoError(t, err)
+	require.Equal(t, 3, used)
+	require.True(t, capped(c1), "the budget ran out")
+	c2 := ctx.WithEventManager(sdk.NewEventManager())
+	used, err = k.purgeRevokedDscs(c2, 10)
+	require.NoError(t, err)
+	require.Equal(t, 2, used)
+	require.False(t, capped(c2), "the last two fit in the budget")
+}
+
+// Audit B-5: a sweep's retry record goes with the registration it was set
+// for, however that registration is removed (a switch, a re-entry).
+func TestRemoveRegistrationClearsSweepRetry(t *testing.T) {
+	k, _, ctx := capKeeper(t)
+	reg := seedReg(t, k, ctx, 0, testDsc, ctx.BlockTime().Unix())
+	require.NoError(t, k.SweepRetry.Set(ctx, reg.Nullifier, ctx.BlockTime().Unix()+types.SweepRetrySeconds))
+	require.NoError(t, k.removeRegistration(ctx, reg))
+	has, err := k.SweepRetry.Has(ctx, reg.Nullifier)
+	require.NoError(t, err)
+	require.False(t, has)
+}

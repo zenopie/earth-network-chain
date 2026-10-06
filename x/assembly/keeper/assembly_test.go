@@ -132,6 +132,13 @@ func TestRemovalBallot(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// From closes_at on the ballot takes no more votes (audit B-12): the
+	// EndBlocker of that block closes it.
+	_, err = e.ms.VoteRemoval(e.ctx.WithBlockTime(time.Unix(opened.ClosesAt, 0)), &types.MsgVoteRemoval{
+		Membership: voter(carol), OptionId: 7, Option: types.VOTE_OPTION_YES,
+	})
+	require.ErrorIs(t, err, types.ErrBallotNotFound)
+
 	// Two of three is exactly two thirds, so it carries.
 	e.ctx = e.ctx.WithBlockTime(time.Unix(opened.ClosesAt+1, 0))
 	require.NoError(t, e.k.EndBlocker(e.ctx))

@@ -366,6 +366,11 @@ func (k Keeper) removeRegistration(ctx context.Context, reg types.Registration) 
 	if err := k.zeroLeaf(ctx, reg.LeafIndex); err != nil {
 		return err
 	}
+	// A sweep's retry record is for this registration: removed by a switch or
+	// re-entry instead, it would delay the next one's sweep or outlive it.
+	if err := k.SweepRetry.Remove(ctx, reg.Nullifier); err != nil {
+		return err
+	}
 	if err := k.Registrations.Remove(ctx, reg.Nullifier); err != nil {
 		return err
 	}

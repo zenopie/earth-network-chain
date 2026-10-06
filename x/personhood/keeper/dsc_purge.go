@@ -128,14 +128,18 @@ func (k Keeper) purgeRevokedDscs(ctx context.Context, budget int) (int, error) {
 		}
 	}
 
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
-		sdk.NewEvent(
-			"registration_sweep_capped",
-			sdk.NewAttribute("retired", strconv.Itoa(len(victims))),
-			sdk.NewAttribute("limit", strconv.Itoa(budget)),
-			sdk.NewAttribute("reason", "dsc_revoked"),
-		),
-	)
+	// Only when the budget ran out (more may be waiting), as the expiry
+	// sweep does: indexers read the event as "capped".
+	if len(victims) >= budget {
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(
+			sdk.NewEvent(
+				"registration_sweep_capped",
+				sdk.NewAttribute("retired", strconv.Itoa(len(victims))),
+				sdk.NewAttribute("limit", strconv.Itoa(budget)),
+				sdk.NewAttribute("reason", "dsc_revoked"),
+			),
+		)
+	}
 	return len(victims), nil
 }
 
