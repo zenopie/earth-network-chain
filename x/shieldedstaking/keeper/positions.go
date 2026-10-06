@@ -109,6 +109,13 @@ func (k Keeper) addPositionTotals(ctx context.Context, p types.Position, sign in
 
 // validatorOptionWeights is v's Groundworks voter: trunc(rate_v x T[v][o] /
 // 100) per option, nothing when its totals are stale.
+//
+// Deliberately not gated on v's status (audit C-8, decided: keep). Positions
+// are private stake whose holders chose where Groundworks money goes; they
+// keep that weight while their validator is jailed, unbonding or unbonded,
+// as they keep their derth (and earn nothing meanwhile). Only an operator's
+// self-bond is gated, counting at a Bonded validator alone (D7-L2): that is
+// the operator's own power, which a validator out of the set does not hold.
 func (k Keeper) validatorOptionWeights(ctx context.Context, v string, epoch uint64) ([]allocationtypes.OptionWeight, error) {
 	e, err := k.GwEpoch.Get(ctx, v)
 	if errors.Is(err, collections.ErrNotFound) || (err == nil && e != epoch) {

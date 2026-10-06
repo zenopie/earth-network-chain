@@ -15,12 +15,18 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting: final-audit fixes** (new genesis, no migration;
 **genesis.json sha256
-a381e2c971748d674d4a071dabae55e86000c88f1c234afe5fe1c22b0c8f4731**; verifying
-keys unchanged). Wallets and indexers must adopt:
+01298d6b5e4f26d3b335b08cc5024c2a1470d256418830220107e634b10d941b**; a new
+move verifying key, the others unchanged). Wallets and indexers must adopt:
 
-- x/personhood: **MsgMoveHandle and MsgMoveCaretaker are removed** (genesis
-  fields 18 and 20 reserved; errors 1125, 1126 and the `handle_moved` event
-  gone). A switched identity claims and casts under the predecessor bound.
+- x/personhood: **MsgMoveHandle and MsgMoveCaretaker carry a move proof**
+  (circuits/move; `MoveProof{proof, root, old_nullifier, new_nullifier}`,
+  public inputs root, scope, old_nullifier, new_nullifier, signal) instead of
+  a membership proof and a free `new_owner`: a handle or split passes only to
+  the same passport's next identity. A switch or re-entry appends a
+  succession leaf `H(TAG_SUCC, idc_old, idc_new)` to the identity tree
+  (wallets rebuilding the tree from `identity_leaf` events see it like any
+  leaf). Genesis: `passports` (21) replaces `passports_seen` (17), new
+  `successions` (22). Error 1129 `ErrInvalidMove`.
 - x/personhood: a switch must be proven on a later `current_date` than the
   live registration (`Registration.proof_date`, field 9; else 1128).
 - x/shieldedstaking: a stake proof that spends notes must spend or pad both

@@ -13,8 +13,8 @@ module books, validator stake, pool reserves, allocation weights and every
 amount the chain itself computes are public.
 
 Genesis: `networks/genesis.json` sha256
-`a381e2c971748d674d4a071dabae55e86000c88f1c234afe5fe1c22b0c8f4731`, carrying
-the action, stake, vote and membership verifying keys
+`01298d6b5e4f26d3b335b08cc5024c2a1470d256418830220107e634b10d941b`, carrying
+the action, stake, vote, membership and move verifying keys
 (`networks/genesis/shielded-verifying-keys/*.vk.b64`) and the passport keys
 (`networks/genesis/verifying-keys/`, 33 register circuits). `make genesis-check` and
 `make privacy-vks-check` pin them.
@@ -301,6 +301,16 @@ predecessor_at)` (country = `CountryField`: the two ASCII bytes of an ISO
 created the leaf, 0 for a passport never registered). A switch or expiry
 zeroes the old leaf. Membership proofs prove against a recent identity root.
 
+**Succession leaves.** When a passport registers to `idc_new` and its last
+registration (live, or lapsed: `PassportsSeen` keeps the last idc) was to
+another `idc_old`, the chain appends `H(TAG_SUCC, idc_old, idc_new)` (`TAG_SUCC`
+= "earth.succ") to the identity tree right after the new identity leaf. It is
+never zeroed and is exported in genesis (`successions`, with `passports`
+carrying each passport's last idc). Another tag and arity than an identity
+leaf, so no membership proof can use one. Both idcs are already public in
+the passport's registration records, so the leaf discloses nothing new; a
+move proof shows one is in the tree without saying which.
+
 ### 3.3 Stake note tree (x/shieldedstaking)
 
     spc    = H(TAG_SPC, owner_pk, rho, rcm)
@@ -385,6 +395,7 @@ counts (`bb gates`, nargo 1.0.0-beta.22):
 | stake | 16,242 | 2^14 | anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash |
 | vote | 22,011 | 2^15 | note_root, nf_root, debt_root, asset, weight, proposal_id, vnf_0, vnf_1, sighash |
 | membership | 5,659 | 2^13 | root, scope, nullifier, signal, excluded_dsc, excluded_country, max_activation, max_predecessor |
+| move | 8,362 | 2^14 | root, scope, old_nullifier, new_nullifier, signal |
 | passport (33 `lean_poa_*` variants) | 138,556 – 659,250 | 2^18 – 2^20 | current_date, address, nullifier, dsc_key: positions are params; `address` carries the registration binding, `current_date` is pinned to block time |
 
 The vote circuit fits the bundled SRS (2^15 + 1 points); the prover's SRS
@@ -469,8 +480,8 @@ Scopes (`H(TAG_SCOPE, Bytes(kind), args…)`):
 | Scope | Args | Used by |
 | --- | --- | --- |
 | `claim` | UTC day | MsgClaimAnml |
-| `caretaker` | — | MsgSetCaretaker |
-| `handle` | — | MsgBindHandle |
+| `caretaker` | — | MsgSetCaretaker, MsgMoveCaretaker (move proof) |
+| `handle` | — | MsgBindHandle, MsgMoveHandle (move proof) |
 | `proposal` | proposal_id, round (0, or 1 after the chamber demoted an expedited proposal) | MsgVoteProposal |
 | `removal` | ballot_id | MsgVoteRemoval |
 | `propose_removal` | option_id, UTC day | MsgProposeRemoval (nullifier not recorded) |
@@ -665,8 +676,10 @@ excluded (`ExcludeAssetPrefix`).
 All personhood private msgs carry `Bundle fee = 1` (its only balance is the
 uerth fee) and, except MsgRegister, a membership proof whose signal is the
 sighash. Gas: `proof_verification_gas + writes × note_gas` with writes:
-MsgClaimAnml 2, MsgSetCaretaker 4, MsgBindHandle 9; MsgRegister: passport proof gas + DSC verification gas +
-5 × note_gas.
+MsgClaimAnml 2, MsgSetCaretaker 4, MsgMoveCaretaker 6, MsgBindHandle 9,
+MsgMoveHandle 4 (the two moves carry a move proof instead, priced the same);
+MsgRegister: passport proof gas + DSC verification gas + 6 × note_gas (one
+for a succession leaf).
 
 | Msg | sighash fields |
 | --- | --- |
@@ -674,6 +687,8 @@ MsgClaimAnml 2, MsgSetCaretaker 4, MsgBindHandle 9; MsgRegister: passport proof 
 | MsgClaimAnml | day, pc, Bytes(ciphertext) |
 | MsgSetCaretaker | (option_id, percent) per entry |
 | MsgBindHandle | Bytes(handle), owner_pk, Bytes(ek_pub) (Bytes of nothing for a release) |
+| MsgMoveCaretaker | (none) |
+| MsgMoveHandle | Bytes(handle) |
 
 ### 6.1 Registration
 
@@ -794,19 +809,28 @@ proof in the handle scope.
   has lapsed. A prover holding a live handle renews or changes it unbounded.
   One live handle per passport across identity switches.
 - A change frees the old handle at once; a release frees it at once.
-- **No moves.** A handle (and a caretaker split) never passes to another
-  nullifier. The chain cannot tell a move to the holder's own next identity
-  from a move to someone else's, and a recipient's consent does not help: a
-  person switching identities once a day could take one handed-over handle
-  or split on each new identity, each counting until its lease ends. So an
-  identity that replaced another claims under the claim bound like any
-  other; the predecessor's handle resolves, unrenewable, until its lease
-  ends. (A move that kept the invariant would need a proof that one prover
-  knows both identity secrets, a new circuit.)
+- **Moves (MsgMoveHandle, MsgMoveCaretaker).** A live handle, lease and
+  all (or a live caretaker split, expiry and percentages), passes from an
+  identity to the identity that succeeded it under the same passport, and
+  only there. The msg carries a **move proof** (circuits/move, section 6.6);
+  the chain fixes its scope (handle or caretaker), takes the msg's sighash as
+  its signal, requires a recent identity root, that `old_nullifier` holds the
+  handle (live) or split (live), and that `new_nullifier` holds none and
+  never moved one away; afterwards `old_nullifier` may never claim or cast
+  again (`ErrHandleMovedOut` 1125, `ErrCaretakerMovedOut` 1126). A proof that
+  does not verify: `ErrInvalidMove` 1129. Why this keeps one live handle (and
+  one split) per passport, daily switchers included: a move needs the
+  chain's succession leaf (old, new), which exists only between consecutive
+  identities of one passport, and the successor's live leaf; each identity
+  holds at most one; a moved-out identity takes no more; and claims and
+  casts still need the predecessor bound. A move to another person's
+  identity has no succession leaf, so no proof; knowing both secrets is
+  also required, so a buyer cannot be named as recipient.
 - `HandleEntry.owner` (Query/Handle, Query/Handles, field 6): the
   handle-scope nullifier holding it, 64 lowercase hex characters, "" for a
   handle never claimed. Events `handle_bound` and `handle_released` carry
-  `owner`.
+  `owner`; `handle_moved` carries `owner` (new) and `previous_owner`
+  (both the move proof's public nullifiers).
 - Self-referral residual: a lapsed registrant still holding a live handle may
   re-register and name it, paying the referral half to themself; bounded by
   per-passport re-entry and the referral half.
@@ -816,10 +840,9 @@ proof in the handle scope.
 `MsgSetCaretaker` files a split in the caretaker scope (a refresh replaces
 it); a new split (one the prover does not hold live) needs
 `max_predecessor < now − caretaker lease − activation margin`. A split past
-its expiry that the sweep has not reached is not held. A split does not move
-(see 6.2, no moves): after a switch the predecessor's split keeps counting,
-unchangeable, until its lease ends, and the new identity casts once the
-bound has passed.
+its expiry that the sweep has not reached is not held. `MsgMoveCaretaker`
+moves a live split to the successor identity (6.2, moves; event
+`move_caretaker` with `nullifier` and `previous_nullifier`).
 
 ### 6.4 Lease bounds
 
@@ -839,6 +862,31 @@ purge gets the largest share; each later sweep is guaranteed budget/8 (at
 least 1); a second round hands what is left to sweeps that used their whole
 allowance. A registration a sweep cannot retire is passed over for
 a day, then retried. A recurring identity root moves its by-time entry.
+
+### 6.6 Move proofs (circuits/move)
+
+Private witness: `old_secret`, `new_secret` (the two identity secrets),
+`succession_index` and `succession_siblings` (the succession leaf's path),
+`dsc_key`, `country`, `activated_at`, `predecessor_at`, `leaf_index`,
+`siblings` (the successor's live identity leaf and its path). Public, in
+order: `root, scope, old_nullifier, new_nullifier, signal`. Constraints:
+
+    succession = H(TAG_SUCC, H(TAG_ID, old_secret), H(TAG_ID, new_secret))  in the tree at root
+    H(TAG_LEAF, H(TAG_ID, new_secret), dsc_key, country, activated_at, predecessor_at)  in the tree at root
+    old_nullifier = H(TAG_SN, old_secret, scope)
+    new_nullifier = H(TAG_SN, new_secret, scope)
+    signal bound (the msg's sighash: chain id, tx fields, fee bundle, handle)
+
+Nothing else is revealed: not which leaves, not the idcs, no passport data.
+The successor must still be live at a recent root, so a move is made while
+the successor holds the passport's live registration (before it switches
+again); a wallet moves right after a switch. Replays: the sighash binds the
+fee bundle (spent once) and the handle; the scope separates handle from
+split moves; the old nullifier is moved out. nargo tests (12): the move,
+one step of a chain, and refusals for another passport's identity,
+backwards, skipping a successor, a zeroed successor, a succession leaf
+passed off as the identity leaf, wrong old or new secret, another scope,
+a recipient nullifier not the successor's, and a wrong root.
 
 ---
 
@@ -1075,7 +1123,10 @@ split_epoch}`: `MsgLockPosition` moves derth out of a note into it
 `MsgPositionVote` votes it on an x/gov proposal (stake-tree snapshot rule:
 created before the snapshot's block; replaceable), `MsgUnlockPosition`
 merges its derth back into the owner's note. Each proves the owner tag.
-Positions are uncapped.
+Positions are uncapped. A position keeps its Groundworks weight whatever
+its validator's status (jailed, unbonding, unbonded): it is the holder's
+private stake, not the validator's power. Only an operator's self-bond is
+gated to Bonded validators (section 9). Decided, not an oversight.
 
 Weighed per validator: x/shieldedstaking keeps `T[v][o]` = Σ over v's live
 positions of derth × percent (`GwTotals`, exact integers); Lock, Update and
