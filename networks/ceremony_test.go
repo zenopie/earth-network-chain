@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,24 +35,67 @@ const (
 )
 
 // publicPeer refuses a gentx memo that is not ID@HOST:PORT with a public
-// host, as scripts/ceremony.sh does.
+// host, matching scripts/ceremony.sh: a global IP, or a fully qualified DNS
+// name outside the internal suffixes. The script also resolves a name and
+// refuses non-public answers; a test cannot rely on DNS, so this check is the
+// looser of the two and the script remains the gate.
 func publicPeer(memo string) error {
 	id, hostport, ok := strings.Cut(memo, "@")
-	if !ok || len(id) != 40 {
+	if !ok || len(id) != 40 || strings.Trim(strings.ToLower(id), "0123456789abcdef") != "" {
 		return fmt.Errorf("not <40-hex node id>@HOST:PORT")
 	}
 	host, port, err := net.SplitHostPort(hostport)
 	if err != nil || port == "" {
 		return fmt.Errorf("not HOST:PORT: %v", err)
 	}
-	if host == "localhost" {
-		return fmt.Errorf("host %s is not public", host)
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("port %s is out of range", port)
 	}
-	if ip, err := netip.ParseAddr(host); err == nil &&
-		(ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast()) {
-		return fmt.Errorf("host %s is not public", host)
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if !globalIP(ip.Unmap()) {
+			return fmt.Errorf("host %s is not a public address", host)
+		}
+		return nil
+	}
+	h := strings.TrimSuffix(strings.ToLower(host), ".")
+	if !strings.Contains(h, ".") {
+		return fmt.Errorf("host %s is not a fully qualified DNS name", host)
+	}
+	for _, suffix := range []string{".local", ".localhost", ".internal", ".lan", ".home", ".home.arpa", ".corp", ".test", ".example", ".invalid"} {
+		if strings.HasSuffix(h, suffix) {
+			return fmt.Errorf("host %s is not a public DNS name", host)
+		}
 	}
 	return nil
+}
+
+// nonGlobal are the special-purpose ranges (RFC 6890 and successors) that are
+// not reachable on the public internet, beyond what netip classifies.
+var nonGlobal = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),  // documentation
+	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("fc00::/7"),
+}
+
+func globalIP(ip netip.Addr) bool {
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() ||
+		ip.IsMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+	for _, p := range nonGlobal {
+		if p.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 // devnetAccounts are keys that have been on a laptop: in the placeholder set
@@ -229,5 +273,26 @@ func TestLaunchCeremony(t *testing.T) {
 
 	default:
 		t.Errorf("gentx operator %s is neither the placeholder %s nor the launch operator %s", operator, placeholderOperator, launchOperator)
+	}
+}
+
+func TestPublicPeer(t *testing.T) {
+	id := strings.Repeat("ab", 20)
+	for memo, want := range map[string]bool{
+		id + "@8.8.8.8:26656":                       true,
+		id + "@p2p.erth.network:26656":              true,
+		id + "@100.64.1.2:26656":                    false,
+		id + "@192.168.0.2:26656":                   false,
+		id + "@203.0.113.9:26656":                   false,
+		id + "@[::ffff:10.0.0.1]:26656":             false,
+		id + "@[2001:db8::1]:26656":                 false,
+		id + "@node.local:26656":                    false,
+		id + "@node:26656":                          false,
+		id + "@8.8.8.8:0":                           false,
+		strings.Repeat("zz", 20) + "@8.8.8.8:26656": false,
+	} {
+		if got := publicPeer(memo) == nil; got != want {
+			t.Errorf("publicPeer(%q) = %v, want %v", memo, got, want)
+		}
 	}
 }
