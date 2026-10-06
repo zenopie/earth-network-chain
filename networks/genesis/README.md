@@ -60,7 +60,13 @@ devnet faucet `earth1s7rgs…` and the ads-for-gas wallet `earth1jtc2z…`, and
 `genesis_time` is a past placeholder. On the operator's machine, one command
 turns them into the launch genesis:
 
-    scripts/ceremony.sh --genesis-time <RFC3339> --pubkey '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"PGqvPN4CxEkxvvh3tSBX0SGeBgjMdqQwZkdHt8FRLm4="}'
+    scripts/ceremony.sh --genesis-time <RFC3339> \
+      --pubkey '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"PGqvPN4CxEkxvvh3tSBX0SGeBgjMdqQwZkdHt8FRLm4="}' \
+      --memo-peer <node id>@<public host>:26656 --moniker <name>
+
+`--memo-peer` (the gentx memo, the genesis's only advertised peer) and
+`--moniker` are required: a private, loopback or link-local host and the
+placeholder's `earth-akash-devnet` moniker are refused.
 
 It reads `VALIDATOR_MNEMONIC` (from the environment, else only that line of
 the deploy repo's `.env`, or `--env-file`), checks it is the launch operator

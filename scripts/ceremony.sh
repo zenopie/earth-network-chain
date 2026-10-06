@@ -3,7 +3,8 @@
 # The launch ceremony: turn the placeholder genesis sources into the launch
 # genesis, in one command, on the operator's machine.
 #
-#   scripts/ceremony.sh --genesis-time <RFC3339> --pubkey '<consensus pubkey json>'
+#   scripts/ceremony.sh --genesis-time <RFC3339> --pubkey '<consensus pubkey json>' \
+#       --memo-peer ID@HOST:PORT --moniker NAME
 #
 #   --genesis-time   the launch instant, e.g. 2026-10-20T16:00:00Z (UTC, whole
 #                    seconds, in the future). Written to networks/genesis/chain.json.
@@ -16,8 +17,11 @@
 #                    the deploy repo's .env next to this repo). Ignored when
 #                    VALIDATOR_MNEMONIC is already set in the environment.
 #   --memo-peer ID@HOST:PORT
-#                    the gentx memo (default: the placeholder gentx's).
-#   --moniker NAME   the validator's moniker (default: the placeholder gentx's).
+#                    the gentx memo: the validator's public p2p address, the
+#                    genesis's only advertised peer. Required; a private,
+#                    loopback, link-local or unspecified IP is refused.
+#   --moniker NAME   the validator's moniker. Required; the placeholder's
+#                    devnet moniker is refused.
 #
 # What it does, all or nothing (any failure restores every source it touched):
 #
@@ -30,8 +34,8 @@
 #      same 1,000 ERTH;
 #   3. networks/genesis/chain.json: genesis_time;
 #   4. networks/genesis/gentx/genesis-validator.json: a new gentx signed by the
-#      operator with the given consensus key (self-delegation, moniker and
-#      commission kept from the placeholder);
+#      operator with the given consensus key, memo and moniker (self-delegation
+#      and commission kept from the placeholder);
 #   5. make genesis, then make genesis-check and the genesis tests with the
 #      ceremony required (EARTH_REQUIRE_CEREMONY=1 go test ./networks/).
 #
@@ -59,13 +63,35 @@ while [ $# -gt 0 ]; do
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --memo-peer) MEMO_PEER="$2"; shift 2 ;;
     --moniker) MONIKER="$2"; shift 2 ;;
-    -h|--help) sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 die() { echo "ceremony: $*" >&2; exit 1; }
 [ -n "$GENESIS_TIME" ] || die "--genesis-time <RFC3339> is required"
 [ -n "$PUBKEY" ] || die "--pubkey '<consensus pubkey json>' is required"
+# The memo and moniker are sha-pinned into the launch genesis: no defaults
+# from the placeholder (a LAN peer and a devnet name, audit D-8).
+[ -n "$MEMO_PEER" ] || die "--memo-peer ID@HOST:PORT (the validator's public p2p address) is required"
+[ -n "$MONIKER" ] || die "--moniker NAME is required"
+[ "$MONIKER" != "earth-akash-devnet" ] || die "--moniker earth-akash-devnet is the placeholder's devnet name"
+python3 - "$MEMO_PEER" <<'PY' || exit 1
+import sys, ipaddress, re
+peer = sys.argv[1]
+m = re.fullmatch(r'([0-9a-f]{40})@(.+):([0-9]{1,5})', peer)
+if not m:
+    sys.exit('ceremony: --memo-peer must be <40-hex node id>@HOST:PORT, got %r' % peer)
+host, port = m.group(2), int(m.group(3))
+if not 0 < port < 65536:
+    sys.exit('ceremony: --memo-peer port %d is out of range' % port)
+try:
+    ip = ipaddress.ip_address(host.strip('[]'))
+except ValueError:
+    ip = None  # a DNS name
+if host.lower() in ('localhost',) or (ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local
+                                                          or ip.is_unspecified or ip.is_reserved or ip.is_multicast)):
+    sys.exit('ceremony: --memo-peer host %s is not a public address' % host)
+PY
 
 # ── arguments ───────────────────────────────────────────────────────────────
 GENESIS_TIME="$(python3 - "$GENESIS_TIME" <<'PY'
@@ -219,9 +245,7 @@ m = t["body"]["messages"][0]
 v, c = m["value"], m["commission"]
 print(m["description"]["moniker"], v["amount"] + v["denom"], c["rate"], c["max_rate"], c["max_change_rate"], m["min_self_delegation"], t["body"]["memo"], sep="\t")
 ' "$WORK/genesis-validator.json")
-IFS=$'\t' read -r OLDMONIKER AMOUNT RATE MAXRATE MAXCHANGE MINSELF OLDMEMO <<<"$FIELDS"
-MONIKER="${MONIKER:-$OLDMONIKER}"
-MEMO_PEER="${MEMO_PEER:-$OLDMEMO}"
+IFS=$'\t' read -r _ AMOUNT RATE MAXRATE MAXCHANGE MINSELF _ <<<"$FIELDS"
 NODE_ID="${MEMO_PEER%%@*}"; HOSTPORT="${MEMO_PEER#*@}"
 P2P_HOST="${HOSTPORT%:*}"; P2P_PORT="${HOSTPORT##*:}"
 [ -n "$NODE_ID" ] && [ -n "$P2P_HOST" ] && [ -n "$P2P_PORT" ] || die "--memo-peer must be ID@HOST:PORT"

@@ -2,6 +2,9 @@ package networks
 
 import (
 	"encoding/base64"
+	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -26,7 +29,30 @@ const (
 	placeholderOperator = "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a"
 	// placeholderGenesisTime is the placeholder's (past) genesis_time.
 	placeholderGenesisTime = "2026-10-02T12:00:00Z"
+	// placeholderMoniker is the placeholder gentx's (devnet) moniker.
+	placeholderMoniker = "earth-akash-devnet"
 )
+
+// publicPeer refuses a gentx memo that is not ID@HOST:PORT with a public
+// host, as scripts/ceremony.sh does.
+func publicPeer(memo string) error {
+	id, hostport, ok := strings.Cut(memo, "@")
+	if !ok || len(id) != 40 {
+		return fmt.Errorf("not <40-hex node id>@HOST:PORT")
+	}
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil || port == "" {
+		return fmt.Errorf("not HOST:PORT: %v", err)
+	}
+	if host == "localhost" {
+		return fmt.Errorf("host %s is not public", host)
+	}
+	if ip, err := netip.ParseAddr(host); err == nil &&
+		(ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast()) {
+		return fmt.Errorf("host %s is not public", host)
+	}
+	return nil
+}
 
 // devnetAccounts are keys that have been on a laptop: in the placeholder set
 // only, never in the launch genesis.
@@ -41,8 +67,12 @@ var usedConsensusKeys = []string{"kTMzoCBEj1g2z49K1D/jxuLGrhTsnzfTx6Gf1LnBUJw="}
 
 type gentxDoc struct {
 	Body struct {
+		Memo     string `json:"memo"`
 		Messages []struct {
-			Type             string `json:"@type"`
+			Type        string `json:"@type"`
+			Description struct {
+				Moniker string `json:"moniker"`
+			} `json:"description"`
 			ValidatorAddress string `json:"validator_address"`
 			Pubkey           struct {
 				Type string `json:"@type"`
@@ -158,7 +188,7 @@ func TestLaunchCeremony(t *testing.T) {
 		}
 		msg := "PENDING CEREMONY: networks/genesis.json is the placeholder (gentx operator " + placeholderOperator +
 			", devnet accounts " + strings.Join(devnetAccounts, ", ") + "). Run\n" +
-			"  scripts/ceremony.sh --genesis-time <RFC3339> --pubkey '{\"@type\":\"/cosmos.crypto.ed25519.PubKey\",\"key\":\"" + launchConsensusKey + "\"}'"
+			"  scripts/ceremony.sh --genesis-time <RFC3339> --pubkey '{\"@type\":\"/cosmos.crypto.ed25519.PubKey\",\"key\":\"" + launchConsensusKey + "\"}' --memo-peer ID@HOST:PORT --moniker NAME"
 		if os.Getenv("EARTH_REQUIRE_CEREMONY") != "" {
 			t.Fatal(msg)
 		}
@@ -172,6 +202,15 @@ func TestLaunchCeremony(t *testing.T) {
 			if inGenesis[a] {
 				t.Errorf("%s holds a balance in the launch genesis", a)
 			}
+		}
+		// The memo is the launch genesis's only advertised peer, and the
+		// moniker its validator's name: neither the placeholder's LAN peer
+		// nor its devnet name (audit D-8).
+		if m.Description.Moniker == placeholderMoniker {
+			t.Errorf("the launch gentx keeps the placeholder moniker %q", placeholderMoniker)
+		}
+		if err := publicPeer(tx.Body.Memo); err != nil {
+			t.Errorf("gentx memo %q: %v", tx.Body.Memo, err)
 		}
 		if keyed[launchOperator] != launchValidatorCoins {
 			t.Errorf("launch operator holds %s, want %s", keyed[launchOperator], launchValidatorCoins)

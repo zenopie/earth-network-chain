@@ -1370,7 +1370,7 @@ export drops open moves (8.7).
 ### 11.4 Launch ceremony
 
 The committed genesis is the placeholder until the operator runs
-`scripts/ceremony.sh --genesis-time <RFC3339> --pubkey <json>`
+`scripts/ceremony.sh --genesis-time <RFC3339> --pubkey <json> --memo-peer ID@HOST:PORT --moniker NAME`
 (networks/genesis/README.md): operator `earth1n6amvk…` (its mnemonic read
 from the deploy .env at run time only), consensus key `PGqvPN4C…`, the
 devnet faucet and gas wallet removed, genesis rebuilt. The genesis sha256
