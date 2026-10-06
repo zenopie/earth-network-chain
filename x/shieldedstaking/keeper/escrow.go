@@ -74,7 +74,7 @@ func (k Keeper) scheduleRetirement(ctx context.Context, val sdk.ValAddress) erro
 // is due (bounded per block): the operator holds no self-delegation and no
 // unbonding self-delegation at val. An operator that bonded again is
 // forgotten (its next removal schedules it anew); one still unbonding is
-// looked at again a block later.
+// looked at again just after its latest unbonding entry completes.
 func (k Keeper) releaseRetiredEscrows(ctx context.Context) {
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixNano()
 	var due []collections.Pair[int64, []byte]
@@ -101,7 +101,17 @@ func (k Keeper) releaseRetiredEscrows(ctx context.Context) {
 				return err
 			}
 			if ubd, err := k.staking.GetUnbondingDelegation(cc, op, val); err == nil && len(ubd.Entries) > 0 {
-				return k.RetiringEscrows.Set(cc, collections.Join(now+1, key.K2()))
+				// Looked at again once its last entry has matured, not
+				// every block: an operator that re-bonded and unbonded
+				// after retiring would otherwise hold a slot of the
+				// per-block budget for a whole unbonding period (audit C-3).
+				at := now + 1
+				for _, e := range ubd.Entries {
+					if c := e.CompletionTime.UnixNano(); c >= at {
+						at = c + 1
+					}
+				}
+				return k.RetiringEscrows.Set(cc, collections.Join(at, key.K2()))
 			} else if err != nil && !errors.Is(err, stakingtypes.ErrNoUnbondingDelegation) {
 				return err
 			}

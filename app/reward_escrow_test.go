@@ -149,3 +149,50 @@ func TestFailingEscrowReleasesDoNotStarveQueues(t *testing.T) {
 	require.False(t, has, "a pending release behind failing entries is retried")
 	require.True(t, e.app.BankKeeper.GetBalance(e.ctx(), sstypes.RewardEscrowAddress(goodPending), "uerth").IsZero())
 }
+
+// Audit C-3: an operator whose retirement falls due while it is still
+// unbonding (it re-bonded and unbonded after retiring) is looked at again
+// once its latest unbonding entry has matured, not every block, so such
+// entries cannot hold the per-block retirement budget.
+func TestRetiringEscrowStillUnbondingWaitsForItsEntry(t *testing.T) {
+	e := initStakeEnv(t)
+	val, _ := e.createValidator(1000 * ssErth)
+	op := sdk.AccAddress(val)
+	ms := stakingkeeper.NewMsgServerImpl(e.app.StakingKeeper)
+	unbondAll := func() {
+		ctx := e.ctx()
+		d, err := e.app.StakingKeeper.GetDelegation(ctx, op, val)
+		require.NoError(t, err)
+		v, err := e.app.StakingKeeper.GetValidator(ctx, val)
+		require.NoError(t, err)
+		_, err = ms.Undelegate(ctx, stakingtypes.NewMsgUndelegate(e.bech(op), e.valoper(val),
+			sdk.NewCoin("uerth", v.TokensFromShares(d.Shares).TruncateInt())))
+		require.NoError(t, err)
+	}
+	e.next(5 * time.Second)
+	unbondAll() // retirement scheduled at T + unbonding time
+	e.days(5)
+	_, err := ms.Delegate(e.ctx(), stakingtypes.NewMsgDelegate(e.bech(op), e.valoper(val), sdk.NewInt64Coin("uerth", ssErth/2)))
+	require.NoError(t, err)
+	unbondAll() // a second unbonding entry, completing 5 days later
+	ubd, err := e.app.StakingKeeper.GetUnbondingDelegation(e.ctx(), op, val)
+	require.NoError(t, err)
+	latest := ubd.Entries[len(ubd.Entries)-1].CompletionTime.UnixNano()
+
+	ut, err := e.app.StakingKeeper.UnbondingTime(e.ctx())
+	require.NoError(t, err)
+	e.days(int(ut/(24*time.Hour)) - 5 + 1) // past the first retirement
+	var keys []int64
+	_ = e.app.ShieldedStakingKeeper.RetiringEscrows.Walk(e.ctx(), nil, func(k collections.Pair[int64, []byte]) (bool, error) {
+		if sdk.ValAddress(k.K2()).Equals(val) {
+			keys = append(keys, k.K1())
+		}
+		return false, nil
+	})
+	require.NotEmpty(t, keys)
+	for _, k := range keys {
+		// The second removal's own schedule is at latest; the first, due
+		// now, is re-queued just past it rather than at the next block.
+		require.GreaterOrEqual(t, k, latest, "re-queued past its latest unbonding entry, not at the next block")
+	}
+}
