@@ -16,6 +16,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	channeltypes "github.com/cosmos/ibc-go/v10/modules/core/04-channel/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -98,16 +99,16 @@ func wasmData(off int, bz []byte) []byte {
 // outputContract is a module whose execute returns prefix + fill x 'A' +
 // suffix as its ContractResult JSON.
 func outputContract(prefix string, fill int, suffix string) []byte {
-	return buildOutputContract(prefix, fill, suffix, false)
+	return buildOutputContract(prefix, fill, 'A', suffix, false)
 }
 
 // callbackContract is outputContract that also exports
 // ibc_destination_callback, returning the same bytes from it.
 func callbackContract(prefix string, fill int, suffix string) []byte {
-	return buildOutputContract(prefix, fill, suffix, true)
+	return buildOutputContract(prefix, fill, 'A', suffix, true)
 }
 
-func buildOutputContract(prefix string, fill int, suffix string, callback bool) []byte {
+func buildOutputContract(prefix string, fill int, fillByte byte, suffix string, callback bool) []byte {
 	const (
 		instRegion = 16
 		outRegion  = 32
@@ -170,7 +171,7 @@ func buildOutputContract(prefix string, fill int, suffix string, callback bool) 
 		wasmConst(int64(start)), localSet(3),
 		{0x02, 0x40, 0x03, 0x40},                               // block, loop
 		localGet(3), wasmConst(int64(end)), {0x4f, 0x0d, 0x01}, // i >= end: br_if 1
-		localGet(3), wasmConst('A'), store8,
+		localGet(3), wasmConst(int64(fillByte)), store8,
 		localGet(3), wasmConst(1), add, localSet(3),
 		{0x0c, 0x00, 0x0b, 0x0b}, // br 0, end loop, end block
 	}
@@ -397,19 +398,31 @@ func TestResultCapNested(t *testing.T) {
 	require.InDelta(t, 600<<10, m.bytes, 1024, "counted once")
 	require.Equal(t, (m.bytes-resultFreeBytes)*resultGasPerByte, gas.GasConsumed())
 
-	// The cap is per top-level msg (R7-C-1): a second 600 KiB msg in the
-	// same tx takes the tx past 1 MiB and is only charged for it.
+	// An ordinary tx's msgs share a 1 MiB total (R8-D-1): a second 600 KiB
+	// msg in the same tx fails it.
 	_, err = outer(capCtx(m, gas), &banktypes.MsgSend{})
-	require.NoError(t, err)
-	require.Greater(t, m.bytes, uint64(maxMsgResultBytes))
-	require.Equal(t, (m.bytes-resultFreeBytes)*resultGasPerByte, gas.GasConsumed(), "the tx total is bounded by gas")
+	require.ErrorIs(t, err, sdkerrors.ErrTxTooLarge)
+	require.Contains(t, err.Error(), "tx msg results")
 
-	// One msg over the cap fails, whatever the meter.
+	// A relay tx's have no byte cap (R7-C-1, R8-C-1): the second msg passes
+	// and is paid for, and so does a single msg over the per-msg cap.
+	relay := &resultMeter{relayOnly: true}
+	gas = storetypes.NewGasMeter(100_000_000)
+	for i := 0; i < 2; i++ {
+		_, err = outer(capCtx(relay, gas), &channeltypes.MsgRecvPacket{})
+		require.NoError(t, err)
+	}
+	require.Greater(t, relay.bytes, uint64(maxMsgResultBytes))
+	require.Equal(t, (relay.bytes-resultFreeBytes)*resultGasPerByte, gas.GasConsumed(), "a relay tx's total is bounded by gas")
+
+	// One msg over the cap fails, whatever the meter but a relay tx's.
 	big := capResult(func(sdk.Context, sdk.Msg) (*sdk.Result, error) {
 		return &sdk.Result{Events: eventsOfSize(maxMsgResultBytes)}, nil
 	})
 	_, err = big(capCtx(&resultMeter{}, storetypes.NewGasMeter(100_000_000)), &banktypes.MsgSend{})
 	require.ErrorIs(t, err, sdkerrors.ErrTxTooLarge)
+	_, err = big(capCtx(&resultMeter{relayOnly: true}, storetypes.NewGasMeter(100_000_000)), &channeltypes.MsgRecvPacket{})
+	require.NoError(t, err, "except in a relay tx")
 
 	// Outside a tx and a metered EndBlock: the cap per msg, no gas.
 	gas = storetypes.NewGasMeter(100_000_000)
@@ -476,4 +489,23 @@ func TestResultCapRoutesWrapped(t *testing.T) {
 	n, err := wrapMsgRoutes(e.app.MsgServiceRouter())
 	require.NoError(t, err)
 	require.Greater(t, n, 50)
+}
+
+// TestResultCapNestedErrTruncated: a nested msg's error is cut before it
+// reaches its caller (an ICA host puts it into an event, R8-C-1), keeping its
+// code.
+func TestResultCapNestedErrTruncated(t *testing.T) {
+	inner := capResult(func(sdk.Context, sdk.Msg) (*sdk.Result, error) {
+		return nil, wasmtypes.ErrExecuteFailed.Wrap(strings.Repeat("x", 900_000))
+	})
+	var got error
+	outer := capResult(func(ctx sdk.Context, msg sdk.Msg) (*sdk.Result, error) {
+		_, got = inner(ctx, msg)
+		return &sdk.Result{}, nil
+	})
+	_, err := outer(capCtx(&resultMeter{}, storetypes.NewGasMeter(1_000_000)), &banktypes.MsgSend{})
+	require.NoError(t, err)
+	require.Error(t, got)
+	require.LessOrEqual(t, len(got.Error()), maxErrorLogBytes+64)
+	require.True(t, errors.Is(got, wasmtypes.ErrExecuteFailed))
 }
