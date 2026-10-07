@@ -302,7 +302,7 @@ say() { printf '  %s\n' "$*" >&2; }
 
 CHAIN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["chain_id"])' "$SRC/chain.json")"
 say "building earthd"
-go build -o "$WORK/earthd" "$REPO/cmd/earthd"
+go -C "$REPO" build -o "$WORK/earthd" ./cmd/earthd
 H="$WORK/home"
 # init writes a consensus and a node key into the scratch home; neither is
 # used (--pubkey, --node-id) and both go with it.

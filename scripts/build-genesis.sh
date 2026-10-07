@@ -55,7 +55,7 @@ CHAIN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["cha
 # it ships with, and a stale earthd on the operator's machine is exactly the kind
 # of difference that only shows up as a mismatched app hash at height 1.
 say "building earthd"
-go build -o "$WORK/earthd" "$REPO/cmd/earthd"
+go -C "$REPO" build -o "$WORK/earthd" ./cmd/earthd
 
 say "earthd init ($CHAIN_ID)"
 "$WORK/earthd" init genesis-build --chain-id "$CHAIN_ID" --home "$WORK/home" >/dev/null 2>&1
@@ -83,7 +83,7 @@ for f in "$REPO"/csca/additional/*; do
   esac
 done
 shopt -u nullglob
-go run "$REPO/tools/pki-genesis" \
+go -C "$REPO" run ./tools/pki-genesis \
   "$REPO/csca/masterlist/allowlist.ml" ${extra_cscas[@]+"${extra_cscas[@]}"} \
   > "$WORK/cscas.json" 2>"$WORK/pki.log" || { cat "$WORK/pki.log" >&2; exit 1; }
 say "$(tail -n1 "$WORK/pki.log")"
