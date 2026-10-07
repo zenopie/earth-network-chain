@@ -335,6 +335,13 @@ func New(
 		panic(err)
 	}
 
+	// Bound what each tx can leave in its ABCI result (app/result_cap.go).
+	// After every msg service is registered (Build, registerIBCModules) and
+	// before the first tx.
+	if _, err := wrapMsgRoutes(app.MsgServiceRouter()); err != nil {
+		panic(fmt.Errorf("wrapping msg routes for the result cap: %w", err))
+	}
+
 	// State sync has to carry contract code, which lives outside the IAVL tree.
 	// Must precede Load: the snapshot manager is sealed there.
 	if err := app.registerWasmSnapshotter(); err != nil {

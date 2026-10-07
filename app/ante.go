@@ -221,6 +221,7 @@ func (app *App) setAnteHandler() error {
 		return fmt.Errorf("building ante handler: %w", err)
 	}
 
-	app.SetAnteHandler(anteHandler)
+	// Every tx carries a fresh result meter into its msgs (app/result_cap.go).
+	app.SetAnteHandler(withResultMeter(anteHandler))
 	return nil
 }
