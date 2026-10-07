@@ -22,6 +22,26 @@ import (
 	shieldedstakingante "github.com/earth-network/earth/x/shieldedstaking/ante"
 )
 
+// DefaultSimulationGasLimit caps a simulated signed tx when app.toml's
+// [wasm] simulation_gas_limit is unset. Node-local, not consensus: it bounds
+// only simulate (a contract execute rarely needs more than 2M; an upload of a
+// large contract can need more, and its deployer then passes --gas instead of
+// --gas auto). At CosmWasm's calibration 10M gas of contract code is about
+// 1.4 s of CPU, the most one anonymous simulate can take.
+const DefaultSimulationGasLimit uint64 = 10_000_000
+
+// SimulationGasLimit is the cap a simulated signed tx runs under: the node's
+// configured simulation_gas_limit, or DefaultSimulationGasLimit. Never the
+// block limit, which wasmd falls back to when the setting is absent.
+func SimulationGasLimit(c wasmtypes.NodeConfig) *uint64 {
+	if c.SimulationGasLimit != nil && *c.SimulationGasLimit > 0 {
+		v := *c.SimulationGasLimit
+		return &v
+	}
+	v := DefaultSimulationGasLimit
+	return &v
+}
+
 // HandlerOptions extends the SDK's ante options with what x/wasm, x/circuit and
 // IBC need.
 type HandlerOptions struct {
@@ -102,10 +122,15 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost: must run first, it installs the gas meter
-		// Caps gas for simulation only. A contract query has no fee paying for
-		// it, so without this a `wasmd query wasm contract-state smart` against
-		// a deliberately non-terminating contract runs until the node dies.
-		wasmkeeper.NewLimitSimulationGasDecorator(options.WasmNodeConfig.SimulationGasLimit),
+		// Caps gas for simulation only (CheckTx and FinalizeBlock pass
+		// through). A simulate has no fee and needs no signature, so the cap
+		// is all that bounds the CPU one costs: a signed tx can run contract
+		// code, which burns roughly 1 ms of CPU per 7k gas, and the block gas
+		// limit (100M) would be ~15 s per call (round-5 R5-E-2). Signed txs
+		// get SimulationGasLimit (DefaultSimulationGasLimit unless app.toml
+		// says otherwise); private txs, which cannot reach a contract, keep
+		// the block limit below.
+		wasmkeeper.NewLimitSimulationGasDecorator(SimulationGasLimit(*options.WasmNodeConfig)),
 		// Puts the tx's position in the block into the context. Contracts read
 		// it to build unique ids that do not collide within a block.
 		wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
@@ -154,7 +179,11 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// Right after SetUpContext: a panic below is an error carrying the
 		// gas already charged (audit 4, I3).
 		shieldedante.RecoverDecorator{},
-		wasmkeeper.NewLimitSimulationGasDecorator(options.WasmNodeConfig.SimulationGasLimit),
+		// A private tx is one PrivateMsg and runs no contract code. Its gas is
+		// mostly flat proof prices (x/shielded params: up to ~60M for a full
+		// bundle), far above the CPU it costs, so it is simulated up to the
+		// block limit (nil): the signed-tx cap would refuse a legitimate one.
+		wasmkeeper.NewLimitSimulationGasDecorator(nil),
 		// The chamber's votes pass the breaker (chamberExemptBreaker).
 		circuitante.NewCircuitBreakerDecorator(chamberExemptBreaker{options.CircuitKeeper}),
 		shieldedante.ValidateTxDecorator{},

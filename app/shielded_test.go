@@ -424,6 +424,9 @@ func TestShieldedPoolEndToEnd(t *testing.T) {
 	}
 	gi, _, err := e.app.Simulate(e.privateTx(shGas(2), nil, sim))
 	require.NoError(t, err)
+	// A private tx is simulated up to the block gas limit, not under the
+	// signed-tx cap (R5-E-2): its flat proof prices can exceed that cap.
+	require.Equal(t, uint64(100_000_000), gi.GasWanted, "private simulate runs under the block limit")
 
 	// --- unshield2: 500,000 to the receiver, the fee paid out of the same
 	// uerth balance (no fee note).

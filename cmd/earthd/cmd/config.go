@@ -3,6 +3,8 @@ package cmd
 import (
 	"strings"
 
+	"github.com/earth-network/earth/app"
+
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	cmtcfg "github.com/cometbft/cometbft/config"
 	serverconfig "github.com/cosmos/cosmos-sdk/server/config"
@@ -20,8 +22,11 @@ func initAppConfig() (string, interface{}) {
 	// The [wasm] block is node-local, not consensus: query_gas_limit,
 	// memory_cache_size and contract debug logging may differ between nodes
 	// without forking the chain. simulation_gas_limit is the one worth knowing
-	// about — left unset it falls back to the block gas limit, which is what
-	// stops a simulated call to a non-terminating contract from pinning a core.
+	// about: it is what stops a simulated call to a non-terminating contract
+	// from pinning a core. Left unset, wasmd would fall back to the block gas
+	// limit (100M, ~15 s of contract CPU per simulate); Earth's ante falls
+	// back to app.DefaultSimulationGasLimit instead (app/ante.go), and the
+	// template writes that value so app.toml shows it.
 	type CustomAppConfig struct {
 		serverconfig.Config `mapstructure:",squash"`
 
@@ -40,9 +45,13 @@ func initAppConfig() (string, interface{}) {
 	// docker/entrypoint.sh, which forces it on every start.
 	srvCfg.Mempool.MaxTxs = -1
 
+	wasmCfg := wasmtypes.DefaultNodeConfig()
+	simLimit := app.DefaultSimulationGasLimit
+	wasmCfg.SimulationGasLimit = &simLimit
+
 	customAppConfig := CustomAppConfig{
 		Config: *srvCfg,
-		Wasm:   wasmtypes.DefaultNodeConfig(),
+		Wasm:   wasmCfg,
 	}
 
 	customAppTemplate := strings.Replace(serverconfig.DefaultConfigTemplate,
@@ -50,7 +59,7 @@ func initAppConfig() (string, interface{}) {
 		"# EARTH: keep -1. Private (shielded) txs are unsigned, and the SDK's app-side\n"+
 			"# mempools refuse any tx with no signer, so any other value drops every\n"+
 			"# private tx. The container entrypoint forces -1 on every start.\n"+
-			"max-txs = {{ .Mempool.MaxTxs }}", 1) + wasmtypes.DefaultConfigTemplate()
+			"max-txs = {{ .Mempool.MaxTxs }}", 1) + wasmtypes.ConfigTemplate(wasmCfg)
 
 	return customAppTemplate, customAppConfig
 }
