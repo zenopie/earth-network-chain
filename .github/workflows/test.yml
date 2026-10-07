@@ -76,6 +76,17 @@ jobs:
       - name: go test
         run: go test -mod=readonly -timeout 30m ./...
 
+      # earth-edge (docker/edge) is its own module, so ./... above does not
+      # reach it. Its conformance module checks the filter against CometBFT's
+      # RPC decoding and every grpc-gateway route in the SDK's and our protos;
+      # it reads the SDK protos from the module cache the step above filled.
+      - name: earth-edge tests
+        working-directory: docker/edge
+        run: |
+          go vet ./...
+          go test -mod=readonly ./...
+          cd conformance && go vet ./... && go test -mod=readonly ./...
+
       # `make genesis-check` deliberately does NOT run here.
       #
       # It rebuilds networks/genesis.json from networks/genesis/ and demands a
