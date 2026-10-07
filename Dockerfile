@@ -109,17 +109,6 @@ RUN CGO_ENABLED=1 go build -trimpath \
 RUN for i in 1 2 3; do CGO_ENABLED=1 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 && ok=1 && break; echo "rly install failed (attempt $i)"; sleep 15; done; [ "${ok:-}" = 1 ] \
     && mv /out/relayer /out/rly
 
-# earth-edge, the request filter that runs in front of the validator's RPC and
-# LCD as its own service in the lease (docker/edge/main.go; the deploy repo's
-# akash/README.md). Standard library only, so it needs nothing downloaded;
-# its own module, so the chain's `go test ./...` does not reach it and it
-# links none of the chain's code. Its tests run here: a filter that fails its
-# allowlist or bypass tables never ships. (docker/edge/conformance checks it
-# against CometBFT's and grpc-gateway's own code; that needs the module cache
-# and runs in CI and by hand, not in this build.)
-RUN cd docker/edge && CGO_ENABLED=0 go test ./filter/ \
-    && CGO_ENABLED=0 go build -trimpath -o /out/earth-edge .
-
 # cosmovisor supervises earthd across upgrades: the chain halts on purpose at the
 # upgrade height, and cosmovisor swaps the binary and restarts it so nobody has
 # to be awake for it. Pure Go, so CGO off gives a static binary with nothing to
@@ -148,7 +137,6 @@ RUN ldconfig /usr/local/lib
 COPY --from=build /out/earthd /usr/local/bin/earthd
 COPY --from=build /out/rly /usr/local/bin/rly
 COPY --from=build /out/cosmovisor /usr/local/bin/cosmovisor
-COPY --from=build /out/earth-edge /usr/local/bin/earth-edge
 
 # Prove the binary can actually start before the image ships. `earthd --help`
 # touches no chain state, but it forces the dynamic loader to resolve every

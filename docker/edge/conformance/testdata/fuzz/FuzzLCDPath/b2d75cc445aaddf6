@@ -1,3 +1,0 @@
-go test fuzz v1
-bool(false)
-string("/cosmos/bank/v1beta1/balances/01000000#")
