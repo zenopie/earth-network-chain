@@ -26,21 +26,7 @@
         {
           "@type": "/cosmos.auth.v1beta1.BaseAccount",
           "account_number": "0",
-          "address": "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a",
-          "pub_key": null,
-          "sequence": "0"
-        },
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "account_number": "1",
-          "address": "earth1s7rgscltvw8v3kzhj46pptdqg843ngs7th9ywp",
-          "pub_key": null,
-          "sequence": "0"
-        },
-        {
-          "@type": "/cosmos.auth.v1beta1.BaseAccount",
-          "account_number": "2",
-          "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
+          "address": "earth1n6amvkgfrrgy6ulhurewnm0endkgye69fkcapr",
           "pub_key": null,
           "sequence": "0"
         }
@@ -59,24 +45,6 @@
     "bank": {
       "balances": [
         {
-          "address": "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a",
-          "coins": [
-            {
-              "amount": "1000000000",
-              "denom": "uerth"
-            }
-          ]
-        },
-        {
-          "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
-          "coins": [
-            {
-              "amount": "10000000000",
-              "denom": "uerth"
-            }
-          ]
-        },
-        {
           "address": "earth1n58mly6f7er0zs6swtetqgfqs36jaarqqsddqt",
           "coins": [
             {
@@ -94,10 +62,10 @@
           ]
         },
         {
-          "address": "earth1s7rgscltvw8v3kzhj46pptdqg843ngs7th9ywp",
+          "address": "earth1n6amvkgfrrgy6ulhurewnm0endkgye69fkcapr",
           "coins": [
             {
-              "amount": "10000000000",
+              "amount": "1000000000",
               "denom": "uerth"
             }
           ]
@@ -171,7 +139,7 @@
           "denom": "uanml"
         },
         {
-          "amount": "2522901000000000",
+          "amount": "2522881000000000",
           "denom": "uerth"
         }
       ]
@@ -325,7 +293,7 @@
                 },
                 "public_key": {
                   "@type": "/cosmos.crypto.secp256k1.PubKey",
-                  "key": "A+V7W31BRKl6qZf/V3Z3NEJtgUEG4G3nPPNnjKq5i670"
+                  "key": "AymWdVae58/lgZXLAqmNtWByTGL+9UtxtQewnKs12HwH"
                 },
                 "sequence": "0"
               }
@@ -334,7 +302,7 @@
           },
           "body": {
             "extension_options": [],
-            "memo": "4284b363d760766e8ccc3d18139d8f3963c620f6@192.168.0.2:26656",
+            "memo": "6ad7347a1e15cc3a247347e152fee9fdd7ed2440@p2p.erth.network:26656",
             "messages": [
               {
                 "@type": "/cosmos.staking.v1beta1.MsgCreateValidator",
@@ -347,7 +315,7 @@
                 "description": {
                   "details": "",
                   "identity": "",
-                  "moniker": "earth-akash-devnet",
+                  "moniker": "earth-validator",
                   "security_contact": "",
                   "website": ""
                 },
@@ -356,7 +324,7 @@
                   "@type": "/cosmos.crypto.ed25519.PubKey",
                   "key": "PGqvPN4CxEkxvvh3tSBX0SGeBgjMdqQwZkdHt8FRLm4="
                 },
-                "validator_address": "earthvaloper14e6sqtf5y7mtzwykqreewe9kg3w94t0f0rul29",
+                "validator_address": "earthvaloper1n6amvkgfrrgy6ulhurewnm0endkgye69vpfk7m",
                 "value": {
                   "amount": "100000000",
                   "denom": "uerth"
@@ -369,7 +337,7 @@
             "unordered": false
           },
           "signatures": [
-            "INAjaq04K+d/MbgfdGemJCns2Xp4AJ3pu9nZ7WZv4mYYq+NidBqJFLU6XoMGcFHaiUKc/gWV2+Ar4k7kOjaJRQ=="
+            "horvsqYb4y9qPMZWUpc/8P/WwSXnVaDCvKRcj+MWqHUXHRd1zqNXtu2IedtVF6doNQNbMMWXermEUNamVZQv8g=="
           ]
         }
       ]
@@ -2356,6 +2324,6 @@
       }
     }
   },
-  "genesis_time": "2026-10-02T12:00:00Z",
+  "genesis_time": "2026-10-07T13:00:00Z",
   "initial_height": 1
 }

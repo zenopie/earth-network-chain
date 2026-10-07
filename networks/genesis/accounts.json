@@ -23,19 +23,9 @@
   ],
   "keyed": [
     {
-      "address": "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a",
+      "address": "earth1n6amvkgfrrgy6ulhurewnm0endkgye69fkcapr",
       "coins": "1000000000uerth",
-      "note": "The genesis validator. 1,000 ERTH: enough to self-delegate 100, and to fund governance deposits (5 ERTH expedited, 1 normal) for years. Deliberately small — 0.00004% of the pre-mine — because the validator's real income is the staking pillar, which pays 1 ERTH/sec split by voting power, and a large genesis balance on top of that is an allocation nobody voted for. Address derived from the operator address of a devnet validator; its key is not in this repo."
-    },
-    {
-      "address": "earth1s7rgscltvw8v3kzhj46pptdqg843ngs7th9ywp",
-      "coins": "10000000000uerth",
-      "note": "Devnet faucet/test account. 10,000 ERTH, enough to exercise transfers, swaps, governance deposits and a second validator's self-delegation without topping up. Its key is not in this repository. REMOVE THIS ACCOUNT before the real launch genesis: it is a key that has been on a laptop, and nothing on mainnet should be funded from one."
-    },
-    {
-      "address": "earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6",
-      "coins": "10000000000uerth",
-      "note": "The ads-for-gas hot wallet, devnet only. 10,000 ERTH is 200,000 grants at DUST_UERTH=50000 — the service sends one dust grant per verified rewarded-ad view so a new human can afford the transaction that registers them. Seeded here because a cutover otherwise starts the service with an empty wallet, which fails quietly: /health reports grants_remaining 0, but callbacks still verify and consume their transaction_id, so the ads are watched and nothing is granted. Its key is not in this repository. REMOVE THIS ACCOUNT before the real launch genesis, for the same reason as the faucet above: it is a key that has been on a laptop."
+      "note": "The genesis validator's operator account, with the placeholder's balance: enough to self-delegate and to fund governance deposits for years. Deliberately small, because the validator's real income is the staking pillar, and a large genesis balance on top of that is an allocation nobody voted for. Its key is held by the operator, not in this repository; scripts/ceremony.sh signs the gentx with it."
     }
   ],
   "modules": [
