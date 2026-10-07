@@ -24,6 +24,7 @@ package filter
 // params. The node's answer is streamed back unchanged.
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,7 +79,7 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			rpcRefuse(w, nil, http.StatusForbidden, "OPTIONS is served as a CORS preflight only")
 			return
 		}
-		h.up.forward(w, r, h.classes.light, http.MethodOptions, path, nil, clientHeaders(r))
+		h.up.forward(w, r, h.classes.light, http.MethodOptions, path, nil, clientHeaders(r), fwdOpts{})
 		return
 	}
 	if path == "/" {
@@ -113,7 +114,16 @@ func (h *rpcHandler) serveURI(w http.ResponseWriter, r *http.Request) {
 		rpcRefuse(w, nil, http.StatusForbidden, err.Error())
 		return
 	}
-	h.up.forward(w, r, cl, http.MethodGet, "/"+name+uriQuery(route, call), nil, clientHeaders(r))
+	h.up.forward(w, r, cl, http.MethodGet, "/"+name+uriQuery(route, call), nil, clientHeaders(r), rpcFwdOpts(name))
+}
+
+// rpcFwdOpts: genesis_chunked is immutable for the chain's life (a relaunch
+// purges Cloudflare's cache, RELAUNCH.md), ~1.75 MB a call: cacheable.
+func rpcFwdOpts(method string) fwdOpts {
+	if method == "genesis_chunked" {
+		return fwdOpts{cache: "public, max-age=3600, s-maxage=86400"}
+	}
+	return fwdOpts{}
 }
 
 // parseURICall is httpParamsToArgs: for each of the route's arguments, the
@@ -169,12 +179,14 @@ func (h *rpcHandler) serveJSONRPC(w http.ResponseWriter, r *http.Request) {
 		rpcRefuse(w, nil, http.StatusMethodNotAllowed, "JSON-RPC is POST to /")
 		return
 	}
-	body, code := readBody(r)
+	body, release, code := readBody(w, r, factorJSONRPC, h.classes.isBackend(r))
 	if code != 0 {
 		rpcRefuse(w, nil, code, http.StatusText(code))
 		return
 	}
+	defer release()
 	id, call, notification, err := parseJSONRPC(body)
+	body = nil // the parsed call holds what is needed
 	if err != nil {
 		rpcRefuse(w, id, http.StatusBadRequest, err.Error())
 		return
@@ -191,17 +203,17 @@ func (h *rpcHandler) serveJSONRPC(w http.ResponseWriter, r *http.Request) {
 	}
 	hdr := clientHeaders(r)
 	hdr.Set("Content-Type", "application/json")
-	h.up.forward(w, r, cl, http.MethodPost, "/", jsonrpcBody(id, call), hdr)
+	h.up.forward(w, r, cl, http.MethodPost, "/", jsonrpcBody(id, call), hdr, rpcFwdOpts(call.method))
 }
 
 // parseJSONRPC is makeJSONRPCHandler's decoding of one body. The id comes
 // back canonical (a string, or an integer as the node truncates a float).
 func parseJSONRPC(body []byte) (id interface{}, call rpcCall, notification bool, err error) {
-	if len(body) == 0 {
+	// A batch is an array: refused on its first byte, without decoding it
+	// (decoding a 1 MiB array only to refuse it was a copy per element).
+	if t := bytes.TrimLeft(body, " \t\r\n"); len(t) == 0 {
 		return nil, call, false, errors.New("empty body")
-	}
-	var batch []json.RawMessage
-	if json.Unmarshal(body, &batch) == nil {
+	} else if t[0] == '[' {
 		return nil, call, false, errBatch
 	}
 	var req jsonrpcRequest

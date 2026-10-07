@@ -3,9 +3,10 @@ package filter
 // What lcd.erth.network serves: the GET routes the wallets, the web app, the
 // backend (cosmpy) and the docs use, POST broadcast and simulate, and CORS
 // preflights for them. Inventory: the deploy repo's akash/README.md, "What
-// the clients call". Each route names its gRPC method; those (except the
-// tx service's) are also what abci_query serves on the RPC side, so the two
-// doors open onto the same rooms.
+// the clients call". Each route names its gRPC method, and `page` says
+// whether its request takes a PageRequest; conformance/ checks both against
+// the protos. The LCD runs these queries outside the node's ABCI mutex; the
+// RPC's abci_query serves only its own short list (rpcpolicy.go).
 //
 // Path parameter types (lcd.go segTypes): addr bech32, hash 64 hex, uint
 // digits, hex, name [A-Za-z0-9_-.]. A route's parameters are the only query
@@ -13,6 +14,7 @@ package filter
 
 import (
 	"errors"
+	"net/url"
 	"regexp"
 )
 
@@ -20,9 +22,9 @@ type lcdSpec struct {
 	method  string
 	pattern string
 	grpc    string // full gRPC method; "" for the tx service (never over abci_query)
-	page    bool   // takes pagination.*
+	page    bool   // the request has a PageRequest: pagination.* served, limit injected
 	params  map[string]string
-	class   string // light, query, search, broadcast, simulate (default query)
+	class   string // light, query, search, abci, simulate (default query)
 	body    []string
 }
 
@@ -36,14 +38,16 @@ var (
 
 var lcdSpecs = []lcdSpec{
 	// --- tx -------------------------------------------------------------
-	{method: "POST", pattern: "/cosmos/tx/v1beta1/txs", class: "broadcast",
+	// CheckTx: takes the ABCI mutex, so it is in the abci class with the
+	// RPC's broadcasts and queries.
+	{method: "POST", pattern: "/cosmos/tx/v1beta1/txs", class: "abci",
 		body: []string{"tx_bytes", "txBytes", "mode"}},
 	{method: "POST", pattern: "/cosmos/tx/v1beta1/simulate", class: "simulate",
 		// cosmpy simulates with the legacy JSON `tx`; the wallets send tx_bytes.
 		body: []string{"tx_bytes", "txBytes", "tx"}},
 	// Commit polls: a point lookup in the tx index.
 	{method: "GET", pattern: "/cosmos/tx/v1beta1/txs/{hash}", class: "light"},
-	// The explorers' search: equality queries only (lcd.go checkSearch).
+	// The explorer's search: one block's txs (lcd.go checkSearch).
 	{method: "GET", pattern: "/cosmos/tx/v1beta1/txs", class: "search", params: map[string]string{
 		"query":    searchQuery,
 		"order_by": `^ORDER_BY_(DESC|ASC|UNSPECIFIED)$`,
@@ -102,16 +106,16 @@ var lcdSpecs = []lcdSpec{
 	{method: "GET", pattern: "/earth/dex/v1/unbondings/{addr}", grpc: "/earth.dex.v1.Query/LpUnbondings"},
 	{method: "GET", pattern: "/earth/dex/v1/liquidity_auction", grpc: "/earth.dex.v1.Query/LiquidityAuction"},
 	{method: "GET", pattern: "/earth/dex/v1/liquidity_auction/bid/{addr}", grpc: "/earth.dex.v1.Query/AuctionBid"},
-	{method: "GET", pattern: "/earth/dex/v1/pol_burns", grpc: "/earth.dex.v1.Query/PolBurns", page: true},
+	{method: "GET", pattern: "/earth/dex/v1/pol_burns", grpc: "/earth.dex.v1.Query/PolBurns"},
 	{method: "GET", pattern: "/earth/dex/v1/simulate_swap_exact_in", grpc: "/earth.dex.v1.Query/SimulateSwapExactIn", params: map[string]string{
 		"offer_denom": reDenom, "offer_amount": `^[0-9]{1,40}$`, "ask_denom": reDenom}},
-	{method: "GET", pattern: "/earth/earth/v1/burns", grpc: "/earth.earth.v1.Query/Burns", page: true},
+	{method: "GET", pattern: "/earth/earth/v1/burns", grpc: "/earth.earth.v1.Query/Burns"},
 	{method: "GET", pattern: "/earth/personhood/v1/params", grpc: "/earth.personhood.v1.Query/Params"},
 	{method: "GET", pattern: "/earth/personhood/v1/registration_count", grpc: "/earth.personhood.v1.Query/RegistrationCount"},
 	{method: "GET", pattern: "/earth/personhood/v1/caretaker_voter_count", grpc: "/earth.personhood.v1.Query/CaretakerVoterCount"},
 	{method: "GET", pattern: "/earth/personhood/v1/identity_tree", grpc: "/earth.personhood.v1.Query/IdentityTree"},
 	{method: "GET", pattern: "/earth/personhood/v1/registration_countries", grpc: "/earth.personhood.v1.Query/RegistrationCountries"},
-	{method: "GET", pattern: "/earth/personhood/v1/registrations_by_dsc/{hex}", grpc: "/earth.personhood.v1.Query/RegistrationsByDsc", page: true},
+	{method: "GET", pattern: "/earth/personhood/v1/registrations_by_dsc/{hex}", grpc: "/earth.personhood.v1.Query/RegistrationsByDsc"},
 	{method: "GET", pattern: "/earth/personhood/v1/lease_bounds", grpc: "/earth.personhood.v1.Query/LeaseBounds"},
 	{method: "GET", pattern: "/earth/personhood/v1/handles", grpc: "/earth.personhood.v1.Query/Handles", params: map[string]string{"start": reText, "limit": reLimit}},
 	{method: "GET", pattern: "/earth/shielded/v1/params", grpc: "/earth.shielded.v1.Query/Params"},
@@ -131,16 +135,23 @@ var lcdSpecs = []lcdSpec{
 	{method: "GET", pattern: "/earth/shieldedstaking/v1/stake_nullifiers/{hex}", grpc: "/earth.shieldedstaking.v1.Query/StakeNullifier"},
 }
 
-// The explorers' searches, and nothing wider. Each is an equality match,
-// which the kv indexer answers from one key prefix. A range (`tx.height>0`,
-// the web explorer's "latest transactions") makes CometBFT's kv indexer walk
-// every tx.height entry in the index and sort the lot, unmetered, on the
-// signer: refused.
-var searchQuery = `^((message\.sender|transfer\.recipient)='[a-z0-9]{1,16}1[02-9ac-hj-np-z]{6,90}'|tx\.height=[1-9][0-9]{0,19})$`
-
-// grpcMethods: the gRPC methods abci_query serves because their LCD route
-// is served (rpcpolicy.go adds abciGRPCExtra). Filled by buildLCDRoutes.
-var grpcMethods = map[string]bool{}
+// The one search served: the txs of one block. CometBFT's kv indexer
+// collects EVERY match of a search, loads each full TxResult and sorts them
+// before it applies the page, and nothing cancels it (the SDK calls TxSearch
+// with context.Background, and the local client ignores the connection). So
+// a search costs what its match set costs, whatever `limit` says, and only
+// a search whose match set is bounded may reach the node (round-5 R5-E-1):
+//
+//   - `tx.height=N` is the key prefix tx.height/N/N/: one block's txs.
+//   - an address equality (`message.sender='…'`, `transfer.recipient='…'`)
+//     is not bounded: the fee collector is the recipient of every fee, a
+//     busy address of thousands of txs, and each is a whole-history scan.
+//     Refused. (The validator also indexes no event attributes at all,
+//     EARTHD_INDEX_EVENTS in the deploy repo, so such a search would find
+//     nothing there anyway.) Wallets build their activity from the txs they
+//     sent, looked up by hash.
+//   - a range (`tx.height>0`) walks every tx.height entry: refused.
+var searchQuery = `^tx\.height=[1-9][0-9]{0,18}$`
 
 var lcdRoutes = buildLCDRoutes()
 
@@ -172,8 +183,8 @@ func buildLCDRoutes() []*lcdRoute {
 			rt.class = func(c *Classes) *class { return c.light }
 		case "search":
 			rt.class = func(c *Classes) *class { return c.search }
-		case "broadcast":
-			rt.class = func(c *Classes) *class { return c.broadcast }
+		case "abci":
+			rt.class = func(c *Classes) *class { return c.abci }
 		case "simulate":
 			rt.class = func(c *Classes) *class { return c.simulate }
 		case "":
@@ -181,19 +192,25 @@ func buildLCDRoutes() []*lcdRoute {
 		default:
 			panic("lcdpolicy: class " + s.class)
 		}
-		if s.grpc != "" {
-			grpcMethods[s.grpc] = true
-		}
+		rt.grpc, rt.page = s.grpc, s.page
 		out = append(out, rt)
 	}
 	return out
 }
 
 // checkSearch: a search must say what it searches for (the deprecated
-// repeated `events` is dropped by the filter, so it cannot stand in).
-func checkSearch(q map[string][]string) error {
+// repeated `events` is dropped by the filter, so it cannot stand in), and
+// it is forwarded with an explicit page: absent, the SDK would use limit
+// 100 (DefaultLimit), not the 50 served here (R5-E-4).
+func checkSearch(q url.Values) error {
 	if len(q["query"]) != 1 {
-		return errors.New("tx search needs one query of the served forms")
+		return errors.New("tx search needs query=tx.height=N")
+	}
+	if q.Get("limit") == "" {
+		q.Set("limit", "50")
+	}
+	if q.Get("page") == "" {
+		q.Set("page", "1")
 	}
 	return nil
 }

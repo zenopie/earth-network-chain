@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-// maxBody bounds a request body: a JSON-RPC call or an LCD broadcast or
-// simulate. CometBFT's own default (rpc max_body_bytes) is 1 MB; a private
-// tx with several ~15 KB proofs is far below it.
-const maxBody = 1 << 20
-
 // Response headers worth passing back. Everything else the node sets
 // (X-Server-Time, its Date) is dropped; Go adds its own framing.
 var passResponseHeaders = []string{
@@ -32,65 +27,125 @@ var passResponseHeaders = []string{
 }
 
 type nodeClient struct {
-	base   string // http://node:26657, no trailing slash
-	client *http.Client
+	base    string // http://node:26657, no trailing slash
+	client  *http.Client
+	classes *Classes
 }
 
 func NewTransport() *http.Transport {
 	return &http.Transport{
-		Proxy:                 nil,
-		MaxIdleConns:          64,
-		MaxIdleConnsPerHost:   32,
-		MaxConnsPerHost:       64,
-		IdleConnTimeout:       60 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		DisableCompression:    true, // Cloudflare compresses towards clients
-		ForceAttemptHTTP2:     false,
+		Proxy:               nil,
+		MaxIdleConns:        64,
+		MaxIdleConnsPerHost: 32,
+		MaxConnsPerHost:     64,
+		IdleConnTimeout:     60 * time.Second,
+		// No ResponseHeaderTimeout: forward's context (holdCeiling) bounds a
+		// request, and a shorter transport timeout would free a class slot
+		// while the node still works on the request.
+		DisableCompression: true, // Cloudflare compresses towards clients
+		ForceAttemptHTTP2:  false,
 	}
 }
 
-// forward sends a request the proxy built to the node under cl's slot and
-// deadline, and streams the answer back.
+// fwdOpts: per-call extras for forward.
+type fwdOpts struct {
+	// cache, if set, is the Cache-Control sent with a 200 (genesis_chunked:
+	// immutable for the chain's life, so Cloudflare can serve it).
+	cache string
+}
+
+// upstreamResult is what the node answered.
+type upstreamResult struct {
+	resp *http.Response
+	err  error
+}
+
+// forward sends a request the proxy built to the node under one slot of cl,
+// and streams the answer back.
+//
+// The slot is held until the node has answered, not until the client's
+// deadline: the node keeps working on a request whose client has gone (it
+// neither notices the dropped connection nor gives up its place in the ABCI
+// mutex queue), so releasing early would admit more work than the cap says
+// (round-5 R5-E-1, R5-E-3). When the client's deadline (cl.timeout) passes
+// first, the client gets 504 and a goroutine keeps the slot until the node
+// answers, then closes that answer unread. At most cap such goroutines exist
+// per class. holdCeiling bounds even that: a node silent that long is
+// wedged, and the request is dropped.
 func (u *nodeClient) forward(w http.ResponseWriter, r *http.Request, cl *class,
-	method, pathQuery string, body []byte, header http.Header) {
-	if !cl.acquire(r.Context()) {
+	method, pathQuery string, body []byte, header http.Header, o fwdOpts) {
+	release := cl.acquire(r.Context(), u.classes.isBackend(r))
+	if release == nil {
 		busy(w, r)
 		return
 	}
-	defer cl.release()
-	ctx, cancel := context.WithTimeout(r.Context(), cl.timeout)
-	defer cancel()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), holdCeiling)
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u.base+pathQuery, rd)
 	if err != nil {
+		cancel()
+		release()
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
 	}
 	for k, vs := range header {
 		req.Header[k] = vs
 	}
-	resp, err := u.client.Do(req)
-	if err != nil {
+	done := make(chan upstreamResult, 1)
+	go func() {
+		resp, err := u.client.Do(req)
+		done <- upstreamResult{resp, err}
+	}()
+	deadline := time.NewTimer(cl.timeout)
+	defer deadline.Stop()
+	var res upstreamResult
+	select {
+	case res = <-done:
+	case <-deadline.C:
+		go abandon(done, cancel, release)
+		http.Error(w, http.StatusText(http.StatusGatewayTimeout), http.StatusGatewayTimeout)
+		return
+	case <-r.Context().Done():
+		go abandon(done, cancel, release)
+		return
+	}
+	defer release()
+	defer cancel()
+	if res.err != nil {
 		code := http.StatusBadGateway
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(res.err, context.DeadlineExceeded) {
 			code = http.StatusGatewayTimeout
 		}
 		http.Error(w, http.StatusText(code), code)
 		return
 	}
-	defer resp.Body.Close()
+	defer res.resp.Body.Close()
 	h := w.Header()
 	for _, k := range passResponseHeaders {
-		if vs := resp.Header.Values(k); len(vs) > 0 {
+		if vs := res.resp.Header.Values(k); len(vs) > 0 {
 			h[http.CanonicalHeaderKey(k)] = vs
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
+	if o.cache != "" && res.resp.StatusCode == http.StatusOK {
+		h.Set("Cache-Control", o.cache)
+	}
+	w.WriteHeader(res.resp.StatusCode)
 	buf := make([]byte, 32<<10)
-	_, _ = io.CopyBuffer(w, resp.Body, buf)
+	_, _ = io.CopyBuffer(w, res.resp.Body, buf)
+}
+
+// abandon waits, holding the slot, until the node answers a request whose
+// client has gone, then drops the answer and frees the slot.
+func abandon(done <-chan upstreamResult, cancel context.CancelFunc, release func()) {
+	res := <-done
+	if res.resp != nil {
+		res.resp.Body.Close()
+	}
+	cancel()
+	release()
 }
 
 // clientHeaders copies the few request headers the node may see: CORS
@@ -117,37 +172,6 @@ func printableASCII(s string) bool {
 		}
 	}
 	return true
-}
-
-// bodySlots bounds how many request bodies are held in memory at once,
-// whatever the classes say: maxBody each.
-var bodySlots = make(chan struct{}, 16)
-
-// readBody reads at most maxBody bytes of the request body, holding a body
-// slot while it does. The slot is released when the read is done: the body
-// is then in memory, counted against GOMEMLIMIT, and on its way to a class.
-func readBody(r *http.Request) ([]byte, int) {
-	t := time.NewTimer(2 * time.Second)
-	defer t.Stop()
-	select {
-	case bodySlots <- struct{}{}:
-	case <-t.C:
-		return nil, http.StatusServiceUnavailable
-	case <-r.Context().Done():
-		return nil, http.StatusServiceUnavailable
-	}
-	defer func() { <-bodySlots }()
-	if r.ContentLength > maxBody {
-		return nil, http.StatusRequestEntityTooLarge
-	}
-	b, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
-	if err != nil {
-		return nil, http.StatusBadRequest
-	}
-	if len(b) > maxBody {
-		return nil, http.StatusRequestEntityTooLarge
-	}
-	return b, 0
 }
 
 // hasBody: whether the client sent (or announced) a request body.
@@ -187,7 +211,7 @@ func isPreflight(r *http.Request) bool {
 		!hasBody(r) && r.URL.RawQuery == ""
 }
 
-func busy(w http.ResponseWriter, r *http.Request) {
+func busy(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Retry-After", "1")
 	http.Error(w, "busy", http.StatusServiceUnavailable)
 }

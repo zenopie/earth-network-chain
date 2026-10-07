@@ -137,6 +137,14 @@ func TestRPCRefused(t *testing.T) {
 		"abci BroadcastTx":              post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/cosmos.tx.v1beta1.Service/BroadcastTx"}}`),
 		"abci reflection":               post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/cosmos.base.reflection.v2alpha1.ReflectionService/GetQueryServicesDescriptor"}}`),
 		"abci cmt GetBlockWithTxs":      post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/cosmos.tx.v1beta1.Service/GetBlockWithTxs"}}`),
+		// R5-E-2: Simulate runs the whole tx inside the ABCI mutex.
+		"abci Simulate JSON-RPC": post(`{"jsonrpc":"2.0","id":6,"method":"abci_query","params":{"data":"0A00","height":"0","path":"/cosmos.tx.v1beta1.Service/Simulate","prove":false}}`),
+		"abci Simulate GET":      get("/abci_query?path=%22/cosmos.tx.v1beta1.Service/Simulate%22&data=0x00"),
+		// R5-E-3: no paginated method over abci_query (no LCD mirror).
+		"abci AllBalances":  post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/cosmos.bank.v1beta1.Query/AllBalances","data":"0A00"}}`),
+		"abci Validators":   post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/cosmos.staking.v1beta1.Query/Validators","data":"1A0218FF"}}`),
+		"abci Burns":        post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/earth.earth.v1.Query/Burns"}}`),
+		"abci SigningInfos": get("/abci_query?path=%22/cosmos.slashing.v1beta1.Query/SigningInfos%22&data=0x0a0420012001"),
 		"abci /app/simulate":            post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/app/simulate","data":"00"}}`),
 		"abci /p2p":                     post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/p2p/filter/id/abc"}}`),
 		"abci /custom":                  post(`{"jsonrpc":"2.0","id":1,"method":"abci_query","params":{"path":"/custom/bank/x"}}`),
@@ -247,7 +255,6 @@ func TestRPCServed(t *testing.T) {
 		{"gas-check csca_by_dn", post(`{"jsonrpc":"2.0","id":4,"method":"abci_query","params":{"data":"` + dn + `","height":"5","path":"/store/pki/subspace","prove":false}}`), want{"POST", "/", ""}},
 		{"known DSCs JSON", post(`{"jsonrpc":"2.0","id":4,"method":"abci_query","params":{"data":"` + regsByDsc + `","path":"/store/personhood/subspace"}}`), want{"POST", "/", ""}},
 		{"cli Account", post(`{"jsonrpc":"2.0","id":5,"method":"abci_query","params":{"data":"0A00","height":"0","path":"/cosmos.auth.v1beta1.Query/Account","prove":false}}`), want{"POST", "/", ""}},
-		{"cli Simulate", post(`{"jsonrpc":"2.0","id":6,"method":"abci_query","params":{"data":"0A00","height":"0","path":"/cosmos.tx.v1beta1.Service/Simulate","prove":false}}`), want{"POST", "/", ""}},
 		{"cli module account", post(`{"jsonrpc":"2.0","id":6,"method":"abci_query","params":{"data":"0A03676F76","height":"0","path":"/cosmos.auth.v1beta1.Query/ModuleAccountByName","prove":false}}`), want{"POST", "/", ""}},
 		{"runbook registrations-by-dsc", post(`{"jsonrpc":"2.0","id":6,"method":"abci_query","params":{"data":"0A00","height":"0","path":"/earth.personhood.v1.Query/RegistrationsByDsc","prove":false}}`), want{"POST", "/", ""}},
 		{"cli gov proposal", post(`{"jsonrpc":"2.0","id":6,"method":"abci_query","params":{"data":"0801","height":"0","path":"/cosmos.gov.v1.Query/Proposal","prove":false}}`), want{"POST", "/", ""}},
@@ -361,6 +368,14 @@ func TestLCDRefused(t *testing.T) {
 		"search AND":               get("/cosmos/tx/v1beta1/txs?query=message.sender%3D%27" + addr + "%27%20AND%20tx.height%3E0"),
 		"search contains":          get("/cosmos/tx/v1beta1/txs?query=message.sender%20CONTAINS%20%27e%27"),
 		"search big limit":         get("/cosmos/tx/v1beta1/txs?query=tx.height%3D5&limit=100"),
+		// R5-E-1: an address equality is a whole-history scan (the fee
+		// collector receives every fee), whatever the limit.
+		"search fee collector":     get("/cosmos/tx/v1beta1/txs?query=transfer.recipient%3D%27earth17xpfvakm2amg962yls6f84z3kell8c5lthcx95%27&limit=1"),
+		"search sender":            get("/cosmos/tx/v1beta1/txs?query=message.sender%3D%27" + addr + "%27&order_by=ORDER_BY_DESC&limit=20"),
+		"search recipient":         get("/cosmos/tx/v1beta1/txs?query=transfer.recipient%3D%27" + addr + "%27"),
+		"search sender and height": get("/cosmos/tx/v1beta1/txs?query=message.sender%3D%27" + addr + "%27%20AND%20tx.height%3D5"),
+		"search hash event":        get("/cosmos/tx/v1beta1/txs?query=tx.hash%3D%27" + txHash + "%27"),
+		"search height int64 overflow": get("/cosmos/tx/v1beta1/txs?query=tx.height%3D99999999999999999999"),
 		"search repeated query":    get("/cosmos/tx/v1beta1/txs?query=tx.height%3D5&query=tx.height%3E0"),
 		"search POST JSON":         {method: "POST", target: "/cosmos/tx/v1beta1/txs", body: `{"query":"tx.height>0"}`, header: map[string]string{"Content-Type": jsonCT}},
 		"search over grpc-gw verb": get("/cosmos/tx/v1beta1/txs:search?query=tx.height%3E0"),
@@ -393,6 +408,13 @@ func TestLCDRefused(t *testing.T) {
 		"websocket":              {method: "GET", target: "/cosmos/bank/v1beta1/params", header: map[string]string{"Connection": "Upgrade", "Upgrade": "websocket"}},
 		// parameters
 		"page limit too big": get("/cosmos/bank/v1beta1/balances/" + addr + "?pagination.limit=100000"),
+		// R5-E-4: CountTotal, a zero limit (which turns CountTotal on), and
+		// long skips are walks of the collection.
+		"page count_total":   get("/cosmos/staking/v1beta1/validators?pagination.count_total=true"),
+		"page limit zero":    get("/cosmos/staking/v1beta1/validators?pagination.limit=0"),
+		"page limit 000":     get("/cosmos/staking/v1beta1/validators?pagination.limit=000"),
+		"page big offset":    get("/cosmos/gov/v1/proposals?pagination.offset=999999999&pagination.limit=1"),
+		"page offset 10001":  get("/cosmos/gov/v1/proposals?pagination.offset=10001"),
 		"repeated param":     get("/earth/personhood/v1/handles?limit=10&limit=20"),
 		"bad height header":  {method: "GET", target: "/earth/shielded/v1/tree", header: map[string]string{"X-Cosmos-Block-Height": "1; drop"}},
 		"semicolon query":    get("/cosmos/bank/v1beta1/params?a=1;b=2"),
@@ -424,16 +446,14 @@ func TestLCDServed(t *testing.T) {
 		{jsonPost("/cosmos/tx/v1beta1/txs", `{"tx_bytes":"CgQKAggB","mode":"BROADCAST_MODE_SYNC"}`), ""},
 		{jsonPost("/cosmos/tx/v1beta1/simulate", `{"tx_bytes":"CgQKAggB"}`), ""},
 		{get("/cosmos/tx/v1beta1/txs/" + txHash), ""},
-		{get("/cosmos/tx/v1beta1/txs?query=message.sender%3D%27" + addr + "%27&order_by=ORDER_BY_DESC&limit=20"), "limit=20&order_by=ORDER_BY_DESC&query=message.sender%3D%27" + addr + "%27"},
-		{get("/cosmos/tx/v1beta1/txs?query=transfer.recipient%3D%27" + addr + "%27&order_by=ORDER_BY_DESC&limit=20"), "-"},
-		{get("/cosmos/bank/v1beta1/balances/" + addr), ""},
+		{get("/cosmos/bank/v1beta1/balances/" + addr), "pagination.limit=100"},
 		{get("/cosmos/bank/v1beta1/supply/by_denom?denom=uerth"), "denom=uerth"},
 		{get("/cosmos/bank/v1beta1/supply/by_denom?denom=dexlp%2F1"), "denom=dexlp%2F1"},
 		{get("/cosmos/bank/v1beta1/supply/by_denom?denom=dexlp/1"), "denom=dexlp%2F1"},
 		{get("/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED&pagination.limit=200"), "pagination.limit=200&status=BOND_STATUS_BONDED"},
-		{get("/cosmos/staking/v1beta1/delegations/" + addr), ""},
+		{get("/cosmos/staking/v1beta1/delegations/" + addr), "pagination.limit=100"},
 		{get("/cosmos/staking/v1beta1/pool"), ""},
-		{get("/cosmos/staking/v1beta1/delegators/" + addr + "/unbonding_delegations"), ""},
+		{get("/cosmos/staking/v1beta1/delegators/" + addr + "/unbonding_delegations"), "pagination.limit=100"},
 		{get("/cosmos/staking/v1beta1/params"), ""},
 		{get("/cosmos/distribution/v1beta1/delegators/" + addr + "/rewards"), ""},
 		{get("/cosmos/gov/v1/proposals?pagination.limit=20&pagination.reverse=true"), "pagination.limit=20&pagination.reverse=true"},
@@ -443,12 +463,12 @@ func TestLCDServed(t *testing.T) {
 		{get("/cosmos/base/tendermint/v1beta1/blocks/1"), ""},
 		{get("/cosmos/base/tendermint/v1beta1/node_info"), ""},
 		{get("/cosmos/base/tendermint/v1beta1/syncing"), ""},
-		{get("/earth/allocation/v1/options/STREAM_ID_CARETAKER"), ""},
+		{get("/earth/allocation/v1/options/STREAM_ID_CARETAKER"), "pagination.limit=100"},
 		{get("/earth/assembly/v1/proposal_tally/4"), ""},
 		{get("/earth/assembly/v1/removal_ballots"), ""},
 		{get("/earth/assembly/v1/ballot_inputs?proposal_id=4"), "proposal_id=4"},
 		{get("/earth/assembly/v1/ballot_inputs?option_id=2"), "option_id=2"},
-		{get("/earth/dex/v1/pool"), ""},
+		{get("/earth/dex/v1/pool"), "pagination.limit=100"},
 		{get("/earth/dex/v1/params"), ""},
 		{get("/earth/dex/v1/unbondings/" + addr), ""},
 		{get("/earth/dex/v1/simulate_swap_exact_in?offer_denom=uerth&offer_amount=1000&ask_denom=uanml"), "-"},
@@ -468,13 +488,16 @@ func TestLCDServed(t *testing.T) {
 		{get("/earth/shieldedstaking/v1/stake_nullifier_tree?start=0&limit=1000"), "-"},
 		{get("/earth/shieldedstaking/v1/debt_tree?start=10&limit=500"), "-"},
 		{get("/earth/shieldedstaking/v1/validators?pagination.limit=200"), ""[:0] + "pagination.limit=200"},
-		{get("/earth/shieldedstaking/v1/positions"), ""},
+		{get("/earth/shieldedstaking/v1/positions"), "pagination.limit=100"},
 		{get("/earth/shieldedstaking/v1/stake_nullifiers/" + hexKey), ""},
 		{get("/earth/shieldedstaking/v1/stake_tree"), ""},
 		// web app (beyond the wallets')
-		{get("/cosmos/tx/v1beta1/txs?query=tx.height%3D123&order_by=ORDER_BY_DESC&limit=50"), "-"},
+		{get("/cosmos/tx/v1beta1/txs?query=tx.height%3D123&order_by=ORDER_BY_DESC&limit=50"), "limit=50&order_by=ORDER_BY_DESC&page=1&query=tx.height%3D123"},
+		{get("/cosmos/tx/v1beta1/txs?query=tx.height%3D123"), "limit=50&page=1&query=tx.height%3D123"},
+		{get("/cosmos/tx/v1beta1/txs?query=tx.height%3D9&limit=7&page=2"), "limit=7&page=2&query=tx.height%3D9"},
+		{get("/cosmos/gov/v1/proposals?pagination.offset=10000&pagination.limit=1000&pagination.count_total=false"), "pagination.count_total=false&pagination.limit=1000&pagination.offset=10000"},
 		{get("/cosmos/base/tendermint/v1beta1/validatorsets/latest?pagination.limit=200"), "-"},
-		{get("/cosmos/bank/v1beta1/send_enabled?denoms=uerth"), "denoms=uerth"},
+		{get("/cosmos/bank/v1beta1/send_enabled?denoms=uerth"), "denoms=uerth&pagination.limit=100"},
 		{get("/cosmos/bank/v1beta1/params"), ""},
 		{get("/cosmos/staking/v1beta1/validators/" + valop), ""},
 		{get("/cosmos/staking/v1beta1/validators/" + valop + "/delegations/" + addr), ""},
@@ -537,21 +560,27 @@ func TestLCDServed(t *testing.T) {
 	}
 }
 
-// Every LCD spec's gRPC method is served over abci_query, and nothing from
-// the tx service is.
-func TestABCIMirrorsLCD(t *testing.T) {
+// abci_query serves its own short list, all in the abci class, and none of
+// the LCD's paginated methods, nor anything from the tx service.
+func TestABCIGRPCList(t *testing.T) {
 	c := DefaultClasses()
-	for _, s := range lcdSpecs {
-		if s.grpc == "" {
-			continue
+	for p := range abciGRPC {
+		cl, err := checkABCIQuery(c, p, nil, false)
+		if err != nil || cl != c.abci {
+			t.Errorf("%s: %v (class %v)", p, err, cl)
 		}
-		if _, err := checkABCIQuery(c, s.grpc, nil, false); err != nil {
-			t.Errorf("%s: %v", s.grpc, err)
+		if strings.HasPrefix(p, "/cosmos.tx.") {
+			t.Errorf("tx service method %s served over abci_query", p)
 		}
 	}
-	for m := range grpcMethods {
-		if strings.HasPrefix(m, "/cosmos.tx.") {
-			t.Errorf("tx service method %s served over abci_query", m)
+	for _, s := range lcdSpecs {
+		if s.page && abciGRPC[s.grpc] {
+			t.Errorf("paginated %s served over abci_query", s.grpc)
+		}
+	}
+	for _, p := range []string{"/cosmos.tx.v1beta1.Service/Simulate", "/cosmos.bank.v1beta1.Query/AllBalances", "/earth.earth.v1.Query/Burns"} {
+		if _, err := checkABCIQuery(c, p, nil, false); err == nil {
+			t.Errorf("%s served over abci_query", p)
 		}
 	}
 }

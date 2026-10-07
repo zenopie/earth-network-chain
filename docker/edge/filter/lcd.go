@@ -62,6 +62,8 @@ type lcdRoute struct {
 	class   func(*Classes) *class
 	// search: the route is the tx search; its query is checked by checkSearch.
 	search bool
+	grpc   string // the gRPC method behind it ("" for the tx service)
+	page   bool   // its request has a PageRequest
 }
 
 // Path parameter types, by the name used in lcdpolicy.go's patterns.
@@ -197,7 +199,7 @@ func (h *lcdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			lcdRefuse(w, http.StatusForbidden, "OPTIONS is served as a CORS preflight for a served route only")
 			return
 		}
-		h.up.forward(w, r, h.classes.light, http.MethodOptions, r.URL.Path, nil, clientHeaders(r))
+		h.up.forward(w, r, h.classes.light, http.MethodOptions, r.URL.Path, nil, clientHeaders(r), fwdOpts{})
 	case http.MethodGet:
 		rt := h.find(http.MethodGet, parts)
 		if rt == nil {
@@ -220,6 +222,12 @@ func (h *lcdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if rt.page && q.Get("pagination.limit") == "" {
+			// An absent (or zero) limit makes the SDK page 100 AND count
+			// the whole collection (CountTotal): every default page a full
+			// walk (R5-E-4). The limit is always explicit, 1..1000.
+			q.Set("pagination.limit", defaultPageLimit)
+		}
 		hdr := clientHeaders(r)
 		if v := r.Header.Get("X-Cosmos-Block-Height"); v != "" {
 			if !segTypes["uint"].MatchString(v) {
@@ -232,7 +240,7 @@ func (h *lcdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if enc := q.Encode(); enc != "" {
 			pq += "?" + enc
 		}
-		h.up.forward(w, r, cl, http.MethodGet, pq, nil, hdr)
+		h.up.forward(w, r, cl, http.MethodGet, pq, nil, hdr, fwdOpts{})
 	case http.MethodPost:
 		rt := h.find(http.MethodPost, parts)
 		if rt == nil {
@@ -248,31 +256,40 @@ func (h *lcdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			lcdRefuse(w, http.StatusUnsupportedMediaType, "POST bodies are application/json")
 			return
 		}
-		body, code := readBody(r)
+		body, release, code := readBody(w, r, factorLCD, h.classes.isBackend(r))
 		if code != 0 {
 			lcdRefuse(w, code, http.StatusText(code))
 			return
 		}
+		defer release()
 		if err := checkJSONObject(body, rt.body); err != nil {
 			lcdRefuse(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		hdr := clientHeaders(r)
 		hdr.Set("Content-Type", "application/json")
-		h.up.forward(w, r, rt.class(h.classes), http.MethodPost, r.URL.Path, body, hdr)
+		h.up.forward(w, r, rt.class(h.classes), http.MethodPost, r.URL.Path, body, hdr, fwdOpts{})
 	default:
 		lcdRefuse(w, http.StatusMethodNotAllowed, "method not served")
 	}
 }
 
 // Pagination, on every route that takes it (cosmos.base.query.v1beta1.PageRequest).
+// The SDK has no maximum of its own; each page is bounded here (R5-E-4):
+//   - limit 1..1000, injected as 100 when absent (0 or absent turns on
+//     CountTotal, a walk of the whole collection);
+//   - offset at most 10,000 (the node iterates past every skipped entry;
+//     clients page with pagination.key, which seeks);
+//   - count_total=true refused (no client asks for it; it walks the lot).
 var paginationParams = map[string]*regexp.Regexp{
 	"pagination.key":         regexp.MustCompile(`^[A-Za-z0-9+/_\-=]{0,512}$`),
-	"pagination.offset":      regexp.MustCompile(`^[0-9]{1,9}$`),
-	"pagination.limit":       regexp.MustCompile(`^([0-9]{1,3}|1000)$`),
-	"pagination.count_total": regexp.MustCompile(`^(true|false)$`),
+	"pagination.offset":      regexp.MustCompile(`^([0-9]{1,4}|10000)$`),
+	"pagination.limit":       regexp.MustCompile(`^([1-9][0-9]{0,2}|1000)$`),
+	"pagination.count_total": regexp.MustCompile(`^false$`),
 	"pagination.reverse":     regexp.MustCompile(`^(true|false)$`),
 }
+
+const defaultPageLimit = "100"
 
 // filterQuery keeps the route's own parameters, first value each, and
 // refuses a kept value its pattern does not allow. Unknown names are

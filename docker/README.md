@@ -44,11 +44,35 @@ wallets, the web app, the backend, `earthd --node` and state sync use
 (`filter/rpcpolicy.go`), and the LCD routes those clients call
 (`filter/lcdpolicy.go`). It decodes every request once, exactly as CometBFT
 v0.38 and grpc-gateway v1.16 would, and forwards a request it wrote itself,
-so an encoding the node would read differently never reaches the node. It
-caps how many calls of each cost class (simulate, raw store reads, the tx
-search, ...) run at once, keeps no per-client state, and logs no request.
+so an encoding the node would read differently never reaches the node.
 Websockets, `tx_search`, `block_search`, batches and the LCD's
 method-override and form POSTs are refused.
+
+What it lets through is bounded in cost, not only in kind:
+
+- **Tx search:** only `tx.height=N` (one block's txs), with `limit` and
+  `page` always explicit. An address search (`message.sender`,
+  `transfer.recipient`) is refused: CometBFT loads every match before it
+  pages, and the fee collector matches every tx.
+- **Pages:** every paginated LCD route is forwarded with an explicit
+  `pagination.limit` (1..1000, 100 when absent: an absent limit makes the
+  SDK count the whole collection); `count_total=true` and offsets over
+  10,000 are refused.
+- **The ABCI mutex:** everything that takes it (RPC `abci_query`, both
+  broadcasts, `abci_info`) is one class of 2 slots (+1 for the backend), and
+  `abci_query` serves a short list of unpaginated gRPC paths. `Simulate` is
+  not served over `abci_query`; use `--gas` with `earthd tx --node`, or the
+  LCD's simulate (signed txs are simulated under `[wasm]
+  simulation_gas_limit`, 10M by default, `app/ante.go`).
+- **Slots outlive timeouts:** a class slot is held until the node answers,
+  not until the client gives up, since the node cannot be told to stop.
+- **Bodies:** read before any slot is taken, under a deadline set from their
+  size (2 s + 128 KiB/s), and charged against a 48 MiB byte budget (16 MiB
+  for the backend) until answered; past it, 503.
+
+It keeps no per-client state and logs no request. Every answer carries
+`X-Earth-Edge: 1`, so an outside check can tell that a hostname reaches the
+filter and not the node.
 
 Run it as `earth`, not root (it refuses root):
 
@@ -56,14 +80,20 @@ Run it as `earth`, not root (it refuses root):
 
 Configuration is `EDGE_RPC_UPSTREAM`, `EDGE_LCD_UPSTREAM` (default
 `http://node:26657`, `http://node:1317`), `EDGE_RPC_LISTEN`,
-`EDGE_LCD_LISTEN` (`:26657`, `:1317`) and `EDGE_MAX_CONNS`. The deploy
-repo's `akash/README.md` ("Public RPC and LCD") is the operator's side.
+`EDGE_LCD_LISTEN` (`:26657`, `:1317`), `EDGE_MAX_CONNS`, and
+`EDGE_BACKEND_AUTH_SHA256` (the SHA-256 of the backend's Authorization
+header, which unlocks the slots reserved for it). The deploy repo's
+`akash/README.md` ("Public RPC and LCD") is the operator's side.
 
 Tests: `cd docker/edge && go test ./...` (allowlists, every bypass from the
-audits, fuzzers); `cd docker/edge/conformance && go test ./...` checks the
-filter against CometBFT's own argument decoding and every grpc-gateway route
-in the SDK's and this repo's protos. Adding a route a client needs means a
-line in `lcdpolicy.go` (or `abciGRPCExtra`) and a case in `filter_test.go`.
+audits, cost bounds: slots held until the node answers, a 1 MiB burst
+against the memory budget, slow bodies; fuzzers that also check every
+forwarded call against independent cost rules); `cd docker/edge/conformance
+&& go test ./...` checks the filter against CometBFT's own argument decoding,
+every grpc-gateway route in the SDK's and this repo's protos, and each
+route's PageRequest. Adding a route a client needs means a line in
+`lcdpolicy.go` (or `abciGRPC`, plus `boundedABCI` in `fuzz_test.go`) and a
+case in `filter_test.go`.
 
 ## The volume is not optional
 

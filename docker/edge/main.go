@@ -15,14 +15,18 @@
 //
 // Configuration (env): EDGE_RPC_LISTEN (:26657), EDGE_LCD_LISTEN (:1317),
 // EDGE_RPC_UPSTREAM (http://node:26657), EDGE_LCD_UPSTREAM
-// (http://node:1317), EDGE_MAX_CONNS (256 per listener). Go's own
-// GOMAXPROCS and GOMEMLIMIT bound the runtime; the SDL sets both. Tests:
+// (http://node:1317), EDGE_MAX_CONNS (256 per listener),
+// EDGE_BACKEND_AUTH_SHA256 (optional: hex SHA-256 of the backend's exact
+// Authorization header value; requests carrying it may use the slots
+// reserved for the backend, filter/limit.go). Go's own GOMAXPROCS and
+// GOMEMLIMIT bound the runtime; the SDL sets both. Tests:
 // filter/ (allowlists, every reported bypass, fuzzing) and conformance/
 // (against CometBFT's and grpc-gateway's own code).
 package main
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"log"
 	"net"
@@ -87,10 +91,12 @@ func newServer(h http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       20 * time.Second,
-		WriteTimeout:      75 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    16 << 10,
+		// The outer bound; a body's own deadline is set from its size
+		// (filter/body.go: 2 s + 128 KiB/s, so 10 s for 1 MiB).
+		ReadTimeout:    20 * time.Second,
+		WriteTimeout:   75 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 16 << 10,
 		// net/http logs some connection errors with the remote address
 		// ("http: TLS handshake error from ..."). Nothing here may log one.
 		ErrorLog: log.New(io.Discard, "", 0),
@@ -109,6 +115,13 @@ func main() {
 		log.Fatal("earth-edge: EDGE_MAX_CONNS must be a positive integer")
 	}
 	cls := filter.DefaultClasses()
+	if v := os.Getenv("EDGE_BACKEND_AUTH_SHA256"); v != "" {
+		h, err := hex.DecodeString(v)
+		if err != nil || len(h) != 32 {
+			log.Fatal("earth-edge: EDGE_BACKEND_AUTH_SHA256 must be 64 hex digits")
+		}
+		cls.SetBackendAuthSHA256(h)
+	}
 	client := &http.Client{
 		Transport: filter.NewTransport(),
 		// The node never redirects a request this proxy builds (paths are
@@ -133,8 +146,9 @@ func main() {
 		}(srv, ln)
 	}
 	nr, ng := filter.Counts()
-	log.Printf("earth-edge: rpc %s -> %s, lcd %s -> %s, %d LCD routes, %d gRPC paths over abci_query",
-		env("EDGE_RPC_LISTEN", ":26657"), rpcUp, env("EDGE_LCD_LISTEN", ":1317"), lcdUp, nr, ng)
+	log.Printf("earth-edge: rpc %s -> %s, lcd %s -> %s, %d LCD routes, %d gRPC paths over abci_query, backend reserve %v",
+		env("EDGE_RPC_LISTEN", ":26657"), rpcUp, env("EDGE_LCD_LISTEN", ":1317"), lcdUp, nr, ng,
+		os.Getenv("EDGE_BACKEND_AUTH_SHA256") != "")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)

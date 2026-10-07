@@ -33,7 +33,7 @@ func protoDirs(t testing.TB) []string {
 	chain := filepath.Join("..", "..", "..")
 	mod, err := os.ReadFile(filepath.Join(chain, "go.mod"))
 	if err != nil {
-		t.Skip("not inside the chain repo")
+		skipOutsideCI(t, "not inside the chain repo")
 	}
 	m := regexp.MustCompile(`(?m)^\s*github\.com/cosmos/cosmos-sdk (v\S+)`).FindSubmatch(mod)
 	if m == nil {
@@ -45,9 +45,21 @@ func protoDirs(t testing.TB) []string {
 	}
 	sdk := filepath.Join(cache, "github.com", "cosmos", "cosmos-sdk@"+string(m[1]), "proto")
 	if _, err := os.Stat(sdk); err != nil {
-		t.Skipf("SDK protos not in the module cache (%s): run `go mod download` in the chain repo", sdk)
+		skipOutsideCI(t, "SDK protos not in the module cache ("+sdk+"): run `go mod download` in the chain repo")
 	}
 	return []string{sdk, filepath.Join(chain, "proto")}
+}
+
+// skipOutsideCI: these tests need the chain checkout and the SDK's protos.
+// Outside them (a copy of docker/edge alone) they skip, but in CI (CI set, as
+// GitHub Actions does) a skip would pass silently with nothing checked, so
+// it fails instead (round-5 R5-E-9).
+func skipOutsideCI(t testing.TB, why string) {
+	t.Helper()
+	if os.Getenv("CI") != "" {
+		t.Fatal(why)
+	}
+	t.Skip(why)
 }
 
 func loadGateway(t testing.TB) []gwRoute {
