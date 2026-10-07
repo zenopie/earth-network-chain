@@ -558,7 +558,7 @@ both state.
 | `make lint` | golangci-lint |
 | `scripts/rehearse-upgrade.sh` | run a governance upgrade end to end locally |
 | `scripts/rehearse-cosmovisor.sh`, `rehearse-cosmovisor-restart.sh` | the same through cosmovisor, before and after the halt |
-| `docker/entrypoint_test.sh` | exercise the container's three boot paths |
+| `docker/entrypoint_test.sh` | exercise the image entrypoint (first start, resume, the genesis hash) |
 
 ### Circuits, verifying keys and proof fixtures
 

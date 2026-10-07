@@ -1,138 +1,118 @@
 # Container image — earth node
 
-The image and the entrypoint here are what a node runs. Deployment (compose
-files, the Akash SDL, secrets) lives in a separate private repository, which
-resolves tag -> digest from the registry when it deploys.
+A generic image: `earthd`, its libraries, the release genesis, and a minimal
+entrypoint. How a particular operator hosts a node (key handling, a
+supervisor, a relayer, a request filter, its orchestration) is deployment, and
+belongs in an image built `FROM` this one by digest.
 
 Pushing a `v*.*.*` tag has CI build the image and push it to
 `ghcr.io/zenopie/earth-network-chain`. Tags only — a plain push to `master`
-builds nothing, and CI writes the digest nowhere.
+builds nothing, and CI writes the digest nowhere. Pin it by digest.
 
     Dockerfile                          builds earthd on a slim runtime
-    docker/entrypoint.sh                first-boot genesis, then earthd start
+    docker/entrypoint.sh                first start: the release genesis; then earthd start
+    docker/entrypoint_test.sh           the entrypoint's tests, no container needed
     .github/workflows/docker-build.yml  builds and pushes the image
+
+## What the entrypoint does
+
+| `$EARTH_HOME/config/genesis.json` | what happens |
+| --- | --- |
+| missing (a fresh volume) | checks `/etc/earth/genesis.json` against `/etc/earth/genesis.json.sha256`, `earthd init`, installs it unmodified, starts |
+| present | starts on what the volume holds (and warns if its genesis is not the image's) |
+
+A hash mismatch is fatal: a genesis swapped into the image after the fact fails
+loudly instead of quietly forking whoever runs it. No account or validator key
+is created or imported; `earthd init` writes a random node key and consensus
+key, which is what a non-validating node needs. `genesis_time` is never
+rewritten: emission is prorated from it, so a rewritten one pays the gap out at
+height 2.
+
+It then runs `earthd start` with RPC and LCD listening on all interfaces
+(`--rpc.laddr tcp://0.0.0.0:26657 --api.enable --api.address tcp://0.0.0.0:1317`),
+followed by any arguments given to the container, which win.
+
+The node runs as `earth` (uid 10001), never root: earthd runs native code on
+input strangers choose (the proof verifier, the CosmWasm engine). `/data` is
+owned by it in the image; a volume owned by someone else needs its ownership
+set by whoever mounts it.
+
+    docker run -v earth-data:/data -p 26656:26656 \
+      -e EARTHD_MINIMUM_GAS_PRICES=0.005uerth \
+      ghcr.io/zenopie/earth-network-chain@sha256:<digest>
+
+## Configuration
+
+earthd reads `app.toml` and `config.toml` under `$EARTH_HOME/config`, then
+`EARTHD_*` environment variables (the key with `.` and `-` as `_`), then flags.
+Environment and flags override the files, which live on the volume.
+
+Required:
+
+- **A minimum gas price** (`EARTHD_MINIMUM_GAS_PRICES`, or `minimum-gas-prices`
+  in `app.toml`): the node refuses to start without one. uerth only: ANML exists
+  only in the shielded pool and is refused as a fee.
+
+What the chain itself fixes, whatever the configuration says:
+
+- **The app mempool is the no-op one.** Private txs are unsigned, and the SDK's
+  priority and sender-nonce mempools refuse any tx with no signer; `app.go`
+  ignores `mempool.max-txs` (loudly) and always runs the no-op mempool.
+- **Signed txs are simulated under `[wasm] simulation_gas_limit`**, 10M gas when
+  unset (`app/ante.go`); private txs are simulated up to the block gas limit.
+
+Worth setting on any node that serves RPC or LCD to others (none is consensus;
+each is node-local):
+
+| Setting | Why |
+| --- | --- |
+| `index-events` (app.toml; `EARTHD_INDEX_EVENTS`) | Empty indexes every event attribute, so every address becomes a `tx_search` key, and CometBFT loads every match of a search before it pages. Index only what your clients search by (an IBC relayer: the `*_packet.packet_*` keys). `tx.hash` and `tx.height` are always indexed. |
+| `query-gas-limit` (app.toml) | 0 is unbounded: one query can walk a whole store. |
+| `[rpc] max_subscription_clients`, `max_open_connections`; `[api] max-open-connections` | Each subscriber is also a `broadcast_tx_commit` in flight; size these to what the node serves. |
+| `[storage] discard_abci_responses = false`, `[tx_index] indexer = "kv"`, `pruning = "nothing"` | Only on a node that serves history: an indexer reading `block_results` from height 1 needs every height's results kept. |
+| `log_level` | At `debug`, the RPC server logs every request and its remote address. |
+
+Public RPC and LCD serve everything CometBFT and the SDK serve, including calls
+whose cost the caller picks (`tx_search` over the index, paginated queries,
+simulate). A node open to the public should sit behind a request filter of its
+operator's choosing.
 
 ## Ports
 
-    1317   LCD    the wallet apps and the ads-for-gas backend
+    1317   LCD
     26656  p2p    other nodes
-    26657  RPC    the explorer's block-range queries
+    26657  RPC
 
-All three are published with explicit host mappings so the addresses are
-predictable — `EARTH_NODE_URL` and the apps need to point somewhere fixed.
-
-p2p needs one thing beyond the mapping: set `EXTERNAL_ADDRESS` to the address
-peers should dial. Without it CometBFT advertises the address it sees on itself,
-which in a container is a private one, and hands that to every peer through PEX
-— the node dials out fine and can never be dialled back. `SEEDS` and
-`PERSISTENT_PEERS` give it somewhere to start; all three are written into
-`config.toml` on every start, so a restart is enough to change one.
-
-gRPC (9090) stays unpublished: everything here speaks REST.
-
-RPC and LCD serve everything CometBFT and the SDK serve, including calls whose
-cost the caller picks (`tx_search` over the index, paginated queries, simulate).
-A node open to the public should sit behind a request filter of its operator's
-choosing; that is deployment, not part of this image. Two node-side bounds are
-here: signed txs are simulated under `[wasm] simulation_gas_limit` (10M gas
-when unset, `app/ante.go`), and the operator picks what the tx indexer keys
-(`EARTHD_INDEX_EVENTS`; CometBFT always indexes `tx.hash` and `tx.height`).
+gRPC (9090) is not published. p2p needs `EARTHD_P2P_EXTERNAL_ADDRESS` (or
+`[p2p] external_address`) set to the address peers should dial: without it
+CometBFT advertises the address it sees on itself, which in a container is a
+private one. Seeds and persistent peers go in `[p2p] seeds` and
+`persistent_peers` the same way.
 
 ## The volume is not optional
 
-`earth-data:/data` holds genesis, the validator's consensus key and all chain
-state. Without it a redeploy does not restart the chain — it creates a *different*
-one, with a new genesis and new keys, and every address the apps knew about stops
-existing. The entrypoint decides which case it is purely by whether
-`/data/config/genesis.json` is there.
+`/data` holds the node's config, keys and chain state. Without a volume every
+restart is a new node with new keys and no history; the entrypoint decides
+which case it is purely by whether `/data/config/genesis.json` is there.
 
 ## Genesis
 
 `networks/genesis.json` is a build artifact, written by `scripts/build-genesis.sh`
 from the sources in `networks/genesis/` and committed alongside its sha256. See
-`networks/genesis/README.md`.
+`networks/genesis/README.md`. Regenerate it with `make genesis` after any change
+to its sources; `make genesis-check` fails if it has drifted. Until the launch
+ceremony it is the placeholder set (`scripts/ceremony.sh`).
 
-It carries the 536 CSCAs, the 33 passport register verifying keys, the four
-privacy circuit keys (action, membership, stake, vote), the ANML/ERTH pool, the
-liquidity auction, the retirement schedules, the governance parameters and the
-genesis validator's gentx. The gentx names only the validator's consensus
-*public* key; the private key never ships in the image.
+It carries the CSCA trust store, the passport register and privacy circuit
+verifying keys, the ANML/ERTH pool, the liquidity auction, the retirement
+schedules, the governance and consensus parameters (a 4 MiB block, 100M block
+gas) and the genesis validator's gentx. The gentx names only the validator's
+consensus *public* key; the private key never ships in the image.
 
-## Three boot paths
+## Validating, upgrades
 
-The entrypoint picks one and says which. The difference between the first two is
-the difference between joining a network and creating one.
-
-| condition | what happens |
-| --- | --- |
-| `/data/config/genesis.json` exists | **resume** — start on the chain already in the volume |
-| otherwise (default) | **join** — install `/etc/earth/genesis.json`, verify it against `/etc/earth/genesis.json.sha256`, start. No key created, no timestamp rewritten |
-| `DEV_INIT=1` | **devnet** — generate a validator, stamp `genesis_time` to now, collect a gentx. A *new chain* every time |
-
-The join path is the default: every container from the same image joins the
-same chain. A hash mismatch is fatal — a genesis swapped into the image after the
-fact fails loudly instead of quietly forking whoever runs it.
-
-`DEV_INIT=1` is for a throwaway devnet and must never be set on a network node:
-each node would stamp its own `genesis_time` and mint its own validator. It
-rewrites the genesis, so a devnet's genesis can never be mistaken for the
-release: the hash no longer matches.
-
-## Browser access
-
-The two surfaces behave differently and only one can be scoped.
-
-| | port | setting | granularity |
-| --- | --- | --- | --- |
-| RPC | 26657 | `RPC_CORS_ORIGINS=https://a,https://b` | an allowlist |
-| LCD | 1317 | `API_UNSAFE_CORS=1` | `*` or nothing — all the SDK offers |
-
-**`RPC_CORS_ORIGINS` closes a gap that has always been open.** CometBFT ships
-`cors_allowed_origins = []`, so a browser could never reach the RPC
-cross-origin. CosmJS talks to the RPC, so anything the
-page does itself was blocked. Keplr masks it: signing is in the extension and
-`keplr.sendTx` broadcasts from its background context, neither subject to page
-CORS.
-
-It is re-applied on every start, so an origin can be added or removed with a
-restart rather than a volume wipe.
-
-Two flags are off unless asked for:
-
-- **`API_UNSAFE_CORS=1`** — any origin may read the LCD *and broadcast through
-  it*. Fine on a public read-only node, wrong on a block producer.
-- **`--keyring-backend test`** only appears on the `DEV_INIT` path. The join
-  path creates no keys at all, and a real validator's consensus key belongs
-  behind `PRIV_VALIDATOR_LADDR`.
-
-Run `docker/entrypoint_test.sh` to exercise all of it without building a
-container.
-
-Until the launch ceremony, `networks/genesis/accounts.json` is the placeholder
-set, which includes two devnet accounts (the faucet and the ads-for-gas hot
-wallet, 10,000 ERTH each); `scripts/ceremony.sh` removes them. See
-`networks/genesis/README.md`.
-
-On the `DEV_INIT` path the entrypoint stamps `genesis_time` to the current time
-before the validator is created: CometBFT gives block 1 exactly the genesis time
-while block 2 gets the wall clock, so the emission, prorated against elapsed
-time, would otherwise pay the whole gap out in a single block. The join path
-keeps the release's `genesis_time`.
-
-Regenerate `networks/genesis.json` with `make genesis` after any change to its sources in
-`networks/genesis/`; `make genesis-check` fails if it has drifted.
-
-## After the first boot (DEV_INIT)
-
-The devnet validator's key lives in the test keyring on the volume:
-
-    earthd keys list --keyring-backend test --home /data
-
-Point the backend at this node's LCD:
-
-    EARTH_NODE_URL=rest+https://<host>:1317
-
-## Defaults
-
-`MIN_GAS_PRICES` defaults to `0.005uerth` and `API_UNSAFE_CORS` to off; both are
-environment variables read on every start (`docker/entrypoint.sh`).
+A validator's consensus key belongs in a remote signer (`priv_validator_laddr`
+in config.toml) or in a file the operator puts on the volume; this image neither
+imports nor generates one beyond `earthd init`'s random key. Coordinated
+upgrades halt the chain at the plan height; release tarballs are laid out for
+cosmovisor (`.github/workflows/release.yml`), which an operator image can add.

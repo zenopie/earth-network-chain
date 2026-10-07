@@ -100,3 +100,6 @@ jobs:
       # sum of balances, only intended accounts hold coins, the dex module can cover
       # its obligations, the verifying keys and CSCA trust store are seeded, and the
       # header matches chain.json. Those run under `go test ./...` above.
+
+      - name: image entrypoint
+        run: docker/entrypoint_test.sh

@@ -117,6 +117,22 @@ backend and indexers must adopt:
   from the environment or `--env-file`. Not yet run: `TestLaunchCeremony`
   reports PENDING CEREMONY until it is, and checks the identities with
   `EARTH_CEREMONY_CONFIG=<launch.json>`.
+- Image: **the container image is generic.** It ships `earthd`, its
+  libraries, the release genesis and a minimal entrypoint: on a fresh home
+  it checks the genesis against its sha256, runs `earthd init` and installs
+  it; then `earthd start` with RPC and LCD on all interfaces and the
+  container's arguments appended. It runs as `earth` (uid 10001). Gone from
+  the image: cosmovisor, the IBC relayer (`rly`, `relayer.sh`), the
+  root-dropping wrapper, and every entrypoint variable (`DEV_INIT`,
+  `PRIV_VALIDATOR_KEY_B64`, `NODE_KEY_B64`, `REQUIRE_NO_CONSENSUS_KEY`,
+  `RESET_ON_GENESIS_MISMATCH`, `USE_COSMOVISOR`, `MIN_GAS_PRICES`,
+  `RPC_CORS_ORIGINS`, `API_UNSAFE_CORS`, `EXTERNAL_ADDRESS`, `SEEDS`,
+  `PERSISTENT_PEERS`, `STATESYNC_*`, `SNAPSHOT_*`). Configure earthd with
+  `EARTHD_*` variables or flags (`EARTHD_MINIMUM_GAS_PRICES` is required);
+  build key handling or a supervisor into an image `FROM` this one by
+  digest. docker/README.md lists what a public node should set.
+- Node: new `app.toml` files take state-sync snapshots every 1000 blocks,
+  keeping 5 (was the SDK's 0, off; the old image's entrypoint set it).
 - CLI: `earthd gas-check --node` defaults to `tcp://localhost:26657` (the
   SDK's own default), not a public endpoint. Pass `--node` for any other.
 - CLI: no `earthd tx` commands are generated for private msgs any more

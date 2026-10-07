@@ -43,7 +43,7 @@
 #
 # MEASURED 2026-08-30, both deadlock here:
 #
-#   v1.7.1                                     the released build in the Dockerfile
+#   v1.7.1                                     the latest release
 #   b3342d9962838fd9e4452cf155c50529c4e185f0   cosmos-sdk #23720, "get block
 #                                              height from db after node
 #                                              execution fails"
@@ -62,15 +62,15 @@
 # stderr, so any warning a binary prints would break it too.
 #
 # So there is no cosmovisor build that can currently recover a node that is
-# already down, and the entrypoint stages the binary instead. Run this without
-# --expect-deadlock whenever a new cosmovisor appears; the day it passes, the
-# staging in docker/entrypoint.sh can go.
+# already down, and a node's supervisor setup has to stage the binary instead.
+# Run this without --expect-deadlock whenever a new cosmovisor appears; the day
+# it passes, that staging can go.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="cvrestart-rehearsal"
 CHAIN_ID="earth-cvrestart"
-# Default matches the Dockerfile's pin. Override to compare builds.
+# The cosmovisor release rehearsed by default. Override to compare builds.
 COSMOVISOR_VERSION="${COSMOVISOR_VERSION:-v1.7.1}"
 EXPECT_DEADLOCK=0
 KEEP=0

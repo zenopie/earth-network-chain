@@ -3,11 +3,15 @@
 # Two stages: build earthd, then ship it on a slim base. The runtime carries no
 # Go toolchain and no source.
 #
+# A generic image: earthd, its libraries, the release genesis and a minimal
+# entrypoint (docker/entrypoint.sh: install the genesis on a fresh home, then
+# `earthd start`). An operator's key handling, supervisor or relayer belong in
+# an image built FROM this one by digest (docker/README.md).
+#
 # Genesis is networks/genesis.json, built by `make genesis` from
-# networks/genesis/ and committed with its sha256: the 536 CSCAs, the 33
-# passport register and four privacy verifying keys, the seeded ANML/ERTH pool,
-# the governance parameters and the genesis validator's gentx. The entrypoint
-# joins that chain by default (docker/README.md).
+# networks/genesis/ and committed with its sha256: the CSCAs, the passport
+# register and privacy verifying keys, the seeded ANML/ERTH pool, the
+# governance parameters and the genesis validator's gentx.
 
 # ---- build ----------------------------------------------------------------
 # trixie for the compiler: Aztec's C++20 headers do not compile with bookworm's
@@ -36,7 +40,7 @@ COPY third_party/barretenberg-go/go.mod third_party/barretenberg-go/
 #   stream error: stream ID 71; INTERNAL_ERROR; received from peer
 #
 # once on proxy.golang.org during `go mod download` and once on sum.golang.org
-# while installing cosmovisor. Nothing was wrong with either build.
+# while installing a Go tool. Nothing was wrong with either build.
 #
 # Retry rather than weaken verification. GONOSUMDB or GOFLAGS=-insecure would
 # also make these pass, by skipping the checksums that make a supply-chain
@@ -92,33 +96,6 @@ RUN CGO_ENABLED=1 go build -trimpath \
                   -X github.com/cosmos/cosmos-sdk/version.Commit=${COMMIT}" \
         -o /out/earthd ./cmd/earthd
 
-# The IBC relayer ships in the same image rather than its own. One image means
-# one digest for CI to pin and one artefact to reason about, and the relayer is
-# inert unless the SDL turns it on. Installed from the module root: the
-# .../cmd/rly package path no longer exists, and the binary comes out named
-# `relayer`.
-# CGO_ENABLED=1, not 0. With cgo off, go-ethereum compiles signature_nocgo.go,
-# which calls btc_ecdsa.SignCompact with the wrong arity for the btcec version
-# this dependency graph resolves to:
-#
-#   signature_nocgo.go:85: assignment mismatch: 2 variables but
-#   btc_ecdsa.SignCompact returns 1 value
-#
-# The cgo path sidesteps it entirely. The runtime image is debian and already
-# carries glibc for earthd, so a dynamically linked relayer runs there fine.
-RUN for i in 1 2 3; do CGO_ENABLED=1 GOBIN=/out go install github.com/cosmos/relayer/v2@v2.6.0 && ok=1 && break; echo "rly install failed (attempt $i)"; sleep 15; done; [ "${ok:-}" = 1 ] \
-    && mv /out/relayer /out/rly
-
-# cosmovisor supervises earthd across upgrades: the chain halts on purpose at the
-# upgrade height, and cosmovisor swaps the binary and restarts it so nobody has
-# to be awake for it. Pure Go, so CGO off gives a static binary with nothing to
-# resolve at load time.
-#
-# Pinned rather than @latest. cosmovisor is the process that decides which binary
-# runs the chain, so "whatever was newest that day" is not a property this image
-# should have.
-RUN for i in 1 2 3; do CGO_ENABLED=0 GOBIN=/out go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@v1.7.1 && ok=1 && break; echo "cosmovisor install failed (attempt $i)"; sleep 15; done; [ "${ok:-}" = 1 ]
-
 # ---- runtime --------------------------------------------------------------
 FROM debian:trixie-slim
 
@@ -135,36 +112,33 @@ COPY --from=build /usr/local/lib/libwasmvm.*.so /usr/local/lib/
 RUN ldconfig /usr/local/lib
 
 COPY --from=build /out/earthd /usr/local/bin/earthd
-COPY --from=build /out/rly /usr/local/bin/rly
-COPY --from=build /out/cosmovisor /usr/local/bin/cosmovisor
 
 # Prove the binary can actually start before the image ships. `earthd --help`
 # touches no chain state, but it forces the dynamic loader to resolve every
 # NEEDED entry — libwasmvm included — so a library the loader cannot find
-# becomes a red build instead of a container that exits instantly on a provider
+# becomes a red build instead of a container that exits instantly on a host
 # whose logs you cannot read.
 RUN earthd --help >/dev/null && echo "earthd links and runs"
-RUN cosmovisor version >/dev/null 2>&1 || cosmovisor help >/dev/null
-COPY docker/relayer.sh /usr/local/bin/relayer.sh
 # Genesis and the hash it is checked against. The entrypoint refuses to start if
 # they disagree, so a genesis swapped into the image after the fact fails loudly
 # rather than quietly forking whoever runs it.
 COPY networks/genesis.json /etc/earth/genesis.json
 COPY networks/genesis.json.sha256 /etc/earth/genesis.json.sha256
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY docker/drop-root.sh /usr/local/bin/drop-root.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/relayer.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh
 
-# The account the node and relayer run as; see docker/drop-root.sh. setpriv is
-# util-linux, which Debian ships in every image — checked here so a base image
-# without it fails the build rather than every start.
+# The node runs as `earth`, not root: earthd executes native code on input
+# strangers choose (the proof verifier, the CosmWasm engine). /data is created
+# owned by it, so a named volume mounted there starts out writable; a volume
+# owned by someone else needs its ownership fixed by whoever mounts it.
 RUN useradd --system --uid 10001 --home-dir /data --no-create-home --shell /usr/sbin/nologin earth \
-    && command -v setpriv >/dev/null
+    && mkdir -p /data && chown earth:earth /data
 
-# Node home. Mount a volume here — without one, every redeploy is a brand new
-# chain with a new genesis, new keys and no history.
-ENV EARTH_HOME=/data
+# Node home. Mount a volume here — without one, every restart is a brand new
+# node with new keys and no history.
+ENV EARTH_HOME=/data HOME=/data
 VOLUME ["/data"]
+USER earth
 
 # LCD, RPC and p2p. p2p is what lets this node have peers at all; without it the
 # container can only ever be its own network.

@@ -41,9 +41,19 @@ func initAppConfig() (string, interface{}) {
 	// default, pinned here so the template every node writes says so).
 	// Private txs are unsigned, and the SDK's priority and sender-nonce
 	// mempools key txs by signer and sequence and refuse any tx with none:
-	// a node running one would drop every private tx. See app/ante.go and
-	// docker/entrypoint.sh, which forces it on every start.
+	// a node running one would drop every private tx. See app/ante.go; app.go
+	// runs the no-op mempool whatever app.toml says.
 	srvCfg.Mempool.MaxTxs = -1
+
+	// State-sync snapshots, on by default (the SDK's default is 0, off). A
+	// chain launched with every node at 0 has no node a newcomer can state
+	// sync from, and a snapshot cannot be taken for a height already passed.
+	// Replaying is expensive here: every registration in a block re-verifies
+	// a passport proof. 1000 blocks is about 80 minutes at 5 s; keeping 5
+	// gives a joining node a choice of recent heights. Node-local: an
+	// operator may turn it off (snapshot-interval = 0).
+	srvCfg.StateSync.SnapshotInterval = 1000
+	srvCfg.StateSync.SnapshotKeepRecent = 5
 
 	wasmCfg := wasmtypes.DefaultNodeConfig()
 	simLimit := app.DefaultSimulationGasLimit
@@ -58,7 +68,7 @@ func initAppConfig() (string, interface{}) {
 		"max-txs = {{ .Mempool.MaxTxs }}",
 		"# EARTH: keep -1. Private (shielded) txs are unsigned, and the SDK's app-side\n"+
 			"# mempools refuse any tx with no signer, so any other value drops every\n"+
-			"# private tx. The container entrypoint forces -1 on every start.\n"+
+			"# private tx. The node runs the no-op mempool whatever this says.\n"+
 			"max-txs = {{ .Mempool.MaxTxs }}", 1) + wasmtypes.ConfigTemplate(wasmCfg)
 
 	return customAppTemplate, customAppConfig
