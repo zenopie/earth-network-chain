@@ -30,6 +30,41 @@ which in a container is a private one, and hands that to every peer through PEX
 
 gRPC (9090) stays unpublished: everything here speaks REST.
 
+## earth-edge: the filter in front of RPC and LCD
+
+The image also carries `earth-edge` (`docker/edge/`), a small standard-library
+Go program that a public node runs as a separate service in front of its RPC
+and LCD:
+
+    rpc.* -> cloudflared -> edge:26657 -> node:26657
+    lcd.* -> cloudflared -> edge:1317  -> node:1317
+
+It serves an allowlist: the CometBFT methods and `abci_query` paths the
+wallets, the web app, the backend, `earthd --node` and state sync use
+(`filter/rpcpolicy.go`), and the LCD routes those clients call
+(`filter/lcdpolicy.go`). It decodes every request once, exactly as CometBFT
+v0.38 and grpc-gateway v1.16 would, and forwards a request it wrote itself,
+so an encoding the node would read differently never reaches the node. It
+caps how many calls of each cost class (simulate, raw store reads, the tx
+search, ...) run at once, keeps no per-client state, and logs no request.
+Websockets, `tx_search`, `block_search`, batches and the LCD's
+method-override and form POSTs are refused.
+
+Run it as `earth`, not root (it refuses root):
+
+    setpriv --reuid=earth --regid=earth --clear-groups --no-new-privs earth-edge
+
+Configuration is `EDGE_RPC_UPSTREAM`, `EDGE_LCD_UPSTREAM` (default
+`http://node:26657`, `http://node:1317`), `EDGE_RPC_LISTEN`,
+`EDGE_LCD_LISTEN` (`:26657`, `:1317`) and `EDGE_MAX_CONNS`. The deploy
+repo's `akash/README.md` ("Public RPC and LCD") is the operator's side.
+
+Tests: `cd docker/edge && go test ./...` (allowlists, every bypass from the
+audits, fuzzers); `cd docker/edge/conformance && go test ./...` checks the
+filter against CometBFT's own argument decoding and every grpc-gateway route
+in the SDK's and this repo's protos. Adding a route a client needs means a
+line in `lcdpolicy.go` (or `abciGRPCExtra`) and a case in `filter_test.go`.
+
 ## The volume is not optional
 
 `earth-data:/data` holds genesis, the validator's consensus key and all chain
