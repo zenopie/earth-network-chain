@@ -1746,10 +1746,11 @@ router, wrapped in place; nested msgs count once, in the outer msg):
 | past that | 20 gas per byte (twice the tx-bytes price) |
 | cap per tx | 1 MiB of msg results in total, and 1 MiB per top-level msg: over it the tx fails with `ErrTxTooLarge` (sdk code 21), msgs reverted, fee charged, stored result < 4 KiB (audit R8-D-1) |
 | relay txs | a tx of relay msgs only (packet receive, ack, timeout, v1 and v2; client update and misbehaviour) has no byte cap: gas bounds it (5 MB at max_gas 100M), and no packet is undeliverable for its size (audit R7-C-1, R8-C-1) |
-| IBC application | every application route (ICS-20 with callbacks, ICA host, contract ports; v1 and v2) may emit 384 KiB per received packet (events plus twice the ack); past that its state and events are dropped and the packet gets an error acknowledgement. A contract port's ack/timeout past it fails (audit R8-C-1) |
+| IBC application | every application route (ICS-20 with callbacks, ICA host, contract ports; v1 and v2) may emit 512 KiB per received packet (events plus twice the ack); past that its state and events are dropped and the packet gets an error acknowledgement. A contract port's ack/timeout past it fails (audit R8-C-1) |
 | IBC callback | a callback contract's events capped at 256 KiB: over it the callback fails (on receive: error acknowledgement, the packet is still received) |
 | gov proposals (EndBlock) | no gas there; every proposal msg of one EndBlock shares a 1 MiB total, past it the msg errors and its proposal is FAILED (audit R7-C-2) |
 | error text | cut to 1 KiB, code and codespace kept: a failed tx's log, nested msgs' errors, IBC callbacks' `callback_error`, the ICA host's and contract ports' error attributes (audit R8-C-1) |
+| how bytes count | at their worst-case JSON size, as RPC and LCD answers write them: each event string byte 1, or 2 for `"` `\` and `\n`-style escapes, or 6 for `<` `>` `&`, other control characters and invalid UTF-8 (U+2028/2029: 6 for 3); msg responses 2 per byte (hex in the LCD). Escape-free ASCII counts its length, so the chain's flows cost the same (R8-D-1 follow-up) |
 
 A block then holds at most ~10 MB of results (5 MB paid at max_gas 100M, or
 ~1,100 contract txs at the free tier). The ante phase is not metered: a signed
@@ -1764,11 +1765,14 @@ size: 38 packets with eight max-memo ones store 1.44 MB for 34M gas and are
 delivered (`TestResultCapRelayBatch`), and a packet whose callback fails
 with a ~0.9 MB error is delivered with a 1 KiB error in an error ack
 (`TestResultCapUndeliverablePacket`). What a packet's contents can add is
-bounded at the application instead (384 KiB, errors 1 KiB). The free tier
+bounded at the application instead (512 KiB, errors 1 KiB). The free tier
 stays per tx, so a tx of many cheap msgs gets one, and the block bound
-holds. Worst cases (`app/resultcap`, `TestResultCapWorstCase`): any non-relay
-tx ~1.05 MB stored; a relay tx 5 MB at 100M gas; JSON answers up to ~6x
-that. Relayers: keep batches to ~10 msgs and
+holds. Since bytes count at their JSON size, the limits bound the answers
+too, up to the uncounted JSON structure (at most 3.3x, for attributes with
+a one-byte key and an empty value). Worst cases (`app/resultcap`,
+`TestResultCapWorstCase`): any non-relay tx ≤ 1 MiB counted, 3.43 MB of RPC
+JSON at most; a relay tx 5 MB counted at 100M gas, ≤ ~16.4 MB of JSON;
+block_results of a max block ~18 MB of JSON, plus gov's EndBlock. Relayers: keep batches to ~10 msgs and
 the gas multiplier at 1.3 or more (simulate prices the bytes). wasmd's own gas register
 is unchanged: the meter prices what is stored, for every module, including
 response data and IBC acks that wasmd's event costs never see.

@@ -104,6 +104,17 @@ backend and indexers must adopt:
   gets an error ack. IBC callback and nested msg errors are cut to 1 KiB.
   Any other tx fails past 1 MiB of msg results in total. The limits are
   exported constants in `app/resultcap`, with the worst cases they give.
+- App: **result bytes are counted at their worst-case JSON size** (R8-D-1
+  follow-up). Every event string byte counts as the RPC's and LCD's JSON
+  writes it (`<`, `>`, `&`, control characters and invalid UTF-8 bytes 6;
+  `"`, `\` and `\n`-style escapes 2; U+2028/2029 6), msg responses twice
+  (hex in the LCD). Gas and every cap (tx, msg, EndBlock, IBC application,
+  callback, error text) therefore bound the JSON answers' content: a result
+  of `<` hits the 1 MiB cap at ~175 KB stored. Escape-free ASCII counts as
+  before, so the chain's own flows cost the same. The JSON structure is not
+  counted; answers are at most 3.3x the counted bytes
+  (`resultcap.JSONPerCountedByteX10`). The IBC application cap is 512 KiB
+  (was 384 KiB).
 - Genesis: **consensus block `max_bytes` is 4 MiB** (4,194,304; CometBFT's
   default was 22 MiB), set from `networks/genesis/chain.json`
   `block_max_bytes`. A block's size bounds every RPC `block` answer and
