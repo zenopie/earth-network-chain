@@ -1730,3 +1730,27 @@ Accepted:
   export-to-relaunch gap credited at the pre-export price.
 - An expired registration proves until the expiry sweep reaches it (6.1).
 - A slash with no matching replay falls on dst's book (event emitted).
+
+Tx result bytes (`app/result_cap.go`, audit R6-E-1). A tx's ABCI result
+(events, msg responses, log) is stored twice and kept for ever, and every
+block_results / tx answer rebuilds it in memory at ~6x. wasmd charges ~1 gas
+per byte of contract events and nothing per byte of response data, so before
+this one 100M-gas tx could store ~100 MB. Consensus now meters the msg phase
+of every tx, at the one point every msg passes (each route of baseapp's msg
+router, wrapped in place; nested msgs count once, in the outer msg):
+
+| | |
+|---|---|
+| free per tx | 8 KiB (1.5x MsgRegister, the largest chain flow at 5.4 KB) |
+| past that | 20 gas per byte (twice the tx-bytes price) |
+| cap per tx | 1 MiB: over it the tx fails with `ErrTxTooLarge` (sdk code 21), msgs reverted, fee charged, stored result < 4 KiB |
+| error text | cut to 1 KiB, code and codespace kept |
+
+A block then holds at most ~10 MB of results (5 MB paid at max_gas 100M, or
+~1,100 contract txs at the free tier). The ante phase is not metered: a signed
+tx's ante events are under 1 KB, a private tx's (its notes and nullifiers,
+6.5 KB at most) are fixed by its shape and capped per block by
+`max_private_actions_per_block`. An ICS-20 relay is ~4 KB per packet; a relay
+batch past 8 KiB pays per byte (gas is simulated). wasmd's own gas register
+is unchanged: the meter prices what is stored, for every module, including
+response data and IBC acks that wasmd's event costs never see.

@@ -75,6 +75,15 @@ backend and indexers must adopt:
   resolving to public addresses only (CD-4);
   `csca/additional/` takes `.der`; `make test` runs; the upgrade rehearsals
   register a human and cast its YES (needs `CIRCUITS`, nargo, bb).
+- App: **a tx's ABCI result is capped and priced** (audit R6-E-1;
+  `app/result_cap.go`, ORCHARD_DESIGN.md section 13). The events and msg
+  responses of a tx's msgs: the first 8 KiB are free, each byte past that
+  costs 20 gas, and past 1 MiB the tx fails with `ErrTxTooLarge` (sdk code
+  21; msgs reverted, fee charged). A failed msg's error text is cut to
+  1 KiB (code and codespace kept). Every chain flow stays in the free tier,
+  so wallets' and gas-check's gas does not change; a contract or relay batch
+  with a large output costs more gas (simulate). Code constants, not params:
+  genesis unchanged.
 
 **Not consensus-affecting.**
 
