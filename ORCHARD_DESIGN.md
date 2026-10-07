@@ -1744,14 +1744,23 @@ router, wrapped in place; nested msgs count once, in the outer msg):
 |---|---|
 | free per tx | 8 KiB (1.5x MsgRegister, the largest chain flow at 5.4 KB) |
 | past that | 20 gas per byte (twice the tx-bytes price) |
-| cap per tx | 1 MiB: over it the tx fails with `ErrTxTooLarge` (sdk code 21), msgs reverted, fee charged, stored result < 4 KiB |
+| cap per top-level msg | 1 MiB: a msg over it fails its tx with `ErrTxTooLarge` (sdk code 21), msgs reverted, fee charged, stored result < 4 KiB. The tx total has no cap of its own; gas bounds it (~5 MB at max_gas 100M) (audit R7-C-1) |
+| IBC callback | a callback contract's events capped at 256 KiB: over it the callback fails (on receive: error acknowledgement, the packet is still received) |
+| gov proposals (EndBlock) | no gas there; every proposal msg of one EndBlock shares a 1 MiB total, past it the msg errors and its proposal is FAILED (audit R7-C-2) |
 | error text | cut to 1 KiB, code and codespace kept |
 
 A block then holds at most ~10 MB of results (5 MB paid at max_gas 100M, or
 ~1,100 contract txs at the free tier). The ante phase is not metered: a signed
 tx's ante events are under 1 KB, a private tx's (its notes and nullifiers,
 6.5 KB at most) are fixed by its shape and capped per block by
-`max_private_actions_per_block`. An ICS-20 relay is ~4 KB per packet; a relay
-batch past 8 KiB pays per byte (gas is simulated). wasmd's own gas register
+`max_private_actions_per_block`. An ICS-20 MsgRecvPacket is 3.7 KB, 168 KB
+with ibc-go's 32 KiB memo maximum; a relay batch past 8 KiB pays per byte
+(gas is simulated). The cap is per msg so that a few max-memo packets cannot
+fail a relayer's whole batch: 38 packets with eight max-memo ones store
+1.44 MB for 34M gas and are delivered (`TestResultCapRelayBatch`). The free
+tier stays per tx, so a tx of many cheap msgs gets one, and the ~10 MB block
+bound holds. With the callback cap no ICS-20 packet's receive can pass 1 MiB,
+so no packet can be undeliverable. Relayers: keep batches to ~10 msgs and
+the gas multiplier at 1.3 or more (simulate prices the bytes). wasmd's own gas register
 is unchanged: the meter prices what is stored, for every module, including
 response data and IBC acks that wasmd's event costs never see.

@@ -84,6 +84,14 @@ backend and indexers must adopt:
   so wallets' and gas-check's gas does not change; a contract or relay batch
   with a large output costs more gas (simulate). Code constants, not params:
   genesis unchanged.
+- App: **the result cap is per top-level msg, not per tx** (audit R7-C-1).
+  A relayer's batch of honest packets is no longer failed by a few 32 KiB-memo
+  packets beside it; a msg over 1 MiB fails its tx alone, and the tx total is
+  bounded by its gas (the free 8 KiB stays per tx). An IBC callback
+  contract may emit at most 256 KiB of events: past that the callback fails
+  (on receive, an error acknowledgement), so no ICS-20 packet is
+  undeliverable. Gov proposal msgs, run in EndBlock without gas, share a
+  1 MiB total per EndBlock; past it the proposal fails (R7-C-2).
 - Genesis: **consensus block `max_bytes` is 4 MiB** (4,194,304; CometBFT's
   default was 22 MiB), set from `networks/genesis/chain.json`
   `block_max_bytes`. A block's size bounds every RPC `block` answer and
