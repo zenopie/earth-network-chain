@@ -1744,23 +1744,31 @@ router, wrapped in place; nested msgs count once, in the outer msg):
 |---|---|
 | free per tx | 8 KiB (1.5x MsgRegister, the largest chain flow at 5.4 KB) |
 | past that | 20 gas per byte (twice the tx-bytes price) |
-| cap per top-level msg | 1 MiB: a msg over it fails its tx with `ErrTxTooLarge` (sdk code 21), msgs reverted, fee charged, stored result < 4 KiB. The tx total has no cap of its own; gas bounds it (~5 MB at max_gas 100M) (audit R7-C-1) |
+| cap per tx | 1 MiB of msg results in total, and 1 MiB per top-level msg: over it the tx fails with `ErrTxTooLarge` (sdk code 21), msgs reverted, fee charged, stored result < 4 KiB (audit R8-D-1) |
+| relay txs | a tx of relay msgs only (packet receive, ack, timeout, v1 and v2; client update and misbehaviour) has no byte cap: gas bounds it (5 MB at max_gas 100M), and no packet is undeliverable for its size (audit R7-C-1, R8-C-1) |
+| IBC application | every application route (ICS-20 with callbacks, ICA host, contract ports; v1 and v2) may emit 384 KiB per received packet (events plus twice the ack); past that its state and events are dropped and the packet gets an error acknowledgement. A contract port's ack/timeout past it fails (audit R8-C-1) |
 | IBC callback | a callback contract's events capped at 256 KiB: over it the callback fails (on receive: error acknowledgement, the packet is still received) |
 | gov proposals (EndBlock) | no gas there; every proposal msg of one EndBlock shares a 1 MiB total, past it the msg errors and its proposal is FAILED (audit R7-C-2) |
-| error text | cut to 1 KiB, code and codespace kept |
+| error text | cut to 1 KiB, code and codespace kept: a failed tx's log, nested msgs' errors, IBC callbacks' `callback_error`, the ICA host's and contract ports' error attributes (audit R8-C-1) |
 
 A block then holds at most ~10 MB of results (5 MB paid at max_gas 100M, or
 ~1,100 contract txs at the free tier). The ante phase is not metered: a signed
 tx's ante events are under 1 KB, a private tx's (its notes and nullifiers,
 6.5 KB at most) are fixed by its shape and capped per block by
 `max_private_actions_per_block`. An ICS-20 MsgRecvPacket is 3.7 KB, 168 KB
-with ibc-go's 32 KiB memo maximum; a relay batch past 8 KiB pays per byte
-(gas is simulated). The cap is per msg so that a few max-memo packets cannot
-fail a relayer's whole batch: 38 packets with eight max-memo ones store
-1.44 MB for 34M gas and are delivered (`TestResultCapRelayBatch`). The free
-tier stays per tx, so a tx of many cheap msgs gets one, and the ~10 MB block
-bound holds. With the callback cap no ICS-20 packet's receive can pass 1 MiB,
-so no packet can be undeliverable. Relayers: keep batches to ~10 msgs and
+with ibc-go's 32 KiB memo maximum, 823 KB when that memo is all '<' (the
+packet's JSON escapes it, and core logs the packet hex-encoded twice); a
+relay batch past 8 KiB pays per byte (gas is simulated). Relay txs have no
+byte cap so that no packet, and no batch holding one, can be failed by its
+size: 38 packets with eight max-memo ones store 1.44 MB for 34M gas and are
+delivered (`TestResultCapRelayBatch`), and a packet whose callback fails
+with a ~0.9 MB error is delivered with a 1 KiB error in an error ack
+(`TestResultCapUndeliverablePacket`). What a packet's contents can add is
+bounded at the application instead (384 KiB, errors 1 KiB). The free tier
+stays per tx, so a tx of many cheap msgs gets one, and the block bound
+holds. Worst cases (`app/resultcap`, `TestResultCapWorstCase`): any non-relay
+tx ~1.05 MB stored; a relay tx 5 MB at 100M gas; JSON answers up to ~6x
+that. Relayers: keep batches to ~10 msgs and
 the gas multiplier at 1.3 or more (simulate prices the bytes). wasmd's own gas register
 is unchanged: the meter prices what is stored, for every module, including
 response data and IBC acks that wasmd's event costs never see.

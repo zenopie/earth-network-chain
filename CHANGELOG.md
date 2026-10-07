@@ -92,6 +92,18 @@ backend and indexers must adopt:
   (on receive, an error acknowledgement), so no ICS-20 packet is
   undeliverable. Gov proposal msgs, run in EndBlock without gas, share a
   1 MiB total per EndBlock; past it the proposal fails (R7-C-2).
+- App: **relay txs are capped by gas only; other txs get a 1 MiB total
+  again; what a packet can make earth emit is bounded at the application**
+  (audit R8-C-1, R8-D-1). A tx made only of relay msgs (MsgRecvPacket,
+  MsgAcknowledgement, MsgTimeout, MsgTimeoutOnClose, v1 and v2, plus
+  MsgUpdateClient and MsgSubmitMisbehaviour) has no byte cap, so no packet
+  is undeliverable for its size. Every IBC application route (ICS-20 with
+  callbacks, the ICA host, contract ports; v1 and v2) runs on a branch: its
+  error attributes are cut to 1 KiB, and on receive, past 384 KiB of
+  events plus twice the ack, its state and events are dropped and the packet
+  gets an error ack. IBC callback and nested msg errors are cut to 1 KiB.
+  Any other tx fails past 1 MiB of msg results in total. The limits are
+  exported constants in `app/resultcap`, with the worst cases they give.
 - Genesis: **consensus block `max_bytes` is 4 MiB** (4,194,304; CometBFT's
   default was 22 MiB), set from `networks/genesis/chain.json`
   `block_max_bytes`. A block's size bounds every RPC `block` answer and
