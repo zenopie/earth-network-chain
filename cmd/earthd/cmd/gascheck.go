@@ -57,7 +57,7 @@ func gasCheckCmd() *cobra.Command {
 		Short:        "Run the chain's personhood checks against a node, read-only (for the gas-grant backend)",
 		SilenceUsage: true,
 	}
-	cmd.PersistentFlags().String("node", "https://rpc.erth.network:443", "CometBFT RPC of the node whose state to read")
+	cmd.PersistentFlags().String("node", "tcp://localhost:26657", "CometBFT RPC of the node whose state to read")
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "registration",
