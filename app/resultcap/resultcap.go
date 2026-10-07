@@ -124,11 +124,15 @@
 //     events. '<': 176 KB stored, 1.05 MB RPC. Tiny attributes: 667 KB
 //     stored, 3.43 MB RPC.
 //   - One relay msg: core logs a packet's data hex-encoded twice (~4x its
-//     size), plus at most MaxPacketAppResultBytes from the application. An
-//     ICS-20 packet with 32 KiB of '<' as its memo has ~197 KB of data (its
-//     JSON escapes '<' too): 823 KB stored and 1.25 MB RPC without a
-//     callback, 865 KB and 1.51 MB with a loud '<' one. Any relay msg is
-//     also within the relay tx bound.
+//     size), plus at most MaxPacketAppResultBytes from the application.
+//     ICS-20: a packet with 32 KiB of '<' as its memo (the largest memo)
+//     has ~197 KB of data (its JSON escapes '<' too): 823 KB stored and
+//     1.25 MB RPC without a callback, 865 KB and 1.51 MB with a loud '<'
+//     one. A packet to a contract port or the ICA host has no memo cap: its
+//     data can fill the tx (~1 MiB, the mempool limit), which core's hex
+//     makes ~4 MB counted (and about as much RPC JSON) for one
+//     MsgRecvPacket at ~90M gas (audit R9-C-1). Any relay msg is within the
+//     relay tx bound below, which is the one that sizes answers.
 //   - A relay tx: MaxRelayTxResultBytes(gas_limit) counted, 5,008,192 at
 //     100M gas, plus its ante events, so at most ~16.4 MB of RPC JSON (tiny
 //     attributes). Measured, 16 packets whose callbacks emit just under

@@ -1758,7 +1758,10 @@ tx's ante events are under 1 KB, a private tx's (its notes and nullifiers,
 6.5 KB at most) are fixed by its shape and capped per block by
 `max_private_actions_per_block`. An ICS-20 MsgRecvPacket is 3.7 KB, 168 KB
 with ibc-go's 32 KiB memo maximum, 823 KB when that memo is all '<' (the
-packet's JSON escapes it, and core logs the packet hex-encoded twice); a
+packet's JSON escapes it, and core logs the packet hex-encoded twice). A
+packet to a contract port or the ICA host has no memo cap and can carry
+~1 MiB of data, ~4 MB counted for one MsgRecvPacket at ~90M gas: still
+within the relay tx bound (audit R9-C-1). A
 relay batch past 8 KiB pays per byte (gas is simulated). Relay txs have no
 byte cap so that no packet, and no batch holding one, can be failed by its
 size: 38 packets with eight max-memo ones store 1.44 MB for 34M gas and are
