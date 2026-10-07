@@ -132,10 +132,14 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 	// send through it. Skip the WithICS4Wrapper calls and outbound packets
 	// bypass the middleware entirely: callbacks on acks and timeouts silently
 	// never fire, with nothing in the logs to say why.
-	transferStack = ibccallbacks.NewIBCMiddleware(transferStack, app.IBCKeeper.ChannelKeeper, wasmStackIBCHandler, wasm.DefaultMaxIBCCallbackGas)
+	//
+	// The callback contract sees the middleware through cappedCallbacks, which
+	// bounds what one callback may emit (app/result_cap.go).
+	callbackContracts := cappedCallbacks{wasmStackIBCHandler}
+	transferStack = ibccallbacks.NewIBCMiddleware(transferStack, app.IBCKeeper.ChannelKeeper, callbackContracts, wasm.DefaultMaxIBCCallbackGas)
 	app.TransferKeeper.WithICS4Wrapper(transferStack.(porttypes.ICS4Wrapper))
 
-	icaControllerStack = ibccallbacks.NewIBCMiddleware(icaControllerStack, app.IBCKeeper.ChannelKeeper, wasmStackIBCHandler, wasm.DefaultMaxIBCCallbackGas)
+	icaControllerStack = ibccallbacks.NewIBCMiddleware(icaControllerStack, app.IBCKeeper.ChannelKeeper, callbackContracts, wasm.DefaultMaxIBCCallbackGas)
 	app.ICAControllerKeeper.WithICS4Wrapper(icaControllerStack.(porttypes.ICS4Wrapper))
 
 	// create IBC v1 router, add transfer route, then set it on the keeper

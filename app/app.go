@@ -341,6 +341,11 @@ func New(
 	if _, err := wrapMsgRoutes(app.MsgServiceRouter()); err != nil {
 		panic(fmt.Errorf("wrapping msg routes for the result cap: %w", err))
 	}
+	// Gov proposals' msgs run in EndBlock: one result meter per block for
+	// them. Before Load, which fixes the EndBlock order.
+	if err := meterGovEndBlock(app.ModuleManager); err != nil {
+		panic(fmt.Errorf("metering gov's EndBlock for the result cap: %w", err))
+	}
 
 	// State sync has to carry contract code, which lives outside the IAVL tree.
 	// Must precede Load: the snapshot manager is sealed there.

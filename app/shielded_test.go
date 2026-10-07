@@ -261,21 +261,28 @@ func (e *shieldedEnv) privateTx(gas uint64, fee *sdk.Coins, msgs ...sdk.Msg) []b
 // signedTx signs with the user key in SIGN_MODE_DIRECT.
 func (e *shieldedEnv) signedTx(gas uint64, fee sdk.Coins, msgs ...sdk.Msg) []byte {
 	e.t.Helper()
+	return e.signedTxAs(e.user, gas, fee, msgs...)
+}
+
+// signedTxAs signs with key in SIGN_MODE_DIRECT.
+func (e *shieldedEnv) signedTxAs(key *secp256k1.PrivKey, gas uint64, fee sdk.Coins, msgs ...sdk.Msg) []byte {
+	e.t.Helper()
 	cfg := e.app.TxConfig()
 	b := cfg.NewTxBuilder()
 	require.NoError(e.t, b.SetMsgs(msgs...))
 	b.SetGasLimit(gas)
 	b.SetFeeAmount(fee)
-	acc := e.app.AuthKeeper.GetAccount(e.ctx(), e.userAddr())
+	addr := sdk.AccAddress(key.PubKey().Address())
+	acc := e.app.AuthKeeper.GetAccount(e.ctx(), addr)
 	require.NotNil(e.t, acc)
 	mode := signingtypes.SignMode_SIGN_MODE_DIRECT
 	require.NoError(e.t, b.SetSignatures(signingtypes.SignatureV2{
-		PubKey: e.user.PubKey(), Data: &signingtypes.SingleSignatureData{SignMode: mode}, Sequence: acc.GetSequence(),
+		PubKey: key.PubKey(), Data: &signingtypes.SingleSignatureData{SignMode: mode}, Sequence: acc.GetSequence(),
 	}))
 	sig, err := clienttx.SignWithPrivKey(e.ctx(), mode, authsigning.SignerData{
-		Address: e.bech(e.userAddr()), ChainID: shieldedtest.ChainID, AccountNumber: acc.GetAccountNumber(),
-		Sequence: acc.GetSequence(), PubKey: e.user.PubKey(),
-	}, b, e.user, cfg, acc.GetSequence())
+		Address: e.bech(addr), ChainID: shieldedtest.ChainID, AccountNumber: acc.GetAccountNumber(),
+		Sequence: acc.GetSequence(), PubKey: key.PubKey(),
+	}, b, key, cfg, acc.GetSequence())
 	require.NoError(e.t, err)
 	require.NoError(e.t, b.SetSignatures(sig))
 	bz, err := cfg.TxEncoder()(b.GetTx())

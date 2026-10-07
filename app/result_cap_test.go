@@ -98,6 +98,16 @@ func wasmData(off int, bz []byte) []byte {
 // outputContract is a module whose execute returns prefix + fill x 'A' +
 // suffix as its ContractResult JSON.
 func outputContract(prefix string, fill int, suffix string) []byte {
+	return buildOutputContract(prefix, fill, suffix, false)
+}
+
+// callbackContract is outputContract that also exports
+// ibc_destination_callback, returning the same bytes from it.
+func callbackContract(prefix string, fill int, suffix string) []byte {
+	return buildOutputContract(prefix, fill, suffix, true)
+}
+
+func buildOutputContract(prefix string, fill int, suffix string, callback bool) []byte {
 	const (
 		instRegion = 16
 		outRegion  = 32
@@ -117,18 +127,27 @@ func outputContract(prefix string, fill int, suffix string) []byte {
 		[]byte{0x60, 0x01, i32, 0x01, i32},           // (i32) -> i32
 		[]byte{0x60, 0x01, i32, 0x00},                // (i32) -> ()
 		[]byte{0x60, 0x03, i32, i32, i32, 0x01, i32}, // (i32,i32,i32) -> i32
+		[]byte{0x60, 0x02, i32, i32, 0x01, i32},      // (i32,i32) -> i32
 	)
-	funcs := wasmVec([]byte{0}, []byte{1}, []byte{2}, []byte{3}, []byte{3})
+	funcList := [][]byte{{0}, {1}, {2}, {3}, {3}}
+	if callback {
+		funcList = append(funcList, []byte{4})
+	}
+	funcs := wasmVec(funcList...)
 	memory := wasmVec(append([]byte{0x00}, wasmULEB(uint64(pages))...))
 	globals := wasmVec(append([]byte{i32, 0x01}, append(wasmConst(int64(heap)), 0x0b)...))
-	exports := wasmVec(
+	exportList := [][]byte{
 		append(wasmName("memory"), 0x02, 0x00),
 		append(wasmName("interface_version_8"), 0x00, 0x00),
 		append(wasmName("allocate"), 0x00, 0x01),
 		append(wasmName("deallocate"), 0x00, 0x02),
 		append(wasmName("instantiate"), 0x00, 0x03),
 		append(wasmName("execute"), 0x00, 0x04),
-	)
+	}
+	if callback {
+		exportList = append(exportList, append(wasmName("ibc_destination_callback"), 0x00, 0x05))
+	}
+	exports := wasmVec(exportList...)
 	localGet := func(i byte) []byte { return []byte{0x20, i} }
 	localSet := func(i byte) []byte { return []byte{0x21, i} }
 	store := func(off byte) []byte { return []byte{0x36, 0x02, off} }
@@ -157,13 +176,17 @@ func outputContract(prefix string, fill int, suffix string) []byte {
 	}
 	execCode = append(execCode, tail...)
 	execCode = append(execCode, wasmConst(outRegion))
-	code := wasmVec(
+	bodies := [][]byte{
 		wasmBody(0),
 		allocate,
 		wasmBody(0),
 		wasmBody(0, wasmConst(instRegion)),
-		wasmBody(1, execCode...),
-	)
+		wasmBody(1, execCode...), // params 0-2, local 3
+	}
+	if callback {
+		bodies = append(bodies, wasmBody(2, execCode...)) // params 0-1, locals 2-3
+	}
+	code := wasmVec(bodies...)
 	data := wasmVec(
 		wasmData(instRegion, wasmRegion(instJSON, len(inst))),
 		wasmData(outRegion, wasmRegion(out, total)),
@@ -334,10 +357,10 @@ func TestResultCapDeterministic(t *testing.T) {
 
 // --- the wrapper on its own -------------------------------------------------
 
-func capCtx(meter *txResultMeter, gas storetypes.GasMeter) sdk.Context {
+func capCtx(meter *resultMeter, gas storetypes.GasMeter) sdk.Context {
 	ctx := sdk.NewContext(nil, cmtproto.Header{}, false, nil).WithGasMeter(gas).WithEventManager(sdk.NewEventManager())
 	if meter != nil {
-		ctx = ctx.WithValue(txResultMeterKey{}, meter)
+		ctx = ctx.WithValue(resultMeterKey{}, meter)
 	}
 	return ctx
 }
@@ -365,7 +388,7 @@ func TestResultCapNested(t *testing.T) {
 		return &sdk.Result{Events: append(res.Events, eventsOfSize(100)...)}, nil
 	})
 
-	m := &txResultMeter{}
+	m := &resultMeter{}
 	gas := storetypes.NewGasMeter(100_000_000)
 	_, err := outer(capCtx(m, gas), &banktypes.MsgSend{})
 	require.NoError(t, err)
@@ -374,20 +397,49 @@ func TestResultCapNested(t *testing.T) {
 	require.InDelta(t, 600<<10, m.bytes, 1024, "counted once")
 	require.Equal(t, (m.bytes-resultFreeBytes)*resultGasPerByte, gas.GasConsumed())
 
-	// A second msg in the same tx takes the total past the cap.
+	// The cap is per top-level msg (R7-C-1): a second 600 KiB msg in the
+	// same tx takes the tx past 1 MiB and is only charged for it.
 	_, err = outer(capCtx(m, gas), &banktypes.MsgSend{})
+	require.NoError(t, err)
+	require.Greater(t, m.bytes, uint64(maxMsgResultBytes))
+	require.Equal(t, (m.bytes-resultFreeBytes)*resultGasPerByte, gas.GasConsumed(), "the tx total is bounded by gas")
+
+	// One msg over the cap fails, whatever the meter.
+	big := capResult(func(sdk.Context, sdk.Msg) (*sdk.Result, error) {
+		return &sdk.Result{Events: eventsOfSize(maxMsgResultBytes)}, nil
+	})
+	_, err = big(capCtx(&resultMeter{}, storetypes.NewGasMeter(100_000_000)), &banktypes.MsgSend{})
 	require.ErrorIs(t, err, sdkerrors.ErrTxTooLarge)
 
-	// Outside a tx (a gov proposal's msgs): the cap per msg, no gas.
+	// Outside a tx and a metered EndBlock: the cap per msg, no gas.
 	gas = storetypes.NewGasMeter(100_000_000)
 	_, err = outer(capCtx(nil, gas), &banktypes.MsgSend{})
 	require.NoError(t, err)
 	require.Zero(t, gas.GasConsumed())
-	big := capResult(func(sdk.Context, sdk.Msg) (*sdk.Result, error) {
-		return &sdk.Result{Events: eventsOfSize(maxTxResultBytes)}, nil
-	})
 	_, err = big(capCtx(nil, gas), &banktypes.MsgSend{})
 	require.ErrorIs(t, err, sdkerrors.ErrTxTooLarge)
+}
+
+// TestResultCapEndBlock: gov's EndBlock meter caps the total of every
+// proposal msg run in the block (R7-C-2), without gas.
+func TestResultCapEndBlock(t *testing.T) {
+	h := capResult(func(sdk.Context, sdk.Msg) (*sdk.Result, error) {
+		return &sdk.Result{Events: eventsOfSize(400 << 10)}, nil
+	})
+	gas := storetypes.NewGasMeter(100_000_000)
+	ctx := withEndBlockMeter(capCtx(nil, gas))
+	for i := 0; i < 2; i++ {
+		_, err := h(ctx, &banktypes.MsgSend{})
+		require.NoError(t, err)
+	}
+	_, err := h(ctx, &banktypes.MsgSend{})
+	require.ErrorIs(t, err, sdkerrors.ErrTxTooLarge, "a third 400 KiB msg in the same EndBlock")
+	require.Contains(t, err.Error(), "proposal msgs of this block")
+	require.Zero(t, gas.GasConsumed())
+
+	// The next block starts afresh.
+	_, err = h(withEndBlockMeter(capCtx(nil, gas)), &banktypes.MsgSend{})
+	require.NoError(t, err)
 }
 
 func TestTruncateErrKeepsCode(t *testing.T) {
@@ -410,8 +462,8 @@ func TestTruncateErrKeepsCode(t *testing.T) {
 // pins that the wrapping also took effect on the routes baseapp uses.
 func TestResultCapRoutesWrapped(t *testing.T) {
 	e := initShieldedEnv(t)
-	m := &txResultMeter{}
-	ctx := e.ctx().WithValue(txResultMeterKey{}, m).WithGasMeter(storetypes.NewInfiniteGasMeter())
+	m := &resultMeter{}
+	ctx := e.ctx().WithValue(resultMeterKey{}, m).WithGasMeter(storetypes.NewInfiniteGasMeter())
 	h := e.app.MsgServiceRouter().Handler(&banktypes.MsgSend{})
 	require.NotNil(t, h)
 	to := e.bech(e.userAddr())
