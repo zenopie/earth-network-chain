@@ -542,3 +542,45 @@ func TestResultCapBoundedIBCModule(t *testing.T) {
 		})
 	}
 }
+
+// failingCallbacks is a callback contract keeper whose every callback fails
+// with a ~0.9 MB error.
+type failingCallbacks struct {
+	ibccallbackstypes.ContractKeeper
+}
+
+var errHuge = wasmtypes.ErrExecuteFailed.Wrap(strings.Repeat("x", 900_000))
+
+func (failingCallbacks) IBCSendPacketCallback(sdk.Context, string, string, clienttypes.Height, uint64, []byte, string, string, string) error {
+	return errHuge
+}
+
+func (failingCallbacks) IBCOnAcknowledgementPacketCallback(sdk.Context, channeltypes.Packet, []byte, sdk.AccAddress, string, string, string) error {
+	return errHuge
+}
+
+func (failingCallbacks) IBCOnTimeoutPacketCallback(sdk.Context, channeltypes.Packet, sdk.AccAddress, string, string, string) error {
+	return errHuge
+}
+
+func (failingCallbacks) IBCReceivePacketCallback(sdk.Context, ibcexported.PacketI, ibcexported.Acknowledgement, string, string) error {
+	return errHuge
+}
+
+// TestResultCapCallbackErrors: every callback's error is cut to 1 KiB with
+// its code kept, the source-side ones too (R8-C-1: ibc-go ignores an
+// ack/timeout callback's error but still writes it into callback_error of
+// the relayer's MsgAcknowledgement / MsgTimeout).
+func TestResultCapCallbackErrors(t *testing.T) {
+	c := cappedCallbacks{failingCallbacks{}}
+	ctx := capCtx(nil, storetypes.NewInfiniteGasMeter())
+	for name, err := range map[string]error{
+		"send":    c.IBCSendPacketCallback(ctx, "", "", clienttypes.ZeroHeight(), 0, nil, "", "", ""),
+		"ack":     c.IBCOnAcknowledgementPacketCallback(ctx, channeltypes.Packet{}, nil, nil, "", "", ""),
+		"timeout": c.IBCOnTimeoutPacketCallback(ctx, channeltypes.Packet{}, nil, "", "", ""),
+		"receive": c.IBCReceivePacketCallback(ctx, channeltypes.Packet{}, nil, "", ""),
+	} {
+		require.ErrorIs(t, err, wasmtypes.ErrExecuteFailed, name)
+		require.LessOrEqual(t, len(err.Error()), resultcap.MaxErrorBytes+64, name)
+	}
+}
