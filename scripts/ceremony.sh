@@ -3,19 +3,32 @@
 # The launch ceremony: turn the placeholder genesis sources into the launch
 # genesis, in one command, on the operator's machine.
 #
-#   scripts/ceremony.sh --genesis-time <RFC3339> --pubkey '<consensus pubkey json>' \
-#       --memo-peer ID@HOST:PORT --moniker NAME
+#   scripts/ceremony.sh --launch <launch.json> --genesis-time <RFC3339> \
+#       --memo-peer ID@HOST:PORT --moniker NAME [--env-file PATH]
 #
+#   --launch FILE    the launch identities, which this repository does not
+#                    hold (the operator keeps them with its deployment):
+#                      {
+#                        "operator": "earth1…",         the genesis validator's
+#                                                       operator account
+#                        "consensus_pubkey": "<base64>", its ed25519 consensus key
+#                                                       (`earthd comet show-validator`'s
+#                                                       "key"); only the public key,
+#                                                       the private key never touches
+#                                                       this machine
+#                        "remove_accounts": ["earth1…"], placeholder accounts that
+#                                                       must not reach the launch
+#                                                       genesis (may be empty)
+#                        "used_consensus_keys": ["…"]   consensus keys that signed an
+#                                                       earlier chain under this id:
+#                                                       refused (may be empty)
+#                      }
+#                    Required, all four keys.
 #   --genesis-time   the launch instant, e.g. 2026-10-20T16:00:00Z (UTC, whole
 #                    seconds, in the future). Written to networks/genesis/chain.json.
-#   --pubkey         the validator's consensus key as `earthd comet show-validator`
-#                    prints it, e.g.
-#                    '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"PGqv…"}'.
-#                    Only the public key: the private key never touches this
-#                    machine. A key that signed an earlier earth-1 is refused.
-#   --env-file PATH  where VALIDATOR_MNEMONIC is (default: $EARTH_DEPLOY_ENV, else
-#                    the deploy repo's .env next to this repo). Ignored when
-#                    VALIDATOR_MNEMONIC is already set in the environment.
+#   --env-file PATH  a dotenv file holding VALIDATOR_MNEMONIC (only that line is
+#                    read). Required unless VALIDATOR_MNEMONIC is already set in
+#                    the environment.
 #   --memo-peer ID@HOST:PORT
 #                    the gentx memo: the validator's public p2p address, the
 #                    genesis's only advertised peer. Required. HOST is a
@@ -27,24 +40,23 @@
 #                    not public. Use a name only if it resolves the same,
 #                    publicly, from everywhere (no split-horizon or
 #                    internal zone); prefer the public IP.
-#   --moniker NAME   the validator's moniker. Required; the placeholder's
-#                    devnet moniker is refused.
+#   --moniker NAME   the validator's moniker. Required; the placeholder gentx's
+#                    moniker is refused.
 #
 # What it does, all or nothing (any failure restores every source it touched):
 #
-#   1. reads VALIDATOR_MNEMONIC (only that line of the .env; never printed) into
-#      a throwaway test keyring and checks it is the launch operator
-#      earth1n6amvkgfrrgy6ulhurewnm0endkgye69fkcapr;
-#   2. networks/genesis/accounts.json: removes the devnet faucet
-#      (earth1s7rgs…) and the ads-for-gas wallet (earth1jtc2z…), and swaps the
-#      placeholder validator account (earth14e6s…) for the operator with the
-#      same 1,000 ERTH;
+#   1. reads VALIDATOR_MNEMONIC (only that line of the env file; never printed)
+#      into a throwaway test keyring and checks it is the launch operator;
+#   2. networks/genesis/accounts.json: removes remove_accounts, and swaps the
+#      placeholder validator account (the committed gentx's signer) for the
+#      operator with the same balance;
 #   3. networks/genesis/chain.json: genesis_time;
 #   4. networks/genesis/gentx/genesis-validator.json: a new gentx signed by the
 #      operator with the given consensus key, memo and moniker (self-delegation
 #      and commission kept from the placeholder);
 #   5. make genesis, then make genesis-check and the genesis tests with the
-#      ceremony required (EARTH_REQUIRE_CEREMONY=1 go test ./networks/).
+#      ceremony required (EARTH_REQUIRE_CEREMONY=1 EARTH_CEREMONY_CONFIG=<launch.json>
+#      go test ./networks/).
 #
 # Afterwards: review `git diff`, commit the sources with networks/genesis.json
 # and its .sha256, and publish the printed sha256. Re-running it on finished
@@ -55,33 +67,103 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO/networks/genesis"
 GENTX="$SRC/gentx/genesis-validator.json"
 
-# The launch decisions this script carries out.
-OPERATOR="earth1n6amvkgfrrgy6ulhurewnm0endkgye69fkcapr"
-PLACEHOLDER="earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a"
-DEVNET_ACCOUNTS="earth1s7rgscltvw8v3kzhj46pptdqg843ngs7th9ywp earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6"
-# Consensus keys that signed an earlier earth-1: never again.
-USED_CONSENSUS_KEYS="kTMzoCBEj1g2z49K1D/jxuLGrhTsnzfTx6Gf1LnBUJw="
-
-GENESIS_TIME="" PUBKEY="" ENV_FILE="${EARTH_DEPLOY_ENV:-}" MEMO_PEER="" MONIKER=""
+LAUNCH="" GENESIS_TIME="" ENV_FILE="" MEMO_PEER="" MONIKER=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --launch) LAUNCH="$2"; shift 2 ;;
     --genesis-time) GENESIS_TIME="$2"; shift 2 ;;
-    --pubkey) PUBKEY="$2"; shift 2 ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --memo-peer) MEMO_PEER="$2"; shift 2 ;;
     --moniker) MONIKER="$2"; shift 2 ;;
-    -h|--help) sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,68p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 die() { echo "ceremony: $*" >&2; exit 1; }
+[ -n "$LAUNCH" ] || die "--launch <launch.json> (the launch identities) is required"
+[ -f "$LAUNCH" ] || die "--launch $LAUNCH: no such file"
+LAUNCH="$(cd "$(dirname "$LAUNCH")" && pwd)/$(basename "$LAUNCH")"
 [ -n "$GENESIS_TIME" ] || die "--genesis-time <RFC3339> is required"
-[ -n "$PUBKEY" ] || die "--pubkey '<consensus pubkey json>' is required"
 # The memo and moniker are sha-pinned into the launch genesis: no defaults
 # from the placeholder (a LAN peer and a devnet name, audit D-8).
 [ -n "$MEMO_PEER" ] || die "--memo-peer ID@HOST:PORT (the validator's public p2p address) is required"
 [ -n "$MONIKER" ] || die "--moniker NAME is required"
-[ "$MONIKER" != "earth-akash-devnet" ] || die "--moniker earth-akash-devnet is the placeholder's devnet name"
+
+# ── the launch identities ───────────────────────────────────────────────────
+# One line each: OPERATOR, PUBKEY (the gentx --pubkey JSON), REMOVE (space
+# separated), USED (space separated).
+LAUNCH_VALUES="$(python3 - "$LAUNCH" <<'PY'
+import sys, json, base64, re
+try:
+    d = json.load(open(sys.argv[1]))
+except ValueError as e:
+    sys.exit('ceremony: --launch is not JSON: %s' % e)
+need = {'operator', 'consensus_pubkey', 'remove_accounts', 'used_consensus_keys'}
+if not isinstance(d, dict) or not need <= set(d):
+    sys.exit('ceremony: --launch must hold %s' % ', '.join(sorted(need)))
+addr = re.compile(r'earth1[02-9ac-hj-np-z]{38}')
+op = d['operator']
+if not isinstance(op, str) or not addr.fullmatch(op):
+    sys.exit('ceremony: launch operator %r is not an earth1 account address' % op)
+key = d['consensus_pubkey']
+try:
+    raw = base64.b64decode(key, validate=True)
+except Exception:
+    sys.exit('ceremony: launch consensus_pubkey is not base64')
+if len(raw) != 32:
+    sys.exit('ceremony: launch consensus_pubkey is %d bytes, not 32 (ed25519)' % len(raw))
+rm, used = d['remove_accounts'], d['used_consensus_keys']
+if not isinstance(rm, list) or not all(isinstance(a, str) and addr.fullmatch(a) for a in rm):
+    sys.exit('ceremony: launch remove_accounts must be a list of earth1 addresses')
+if op in rm:
+    sys.exit('ceremony: the launch operator is in remove_accounts')
+if not isinstance(used, list) or not all(isinstance(k, str) and k for k in used):
+    sys.exit('ceremony: launch used_consensus_keys must be a list of base64 keys')
+if key in used:
+    sys.exit('ceremony: consensus key %s signed an earlier chain: refusing to reuse it' % key)
+print(op)
+print(json.dumps({'@type': '/cosmos.crypto.ed25519.PubKey', 'key': key}, separators=(',', ':')))
+print(' '.join(rm))
+print(' '.join(used))
+print('end')
+PY
+)" || exit 1
+{ read -r OPERATOR; read -r PUBKEY; read -r REMOVE_ACCOUNTS; read -r USED_CONSENSUS_KEYS; read -r _END; } <<<"$LAUNCH_VALUES"
+
+# The placeholder: whoever signed the committed gentx, and its moniker. A
+# re-run on finished sources finds the operator here instead.
+GENTX_FIELDS="$(python3 - "$GENTX" <<'PY'
+import json, sys
+# bech32 (BIP 173): the operator account is the bytes of the valoper address
+# under the account prefix.
+CS = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
+def polymod(v):
+    g = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+    c = 1
+    for x in v:
+        b = c >> 25
+        c = (c & 0x1ffffff) << 5 ^ x
+        for i in range(5):
+            c ^= g[i] if (b >> i) & 1 else 0
+    return c
+def hrpx(h): return [ord(x) >> 5 for x in h] + [0] + [ord(x) & 31 for x in h]
+def decode(a):
+    h, d = a[:a.rindex('1')], [CS.index(x) for x in a[a.rindex('1') + 1:]]
+    if polymod(hrpx(h) + d) != 1:
+        sys.exit('ceremony: bad bech32 %s' % a)
+    return d[:-6]
+def encode(h, d):
+    p = polymod(hrpx(h) + d + [0] * 6) ^ 1
+    return h + '1' + ''.join(CS[x] for x in d + [(p >> 5 * (5 - i)) & 31 for i in range(6)])
+t = json.load(open(sys.argv[1]))
+m = t['body']['messages'][0]
+print(encode('earth', decode(m['validator_address'])))
+print(m['description']['moniker'])
+PY
+)" || exit 1
+GENTX_SIGNER="${GENTX_FIELDS%%$'\n'*}"; PLACEHOLDER_MONIKER="${GENTX_FIELDS#*$'\n'}"
+[ "$MONIKER" != "$PLACEHOLDER_MONIKER" ] || [ "$GENTX_SIGNER" = "$OPERATOR" ] \
+  || die "--moniker $MONIKER is the placeholder gentx's moniker"
 python3 - "$MEMO_PEER" <<'PY' || exit 1
 import sys, ipaddress, re, socket
 peer = sys.argv[1]
@@ -147,32 +229,10 @@ if t <= datetime.datetime.now(datetime.timezone.utc):
 print(t.strftime('%Y-%m-%dT%H:%M:%SZ'))
 PY
 )" || exit 1
-python3 - "$PUBKEY" "$USED_CONSENSUS_KEYS" <<'PY' || exit 1
-import sys, json, base64
-try:
-    k = json.loads(sys.argv[1])
-except ValueError:
-    sys.exit('ceremony: --pubkey is not JSON')
-if k.get('@type') != '/cosmos.crypto.ed25519.PubKey' or set(k) != {'@type', 'key'}:
-    sys.exit('ceremony: --pubkey must be {"@type":"/cosmos.crypto.ed25519.PubKey","key":"<base64>"}')
-try:
-    raw = base64.b64decode(k['key'], validate=True)
-except Exception:
-    sys.exit('ceremony: --pubkey key is not base64')
-if len(raw) != 32:
-    sys.exit('ceremony: --pubkey key is %d bytes, not 32' % len(raw))
-if k['key'] in sys.argv[2].split():
-    sys.exit('ceremony: consensus key %s signed an earlier earth-1: refusing to reuse it' % k['key'])
-PY
 
-# ── the mnemonic: from the environment, or that one line of the .env ────────
+# ── the mnemonic: from the environment, or that one line of --env-file ──────
 if [ -z "${VALIDATOR_MNEMONIC:-}" ]; then
-  if [ -z "$ENV_FILE" ]; then
-    for c in "$REPO/../earth-network-deploy/.env" "$REPO/../../earth-network-deploy/.env"; do
-      [ -f "$c" ] && { ENV_FILE="$c"; break; }
-    done
-  fi
-  [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || die "no VALIDATOR_MNEMONIC in the environment and no deploy .env found (--env-file PATH)"
+  [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || die "no VALIDATOR_MNEMONIC in the environment and no --env-file PATH holding it"
   # Only VALIDATOR_MNEMONIC is read; the file is not sourced (it holds other
   # secrets, and sourcing would run it).
   VALIDATOR_MNEMONIC="$(python3 - "$ENV_FILE" <<'PY'
@@ -228,31 +288,31 @@ ADDR="$("$WORK/earthd" keys show operator -a --keyring-backend test --home "$H")
 say "operator $ADDR"
 
 # ── 2. accounts.json ────────────────────────────────────────────────────────
-python3 - "$SRC/accounts.json" "$OPERATOR" "$PLACEHOLDER" "$DEVNET_ACCOUNTS" <<'PY'
+python3 - "$SRC/accounts.json" "$OPERATOR" "$GENTX_SIGNER" "$REMOVE_ACCOUNTS" <<'PY'
 import json, sys, collections
-path, op, placeholder, devnet = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].split()
+# placeholder is the committed gentx's signer: the operator itself on a re-run.
+path, op, placeholder, remove = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].split()
 d = json.load(open(path), object_pairs_hook=collections.OrderedDict)
 keyed = d['keyed']
 addrs = [a['address'] for a in keyed]
-done = op in addrs and placeholder not in addrs and not set(devnet) & set(addrs)
-pending = placeholder in addrs and op not in addrs and set(devnet) <= set(addrs)
+done = placeholder == op and op in addrs and not set(remove) & set(addrs)
+pending = placeholder != op and placeholder in addrs and op not in addrs and set(remove) <= set(addrs)
 if not (pending or done):
     sys.exit('ceremony: accounts.json is neither the placeholder set nor the launch set: %s' % addrs)
 if pending:
     out = []
     for a in keyed:
-        if a['address'] in devnet:
+        if a['address'] in remove:
             continue
         if a['address'] == placeholder:
             a = collections.OrderedDict([
                 ('address', op),
                 ('coins', a['coins']),
-                ('note', 'The genesis validator\'s operator account. 1,000 ERTH: enough to '
-                         'self-delegate 100, and to fund governance deposits (5 ERTH expedited, 1 '
-                         'normal) for years. Deliberately small, because the validator\'s real '
-                         'income is the staking pillar, and a large genesis balance on top of that '
-                         'is an allocation nobody voted for. Its key is VALIDATOR_MNEMONIC in the '
-                         'gitignored .env of the deploy repo and is not in this repository; '
+                ('note', 'The genesis validator\'s operator account, with the placeholder\'s '
+                         'balance: enough to self-delegate and to fund governance deposits for years. '
+                         'Deliberately small, because the validator\'s real income is the staking '
+                         'pillar, and a large genesis balance on top of that is an allocation nobody '
+                         'voted for. Its key is held by the operator, not in this repository; '
                          'scripts/ceremony.sh signs the gentx with it.'),
             ])
         out.append(a)
@@ -308,7 +368,7 @@ say "gentx: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["b
 "$REPO/scripts/build-genesis.sh"
 "$REPO/scripts/build-genesis.sh" --check
 say "genesis tests (ceremony required)"
-(cd "$REPO" && EARTH_REQUIRE_CEREMONY=1 go test -count=1 ./networks/ >"$WORK/test.log" 2>&1) || { cat "$WORK/test.log" >&2; die "genesis tests failed"; }
+(cd "$REPO" && EARTH_REQUIRE_CEREMONY=1 EARTH_CEREMONY_CONFIG="$LAUNCH" go test -count=1 ./networks/ >"$WORK/test.log" 2>&1) || { cat "$WORK/test.log" >&2; die "genesis tests failed"; }
 
 DONE=1
 SUM="$(cut -d' ' -f1 "$REPO/networks/genesis.json.sha256")"

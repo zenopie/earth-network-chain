@@ -53,36 +53,47 @@ generated from the other.
 
 ## The launch ceremony (pending until it has run)
 
-The committed sources are the **placeholder** set: the gentx is signed by the
-placeholder account `earth14e6s…` (already with the launch consensus key
-`PGqvPN4C…`, which never signed any chain), `accounts.json` still funds the
-devnet faucet `earth1s7rgs…` and the ads-for-gas wallet `earth1jtc2z…`, and
+The committed sources are the **placeholder** set: the gentx is signed by a
+placeholder account, `accounts.json` still funds two devnet accounts, and
 `genesis_time` is a past placeholder. On the operator's machine, one command
 turns them into the launch genesis:
 
-    scripts/ceremony.sh --genesis-time <RFC3339> \
-      --pubkey '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"PGqvPN4CxEkxvvh3tSBX0SGeBgjMdqQwZkdHt8FRLm4="}' \
-      --memo-peer <node id>@<public host>:26656 --moniker <name>
+    scripts/ceremony.sh --launch <launch.json> --genesis-time <RFC3339> \
+      --memo-peer <node id>@<public host>:26656 --moniker <name> \
+      [--env-file <file holding VALIDATOR_MNEMONIC>]
+
+The launch identities are the operator's, not this repository's. They come in
+the `--launch` file (all four keys required):
+
+    {
+      "operator": "earth1…",            the genesis validator's operator account
+      "consensus_pubkey": "<base64>",   its ed25519 consensus public key
+      "remove_accounts": ["earth1…"],   placeholder accounts to drop (may be [])
+      "used_consensus_keys": ["…"]      keys that signed an earlier chain under
+                                        this chain id, refused (may be [])
+    }
 
 `--memo-peer` (the gentx memo, the genesis's only advertised peer) and
 `--moniker` are required: a private, loopback or link-local host and the
-placeholder's `earth-akash-devnet` moniker are refused.
+placeholder gentx's moniker are refused.
 
 It reads `VALIDATOR_MNEMONIC` (from the environment, else only that line of
-the deploy repo's `.env`, or `--env-file`), checks it is the launch operator
-`earth1n6amvkgfrrgy6ulhurewnm0endkgye69fkcapr`, removes the two devnet
-accounts, swaps the validator account for the operator with the same 1,000
-ERTH, sets `genesis_time` (UTC, in the future), signs a new gentx with the
-given consensus key (refusing one that signed an earlier earth-1), rebuilds
-`networks/genesis.json` and runs `make genesis-check` and the genesis tests
-with the ceremony required. Any failure restores every source. Then commit
-the sources with the rebuilt genesis and publish its sha256.
+`--env-file`), checks it is the launch operator, removes `remove_accounts`,
+swaps the placeholder validator account (the committed gentx's signer) for
+the operator with the same balance, sets `genesis_time` (UTC, in the future),
+signs a new gentx with `consensus_pubkey` (refusing one in
+`used_consensus_keys`), rebuilds `networks/genesis.json` and runs
+`make genesis-check` and the genesis tests with the ceremony required. Any
+failure restores every source. Then commit the sources with the rebuilt
+genesis and publish its sha256.
 
 Until then `TestLaunchCeremony` (networks/ceremony_test.go) checks what holds
-in both states (one gentx, the launch consensus key, signed by its funded
-operator; exactly the placeholder set, never a mix) and reports **PENDING
-CEREMONY** as a skip; `EARTH_REQUIRE_CEREMONY=1 go test ./networks/` (what
-the script and a release build run) fails instead.
+in both states (one ed25519 gentx signed by its funded operator; the
+placeholder gentx, moniker and time together, never a mix) and reports
+**PENDING CEREMONY** as a skip. With `EARTH_CEREMONY_CONFIG=<launch.json>` it
+also checks the launch identities (the gentx's key, the operator, the removed
+accounts); `EARTH_REQUIRE_CEREMONY=1` (what the script and a release build
+run) requires that file and fails while the ceremony is pending.
 
 ## Still to decide before this is a real launch
 
@@ -90,6 +101,6 @@ These are on the launch checklist ([docs.erth.network](https://docs.erth.network
 and none of them is a thing this script can decide for you:
 
 - **`genesis_time`** must be a real UTC instant near the actual launch (the
-  ceremony sets it), and the container entrypoint must not rewrite it at boot.
+  ceremony sets it), and nothing that starts a node may rewrite it at boot.
 - `min_deposit`, the minimum gas price and the slashing window are still the
   devnet numbers.

@@ -108,11 +108,17 @@ backend and indexers must adopt:
   tombstoned, delegatable and refusal, the book, B, S, rate, D, W, the
   module's redelegation entries per destination). Wallets read the whole list
   instead of asking about one validator before a staking msg.
-- Genesis: `scripts/ceremony.sh --genesis-time <RFC3339> --pubkey <json>`
-  replaces `scripts/ceremony-gentx.sh` and does the whole launch ceremony
-  (operator earth1n6amvk…, devnet faucet and gas wallet removed, gentx,
-  genesis_time, rebuild). Not yet run: `TestLaunchCeremony` reports PENDING
-  CEREMONY until it is.
+- Genesis: `scripts/ceremony.sh --launch <launch.json> --genesis-time
+  <RFC3339> --memo-peer … --moniker …` replaces `scripts/ceremony-gentx.sh`
+  and does the whole launch ceremony (operator check, placeholder accounts
+  removed, gentx, genesis_time, rebuild). The launch identities (operator,
+  consensus key, accounts to remove, consensus keys never to reuse) are the
+  operator's `--launch` file, not in this repository; the mnemonic comes
+  from the environment or `--env-file`. Not yet run: `TestLaunchCeremony`
+  reports PENDING CEREMONY until it is, and checks the identities with
+  `EARTH_CEREMONY_CONFIG=<launch.json>`.
+- CLI: `earthd gas-check --node` defaults to `tcp://localhost:26657` (the
+  SDK's own default), not a public endpoint. Pass `--node` for any other.
 - CLI: no `earthd tx` commands are generated for private msgs any more
   (personhood move-caretaker/bind-handle/move-handle, shieldedstaking
   restake, all three assembly msgs); they could never build a valid tx.
@@ -1548,9 +1554,9 @@ in it. For an operator deciding what to run, this is the first release there is.
       error during handshake: error on replay: validator set is empty after
       InitGenesis
 
-  forever, with no way out but destroying the volume. The v0.2.0 lease hit
-  exactly this: the pod reported available, never ready, and the Akash Console
-  API exposes no logs to say why.
+  forever, with no way out but destroying the volume. A v0.2.0 devnet hit
+  exactly this: the container reported available, never ready, and its host
+  exposed no logs to say why.
 
   The entrypoint now writes a `.devinit-complete` marker only after
   `collect-gentxs` succeeds, and treats a devnet genesis with no gentx as

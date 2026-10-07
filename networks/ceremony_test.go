@@ -2,6 +2,7 @@ package networks
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"os"
@@ -16,24 +17,57 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/bech32"
 )
 
-// The launch ceremony (scripts/ceremony.sh). These are the decisions it
-// carries out; changing one is a ceremony decision, made here and in the
-// script together.
+// The committed placeholder sources, which the launch ceremony
+// (scripts/ceremony.sh) replaces. These describe data in networks/genesis/,
+// not launch decisions: the launch identities (operator, consensus key,
+// accounts to remove, consensus keys never to reuse) are the operator's and
+// reach this test only through EARTH_CEREMONY_CONFIG, the same launch file
+// the script takes with --launch.
 const (
-	// launchOperator is the genesis validator's operator account.
-	launchOperator = "earth1n6amvkgfrrgy6ulhurewnm0endkgye69fkcapr"
-	// launchConsensusKey is the genesis validator's consensus key: never used
-	// to sign any earlier chain.
-	launchConsensusKey = "PGqvPN4CxEkxvvh3tSBX0SGeBgjMdqQwZkdHt8FRLm4="
-	// launchValidatorCoins is the operator account's genesis balance.
-	launchValidatorCoins = "1000000000uerth"
 	// placeholderOperator signs the placeholder gentx until the ceremony.
 	placeholderOperator = "earth14e6sqtf5y7mtzwykqreewe9kg3w94t0f25d54a"
+	// placeholderValidatorCoins is its balance, which the ceremony moves to
+	// the launch operator.
+	placeholderValidatorCoins = "1000000000uerth"
 	// placeholderGenesisTime is the placeholder's (past) genesis_time.
 	placeholderGenesisTime = "2026-10-02T12:00:00Z"
-	// placeholderMoniker is the placeholder gentx's (devnet) moniker.
+	// placeholderMoniker is the placeholder gentx's moniker (signed into it).
 	placeholderMoniker = "earth-akash-devnet"
 )
+
+// launchConfig is scripts/ceremony.sh's --launch file.
+type launchConfig struct {
+	Operator          string   `json:"operator"`
+	ConsensusPubkey   string   `json:"consensus_pubkey"`
+	RemoveAccounts    []string `json:"remove_accounts"`
+	UsedConsensusKeys []string `json:"used_consensus_keys"`
+}
+
+// loadLaunchConfig reads EARTH_CEREMONY_CONFIG, if set. With
+// EARTH_REQUIRE_CEREMONY set it is required: the launch identities are what
+// the ceremony is checked against.
+func loadLaunchConfig(t *testing.T) *launchConfig {
+	t.Helper()
+	path := os.Getenv("EARTH_CEREMONY_CONFIG")
+	if path == "" {
+		if os.Getenv("EARTH_REQUIRE_CEREMONY") != "" {
+			t.Fatal("EARTH_REQUIRE_CEREMONY is set but EARTH_CEREMONY_CONFIG (the launch file, as for scripts/ceremony.sh --launch) is not")
+		}
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("EARTH_CEREMONY_CONFIG: %v", err)
+	}
+	var c launchConfig
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatalf("EARTH_CEREMONY_CONFIG %s: %v", path, err)
+	}
+	if c.Operator == "" || c.ConsensusPubkey == "" || c.RemoveAccounts == nil || c.UsedConsensusKeys == nil {
+		t.Fatalf("EARTH_CEREMONY_CONFIG %s must set operator, consensus_pubkey, remove_accounts and used_consensus_keys", path)
+	}
+	return &c
+}
 
 // publicPeer refuses a gentx memo that is not ID@HOST:PORT with a public
 // host, mirroring scripts/ceremony.sh rule for rule: a lower-case 40-hex node
@@ -110,17 +144,6 @@ func globalIP(ip netip.Addr) bool {
 	return true
 }
 
-// devnetAccounts are keys that have been on a laptop: in the placeholder set
-// only, never in the launch genesis.
-var devnetAccounts = []string{
-	"earth1s7rgscltvw8v3kzhj46pptdqg843ngs7th9ywp", // faucet
-	"earth1jtc2zjmmmyttdayz6aw8vfgt5qn4hg7rpxaar6", // ads-for-gas hot wallet
-}
-
-// usedConsensusKeys signed an earlier earth-1: a gentx with one could
-// double-sign the same heights.
-var usedConsensusKeys = []string{"kTMzoCBEj1g2z49K1D/jxuLGrhTsnzfTx6Gf1LnBUJw="}
-
 type gentxDoc struct {
 	Body struct {
 		Memo     string `json:"memo"`
@@ -166,12 +189,14 @@ type ceremonyGenesis struct {
 // holds in both is checked in both; what only the ceremony makes true is
 // checked once it has run, and until then the test reports PENDING CEREMONY
 // (a skip, or a failure with EARTH_REQUIRE_CEREMONY set, as scripts/ceremony.sh
-// and a release build run it).
+// and a release build run it). The launch identities come from
+// EARTH_CEREMONY_CONFIG; without it only what holds for any launch is checked.
 func TestLaunchCeremony(t *testing.T) {
 	g := readJSON[ceremonyGenesis](t, "genesis.json")
 	accts := readJSON[accountsDoc](t, "genesis/accounts.json")
+	launch := loadLaunchConfig(t)
 
-	// Both states: one gentx, the launch consensus key, signed by its
+	// Both states: one gentx with an ed25519 consensus key, signed by its
 	// operator's own account, which genesis funds for the self-delegation.
 	if len(g.AppState.Genutil.GenTxs) != 1 {
 		t.Fatalf("%d gentxs; the launch genesis has exactly one", len(g.AppState.Genutil.GenTxs))
@@ -181,12 +206,17 @@ func TestLaunchCeremony(t *testing.T) {
 		t.Fatalf("the gentx is not one MsgCreateValidator")
 	}
 	m := tx.Body.Messages[0]
-	if m.Pubkey.Type != "/cosmos.crypto.ed25519.PubKey" || m.Pubkey.Key != launchConsensusKey {
-		t.Errorf("gentx consensus key %s %s, want the launch key %s", m.Pubkey.Type, m.Pubkey.Key, launchConsensusKey)
+	if m.Pubkey.Type != "/cosmos.crypto.ed25519.PubKey" {
+		t.Errorf("gentx consensus key type %s, want ed25519", m.Pubkey.Type)
 	}
-	for _, used := range usedConsensusKeys {
-		if m.Pubkey.Key == used {
-			t.Errorf("gentx consensus key %s signed an earlier earth-1", used)
+	if launch != nil {
+		if m.Pubkey.Key != launch.ConsensusPubkey {
+			t.Errorf("gentx consensus key %s, want the launch key %s", m.Pubkey.Key, launch.ConsensusPubkey)
+		}
+		for _, used := range launch.UsedConsensusKeys {
+			if m.Pubkey.Key == used {
+				t.Errorf("gentx consensus key %s signed an earlier chain", used)
+			}
 		}
 	}
 	_, valBz, err := bech32.DecodeAndConvert(m.ValidatorAddress)
@@ -224,34 +254,51 @@ func TestLaunchCeremony(t *testing.T) {
 		inGenesis[b.Address] = true
 	}
 
-	switch operator {
-	case placeholderOperator:
-		// Pending: exactly the placeholder set, so a half-run ceremony fails.
-		want := append([]string{placeholderOperator}, devnetAccounts...)
-		if len(accts.Keyed) != len(want) {
-			t.Errorf("placeholder gentx with %d keyed accounts, want the placeholder set %v", len(accts.Keyed), want)
-		}
-		for _, a := range want {
-			if _, ok := keyed[a]; !ok {
-				t.Errorf("placeholder gentx but %s is missing from accounts.json: a partial ceremony", a)
-			}
-		}
-		if _, ok := keyed[launchOperator]; ok {
-			t.Errorf("placeholder gentx but the launch operator is in accounts.json: a partial ceremony")
+	if operator == placeholderOperator {
+		// Pending: the placeholder gentx, moniker and genesis_time together,
+		// so a half-run ceremony fails.
+		if m.Description.Moniker != placeholderMoniker {
+			t.Errorf("placeholder gentx but moniker %q: a partial ceremony", m.Description.Moniker)
 		}
 		if g.GenesisTime != placeholderGenesisTime {
 			t.Errorf("placeholder gentx but genesis_time %s: a partial ceremony", g.GenesisTime)
 		}
-		msg := "PENDING CEREMONY: networks/genesis.json is the placeholder (gentx operator " + placeholderOperator +
-			", devnet accounts " + strings.Join(devnetAccounts, ", ") + "). Run\n" +
-			"  scripts/ceremony.sh --genesis-time <RFC3339> --pubkey '{\"@type\":\"/cosmos.crypto.ed25519.PubKey\",\"key\":\"" + launchConsensusKey + "\"}' --memo-peer ID@HOST:PORT --moniker NAME"
+		if keyed[placeholderOperator] != placeholderValidatorCoins {
+			t.Errorf("placeholder operator holds %s, want %s", keyed[placeholderOperator], placeholderValidatorCoins)
+		}
+		if launch != nil {
+			// Exactly the placeholder set the launch file describes.
+			want := append([]string{placeholderOperator}, launch.RemoveAccounts...)
+			if len(accts.Keyed) != len(want) {
+				t.Errorf("placeholder gentx with %d keyed accounts, want the placeholder set %v", len(accts.Keyed), want)
+			}
+			for _, a := range want {
+				if _, ok := keyed[a]; !ok {
+					t.Errorf("placeholder gentx but %s is missing from accounts.json: a partial ceremony", a)
+				}
+			}
+			if _, ok := keyed[launch.Operator]; ok {
+				t.Errorf("placeholder gentx but the launch operator is in accounts.json: a partial ceremony")
+			}
+		}
+		msg := "PENDING CEREMONY: networks/genesis.json is the placeholder (gentx operator " + placeholderOperator + "). Run\n" +
+			"  scripts/ceremony.sh --launch <launch.json> --genesis-time <RFC3339> --memo-peer ID@HOST:PORT --moniker NAME"
 		if os.Getenv("EARTH_REQUIRE_CEREMONY") != "" {
 			t.Fatal(msg)
 		}
 		t.Skip(msg)
+	}
 
-	case launchOperator:
-		for _, a := range append([]string{placeholderOperator}, devnetAccounts...) {
+	// The launch genesis.
+	if launch != nil && operator != launch.Operator {
+		t.Fatalf("gentx operator %s is neither the placeholder %s nor the launch operator %s", operator, placeholderOperator, launch.Operator)
+	}
+	{
+		gone := []string{placeholderOperator}
+		if launch != nil {
+			gone = append(gone, launch.RemoveAccounts...)
+		}
+		for _, a := range gone {
 			if _, ok := keyed[a]; ok {
 				t.Errorf("%s is in accounts.json of the launch genesis", a)
 			}
@@ -268,10 +315,10 @@ func TestLaunchCeremony(t *testing.T) {
 		if err := publicPeer(tx.Body.Memo); err != nil {
 			t.Errorf("gentx memo %q: %v", tx.Body.Memo, err)
 		}
-		if keyed[launchOperator] != launchValidatorCoins {
-			t.Errorf("launch operator holds %s, want %s", keyed[launchOperator], launchValidatorCoins)
+		if keyed[operator] != placeholderValidatorCoins {
+			t.Errorf("launch operator holds %s, want the placeholder's %s", keyed[operator], placeholderValidatorCoins)
 		}
-		if !inGenesis[launchOperator] {
+		if !inGenesis[operator] {
 			t.Errorf("the launch operator holds nothing in genesis.json")
 		}
 		gt, err := time.Parse(time.RFC3339, g.GenesisTime)
@@ -282,9 +329,6 @@ func TestLaunchCeremony(t *testing.T) {
 		if !gt.After(pt) {
 			t.Errorf("genesis_time %s is not after the placeholder's %s: the ceremony sets the launch instant", g.GenesisTime, placeholderGenesisTime)
 		}
-
-	default:
-		t.Errorf("gentx operator %s is neither the placeholder %s nor the launch operator %s", operator, placeholderOperator, launchOperator)
 	}
 }
 
@@ -292,7 +336,7 @@ func TestPublicPeer(t *testing.T) {
 	id := strings.Repeat("ab", 20)
 	for memo, want := range map[string]bool{
 		id + "@8.8.8.8:26656":                       true,
-		id + "@p2p.erth.network:26656":              true,
+		id + "@p2p.example.org:26656":               true,
 		id + "@100.64.1.2:26656":                    false,
 		id + "@192.168.0.2:26656":                   false,
 		id + "@203.0.113.9:26656":                   false,
@@ -306,9 +350,9 @@ func TestPublicPeer(t *testing.T) {
 		id + "@node.intranet:26656":                 false,
 		id + "@node.localhost:26656":                false,
 		id + "@router.home.arpa:26656":              false,
-		id + "@P2P.Erth.Network.:26656":             true,
-		id + "@bad_label.erth.network:26656":        false,
-		id + "@-x.erth.network:26656":               false,
+		id + "@P2P.Example.Org.:26656":              true,
+		id + "@bad_label.example.org:26656":         false,
+		id + "@-x.example.org:26656":                false,
 		id + "@[2606:4700::1111]:26656":             true,
 		id + "@8.8.8.8:123456":                      false,
 	} {
