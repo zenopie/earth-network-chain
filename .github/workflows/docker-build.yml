@@ -63,15 +63,14 @@ jobs:
 
       # Deliberately does NOT write the digest anywhere.
       #
-      # This used to check out master, rewrite docker-compose.yaml and the Akash
-      # SDL with the digest it had just pushed, and commit that back. Two things
-      # were wrong with it: this repository carried deployment state it has no
-      # business holding, and a build racing a human push meant one of them lost
-      # — which happened.
+      # This used to check out master, rewrite deployment manifests with the
+      # digest it had just pushed, and commit that back. Two things were wrong
+      # with it: this repository carried deployment state it has no business
+      # holding, and a build racing a human push meant one of them lost —
+      # which happened.
       #
-      # Deployment now lives in a separate private repository, which resolves
-      # tag -> digest from the registry when it deploys. Anyone can do the same
-      # with no credentials:
+      # Deployment is the operator's: resolve tag -> digest from the registry
+      # and pin that. Anyone can, with no credentials:
       #
       #   TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:<repo>:pull&service=ghcr.io" | jq -r .token)
       #   curl -sI -H "Authorization: Bearer $TOKEN" \
