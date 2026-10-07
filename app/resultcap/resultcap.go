@@ -20,12 +20,14 @@
 //
 // # The rules
 //
-// Bytes are counted as the proto size of a msg's events and responses plus
-// EventOverhead, AttributeOverhead and MsgOverhead, which cover what baseapp
-// adds when it stores them (msg_index attributes, index flags, the "message"
-// event). The ante phase is not metered (a signed tx's ante events are a
-// fixed handful, under 1 KB; a private tx's are a function of its shape,
-// 6.5 KB at most, and capped per block by max_private_actions_per_block).
+// Bytes are counted as described under "How bytes are counted" below: in
+// short, the proto size of a msg's events and responses, every string byte
+// at the size a node's JSON answer gives it, plus EventOverhead,
+// AttributeOverhead and MsgOverhead. "Bytes" in the rules and limits below
+// are counted bytes. The ante phase is not metered (a signed tx's ante events
+// are a fixed handful, under 1 KB; a private tx's are a function of its
+// shape, 6.5 KB at most, and capped per block by
+// max_private_actions_per_block).
 //
 //   - Gas. The first FreeBytes of a tx's msg-phase result are free (per tx,
 //     not per msg); every byte past that costs GasPerByte gas on the tx's gas
@@ -73,27 +75,70 @@
 //     past that the msg fails and its proposal is marked FAILED. Each msg is
 //     also capped at MaxMsgResultBytes.
 //
+// # How bytes are counted
+//
+// A result is stored as proto, but it is served as JSON (CometBFT RPC
+// block_results, tx and tx_search; the SDK's LCD txs/{hash} and txs), and the
+// JSON is what a node and a client build in memory. The bytes are therefore
+// counted at their worst-case JSON size, so that gas and the caps bound the
+// answers' content, not only the store:
+//
+//   - Event strings (types, keys, values), byte by byte, at the largest size
+//     any of these answers' encoders gives them. All of them render strings
+//     with Go's encoding/json: CometBFT's RPC (gogoproto jsonpb inside
+//     cmtjson, then the stdlib encoder's HTML-safe compaction) and the LCD
+//     (the gRPC gateway's gogoproto jsonpb); protojson, where used, escapes a
+//     subset. So '<', '>', '&', a control character other than \b \f \n \r
+//     \t, and each byte of invalid UTF-8 (written as \ufffd) count
+//     JSONEscapeBytes (6); '"', '\' and those five count 2; U+2028 and U+2029
+//     (3 bytes) count 6; every other byte counts 1. An ASCII string free of
+//     these, which is every string of the chain's own flows, counts its
+//     length: those flows cost what they did.
+//   - Msg responses, stored as bytes in ExecTxResult.Data, count
+//     ResponseByteWeight (2) per proto byte: the LCD writes them as hex
+//     (tx_response.data), the RPC as base64.
+//   - The proto framing (tags, lengths, index flags) and the overheads count
+//     once, as before.
+//
+// The count is one pass over each string, with no allocation, and a pure
+// function of the result: deterministic. Error texts are cut by the same
+// count (MaxErrorBytes of JSON).
+//
+// What is not counted is the JSON structure around the strings (field names,
+// quotes, braces). It makes an answer at most JSONPerCountedByteX10/10 (3.3)
+// times its counted bytes, for a contract that emits only attributes with a
+// one-byte key and an empty value (11 counted bytes, 36 of JSON each); an
+// ordinary attribute's structure is a small fraction of it. Counting it
+// would raise every ordinary result's cost.
+//
 // # Worst cases
 //
-// Stored bytes (proto ExecTxResult), at genesis block max_gas 100M, as
-// measured by app's TestResultCapWorstCase with every attribute filled with
-// '<' (CometBFT's and the SDK's JSON write it as the 6-byte \u003c, so JSON
-// answers are up to ~6x the stored bytes):
+// At genesis block max_gas 100M, as measured by app's TestResultCapWorstCase
+// with the two shapes whose JSON is largest for their count: attributes
+// filled with '<' (escaping, now counted: JSON ~= counted) and attributes
+// {"key":"a","value":""} (structure, ~3.3x). Stored is the proto
+// ExecTxResult; RPC is the tx answer, block_results is about the same per
+// tx; LCD's txs/{hash} adds the tx's JSON.
 //
-//   - Any tx with a non-relay msg: MaxTxResultBytes of msg results plus its
-//     ante events: 1,048,712 B stored; RPC tx ~6.3 MB of JSON.
+//   - Any tx with a non-relay msg: MaxTxResultBytes counted, plus its ante
+//     events. '<': 176 KB stored, 1.05 MB RPC. Tiny attributes: 667 KB
+//     stored, 3.43 MB RPC.
 //   - One relay msg: core logs a packet's data hex-encoded twice (~4x its
 //     size), plus at most MaxPacketAppResultBytes from the application. An
 //     ICS-20 packet with 32 KiB of '<' as its memo has ~197 KB of data (its
-//     JSON escapes '<' too): 823 KB stored without a callback, ~1.2 MB with
-//     the largest one. Any relay msg is also within the relay tx bound.
-//   - A relay tx: MaxRelayTxResultBytes(gas_limit), 5,008,192 B at 100M gas,
-//     plus its ante events. Measured: 16 packets whose callbacks emit 252 KiB
-//     of '<' each store 4.2 MB at 93.6M gas; RPC tx ~24.9 MB of JSON.
-//   - A block: paid bytes and free tiers share block gas. A free-tier tx
-//     (8 KiB of '<' from a contract) costs ~136k gas, so ~740 of them fill a
-//     block: ~6.5 MB stored, ~35.5 MB of block_results JSON; all-paid is at
-//     most 5 MB stored. Gov's EndBlock adds at most MaxEndBlockResultBytes.
+//     JSON escapes '<' too): 823 KB stored and 1.25 MB RPC without a
+//     callback, 865 KB and 1.51 MB with a loud '<' one. Any relay msg is
+//     also within the relay tx bound.
+//   - A relay tx: MaxRelayTxResultBytes(gas_limit) counted, 5,008,192 at
+//     100M gas, plus its ante events, so at most ~16.4 MB of RPC JSON (tiny
+//     attributes). Measured, 16 packets whose callbacks emit just under
+//     MaxCallbackResultBytes: '<' 760 KB stored, 4.25 MB RPC at 86.6M gas;
+//     tiny attributes 2.70 MB stored, 13.6 MB RPC at 83.3M gas.
+//   - A block: paid bytes and free tiers share block gas. Free-tier txs fill
+//     a block with the most: '<' ~827 txs, 1.9 MB stored, 7.6 MB of
+//     block_results JSON; tiny attributes ~708 txs, 4.0 MB stored, 18.0 MB
+//     JSON. All-paid is at most 5 MB counted. Gov's EndBlock adds at most
+//     MaxEndBlockResultBytes counted (~3.4 MB of JSON).
 package resultcap
 
 const (
@@ -112,10 +157,10 @@ const (
 
 	// MaxPacketAppResultBytes caps what an IBC application emits for one
 	// received packet: events plus twice its acknowledgement. Above
-	// MaxCallbackResultBytes plus an ICS-20 packet's own events (~35 KB with
-	// the largest memo), so an ICS-20 receive within the callback cap never
-	// trips it.
-	MaxPacketAppResultBytes = 384 << 10 // 384 KiB
+	// MaxCallbackResultBytes plus an ICS-20 packet's own events (~210 KB
+	// counted with the largest memo, all '<'), so an ICS-20 receive within
+	// the callback cap never trips it.
+	MaxPacketAppResultBytes = 512 << 10 // 512 KiB
 
 	// MaxCallbackResultBytes caps the events of one IBC callback.
 	MaxCallbackResultBytes = 256 << 10 // 256 KiB
@@ -141,6 +186,24 @@ const (
 	EventOverhead     = 24
 	AttributeOverhead = 4
 	MsgOverhead       = 256
+
+	// JSONEscapeBytes is the most bytes one stored byte of an event string
+	// becomes in a node's JSON answers (see "How bytes are counted"): the
+	// 6-byte \u003c for '<', and likewise for '>', '&', control characters
+	// and each byte of invalid UTF-8 (\ufffd). Every limit above counts such
+	// a byte as this many.
+	JSONEscapeBytes = 6
+
+	// ResponseByteWeight is what one byte of a msg response counts as: the
+	// responses are stored as bytes (ExecTxResult.Data), which the LCD
+	// writes as hex (tx_response.data) and the RPC as base64.
+	ResponseByteWeight = 2
+
+	// JSONPerCountedByteX10 is ten times the most JSON one counted byte of a
+	// result becomes in a node's answers (the uncounted JSON structure; see
+	// "How bytes are counted"). Not consensus: it describes the counting,
+	// for tools that size answer ceilings from the limits above.
+	JSONPerCountedByteX10 = 33
 )
 
 // RelayMsgTypeURLs are the relay msgs: the msgs a relayer submits to deliver

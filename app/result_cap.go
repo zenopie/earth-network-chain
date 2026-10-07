@@ -99,11 +99,62 @@ func withEndBlockMeter(ctx sdk.Context) sdk.Context {
 	return ctx.WithValue(resultMeterKey{}, &resultMeter{endBlock: true})
 }
 
-// eventBytes is what events add to a stored result.
+// jsonExtra is, for each ASCII byte, how many bytes its JSON rendering adds
+// in the answers a node gives for results (resultcap, "How bytes are
+// counted"): Go's encoding/json, under CometBFT's RPC and gogoproto jsonpb
+// (the SDK's LCD) alike, writes < > & and the control characters other than
+// \b \f \n \r \t as the 6-byte \u00XX, and " \ and those five as 2 bytes.
+// protojson escapes a subset of these, no more.
+var jsonExtra = func() (t [utf8.RuneSelf]uint8) {
+	for c := 0; c < 0x20; c++ {
+		t[c] = resultcap.JSONEscapeBytes - 1
+	}
+	for _, c := range "<>&" {
+		t[c] = resultcap.JSONEscapeBytes - 1
+	}
+	for _, c := range "\"\\\b\f\n\r\t" {
+		t[c] = 1
+	}
+	return t
+}()
+
+// jsonLen is the length of s as a JSON string's contents in the node's
+// answers, at its worst across the encoders (resultcap, "How bytes are
+// counted"): ASCII per jsonExtra; an invalid UTF-8 byte is written as
+// \ufffd (6 bytes); U+2028 and U+2029 (3 bytes) as \u2028 and \u2029 (6);
+// every other rune as itself. One pass over s, no allocation; an ASCII
+// string free of escapes is len(s).
+func jsonLen(s string) uint64 {
+	n := uint64(len(s))
+	for i := 0; i < len(s); {
+		if c := s[i]; c < utf8.RuneSelf {
+			n += uint64(jsonExtra[c])
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			n += resultcap.JSONEscapeBytes - 1
+		case r == '\u2028' || r == '\u2029':
+			n += resultcap.JSONEscapeBytes - 3
+		}
+		i += size
+	}
+	return n
+}
+
+// eventBytes is what events add to a stored result, each string counted at
+// its JSON length (jsonLen): the proto size of the events, plus the
+// overheads, plus what escaping adds to their types, keys and values.
 func eventBytes(events []abci.Event) uint64 {
 	var n uint64
 	for _, e := range events {
 		n += uint64(e.Size()) + resultEventOverhead + resultAttributeOverhead*uint64(len(e.Attributes))
+		n += jsonLen(e.Type) - uint64(len(e.Type))
+		for _, a := range e.Attributes {
+			n += jsonLen(a.Key) - uint64(len(a.Key)) + jsonLen(a.Value) - uint64(len(a.Value))
+		}
 	}
 	return n
 }
@@ -116,12 +167,14 @@ func resultBytes(res *sdk.Result) uint64 {
 	n := eventBytes(res.Events)
 	for _, r := range res.MsgResponses {
 		if r != nil {
-			n += uint64(r.Size()) + resultEventOverhead
+			n += resultcap.ResponseByteWeight*uint64(r.Size()) + resultEventOverhead
 		}
 	}
 	// res.Data is the same response marshalled again (WrapServiceResult);
-	// baseapp stores only MsgResponses. It adds the msg's "message" event
-	// (action, sender, module), counted as a flat resultMsgOverhead.
+	// baseapp stores only MsgResponses, in ExecTxResult.Data, which answers
+	// render as bytes: base64 (RPC) or hex (LCD tx_response.data), hence
+	// ResponseByteWeight. It adds the msg's "message" event (action, sender,
+	// module), counted as a flat resultMsgOverhead.
 	return n + resultMsgOverhead
 }
 
@@ -188,23 +241,29 @@ func truncateErr(err error) error {
 		return nil
 	}
 	s := err.Error()
-	if len(s) <= maxErrorLogBytes {
+	if jsonLen(s) <= maxErrorLogBytes {
 		return err
 	}
 	return &truncatedErr{msg: truncateText(s), cause: err}
 }
 
-// truncateText cuts an error text to maxErrorLogBytes, on a rune boundary,
-// and says how long it was.
+// truncateText cuts an error text to at most maxErrorLogBytes of JSON
+// (jsonLen), on a rune boundary, and says how long it was. A text within the
+// limit is returned as it is.
 func truncateText(s string) string {
-	if len(s) <= maxErrorLogBytes {
-		return s
+	var n uint64
+	for i := 0; i < len(s); {
+		size := 1
+		if s[i] >= utf8.RuneSelf {
+			_, size = utf8.DecodeRuneInString(s[i:])
+		}
+		n += jsonLen(s[i : i+size])
+		if n > maxErrorLogBytes {
+			return fmt.Sprintf("%s... (error truncated: %d bytes)", s[:i], len(s))
+		}
+		i += size
 	}
-	cut := maxErrorLogBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return fmt.Sprintf("%s... (error truncated: %d bytes)", s[:cut], len(s))
+	return s
 }
 
 // wrapMsgRoutes puts capResult around every handler in baseapp's msg router.

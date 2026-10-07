@@ -60,7 +60,7 @@ func truncateErrorAttrs(evs sdk.Events) sdk.Events {
 		out[i] = ev
 		copied := false
 		for j, a := range ev.Attributes {
-			if len(a.Value) <= maxErrorLogBytes || !errorAttrs[[2]string{ev.Type, a.Key}] {
+			if !errorAttrs[[2]string{ev.Type, a.Key}] || jsonLen(a.Value) <= maxErrorLogBytes {
 				continue
 			}
 			if !copied {
