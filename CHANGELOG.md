@@ -78,6 +78,14 @@ backend and indexers must adopt:
 
 **Not consensus-affecting.**
 
+- Node: **signed txs are simulated under `[wasm] simulation_gas_limit`**,
+  10,000,000 gas when unset (wasmd fell back to the 100M block limit, about
+  15 s of contract CPU per simulate). New `app.toml` files write the line;
+  existing ones without it get the 10M default. Private txs keep the block
+  limit (their proofs are priced flat, up to about 60M). Simulating a
+  signed tx that needs more, such as storing a contract over roughly
+  650 KB, fails: pass an explicit `--gas`. Raise the setting on a node that
+  serves such simulates. Node-local; genesis unchanged.
 - x/shieldedstaking: **Query/Validators** (`/earth/shieldedstaking/v1/validators`,
   paged): every validator's quote inputs in one list (x/staking's validator,
   tombstoned, delegatable and refusal, the book, B, S, rate, D, W, the
