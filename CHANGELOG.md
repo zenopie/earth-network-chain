@@ -139,6 +139,15 @@ backend and indexers must adopt:
   `EARTHD_*` variables or flags (`EARTHD_MINIMUM_GAS_PRICES` is required);
   build key handling or a supervisor into an image `FROM` this one by
   digest. docker/README.md lists what a public node should set.
+  A volume whose genesis is not the image's is refused at start (the
+  relaunch reuses the chain id `earth-1`, so an old volume would otherwise
+  resume the old chain): move or delete its data deliberately, or set
+  `EARTH_ALLOW_FOREIGN_GENESIS=1` (audit R7-C-5).
+- Ops: `scripts/ceremony.sh` refuses a launch `accounts.json` that keeps any
+  keyed account besides the operator, and an empty `remove_accounts` unless
+  `--allow-empty-remove`; consensus keys must be canonical base64 of 32
+  bytes and are compared as bytes. `TestLaunchCeremony` asserts the same in
+  the launch state, independent of the launch file (audit R7-C-3, R7-C-4).
 - Node: new `app.toml` files take state-sync snapshots every 1000 blocks,
   keeping 5 (was the SDK's 0, off; the old image's entrypoint set it).
 - CLI: `earthd gas-check --node` defaults to `tcp://localhost:26657` (the

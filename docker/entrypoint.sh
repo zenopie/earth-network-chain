@@ -8,7 +8,11 @@
 #                 imported and none is made beyond the random ones init
 #                 writes, and the genesis is not modified, so every node that
 #                 boots this image computes the same genesis and app hash.
-#   later starts  start on what the volume holds.
+#   later starts  start on what the volume holds, if its genesis is this
+#                 image's. A volume whose genesis differs (a previous chain,
+#                 possibly under the same chain id) is refused: the operator
+#                 deletes that data deliberately, or sets
+#                 EARTH_ALLOW_FOREIGN_GENESIS=1 to run it anyway.
 #
 # Everything else is earthd's own configuration, which it reads from
 # $EARTH_HOME/config (app.toml, config.toml), from EARTHD_* environment
@@ -55,7 +59,19 @@ else
   on_disk="$(sha256_of "$EARTH_HOME/config/genesis.json")"
   say "resuming $EARTH_HOME, genesis sha256 $on_disk"
   if [ -f "$GENESIS_SRC" ] && [ "$on_disk" != "$(sha256_of "$GENESIS_SRC")" ]; then
-    say "WARNING: that is not this image's genesis ($(sha256_of "$GENESIS_SRC")): the volume holds another chain"
+    image_sha="$(sha256_of "$GENESIS_SRC")"
+    if [ "${EARTH_ALLOW_FOREIGN_GENESIS:-0}" = "1" ]; then
+      say "WARNING: $EARTH_HOME holds another chain's genesis ($on_disk, image $image_sha); EARTH_ALLOW_FOREIGN_GENESIS=1, starting anyway"
+    else
+      die "$EARTH_HOME holds another chain's genesis: refusing to start
+    volume genesis sha256 $on_disk
+    image genesis sha256  $image_sha
+  This volume belongs to a different chain (an earlier launch may reuse the
+  same chain id). Resuming it would run that chain, not this image's. To join
+  this image's chain, move or delete the volume's data deliberately (keep
+  config/priv_validator_key.json and config/node_key.json if they are yours),
+  or set EARTH_ALLOW_FOREIGN_GENESIS=1 to run the volume's chain anyway."
+    fi
   fi
 fi
 

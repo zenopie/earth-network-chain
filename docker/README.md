@@ -19,7 +19,8 @@ builds nothing, and CI writes the digest nowhere. Pin it by digest.
 | `$EARTH_HOME/config/genesis.json` | what happens |
 | --- | --- |
 | missing (a fresh volume) | checks `/etc/earth/genesis.json` against `/etc/earth/genesis.json.sha256`, `earthd init`, installs it unmodified, starts |
-| present | starts on what the volume holds (and warns if its genesis is not the image's) |
+| present, the image's genesis | starts on what the volume holds |
+| present, another genesis | refuses to start (the volume is another chain's, possibly under the same chain id): move or delete its data deliberately, or set `EARTH_ALLOW_FOREIGN_GENESIS=1` to run it anyway |
 
 A hash mismatch is fatal: a genesis swapped into the image after the fact fails
 loudly instead of quietly forking whoever runs it. No account or validator key

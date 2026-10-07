@@ -78,23 +78,44 @@ else
 fi
 cp "$REPO/networks/genesis.json" "$GEN"
 
-# ── resume: the volume's genesis is never replaced; flags pass through ─────
+# ── resume: the image's own chain; flags pass through ──────────────────────
 H="$WORK/resume"; mkdir -p "$H/config"
-printf '{"another":"chain"}\n' > "$H/config/genesis.json"
+cp "$GEN" "$H/config/genesis.json"
 if run "$H" --minimum-gas-prices 0.01uerth --log_level error; then
-  grep -q '"another":"chain"' "$H/config/genesis.json" \
-    && ok "resume: leaves the volume's genesis alone" \
-    || bad "resume: replaced the volume's genesis"
   grep -q "^earthd init" "$EARTHD_LOG" && bad "resume: re-initialised" "" || ok "resume: no init"
-  grep -q "WARNING: that is not this image's genesis" "$LOG" \
-    && ok "resume: says when the volume holds another chain" \
-    || bad "resume: silent about a foreign genesis" "$(cat "$LOG")"
   grep -q -- "--api.address tcp://0.0.0.0:1317 --minimum-gas-prices 0.01uerth --log_level error$" "$EARTHD_LOG" \
     && ok "resume: container arguments reach earthd start, last" \
     || bad "resume: arguments lost" "$(grep '^earthd start' "$EARTHD_LOG")"
 else
   bad "resume: exited non-zero" "$(tail -3 "$LOG")"
 fi
+
+# ── resume on another chain's volume: refused unless overridden ────────────
+H="$WORK/foreign"; mkdir -p "$H/config"
+printf '{"another":"chain"}\n' > "$H/config/genesis.json"
+if run "$H"; then
+  bad "foreign: started on another chain's volume"
+else
+  grep -q "holds another chain's genesis: refusing to start" "$LOG" \
+    && ok "foreign: refuses, and says why" \
+    || bad "foreign: failed for another reason" "$(tail -5 "$LOG")"
+  grep -q "^earthd" "$EARTHD_LOG" && bad "foreign: ran earthd" "" || ok "foreign: never starts"
+  grep -q '"another":"chain"' "$H/config/genesis.json" \
+    && ok "foreign: leaves the volume's data alone" \
+    || bad "foreign: touched the volume's genesis"
+fi
+export EARTH_ALLOW_FOREIGN_GENESIS=1
+if run "$H"; then
+  grep -q "EARTH_ALLOW_FOREIGN_GENESIS=1, starting anyway" "$LOG" \
+    && ok "foreign + override: starts, loudly" \
+    || bad "foreign + override: silent" "$(cat "$LOG")"
+  grep -q '"another":"chain"' "$H/config/genesis.json" \
+    && ok "foreign + override: the volume's genesis is never replaced" \
+    || bad "foreign + override: replaced the volume's genesis"
+else
+  bad "foreign + override: exited non-zero" "$(tail -3 "$LOG")"
+fi
+unset EARTH_ALLOW_FOREIGN_GENESIS
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
