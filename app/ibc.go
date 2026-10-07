@@ -142,19 +142,23 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 	icaControllerStack = ibccallbacks.NewIBCMiddleware(icaControllerStack, app.IBCKeeper.ChannelKeeper, callbackContracts, wasm.DefaultMaxIBCCallbackGas)
 	app.ICAControllerKeeper.WithICS4Wrapper(icaControllerStack.(porttypes.ICS4Wrapper))
 
-	// create IBC v1 router, add transfer route, then set it on the keeper
+	// create IBC v1 router, add transfer route, then set it on the keeper.
+	// Every route is bounded (app/result_cap_ibc.go): what one packet's
+	// handling may emit is capped, so relay msgs need no byte cap of their
+	// own. Only the router gets the bounded wrappers; the ICS4Wrapper wiring
+	// above keeps the stacks themselves.
 	ibcRouter := porttypes.NewRouter().
-		AddRoute(ibctransfertypes.ModuleName, transferStack).
-		AddRoute(wasmtypes.ModuleName, wasmStackIBCHandler).
-		AddRoute(icacontrollertypes.SubModuleName, icaControllerStack).
-		AddRoute(icahosttypes.SubModuleName, icaHostStack)
+		AddRoute(ibctransfertypes.ModuleName, boundedIBCModule{IBCModule: transferStack}).
+		AddRoute(wasmtypes.ModuleName, boundedIBCModule{IBCModule: wasmStackIBCHandler, contractPort: true}).
+		AddRoute(icacontrollertypes.SubModuleName, boundedIBCModule{IBCModule: icaControllerStack}).
+		AddRoute(icahosttypes.SubModuleName, boundedIBCModule{IBCModule: icaHostStack})
 
 	// create IBC v2 router, add transfer route, then set it on the keeper
 	// AddPrefixRoute: every IBC v2 port a contract owns starts with the same
 	// prefix, so one route covers all of them.
 	ibcv2Router := ibcapi.NewRouter().
-		AddRoute(ibctransfertypes.PortID, transferStackV2).
-		AddPrefixRoute(wasmkeeper.PortIDPrefixV2, wasmkeeper.NewIBC2Handler(app.WasmKeeper))
+		AddRoute(ibctransfertypes.PortID, boundedIBCModuleV2{IBCModule: transferStackV2}).
+		AddPrefixRoute(wasmkeeper.PortIDPrefixV2, boundedIBCModuleV2{IBCModule: wasmkeeper.NewIBC2Handler(app.WasmKeeper), contractPort: true})
 
 	// this line is used by starport scaffolding # ibc/app/module
 
