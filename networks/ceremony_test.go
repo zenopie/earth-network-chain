@@ -1,6 +1,7 @@
 package networks
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -66,7 +67,33 @@ func loadLaunchConfig(t *testing.T) *launchConfig {
 	if c.Operator == "" || c.ConsensusPubkey == "" || c.RemoveAccounts == nil || c.UsedConsensusKeys == nil {
 		t.Fatalf("EARTH_CEREMONY_CONFIG %s must set operator, consensus_pubkey, remove_accounts and used_consensus_keys", path)
 	}
+	if _, err := consensusKey(c.ConsensusPubkey); err != nil {
+		t.Fatalf("EARTH_CEREMONY_CONFIG consensus_pubkey: %v", err)
+	}
+	for i, k := range c.UsedConsensusKeys {
+		if _, err := consensusKey(k); err != nil {
+			t.Fatalf("EARTH_CEREMONY_CONFIG used_consensus_keys[%d]: %v", i, err)
+		}
+	}
 	return &c
+}
+
+// consensusKey decodes an ed25519 consensus key as scripts/ceremony.sh does:
+// canonical standard base64 (decoding alone accepts non-zero pad bits, so
+// one key has several spellings) of exactly 32 bytes. Keys are compared as
+// these bytes, never as strings.
+func consensusKey(s string) ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("%q is not base64: %w", s, err)
+	}
+	if base64.StdEncoding.EncodeToString(raw) != s {
+		return nil, fmt.Errorf("%q is not canonical base64", s)
+	}
+	if len(raw) != 32 {
+		return nil, fmt.Errorf("%q is %d bytes, not 32 (ed25519)", s, len(raw))
+	}
+	return raw, nil
 }
 
 // publicPeer refuses a gentx memo that is not ID@HOST:PORT with a public
@@ -176,6 +203,12 @@ type ceremonyGenesis struct {
 		Genutil struct {
 			GenTxs []gentxDoc `json:"gen_txs"`
 		} `json:"genutil"`
+		Auth struct {
+			Accounts []struct {
+				Type    string `json:"@type"`
+				Address string `json:"address"`
+			} `json:"accounts"`
+		} `json:"auth"`
 		Bank struct {
 			Balances []struct {
 				Address string `json:"address"`
@@ -209,13 +242,18 @@ func TestLaunchCeremony(t *testing.T) {
 	if m.Pubkey.Type != "/cosmos.crypto.ed25519.PubKey" {
 		t.Errorf("gentx consensus key type %s, want ed25519", m.Pubkey.Type)
 	}
+	gentxKey, err := consensusKey(m.Pubkey.Key)
+	if err != nil {
+		t.Errorf("gentx consensus key: %v", err)
+	}
 	if launch != nil {
-		if m.Pubkey.Key != launch.ConsensusPubkey {
+		want, _ := consensusKey(launch.ConsensusPubkey)
+		if !bytes.Equal(gentxKey, want) {
 			t.Errorf("gentx consensus key %s, want the launch key %s", m.Pubkey.Key, launch.ConsensusPubkey)
 		}
 		for _, used := range launch.UsedConsensusKeys {
-			if m.Pubkey.Key == used {
-				t.Errorf("gentx consensus key %s signed an earlier chain", used)
+			if u, _ := consensusKey(used); bytes.Equal(gentxKey, u) {
+				t.Errorf("gentx consensus key %s signed an earlier chain (listed as %s)", m.Pubkey.Key, used)
 			}
 		}
 	}
@@ -306,6 +344,30 @@ func TestLaunchCeremony(t *testing.T) {
 				t.Errorf("%s holds a balance in the launch genesis", a)
 			}
 		}
+		// Whatever the launch file listed (audit R7-C-3): the launch genesis
+		// has one keyed account, the operator's. Every other placeholder
+		// account (a devnet faucet, a hot wallet) had its key on a laptop.
+		// Balances and auth accounts are the operator's and the module
+		// accounts' only.
+		for _, a := range accts.Keyed {
+			if a.Address != operator {
+				t.Errorf("keyed account %s besides the operator in the launch genesis: remove it (launch file remove_accounts)", a.Address)
+			}
+		}
+		allowed := map[string]bool{operator: true}
+		for _, mod := range accts.Modules {
+			allowed[mod.Address] = true
+		}
+		for _, b := range g.AppState.Bank.Balances {
+			if !allowed[b.Address] {
+				t.Errorf("%s holds a balance in the launch genesis but is neither the operator nor a module account", b.Address)
+			}
+		}
+		for _, acc := range g.AppState.Auth.Accounts {
+			if acc.Type == "/cosmos.auth.v1beta1.BaseAccount" && acc.Address != operator {
+				t.Errorf("auth account %s besides the operator in the launch genesis", acc.Address)
+			}
+		}
 		// The memo is the launch genesis's only advertised peer, and the
 		// moniker its validator's name: neither the placeholder's LAN peer
 		// nor its devnet name (audit D-8).
@@ -328,6 +390,28 @@ func TestLaunchCeremony(t *testing.T) {
 		pt, _ := time.Parse(time.RFC3339, placeholderGenesisTime)
 		if !gt.After(pt) {
 			t.Errorf("genesis_time %s is not after the placeholder's %s: the ceremony sets the launch instant", g.GenesisTime, placeholderGenesisTime)
+		}
+	}
+}
+
+func TestConsensusKeyCanonical(t *testing.T) {
+	raw := make([]byte, 32)
+	for i := range raw {
+		raw[i] = byte(i)
+	}
+	k := base64.StdEncoding.EncodeToString(raw) // ...Hh8=
+	got, err := consensusKey(k)
+	if err != nil || !bytes.Equal(got, raw) {
+		t.Fatalf("consensusKey(%s) = %x, %v", k, got, err)
+	}
+	// The same 32 bytes with non-zero pad bits: Go's decoder accepts it.
+	alt := k[:len(k)-2] + "9="
+	if b, err := base64.StdEncoding.DecodeString(alt); err != nil || !bytes.Equal(b, raw) {
+		t.Fatalf("expected %s to decode to the same bytes", alt)
+	}
+	for _, bad := range []string{alt, "AAAA", k + "AAAA", "not base64!", ""} {
+		if _, err := consensusKey(bad); err == nil {
+			t.Errorf("consensusKey(%q) accepted", bad)
 		}
 	}
 }

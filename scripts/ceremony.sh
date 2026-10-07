@@ -4,7 +4,8 @@
 # genesis, in one command, on the operator's machine.
 #
 #   scripts/ceremony.sh --launch <launch.json> --genesis-time <RFC3339> \
-#       --memo-peer ID@HOST:PORT --moniker NAME [--env-file PATH]
+#       --memo-peer ID@HOST:PORT --moniker NAME [--env-file PATH] \
+#       [--allow-empty-remove]
 #
 #   --launch FILE    the launch identities, which this repository does not
 #                    hold (the operator keeps them with its deployment):
@@ -18,12 +19,21 @@
 #                                                       this machine
 #                        "remove_accounts": ["earth1…"], placeholder accounts that
 #                                                       must not reach the launch
-#                                                       genesis (may be empty)
+#                                                       genesis; empty only with
+#                                                       --allow-empty-remove
 #                        "used_consensus_keys": ["…"]   consensus keys that signed an
 #                                                       earlier chain under this id:
 #                                                       refused (may be empty)
 #                      }
-#                    Required, all four keys.
+#                    Required, all four keys. Keys are canonical base64 of 32
+#                    bytes and are compared as bytes. Whatever the list says,
+#                    the launch accounts.json may hold no keyed account but
+#                    the operator: one left over is refused (as the genesis
+#                    tests do).
+#   --allow-empty-remove
+#                    accept an empty remove_accounts (only meaningful when the
+#                    placeholder set holds no account besides the placeholder
+#                    validator; anything else is still refused).
 #   --genesis-time   the launch instant, e.g. 2026-10-20T16:00:00Z (UTC, whole
 #                    seconds, in the future). Written to networks/genesis/chain.json.
 #   --env-file PATH  a dotenv file holding VALIDATOR_MNEMONIC (only that line is
@@ -67,7 +77,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO/networks/genesis"
 GENTX="$SRC/gentx/genesis-validator.json"
 
-LAUNCH="" GENESIS_TIME="" ENV_FILE="" MEMO_PEER="" MONIKER=""
+LAUNCH="" GENESIS_TIME="" ENV_FILE="" MEMO_PEER="" MONIKER="" ALLOW_EMPTY_REMOVE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --launch) LAUNCH="$2"; shift 2 ;;
@@ -75,7 +85,8 @@ while [ $# -gt 0 ]; do
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --memo-peer) MEMO_PEER="$2"; shift 2 ;;
     --moniker) MONIKER="$2"; shift 2 ;;
-    -h|--help) sed -n '2,68p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --allow-empty-remove) ALLOW_EMPTY_REMOVE=1; shift ;;
+    -h|--help) sed -n '2,80p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -92,8 +103,8 @@ LAUNCH="$(cd "$(dirname "$LAUNCH")" && pwd)/$(basename "$LAUNCH")"
 # ── the launch identities ───────────────────────────────────────────────────
 # One line each: OPERATOR, PUBKEY (the gentx --pubkey JSON), REMOVE (space
 # separated), USED (space separated).
-LAUNCH_VALUES="$(python3 - "$LAUNCH" <<'PY'
-import sys, json, base64, re
+LAUNCH_VALUES="$(python3 - "$LAUNCH" "$ALLOW_EMPTY_REMOVE" <<'PY'
+import sys, json, base64, re, binascii
 try:
     d = json.load(open(sys.argv[1]))
 except ValueError as e:
@@ -105,21 +116,34 @@ addr = re.compile(r'earth1[02-9ac-hj-np-z]{38}')
 op = d['operator']
 if not isinstance(op, str) or not addr.fullmatch(op):
     sys.exit('ceremony: launch operator %r is not an earth1 account address' % op)
+def ed25519(what, k):
+    # Canonical standard base64 of exactly 32 bytes: decoding alone accepts
+    # non-zero pad bits, so two spellings of one key would compare unequal.
+    if not isinstance(k, str):
+        sys.exit('ceremony: %s is not a base64 string' % what)
+    try:
+        raw = base64.b64decode(k, validate=True)
+    except (binascii.Error, ValueError):
+        sys.exit('ceremony: %s is not base64: %r' % (what, k))
+    if base64.b64encode(raw).decode() != k:
+        sys.exit('ceremony: %s is not canonical base64: %r' % (what, k))
+    if len(raw) != 32:
+        sys.exit('ceremony: %s is %d bytes, not 32 (ed25519)' % (what, len(raw)))
+    return raw
 key = d['consensus_pubkey']
-try:
-    raw = base64.b64decode(key, validate=True)
-except Exception:
-    sys.exit('ceremony: launch consensus_pubkey is not base64')
-if len(raw) != 32:
-    sys.exit('ceremony: launch consensus_pubkey is %d bytes, not 32 (ed25519)' % len(raw))
+raw = ed25519('launch consensus_pubkey', key)
 rm, used = d['remove_accounts'], d['used_consensus_keys']
 if not isinstance(rm, list) or not all(isinstance(a, str) and addr.fullmatch(a) for a in rm):
     sys.exit('ceremony: launch remove_accounts must be a list of earth1 addresses')
 if op in rm:
     sys.exit('ceremony: the launch operator is in remove_accounts')
-if not isinstance(used, list) or not all(isinstance(k, str) and k for k in used):
+if not rm and sys.argv[2] != '1':
+    sys.exit('ceremony: launch remove_accounts is empty: the placeholder accounts would reach the launch '
+             'genesis (pass --allow-empty-remove if the placeholder set really has none)')
+if not isinstance(used, list):
     sys.exit('ceremony: launch used_consensus_keys must be a list of base64 keys')
-if key in used:
+used_raw = [ed25519('used_consensus_keys[%d]' % i, k) for i, k in enumerate(used)]
+if raw in used_raw:
     sys.exit('ceremony: consensus key %s signed an earlier chain: refusing to reuse it' % key)
 print(op)
 print(json.dumps({'@type': '/cosmos.crypto.ed25519.PubKey', 'key': key}, separators=(',', ':')))
@@ -317,6 +341,13 @@ if pending:
             ])
         out.append(a)
     d['keyed'] = out
+# The launch set is the operator alone: a placeholder account the launch file
+# forgot to remove (a devnet faucet, a hot wallet whose key has been on a
+# laptop) is refused here, as networks/ceremony_test.go refuses it.
+left = [a['address'] for a in d['keyed'] if a['address'] != op]
+if left:
+    sys.exit('ceremony: accounts.json would keep keyed accounts besides the operator: %s '
+             '(add them to the launch file\'s remove_accounts)' % ', '.join(left))
 open(path, 'w').write(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
 PY
 say "accounts.json: launch set"
