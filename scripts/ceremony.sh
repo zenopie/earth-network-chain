@@ -44,9 +44,9 @@
 #                    genesis's only advertised peer. Required. HOST is a
 #                    public IP (is_global: private, CGNAT 100.64.0.0/10,
 #                    loopback, link-local, reserved and documentation ranges
-#                    are refused) or a fully qualified DNS name that MUST
+#                    are refused) or a fully qualified DNS name that should
 #                    resolve to public addresses only; it is resolved here
-#                    and refused if it does not resolve or any address is
+#                    warned (not refused) if it does not resolve; refused if any address is
 #                    not public. Use a name only if it resolves the same,
 #                    publicly, from everywhere (no split-horizon or
 #                    internal zone); prefer the public IP.
@@ -229,7 +229,12 @@ else:
     try:
         addrs = {ipaddress.ip_address(a[4][0].split('%')[0]) for a in socket.getaddrinfo(name, port, proto=socket.IPPROTO_TCP)}
     except (socket.gaierror, UnicodeError) as e:
-        sys.exit('ceremony: --memo-peer host %s does not resolve (%s): a DNS name must resolve to a public address' % (host, e))
+        # Nothing dials the memo (peers come from config and the docs), and a
+        # fresh record may not have reached this machine's resolver yet: a
+        # well-formed public name is enough. A name that does resolve must
+        # resolve to public addresses only.
+        print('ceremony: warning: --memo-peer host %s does not resolve here (%s); using it anyway' % (host, e), file=sys.stderr)
+        sys.exit(0)
     bad = sorted(str(a) for a in addrs if not public(a))
     if not addrs or bad:
         sys.exit('ceremony: --memo-peer host %s resolves to non-public %s' % (host, ', '.join(bad) or 'nothing'))
