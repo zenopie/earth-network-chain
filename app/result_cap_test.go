@@ -109,6 +109,17 @@ func callbackContract(prefix string, fill int, suffix string) []byte {
 }
 
 func buildOutputContract(prefix string, fill int, fillByte byte, suffix string, callback bool) []byte {
+	return buildPatternContract(prefix, fill, string(fillByte), suffix, callback)
+}
+
+// buildPatternContract is buildOutputContract with fill bytes of pattern
+// repeated (fill a multiple of its length): the first copy is in the data
+// section, the loop copies each byte from len(pattern) bytes back.
+func buildPatternContract(prefix string, fill int, pattern string, suffix string, callback bool) []byte {
+	if fill%len(pattern) != 0 {
+		panic("fill is not a multiple of the pattern")
+	}
+	fillByte := pattern[0]
 	const (
 		instRegion = 16
 		outRegion  = 32
@@ -167,14 +178,23 @@ func buildOutputContract(prefix string, fill int, fillByte byte, suffix string, 
 	for j := 0; j < len(suffix); j++ {
 		tail = append(tail, wasmConst(int64(end+j)), wasmConst(int64(suffix[j])), store8)
 	}
+	from, value := start, [][]byte{wasmConst(int64(fillByte))}
+	if len(pattern) > 1 && fill > 0 {
+		// mem[i] = mem[i-len(pattern)], from the second copy on.
+		from = start + len(pattern)
+		value = [][]byte{localGet(3), wasmConst(int64(len(pattern))), {0x6b}, {0x2d, 0x00, 0x00}}
+	}
 	execCode := [][]byte{
-		wasmConst(int64(start)), localSet(3),
+		wasmConst(int64(from)), localSet(3),
 		{0x02, 0x40, 0x03, 0x40},                               // block, loop
 		localGet(3), wasmConst(int64(end)), {0x4f, 0x0d, 0x01}, // i >= end: br_if 1
-		localGet(3), wasmConst(int64(fillByte)), store8,
-		localGet(3), wasmConst(1), add, localSet(3),
-		{0x0c, 0x00, 0x0b, 0x0b}, // br 0, end loop, end block
+		localGet(3),
 	}
+	execCode = append(execCode, value...)
+	execCode = append(execCode, store8,
+		localGet(3), wasmConst(1), add, localSet(3),
+		[]byte{0x0c, 0x00, 0x0b, 0x0b}, // br 0, end loop, end block
+	)
 	execCode = append(execCode, tail...)
 	execCode = append(execCode, wasmConst(outRegion))
 	bodies := [][]byte{
@@ -194,6 +214,14 @@ func buildOutputContract(prefix string, fill int, fillByte byte, suffix string, 
 		wasmData(instJSON, []byte(inst)),
 		wasmData(out, []byte(prefix)),
 	)
+	if len(pattern) > 1 && fill > 0 {
+		data = wasmVec(
+			wasmData(instRegion, wasmRegion(instJSON, len(inst))),
+			wasmData(outRegion, wasmRegion(out, total)),
+			wasmData(instJSON, []byte(inst)),
+			wasmData(out, []byte(prefix+pattern)),
+		)
+	}
 	mod := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
 	for _, s := range []struct {
 		id   byte

@@ -314,46 +314,78 @@ func (e *capEnv) answerSizes(txBytes []byte, r *abci.ExecTxResult) (raw, rpc, lc
 	return raw, rpc, len(bz)
 }
 
-// TestResultCapWorstCase measures the largest results the caps allow, filled
-// with '<' (the byte whose JSON is longest), for the fix report and the
-// deploy repo's answer ceilings:
+// Contract outputs for the worst cases. ltOutput fills one attribute with
+// '<', whose JSON is six times its stored size, to about counted bytes as the
+// caps count them. tinyOutput emits attributes {"key":"a","value":""}, the
+// most JSON structure per counted byte (wasmd refuses an empty key, not an
+// empty value): such an attribute counts 11 bytes and its JSON is 36,
+// {"key":"a","value":"","index":true} and a comma.
+func ltOutput(counted int, callback bool) []byte {
+	return buildOutputContract(attrPrefix, counted/resultcap.JSONEscapeBytes, '<', attrSuffix, callback)
+}
+
+const (
+	tinyAttr        = `{"key":"a","value":""}`
+	tinyAttrCounted = 11
+)
+
+func tinyOutput(counted int, callback bool) []byte {
+	n := counted / tinyAttrCounted
+	return buildPatternContract(`{"ok":{"messages":[],"attributes":[`, (n-1)*(len(tinyAttr)+1), tinyAttr+",",
+		tinyAttr+`],"events":[],"data":null}}`, callback)
+}
+
+// TestResultCapWorstCase measures the largest results the caps allow, for
+// the fix report and the deploy repo's answer ceilings, with each of the two
+// shapes whose JSON is largest for what they are counted: '<'-filled
+// attributes (escaping, counted at its JSON size) and tiny attributes (JSON
+// structure, which is not counted):
 //   - an ordinary tx at the 1 MiB total;
-//   - a relay tx at the 100M block gas limit, of 32 KiB-memo ICS-20
-//     packets over the localhost connection, which any account can open.
+//   - a free-tier tx, as many as a 100M-gas block holds (block_results);
+//   - one ICS-20 MsgRecvPacket with a 32 KiB memo of '<';
+//   - a relay tx at the 100M block gas limit, of ICS-20 packets with loud
+//     destination callbacks over the localhost connection, which any account
+//     can open.
 func TestResultCapWorstCase(t *testing.T) {
 	e := newCapEnv(t, "result-cap-worst")
 	user := e.bech(e.userAddr())
+	shapes := []struct {
+		name  string
+		build func(counted int, callback bool) []byte
+	}{{"lt", ltOutput}, {"tiny", tinyOutput}}
 
 	t.Run("ordinary tx", func(t *testing.T) {
-		// One execute whose single attribute takes the tx to just under the
-		// total: the wasm event's other attribute, the message event and the
-		// counting overheads are ~400 bytes.
-		fill := resultcap.MaxTxResultBytes - 1024
-		c := e.deploy("worst-attr", buildOutputContract(attrPrefix, fill, '<', attrSuffix, false))
-		const gas = 40_000_000
-		tx := e.signedTx(gas, e.gasFee(gas), &wasmtypes.MsgExecuteContract{Sender: user, Contract: c, Msg: []byte("{}")})
-		fb := e.finalize(tx)
-		r := fb.TxResults[0]
-		requireOK(t, r)
-		raw, rpc, lcd := e.answerSizes(tx, r)
-		t.Logf("ordinary tx: %d B stored, RPC tx %d B, LCD txs/{hash} %d B, %d gas", raw, rpc, lcd, r.GasUsed)
-		require.LessOrEqual(t, raw, resultcap.MaxTxResultBytes+4<<10)
-		require.Greater(t, raw, resultcap.MaxTxResultBytes-4<<10)
+		// One execute that takes the tx to just under the total: the wasm
+		// event's other attribute, the message event and the counting
+		// overheads are ~500 bytes.
+		for _, sh := range shapes {
+			c := e.deploy("worst-"+sh.name, sh.build(resultcap.MaxTxResultBytes-2048, false))
+			const gas = 60_000_000
+			tx := e.signedTx(gas, e.gasFee(gas), &wasmtypes.MsgExecuteContract{Sender: user, Contract: c, Msg: []byte("{}")})
+			r := e.finalize(tx).TxResults[0]
+			requireOK(t, r)
+			raw, rpc, lcd := e.answerSizes(tx, r)
+			t.Logf("ordinary tx (%s): %d B stored, RPC tx %d B, LCD txs/{hash} %d B, %d gas, tx %d B", sh.name, raw, rpc, lcd, r.GasUsed, len(tx))
+			// The JSON is within the documented factor of what was counted.
+			require.LessOrEqual(t, 10*rpc, resultcap.JSONPerCountedByteX10*(resultcap.MaxTxResultBytes+4<<10))
+		}
 	})
 
 	t.Run("free-tier tx", func(t *testing.T) {
 		// The most result per gas a block can hold: txs that stay inside
 		// the free tier, as many as block gas allows (block_results' worst).
-		c := e.deploy("worst-free", buildOutputContract(attrPrefix, resultcap.FreeBytes-512, '<', attrSuffix, false))
-		const gas = 1_000_000
-		tx := e.signedTx(gas, e.gasFee(gas), &wasmtypes.MsgExecuteContract{Sender: user, Contract: c, Msg: []byte("{}")})
-		r := e.finalize(tx).TxResults[0]
-		requireOK(t, r)
-		bz, err := cmtjson.Marshal(r)
-		require.NoError(t, err)
-		perBlock := 100_000_000 / r.GasUsed
-		t.Logf("free-tier tx: %d B stored, %d B in block_results JSON, %d gas: %d per 100M block = %d B stored, %d B JSON",
-			resultSize(t, r), len(bz), r.GasUsed, perBlock, perBlock*int64(resultSize(t, r)), perBlock*int64(len(bz)))
+		for _, sh := range shapes {
+			c := e.deploy("worst-free-"+sh.name, sh.build(resultcap.FreeBytes-1024, false))
+			const gas = 1_000_000
+			tx := e.signedTx(gas, e.gasFee(gas), &wasmtypes.MsgExecuteContract{Sender: user, Contract: c, Msg: []byte("{}")})
+			r := e.finalize(tx).TxResults[0]
+			requireOK(t, r)
+			bz, err := cmtjson.Marshal(r)
+			require.NoError(t, err)
+			perBlock := 100_000_000 / r.GasUsed
+			t.Logf("free-tier tx (%s): %d B stored, %d B in block_results JSON, %d gas: %d per 100M block = %d B stored, %d B JSON",
+				sh.name, resultSize(t, r), len(bz), r.GasUsed, perBlock, perBlock*int64(resultSize(t, r)), perBlock*int64(len(bz)))
+		}
 	})
 
 	e.openTransferChannel()
@@ -367,39 +399,61 @@ func TestResultCapWorstCase(t *testing.T) {
 		require.Len(t, eventsOf(r.Events, channeltypes.EventTypeWriteAck), len(packets))
 		return tx, r
 	}
+	callbacksOK := func(t *testing.T, r *abci.ExecTxResult, n int) {
+		evs := eventsOf(r.Events, ibccallbackstypes.EventTypeDestinationCallback)
+		require.Len(t, evs, n)
+		for _, ev := range evs {
+			require.Equal(t, ibccallbackstypes.AttributeValueCallbackSuccess, ev[ibccallbackstypes.AttributeKeyCallbackResult], ev[ibccallbackstypes.AttributeKeyCallbackError])
+		}
+		require.Empty(t, eventsOf(r.Events, "ibccallbackerror-"+eventTypePacketResultCapped))
+	}
 
 	t.Run("relay msg", func(t *testing.T) {
 		// ICS-20 packet data is JSON that escapes '<' too, so a memo of
 		// 32 KiB of '<' is ~197 KB of packet data, which core logs
-		// hex-encoded twice. The largest ICS-20 MsgRecvPacket short of a
-		// callback (and over the old 1 MiB per-msg cap with one).
+		// hex-encoded twice; ICS-20 logs the memo itself once.
 		packets := e.transfer(receiver, strings.Repeat("<", transfertypes.MaximumMemoLength))
 		tx, r := relay(t, 40_000_000, packets)
 		raw, rpc, lcd := e.answerSizes(tx, r)
 		t.Logf("one MsgRecvPacket, 32 KiB memo of '<': %d B stored, RPC tx %d B, LCD txs/{hash} %d B, %d gas, packet data %d B",
 			raw, rpc, lcd, r.GasUsed, len(packets[0].Data))
+
+		// The same memo naming a destination callback that emits just
+		// under MaxCallbackResultBytes: within MaxPacketAppResultBytes, so
+		// the packet is received and the callback succeeds.
+		loud := e.deploy("worst-cb-memo", ltOutput(resultcap.MaxCallbackResultBytes-4096, true))
+		memo := callbackMemo(t, loud, 0)
+		memo = strings.TrimSuffix(memo, "}") + `,"pad":"` + strings.Repeat("<", transfertypes.MaximumMemoLength-len(memo)-len(`,"pad":""}`)+1) + `"}`
+		require.Len(t, memo, transfertypes.MaximumMemoLength)
+		packets = e.transfer(receiver, memo)
+		tx, r = relay(t, 60_000_000, packets)
+		callbacksOK(t, r, 1)
+		raw, rpc, lcd = e.answerSizes(tx, r)
+		t.Logf("one MsgRecvPacket, 32 KiB memo of '<' and a loud '<' callback: %d B stored, RPC tx %d B, LCD txs/{hash} %d B, %d gas",
+			raw, rpc, lcd, r.GasUsed)
 	})
 
 	t.Run("relay tx", func(t *testing.T) {
 		// The most JSON per gas a relay tx can hold: packets whose
-		// destination callback emits just under MaxCallbackResultBytes of
-		// '<', as many as the 100M block gas limit pays for.
-		loud := e.deploy("worst-cb", buildOutputContract(attrPrefix, resultcap.MaxCallbackResultBytes-4096, '<', attrSuffix, true))
-		const n = 16
-		var packets []channeltypes.Packet
-		for len(packets) < n {
-			k := min(5, n-len(packets))
-			packets = append(packets, e.transfer(receiver, repeat(callbackMemo(t, loud, 0), k)...)...)
-		}
+		// destination callback emits just under MaxCallbackResultBytes, as
+		// many as the 100M block gas limit pays for.
 		const gas = 100_000_000 // genesis block max_gas
-		tx, r := relay(t, gas, packets)
-		for _, ev := range eventsOf(r.Events, ibccallbackstypes.EventTypeDestinationCallback) {
-			require.Equal(t, ibccallbackstypes.AttributeValueCallbackSuccess, ev[ibccallbackstypes.AttributeKeyCallbackResult])
+		for _, sh := range shapes {
+			loud := e.deploy("worst-cb-"+sh.name, sh.build(resultcap.MaxCallbackResultBytes-4096, true))
+			const n = 16
+			var packets []channeltypes.Packet
+			for len(packets) < n {
+				k := min(5, n-len(packets))
+				packets = append(packets, e.transfer(receiver, repeat(callbackMemo(t, loud, 0), k)...)...)
+			}
+			tx, r := relay(t, gas, packets)
+			callbacksOK(t, r, n)
+			raw, rpc, lcd := e.answerSizes(tx, r)
+			t.Logf("relay tx of %d loud-callback packets (%s): %d B stored, RPC tx %d B, LCD txs/{hash} %d B, %d gas, tx %d B",
+				n, sh.name, raw, rpc, lcd, r.GasUsed, len(tx))
+			require.LessOrEqual(t, uint64(raw), resultcap.MaxRelayTxResultBytes(gas)+4<<10)
+			require.LessOrEqual(t, uint64(10*rpc), resultcap.JSONPerCountedByteX10*(resultcap.MaxRelayTxResultBytes(uint64(r.GasUsed))+16<<10))
 		}
-		raw, rpc, lcd := e.answerSizes(tx, r)
-		t.Logf("relay tx of %d loud-callback packets: %d B stored, RPC tx %d B, LCD txs/{hash} %d B, %d gas, tx %d B",
-			n, raw, rpc, lcd, r.GasUsed, len(tx))
-		require.LessOrEqual(t, uint64(raw), resultcap.MaxRelayTxResultBytes(gas)+4<<10)
 	})
 }
 
