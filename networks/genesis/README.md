@@ -25,7 +25,7 @@ anything both state.
 
 | File | What it decides |
 | --- | --- |
-| `chain.json` | chain id, genesis time, app version — the header a network agrees on before anything else |
+| `chain.json` | chain id, genesis time, app version, block gas and byte limits — the header a network agrees on before anything else |
 | `app_state.json` | every parameter this chain deliberately sets, merged *over* `earthd init`'s defaults |
 | `accounts.json` | every balance that exists at height 1, and nothing else may hold one |
 | `verifying-keys/*.vk.b64` | one base64 UltraHonk verifying key per passport register circuit (33); the filename is the circuit id. Written by `scripts/privacy-vks.sh` |

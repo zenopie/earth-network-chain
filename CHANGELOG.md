@@ -15,7 +15,7 @@ like, because nodes running different versions cannot agree.
 
 **Consensus-affecting: final-audit fixes** (new genesis, no migration;
 **genesis.json sha256
-bae959be55a37e9c9c06c97207c91b92068202c6b20cacb51c30882c155f2779**; a new
+455d5aae87a57b7894cc7220d45f54dd70ab37d922da04f2fa0a7c62d8305246**; a new
 move verifying key and all 33 register circuit keys changed). Wallets,
 backend and indexers must adopt:
 
@@ -84,6 +84,14 @@ backend and indexers must adopt:
   so wallets' and gas-check's gas does not change; a contract or relay batch
   with a large output costs more gas (simulate). Code constants, not params:
   genesis unchanged.
+- Genesis: **consensus block `max_bytes` is 4 MiB** (4,194,304; CometBFT's
+  default was 22 MiB), set from `networks/genesis/chain.json`
+  `block_max_bytes`. A block's size bounds every RPC `block` answer and
+  gossip buffer, and only the proposer chooses what fills it. The largest tx
+  of any path fits with a block's 1 MiB of evidence (`networks/blocksize_test.go`:
+  a 32-action private tx ~522 KB, a registration ~532 KB, a contract upload
+  at MaxWasmSize ~820 KB, a default mempool's 1 MiB). `max_gas` stays 100M;
+  byte-heavy blocks (many uploads) are now bounded by bytes, not gas.
 
 **Not consensus-affecting.**
 
