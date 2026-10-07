@@ -512,10 +512,10 @@ earthd query wasm contract-state smart <addr> '{"…":{}}'
 
 ## Deployment
 
-The operator side — the Akash SDL, secrets and deploy tooling for the network's
-own node — lives in a separate private repository. Nothing there is needed to
-join the chain: this repository holds the node software, the genesis, the image
-and the entrypoint that lets anyone run one.
+How an operator hosts a node (its orchestration, secrets, key handling and
+request filtering) is deployment, and none of it lives here. Nothing of that
+kind is needed to join the chain: this repository holds the node software, the
+genesis, and a minimal image (docker/README.md) that lets anyone run one.
 
 ## Running a node
 

@@ -154,7 +154,7 @@ const (
 	// everything else.
 	//
 	// Then tripled: the 10ms allowance is for a whole core; a validator may run
-	// on a fraction of one (earth-1's does, on Akash), where the same proof is
+	// on a fraction of one (a fractional cloud CPU), where the same proof is
 	// several times slower, and a block of deliberately invalid proofs costs
 	// the full verification each. At 3,000,000 a block holds at most 33, about
 	// 0.8s even at 24ms apiece.

@@ -18,7 +18,7 @@ const (
 	// Same method as x/personhood's DefaultProofVerificationGas: the proof, not
 	// the fee, is what could make a block slow, so the charge is set from the
 	// block gas limit. An action proof verifies in ~4.3 ms on an M-class core,
-	// several times that on a fractional Akash CPU; 2,000,000 against the
+	// several times that on a fractional CPU; 2,000,000 against the
 	// 100,000,000 block limit admits at most 50 verifications a block, and
 	// max_private_actions_per_block caps it lower still.
 	DefaultProofVerificationGas uint64 = 2_000_000
