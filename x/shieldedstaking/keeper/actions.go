@@ -1,7 +1,6 @@
 package keeper
 
 import (
-	"bytes"
 	"context"
 	"errors"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	shieldedkeeper "github.com/earth-network/earth/x/shielded/keeper"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
@@ -43,16 +41,18 @@ import (
 // and two note writes per nullifier slot (an indexed-tree insert) and one per
 // output slot. Covers
 // the handler's reads and writes (the rate's reward computation is the
-// heaviest: a distribution period walk).
+// heaviest: a distribution period walk). A delegation also bonds in its
+// handler (x/staking Delegate and the reward withdrawal it triggers, v1.2.0).
 const (
-	gasDelegate   uint64 = 400_000
+	gasDelegate   uint64 = 600_000
 	gasRestake    uint64 = 100_000
 	gasUndelegate uint64 = 400_000
 	gasVote       uint64 = 250_000
-	gasLock       uint64 = 400_000
-	gasUpdate     uint64 = 300_000
-	gasUnlock     uint64 = 300_000
-	gasPosVote    uint64 = 250_000
+	// gasGroundworks: every stake msg's Groundworks effect, whether it has
+	// one or not (its inputs' tags looked up and their votes cancelled, its
+	// outputs' votes cast: O(options) total writes and a voter re-filed
+	// each), so the gas does not tell a voting note from another.
+	gasGroundworks uint64 = 300_000
 )
 
 // preparedVote is what Check derived for a stake vote: the sighash and the
@@ -81,8 +81,7 @@ func NewActionHandler(k Keeper) ActionHandler { return ActionHandler{k: k} }
 func RegisterPrivateActions(register func(string, shieldedtypes.PrivateActionHandler), h ActionHandler) {
 	for _, t := range []string{
 		types.TypeMsgDelegate, types.TypeMsgRestake, types.TypeMsgUndelegate,
-		types.TypeMsgStakeVote, types.TypeMsgLockPosition, types.TypeMsgUpdatePosition, types.TypeMsgUnlockPosition,
-		types.TypeMsgPositionVote, types.TypeMsgRedelegate,
+		types.TypeMsgStakeVote, types.TypeMsgRedelegate,
 	} {
 		register(t, h)
 	}
@@ -134,14 +133,6 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 		base = gasRestake
 	case *types.MsgUndelegate:
 		base = gasUndelegate
-	case *types.MsgLockPosition:
-		base = gasLock
-	case *types.MsgUpdatePosition:
-		base = gasUpdate
-	case *types.MsgUnlockPosition:
-		base = gasUnlock
-	case *types.MsgPositionVote:
-		base = gasPosVote
 	case *types.MsgRedelegate:
 		g, err := h.k.redelegateGas(ctx, msg.(*types.MsgRedelegate))
 		if err != nil {
@@ -151,7 +142,7 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	default:
 		return 0, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
-	return base + proof + writes*note, nil
+	return base + gasGroundworks + proof + writes*note, nil
 }
 
 func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg) (any, error) {
@@ -180,21 +171,13 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 		_, err = k.valAddr(m.Validator)
 	case *types.MsgUndelegate:
 		_, err = k.checkUndelegate(ctx, m)
-	case *types.MsgLockPosition:
-		err = k.checkLock(ctx, m)
-	case *types.MsgUpdatePosition:
-		_, err = k.checkUpdate(ctx, m)
-	case *types.MsgUnlockPosition:
-		var p types.Position
-		if p, err = k.checkPositionOwner(ctx, m.PositionId, &m.Stake); err == nil {
-			lanes = types.UnlockLanes(p)
-		}
-	case *types.MsgPositionVote:
-		_, _, err = k.checkPositionVote(ctx, m)
 	case *types.MsgRedelegate:
 		_, err = k.checkRedelegate(ctx, m)
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := k.checkGroundworks(ctx, sm); err != nil {
 		return nil, err
 	}
 	p := sm.StakeProofOf()
@@ -206,13 +189,11 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 	if err := k.checkStakeClear(ctx, p); err != nil {
 		return nil, err
 	}
-	// Every proof that publishes a nullifier proves against the window,
-	// padding included (the chain cannot tell it from a real spend). A proof
-	// that spends nothing proves no membership.
-	if len(p.SpentNullifiers()) > 0 {
-		if err := k.checkStakeAnchor(ctx, p.Anchor); err != nil {
-			return nil, err
-		}
+	// Every proof publishes nullifiers (shape: both slots), padding
+	// included, and proves against the window (the chain cannot tell
+	// padding from a real spend).
+	if err := k.checkStakeAnchor(ctx, p.Anchor); err != nil {
+		return nil, err
 	}
 	cms, _ := p.Outputs()
 	if err := k.checkStakeCapacity(ctx, uint64(len(cms))); err != nil {
@@ -364,7 +345,7 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (type
 	if _, err := k.valAddr(m.Validator); err != nil {
 		return types.ProposalSnapshot{}, math.Int{}, err
 	}
-	snap, supply, err := k.openSnapshot(ctx, m.ProposalId, m.Validator, true)
+	snap, supply, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
 		return snap, math.Int{}, err
 	}
@@ -390,81 +371,5 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (type
 	return snap, d, nil
 }
 
-// noteVoteKey is a note vote's key under its proposal: 0x00 || vote nullifier
-// (position votes are 0x01 || id).
+// noteVoteKey is a note vote's key under its proposal: 0x00 || vote nullifier.
 func noteVoteKey(vnf []byte) []byte { return append([]byte{0}, vnf...) }
-
-func (k Keeper) checkLock(ctx context.Context, m *types.MsgLockPosition) error {
-	if _, err := k.valAddr(m.Validator); err != nil {
-		return err
-	}
-	params, err := k.Params.Get(ctx)
-	if err != nil {
-		return err
-	}
-	if math.NewIntFromUint64(m.Amount).LT(params.MinPosition) {
-		return types.ErrPosition.Wrapf("a position locks at least %s derth", params.MinPosition)
-	}
-	// v_out is a public u64, so two maximal notes could lock 2^64-2: a
-	// position that could never unlock (its note would not fit) and that
-	// genesis refuses (audit 6 C-L2).
-	if err := fitsNote(math.NewIntFromUint64(m.Amount)); err != nil {
-		return err
-	}
-	if err := k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits); err != nil {
-		return err
-	}
-	if len(m.Splits) > 0 && !k.positionWeight(ctx, m.Validator, math.NewIntFromUint64(m.Amount)).IsPositive() {
-		return allocationtypes.ErrNoWeight
-	}
-	return nil
-}
-
-// checkUpdate: the owner's proof, a valid split, and (as LockPosition
-// requires) a split only on a position that has weight (audit F9).
-func (k Keeper) checkUpdate(ctx context.Context, m *types.MsgUpdatePosition) (types.Position, error) {
-	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
-	if err != nil {
-		return p, err
-	}
-	if err := k.allocation.ValidateSplit(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, m.Splits); err != nil {
-		return p, err
-	}
-	if len(m.Splits) > 0 && !k.positionWeight(ctx, p.Validator, p.Derth).IsPositive() {
-		return p, allocationtypes.ErrNoWeight
-	}
-	return p, nil
-}
-
-// checkPositionOwner returns the position if the stake proof's owner tag is
-// the one it stores: the proof (verified by the ante) shows its prover owns
-// that tag.
-func (k Keeper) checkPositionOwner(ctx context.Context, id uint64, sp *types.StakeProof) (types.Position, error) {
-	p, err := k.Positions.Get(ctx, id)
-	if errors.Is(err, collections.ErrNotFound) {
-		return p, types.ErrPosition.Wrapf("no position %d", id)
-	} else if err != nil {
-		return p, err
-	}
-	if !bytes.Equal(p.OwnerTag, sp.OwnerTag) {
-		return p, types.ErrSignature.Wrapf("position %d", id)
-	}
-	return p, nil
-}
-
-func (k Keeper) checkPositionVote(ctx context.Context, m *types.MsgPositionVote) (types.Position, math.Int, error) {
-	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
-	if err != nil {
-		return p, math.Int{}, err
-	}
-	snap, vs, err := k.openSnapshot(ctx, m.ProposalId, p.Validator, false)
-	if err != nil {
-		return p, vs, err
-	}
-	// A position locked at or after the snapshot's block holds derth whose
-	// notes could still vote from the snapshot root; it may not vote too.
-	if p.CreatedHeight >= snap.Height {
-		return p, vs, types.ErrNoVoting.Wrapf("position %d was created after proposal %d entered voting", p.Id, m.ProposalId)
-	}
-	return p, vs, nil
-}

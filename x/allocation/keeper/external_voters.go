@@ -16,10 +16,10 @@ import (
 // Two modules file votes under keys that are not accounts. x/personhood files
 // anonymous caretaker splits under caretaker nullifiers at a weight it decides
 // (SetVoterSplit). x/shieldedstaking files all of a validator's Groundworks
-// positions as one weighted voter (key "gwpos/" || validator address bytes)
-// with absolute option weights it computes itself (SetWeightedVoter); a
-// position's anonymous owner changes its split with a stake proof of the
-// position's owner tag, never a key. These calls are those modules' way in.
+// votes as one weighted voter (key "gwpos/" || validator address bytes) with
+// absolute option weights it computes itself (SetWeightedVoter); a vote's
+// anonymous owner changes its split with a stake proof of its note, never a
+// key. These calls are those modules' way in.
 // key is any byte string that cannot collide with an account address (a
 // validator voter key is 26 or 38 bytes, a caretaker nullifier 32 bytes in
 // its own stream; accounts are 20 or 32). MsgSetAllocations goes through ApplySplit too, so every split meets
@@ -177,8 +177,8 @@ func (k Keeper) ResyncVoter(ctx context.Context, stream types.StreamId, key []by
 // weight on each option (zero entries dropped) instead of a split at one
 // weight, replacing whatever key carried before. No weights clears key's
 // vote. For a module that aggregates many splits into one voter:
-// x/shieldedstaking files all the Groundworks positions of a validator as one
-// voter, so its epoch work grows with validators, not positions.
+// x/shieldedstaking files all the Groundworks votes of a validator as one
+// voter, so its epoch work grows with validators, not votes.
 //
 // Like a replayed split, a weight on a struck or vanished option is skipped
 // rather than refused (the module re-files its totals every epoch, with no

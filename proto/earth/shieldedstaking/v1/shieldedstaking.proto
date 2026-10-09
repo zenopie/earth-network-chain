@@ -42,15 +42,15 @@ message ValidatorState {
     (amino.dont_omitempty) = true
   ];
   // epoch_rate is rate_v as of the last epoch end: ERTH per derth. It weighs
-  // Groundworks positions. Conversions use the live rate.
+  // Groundworks votes. Conversions use the live rate.
   string epoch_rate = 4 [
     (cosmos_proto.scalar) = "cosmos.Dec",
     (gogoproto.customtype) = "cosmossdk.io/math.LegacyDec",
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
-  // derth_supply is S_v: the derth/<validator> outstanding, in stake notes
-  // and positions. derth is never a coin.
+  // derth_supply is S_v: the derth/<validator> outstanding, in stake notes.
+  // derth is never a coin.
   string derth_supply = 5 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
@@ -253,9 +253,14 @@ message UnbondPayout {
   int64 retry_at = 8;
 }
 
-// Position is a Groundworks position: derth locked in the module, its owner
-// known only by owner_tag, which its stake proofs must reproduce.
-message Position {
+// GroundworksVote is one stake note's Groundworks vote: derth (the note's
+// unexposed amount when it voted) at validator, split by splits, stored
+// under the note's Groundworks tag (circuits/stake gw = H(TAG_GW, nk, rho)).
+// The note's owner is not known. Any stake proof spending the note publishes
+// the tag and cancels the vote; a stake msg naming a split re-casts it on the
+// output in the same tx.
+message GroundworksVote {
+  // id is the vote's sequence number (its lease's key in the lapse queue).
   uint64 id = 1;
   string validator = 2;
   string derth = 3 [
@@ -265,14 +270,13 @@ message Position {
     (amino.dont_omitempty) = true
   ];
   repeated earth.allocation.v1.AllocationWeight splits = 4 [(gogoproto.nullable) = false];
-  // pubkey, nonce: the retired one-time position key; the owner proves
-  // owner_tag instead.
-  reserved 5, 6;
-  reserved "pubkey", "nonce";
+  // 5, 6, 9: the retired positions' pubkey, nonce and owner_tag.
+  reserved 5, 6, 9;
+  reserved "pubkey", "nonce", "owner_tag";
   int64 created_height = 7;
-  // weight is what the position carries in the Groundworks stream (derth x
-  // its validator's epoch rate, 0 without a live split). Not stored: the
-  // stream weighs a validator's positions together (one voter per
+  // weight is what the vote carries in the Groundworks stream (derth x its
+  // validator's epoch rate, 0 when its split no longer counts). Not stored:
+  // the stream weighs a validator's votes together (one voter per
   // validator), and queries fill this in.
   string weight = 8 [
     (cosmos_proto.scalar) = "cosmos.Int",
@@ -280,18 +284,17 @@ message Position {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
-  // owner_tag is H(TAG_OTAG, owner_pk, salt), 32 bytes (circuits/stake).
-  bytes owner_tag = 9;
   // split_epoch is the Groundworks stream's allocation epoch the split was
   // cast in. A governance reset bumps that epoch, and a split from an older
-  // one no longer counts (the owner votes again with MsgUpdatePosition).
+  // one no longer counts (the owner votes again).
   uint64 split_epoch = 10;
   // split_expires_at is when the split stops counting (unix seconds): cast
-  // or renewed (MsgLockPosition, MsgUpdatePosition) + x/allocation
-  // groundworks_lease_seconds; 0 without a split. At that time the split is
+  // + x/allocation groundworks_lease_seconds. At that time the vote is
   // dropped from its validator's totals (the stream settled to the expiry
-  // first), and the owner re-casts with MsgUpdatePosition.
+  // first); the owner re-casts with any stake msg naming a split.
   int64 split_expires_at = 11;
+  // tag is the note's Groundworks tag (32 bytes).
+  bytes tag = 12;
 }
 
 // StakeRoot is a stake-tree root recorded at the end of a block that changed
@@ -349,14 +352,15 @@ message ValidatorSnapshot {
   ];
 }
 
-// StakeVote is one private stake vote: up to two stake notes' (keyed by
-// their first vote nullifier) or a position's.
+// StakeVote is one private stake vote: up to two stake notes', keyed by
+// their first vote nullifier.
 message StakeVote {
   uint64 proposal_id = 1;
-  // key is 0x00 || the first vote nullifier (32 bytes) of a note vote, or
-  // 0x01 || the position id (8 bytes big-endian) of a position vote.
+  // key is 0x00 || the first vote nullifier (32 bytes).
   bytes key = 2;
-  bool position = 3;
+  // position (3): the retired position votes' flag.
+  reserved 3;
+  reserved "position";
   string validator = 4;
   string derth = 5 [
     (cosmos_proto.scalar) = "cosmos.Int",
@@ -365,9 +369,8 @@ message StakeVote {
     (amino.dont_omitempty) = true
   ];
   repeated cosmos.gov.v1.WeightedVoteOption options = 6;
-  // vote_nullifiers are a note vote's two vote nullifiers (a used slot's or
-  // an unused slot's padding, indistinguishable; the first the key's); empty
-  // for a position vote.
+  // vote_nullifiers are the vote's two vote nullifiers (a used slot's or an
+  // unused slot's padding, indistinguishable; the first the key's).
   repeated bytes vote_nullifiers = 7;
 }
 

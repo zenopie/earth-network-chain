@@ -31,9 +31,11 @@ type Params struct {
 	// epoch_seconds is the length of an epoch. Delegations and undelegations
 	// queued during an epoch are executed, and rewards compounded, at its end.
 	EpochSeconds uint64 `protobuf:"varint,1,opt,name=epoch_seconds,json=epochSeconds,proto3" json:"epoch_seconds,omitempty"`
-	// min_position is the smallest derth a Groundworks position may lock.
-	// Positions are weighed per validator (one Groundworks voter each), so no
-	// epoch work grows with their number; this only keeps dust out.
+	// min_position is the smallest weight (derth x epoch rate, in uerth) a
+	// Groundworks vote may carry. Votes are weighed per validator (one
+	// Groundworks voter each), so no epoch work grows with their number; this
+	// only keeps dust out. (Named for the retired positions it once bounded:
+	// the name is kept so earth-1's launch genesis still reads.)
 	MinPosition cosmossdk_io_math.Int `protobuf:"bytes,2,opt,name=min_position,json=minPosition,proto3,customtype=cosmossdk.io/math.Int" json:"min_position"`
 	// stake_root_window_seconds is how long a superseded stake-tree root stays
 	// an anchor (the latest never expires; a vote's snapshot root is accepted

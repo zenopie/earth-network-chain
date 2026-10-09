@@ -28,6 +28,7 @@ import (
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/stretchr/testify/require"
 
+	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
@@ -334,6 +335,13 @@ func requireRefused(t *testing.T, err error) {
 // clearing a labelled one's label when clear.
 func (e *stakeEnv) restake(ns []*snote, clear bool) *snote {
 	e.t.Helper()
+	return e.restakeVote(ns, clear, nil)
+}
+
+// restakeVote is restake whose output votes in Groundworks with split (none:
+// it does not vote; any vote its inputs held is cancelled either way).
+func (e *stakeEnv) restakeVote(ns []*snote, clear bool, split []allocationtypes.AllocationWeight) *snote {
+	e.t.Helper()
 	v, ok := sstypes.ParseDerthDenom(ns[0].denom)
 	require.True(e.t, ok)
 	var amount uint64
@@ -346,8 +354,8 @@ func (e *stakeEnv) restake(ns []*snote, clear bool) *snote {
 	}
 	out := e.freshStake(ns[0].denom, amount)
 	p := e.feeOnly()
-	sp := e.stake(&stakePlan{denom: ns[0].denom, ins: ns, out: out, clear: clear})
-	m := &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: sp.proof}
+	sp := e.stake(&stakePlan{denom: ns[0].denom, ins: ns, out: out, clear: clear, vote: len(split) > 0, split: split})
+	m := &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: sp.proof, GroundworksSplit: split}
 	e.prove(m, p)
 	e.proveStake(m, sp)
 	res := e.run(e.privateTx(m))
@@ -606,17 +614,15 @@ func TestStakeVoteManyNotesOneWeight(t *testing.T) {
 	require.NoError(t, gs.Validate())
 	noteVotes := 0
 	for _, v := range gs.Votes {
-		if !v.Position {
-			noteVotes++
-			require.Equal(t, v.Key[1:], v.VoteNullifiers[0])
-		}
+		noteVotes++
+		require.Equal(t, v.Key[1:], v.VoteNullifiers[0])
 	}
 	require.Equal(t, 2, noteVotes)
 	// A genesis whose votes share a vote nullifier is refused.
 	bad := *gs
 	bad.Votes = append([]sstypes.StakeVote(nil), gs.Votes...)
 	for i := range bad.Votes {
-		if v := bad.Votes[i]; !v.Position && !bytes.Equal(v.VoteNullifiers[0], e.vnf(ns[0], prop)) {
+		if v := bad.Votes[i]; !bytes.Equal(v.VoteNullifiers[0], e.vnf(ns[0], prop)) {
 			v.VoteNullifiers = [][]byte{v.VoteNullifiers[0], e.vnf(ns[0], prop)}
 			bad.Votes[i] = v
 		}

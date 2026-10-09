@@ -166,7 +166,7 @@ func NewKeeper(
 
 	// The capital stream's default weight source (bonded stake). In the app,
 	// x/shieldedstaking replaces it at wiring with its own
-	// (RegisterWeightSource: positions per validator, operators' self-bonds
+	// (RegisterWeightSource: stake note votes per validator, operators' self-bonds
 	// at Bonded validators); this one remains for keeper tests.
 	k.weightSources[types.STREAM_ID_GROUNDWORKS] = capitalWeightSource{k: k}
 

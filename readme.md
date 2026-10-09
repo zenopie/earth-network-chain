@@ -160,7 +160,8 @@ collector during `BeginBlock` and `x/distribution` takes it from there — split
 power, validator commission withheld at each validator's configured rate. Nobody claims it
 with a withdraw msg. `x/shieldedstaking` is the only delegator besides each operator's own
 self-bond, so delegators' rewards accrue to its per-validator book and raise the rate every
-stake note redeems at; an operator's commission and self-bond rewards are compounded into
+stake note redeems at (a private delegation is bonded in the block it lands in and earns
+from that block); an operator's commission and self-bond rewards are compounded into
 its self-bond each epoch, and `MsgWithdrawDelegatorReward` (operator),
 `MsgWithdrawValidatorCommission` and `MsgSetWithdrawAddress` are refused
 ([ORCHARD_DESIGN.md](ORCHARD_DESIGN.md) §8, §8.8).
@@ -326,7 +327,7 @@ protocol rules, one per axis, and both run the same engine in **`x/allocation`**
 | Stream | Who may vote | Weight |
 | --- | --- | --- |
 | `caretaker` | anyone with a live proof-of-personhood registration | flat, identical for every human |
-| `groundworks` | validator operators, and Groundworks positions (owner-locked stake) | an operator's self-bond while its validator is Bonded; a position's locked stake |
+| `groundworks` | validator operators, and private stake notes that vote | an operator's self-bond while its validator is Bonded; a voting stake note's derth at its validator's epoch rate |
 
 Voters set percentages (summing to 100) across that stream's *allocation options*; each
 option accrues ERTH pro-rata to the weight pointed at it, tracked with a reward index
@@ -337,8 +338,12 @@ reset of one slate leaves the other standing.
 
 Groundworks-stream weights are kept in sync with live stake, no re-vote needed: an
 operator's self-bond through the staking hooks (`x/allocation/keeper/hooks.go`), and each
-validator's positions through `x/shieldedstaking`, which files them as one weighted voter
-(`x/allocation/keeper/external_voters.go`; [ORCHARD_DESIGN.md](ORCHARD_DESIGN.md) §8.6, §9).
+validator's stake note votes through `x/shieldedstaking`, which files them as one weighted
+voter (`x/allocation/keeper/external_voters.go`; [ORCHARD_DESIGN.md](ORCHARD_DESIGN.md) §8.6, §9).
+A stake note votes in place: a stake msg (delegate, restake, undelegate, redelegate) that
+carries a `groundworks_split` stores a vote under its output note's Groundworks tag, and any
+later spend of that note cancels it. Votes are leased (`groundworks_lease_seconds`, a year
+by default); a stake tx that carries the split again renews it.
 Caretaker splits are cast privately with `x/personhood`'s `MsgSetCaretaker` under a
 caretaker nullifier, and cleared when the registration's lease lapses.
 

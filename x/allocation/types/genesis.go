@@ -172,7 +172,7 @@ func (gs GenesisState) Validate() error {
 				return fmt.Errorf("stream %s: voter %s allocates %d%%", st.Stream, v.Address, pct)
 			}
 			// And every account's Groundworks split has one, as every
-			// position's split does (audit round 2, CD-2): imported without
+			// stake note vote does (audit round 2, CD-2): imported without
 			// one, it would never be queued and would count for ever.
 			if st.Stream == STREAM_ID_GROUNDWORKS && len(v.Voter.OptionWeights) == 0 && len(v.Voter.Percentages) > 0 && v.Voter.ExpiresAt == 0 {
 				return fmt.Errorf("stream %s: voter %s has a split with no lease (expires_at 0)", st.Stream, v.Address)

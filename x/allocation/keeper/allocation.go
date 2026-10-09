@@ -245,7 +245,7 @@ func (k Keeper) AdvanceIndexTo(ctx context.Context, stream types.StreamId, t int
 
 // advanceIndexTo settles stream up to now (unix nanos). It never retires a
 // lease (only the BeginBlock sweep does, SweepLapses): it moves the index
-// and nothing else, so a caller may read voters and positions before it
+// and nothing else, so a caller may read voters and votes before it
 // and write them after. Should a lease be due (never, once this block's
 // sweep has run), it stops at that lapse time (heldTarget).
 func (k Keeper) advanceIndexTo(ctx context.Context, stream types.StreamId, now int64) error {

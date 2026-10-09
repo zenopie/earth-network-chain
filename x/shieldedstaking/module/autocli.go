@@ -29,10 +29,10 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "validator"}, {ProtoField: "epoch"}},
 				},
 				{
-					RpcMethod: "Position", Use: "position [id]", Short: "Show a Groundworks position",
+					RpcMethod: "GroundworksVote", Use: "groundworks-vote [id]", Short: "Show a Groundworks vote",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}},
 				},
-				{RpcMethod: "Positions", Use: "positions", Short: "List Groundworks positions"},
+				{RpcMethod: "GroundworksVotes", Use: "groundworks-votes", Short: "List Groundworks votes"},
 				{
 					RpcMethod: "DebtTree", Use: "debt-tree",
 					Short: "Show the slash debt tree's rows, root and the label window",
@@ -56,10 +56,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{RpcMethod: "Restake", Skip: true},
 				{RpcMethod: "Undelegate", Skip: true},
 				{RpcMethod: "StakeVote", Skip: true},
-				{RpcMethod: "LockPosition", Skip: true},
-				{RpcMethod: "UpdatePosition", Skip: true},
-				{RpcMethod: "UnlockPosition", Skip: true},
-				{RpcMethod: "PositionVote", Skip: true},
 				{RpcMethod: "Redelegate", Skip: true},
 			},
 		},

@@ -70,9 +70,9 @@ func TestSnapshotSupplyIsStartOfBlock(t *testing.T) {
 	require.Equal(t, math.NewInt(1_407), k.Supply(at(30), val))
 }
 
-// Audit C-1: a snapshot taken without roots (RootsStale) refuses note votes,
-// which prove against its roots, and still takes position votes.
-func TestRootlessSnapshotTakesPositionVotes(t *testing.T) {
+// Audit C-1: a snapshot taken without roots (RootsStale) refuses votes,
+// which prove against its roots.
+func TestRootlessSnapshotRefusesVotes(t *testing.T) {
 	key := storetypes.NewKVStoreKey(types.StoreKey)
 	ctx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("tt")).Ctx
 	enc := moduletestutil.MakeTestEncodingConfig()
@@ -89,11 +89,8 @@ func TestRootlessSnapshotTakesPositionVotes(t *testing.T) {
 	require.NoError(t, k.Snapshots.Set(c, 1, snap))
 	require.NoError(t, k.SnapshotsBySeq.Set(c, collections.Join(snap.Seq, uint64(1))))
 
-	_, _, err = k.openSnapshot(c, 1, val, true)
-	require.ErrorIs(t, err, types.ErrNoVoting, "a note vote needs the snapshot's roots")
-	_, supply, err := k.openSnapshot(c, 1, val, false)
-	require.NoError(t, err, "a position vote does not")
-	require.Equal(t, int64(1_000), supply.Int64())
+	_, _, err = k.openSnapshot(c, 1, val)
+	require.ErrorIs(t, err, types.ErrNoVoting, "a vote needs the snapshot's roots")
 }
 
 // Audit C-4, C-5: a maturity queue entry with no record is dropped (not

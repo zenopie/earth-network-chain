@@ -22,9 +22,9 @@ import (
 //  1. ERTH: the module's uerth balance == sum of queued delegations + the
 //     matured records' payouts not yet made (payout - paid). Exact: every uerth the module receives is
 //     booked in the same call (rewards are booked from balance deltas).
-//  2. derth is never a coin (the module holds none), and
-//     the derth locked in v's positions is at most derth_supply_v (the rest
-//     is in stake notes, whose amounts are hidden).
+//  2. derth is never a coin (the module holds none), and the derth v's
+//     Groundworks votes carry is at most derth_supply_v (it is in stake
+//     notes, whose amounts are otherwise hidden).
 //  3. Unbonding: per validator, the UNBONDING records' undelegated sum ==
 //     the module's SDK entries' initial balances, and each record's creation
 //     height has an entry.
@@ -39,7 +39,7 @@ import (
 //     recorded (a removed validator's was released). The module account's
 //     own withdraw address is itself (audit 4, G2).
 //  6. Groundworks: per (validator, option), the stored total (current epoch)
-//     == the sum of derth x percent over the validator's live positions.
+//     == the sum of derth x percent over the validator's live votes.
 //  7. Stake nullifier tree (O(1)): its size is 0, or 1 + its last value's
 //     leaf index; the recorded latest size is at most the size.
 //  8. Payouts: each record's queued payouts sum to its outstanding (and a
@@ -307,20 +307,22 @@ func (k Keeper) assertDenoms(ctx context.Context) error {
 			return types.ErrInvariant.Wrapf("module holds %s", c)
 		}
 	}
-	locked := map[string]math.Int{}
-	if err := k.Positions.Walk(ctx, nil, func(_ uint64, p types.Position) (bool, error) {
-		if cur, ok := locked[p.Validator]; ok {
-			locked[p.Validator] = cur.Add(p.Derth)
+	// Every unit of derth is in one unspent note and a note votes once, so a
+	// validator's Groundworks votes weigh at most its supply.
+	voted := map[string]math.Int{}
+	if err := k.GwVotes.Walk(ctx, nil, func(_ uint64, v types.GroundworksVote) (bool, error) {
+		if cur, ok := voted[v.Validator]; ok {
+			voted[v.Validator] = cur.Add(v.Derth)
 		} else {
-			locked[p.Validator] = p.Derth
+			voted[v.Validator] = v.Derth
 		}
 		return false, nil
 	}); err != nil {
 		return err
 	}
-	for v, l := range locked {
-		if s := k.Supply(ctx, v); l.GT(s) {
-			return types.ErrInvariant.Wrapf("positions lock %s derth/%s, more than its supply %s", l, v, s)
+	for v, d := range voted {
+		if s := k.Supply(ctx, v); d.GT(s) {
+			return types.ErrInvariant.Wrapf("groundworks votes weigh %s derth/%s, more than its supply %s", d, v, s)
 		}
 	}
 	return nil

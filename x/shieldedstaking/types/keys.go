@@ -1,7 +1,7 @@
 // Package types defines private staking: the module as the sole non-self
 // delegator, derth/<valoper> owner-locked stake notes in the module's own
 // stake note tree, epochs, undelegation payouts, stake votes and Groundworks
-// positions.
+// votes.
 package types
 
 import (
@@ -41,7 +41,7 @@ const (
 	EpochValidatorLimit = 200
 
 	// InvariantBookLimit bounds the epoch end's invariant check: with more
-	// books, unbond records and positions than this it is skipped (and an event says so)
+	// books, unbond records and Groundworks votes than this it is skipped (and an event says so)
 	// rather than walk them all in EndBlock. Tests and genesis run it in full.
 	InvariantBookLimit = 1_000
 
@@ -83,21 +83,24 @@ const (
 
 // Storage prefixes.
 var (
-	ParamsKey         = collections.NewPrefix(0)
-	EpochKey          = collections.NewPrefix(1)
-	ValidatorsKey     = collections.NewPrefix(2)
-	UnbondRecordsKey  = collections.NewPrefix(3)
-	MaturityQueueKey  = collections.NewPrefix(4)
-	PositionsKey      = collections.NewPrefix(5)
-	PositionSeqKey    = collections.NewPrefix(6)
+	ParamsKey        = collections.NewPrefix(0)
+	EpochKey         = collections.NewPrefix(1)
+	ValidatorsKey    = collections.NewPrefix(2)
+	UnbondRecordsKey = collections.NewPrefix(3)
+	MaturityQueueKey = collections.NewPrefix(4)
+	// GwVotesKey holds the Groundworks votes by id, GwVoteSeqKey the id
+	// sequence (groundworks.go). 5 and 6 held the retired positions and their
+	// sequence; the upgrade that retired them cleared both.
+	GwVotesKey        = collections.NewPrefix(5)
+	GwVoteSeqKey      = collections.NewPrefix(6)
 	SnapshotsKey      = collections.NewPrefix(7)
 	VotesKey          = collections.NewPrefix(8)
 	TalliesKey        = collections.NewPrefix(9)
 	SnapshotExpiryKey = collections.NewPrefix(10)
-	PositionsByValKey = collections.NewPrefix(11)
+	// 11 is reserved (was PositionsByValKey; cleared by the upgrade).
 	PendingRecordsKey = collections.NewPrefix(12)
 	// SlashedValidatorsKey holds the validators slashed in the current block,
-	// whose epoch rate and positions EndBlock re-weighs. Emptied every
+	// whose epoch rate and Groundworks votes EndBlock re-weighs. Emptied every
 	// EndBlock; never exported.
 	SlashedValidatorsKey = collections.NewPrefix(13)
 	// The stake note tree: its nodes and size, its nullifier set, and its
@@ -130,8 +133,8 @@ var (
 	// PendingReleasesKey holds removed validators whose release failed.
 	RetiringEscrowsKey = collections.NewPrefix(27)
 	PendingReleasesKey = collections.NewPrefix(28)
-	// Groundworks totals (positions.go): per (validator, option) the sum of
-	// derth x percent over the validator's live positions, and per validator
+	// Groundworks totals (groundworks.go): per (validator, option) the sum of
+	// derth x percent over the validator's live votes, and per validator
 	// the Groundworks allocation epoch those totals belong to.
 	GwTotalsKey = collections.NewPrefix(29)
 	GwEpochKey  = collections.NewPrefix(30)
@@ -197,9 +200,12 @@ var (
 	WatchSrcKey    = collections.NewPrefix(55)
 	WatchSharesKey = collections.NewPrefix(56)
 	WatchCallsKey  = collections.NewPrefix(57)
-	// GwLapsesKey orders positions' Groundworks split leases by when they
-	// lapse: (split_expires_at, position id).
+	// GwLapsesKey orders the Groundworks votes' leases by when they lapse:
+	// (split_expires_at, vote id).
 	GwLapsesKey = collections.NewPrefix(58)
+	// GwVotesByTagKey maps a Groundworks vote's note tag to its id: what a
+	// stake proof's input tags cancel.
+	GwVotesByTagKey = collections.NewPrefix(59)
 )
 
 // MoveTimeSlackSeconds is how far a redelegation's block time may be after
@@ -259,7 +265,8 @@ func ParseDerthDenom(denom string) (string, bool) {
 }
 
 // ValidatorVoterKey is the Groundworks voter key under which x/allocation
-// weighs all of validator's positions together: "gwpos/" || the validator's
+// weighs all of validator's votes together: "gwpos/" (kept from the retired
+// positions: x/allocation stores voters under it) || the validator's
 // address bytes (26 or 38 bytes, never an account's 20 or 32).
 func ValidatorVoterKey(valBz []byte) []byte {
 	return append([]byte(ValidatorVoterPrefix), valBz...)

@@ -25,8 +25,7 @@ import (
 // Keeper is private staking. Its module account is the only delegator x/staking
 // has besides validators' own self-bonds: it holds ERTH queued for delegation
 // and matured unbondings not yet paid out. What a person owns here (derth) is
-// an owner-locked note in this module's stake note tree; positions hold derth
-// on the books; an undelegation is a queued payout to a pool pc; nothing here
+// an owner-locked note in this module's stake note tree; an undelegation is a queued payout to a pool pc; nothing here
 // is a coin but ERTH.
 type Keeper struct {
 	storeService corestore.KVStoreService
@@ -66,20 +65,21 @@ type Keeper struct {
 	// validator, until sweepOrphanRecords forgets them.
 	OrphanRecords collections.KeySet[collections.Pair[string, uint64]]
 	// SlashedValidators are this block's slashed validators (valoper), for
-	// EndBlock's re-weigh of their positions (reweighSlashed).
+	// EndBlock's re-weigh of their Groundworks votes (reweighSlashed).
 	SlashedValidators collections.KeySet[string]
 	// MaturityQueue orders UNBONDING records by (completion ns, validator,
 	// epoch).
 	MaturityQueue collections.KeySet[collections.Triple[int64, string, uint64]]
 
-	Positions      collections.Map[uint64, types.Position]
-	PositionSeq    collections.Sequence
-	PositionsByVal collections.KeySet[collections.Pair[string, uint64]]
+	// GwVotes: the Groundworks votes by id; GwVoteSeq their id sequence;
+	// GwVotesByTag each vote's note tag to its id (groundworks.go).
+	GwVotes      collections.Map[uint64, types.GroundworksVote]
+	GwVoteSeq    collections.Sequence
+	GwVotesByTag collections.Map[[]byte, uint64]
 
 	Snapshots      collections.Map[uint64, types.ProposalSnapshot]
 	SnapshotExpiry collections.KeySet[collections.Pair[int64, uint64]]
-	// Votes are keyed (proposal, 0x00||vote_nf) for note votes and
-	// (proposal, 0x01||position id) for position votes.
+	// Votes are keyed (proposal, 0x00||vote_nf).
 	Votes collections.Map[collections.Pair[uint64, []byte], types.StakeVote]
 	// UsedVoteNullifiers are every vote nullifier a note vote used, per
 	// proposal (a vote of several notes is keyed by its first).
@@ -121,12 +121,12 @@ type Keeper struct {
 	// EpochSweep is the epoch-end book sweep's progress (epoch.go).
 	EpochSweep collections.Item[types.EpochSweep]
 	// GwTotals is, per (validator, option), the sum of derth x percent over
-	// the validator's live positions (positions.go); GwEpoch the Groundworks
+	// the validator's live votes (groundworks.go); GwEpoch the Groundworks
 	// allocation epoch each validator's totals belong to.
 	GwTotals collections.Map[collections.Pair[string, uint64], math.Int]
 	GwEpoch  collections.Map[string, uint64]
-	// GwLapses: (split_expires_at, position id) for every position with a
-	// split (positions.go, the Groundworks Lapser).
+	// GwLapses: (split_expires_at, vote id) for every vote (groundworks.go,
+	// the Groundworks Lapser).
 	GwLapses collections.KeySet[collections.Pair[int64, uint64]]
 	// RetiringEscrows: (release time ns, validator) for operators that
 	// removed their whole self-bond; PendingReleases: removed validators
@@ -219,11 +219,11 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key)),
 		MaturityQueue: collections.NewKeySet(sb, types.MaturityQueueKey, "maturity_queue",
 			collections.TripleKeyCodec(collections.Int64Key, collections.StringKey, collections.Uint64Key)),
-		Positions: collections.NewMap(sb, types.PositionsKey, "positions", collections.Uint64Key,
-			codec.CollValue[types.Position](cdc)),
-		PositionSeq: collections.NewSequence(sb, types.PositionSeqKey, "position_seq"),
-		PositionsByVal: collections.NewKeySet(sb, types.PositionsByValKey, "positions_by_val",
-			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key)),
+		GwVotes: collections.NewMap(sb, types.GwVotesKey, "gw_votes", collections.Uint64Key,
+			codec.CollValue[types.GroundworksVote](cdc)),
+		GwVoteSeq:    collections.NewSequence(sb, types.GwVoteSeqKey, "gw_vote_seq"),
+		GwVotesByTag: collections.NewMap(sb, types.GwVotesByTagKey, "gw_votes_by_tag", collections.BytesKey, collections.Uint64Value),
+
 		Snapshots: collections.NewMap(sb, types.SnapshotsKey, "snapshots", collections.Uint64Key,
 			codec.CollValue[types.ProposalSnapshot](cdc)),
 		SnapshotExpiry: collections.NewKeySet(sb, types.SnapshotExpiryKey, "snapshot_expiry",

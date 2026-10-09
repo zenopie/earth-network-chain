@@ -30,8 +30,7 @@ func init() {
 		&types.Module{},
 		appconfig.Provide(ProvideModule,
 			types.ProvideDelegateGetSigners, types.ProvideRestakeGetSigners, types.ProvideUndelegateGetSigners,
-			types.ProvideStakeVoteGetSigners, types.ProvideLockPositionGetSigners, types.ProvideUpdatePositionGetSigners,
-			types.ProvideUnlockPositionGetSigners, types.ProvidePositionVoteGetSigners, types.ProvideRedelegateGetSigners),
+			types.ProvideStakeVoteGetSigners, types.ProvideRedelegateGetSigners),
 	)
 }
 
@@ -86,11 +85,11 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// every transparent path refuses it by name).
 	in.ShieldedKeeper.ExcludeAssetPrefix(types.DerthPrefix)
 	in.ShieldedKeeper.RegisterShieldedOnlyPrefix(types.DerthPrefix, types.ModuleName)
-	// Groundworks weight: each validator's positions as one voter (derth x
-	// epoch rate), and an operator's self-bond while its validator is
-	// Bonded; this module's own delegations carry none.
-	in.AllocationKeeper.RegisterWeightSource(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewPositionWeightSource(k))
-	in.AllocationKeeper.RegisterLapser(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewPositionLapser(k))
+	// Groundworks weight: each validator's stake note votes as one voter
+	// (derth x epoch rate), and an operator's self-bond while its validator
+	// is Bonded; this module's own delegations carry none.
+	in.AllocationKeeper.RegisterWeightSource(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewGroundworksWeightSource(k))
+	in.AllocationKeeper.RegisterLapser(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewGroundworksLapser(k))
 
 	return ModuleOutputs{
 		ShieldedStakingKeeper: k,

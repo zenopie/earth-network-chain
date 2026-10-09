@@ -12,13 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
-	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
-	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
 // Audit round 2, CD-1: a lapse backlog (more lapse seconds due at once than
 // one block used to walk: after a long halt) left leases due after
-// x/allocation's BeginBlocker. A tx that read a position or voter, then
+// x/allocation's BeginBlocker. A tx that read a vote or voter, then
 // settled the stream (which retired those leases), then wrote what it had
 // read, undid or doubled the lapse. Leases now retire only in the
 // BeginBlock sweep, which drains every due one; these reproduce each effect
@@ -42,8 +40,8 @@ func (e *stakeEnv) lapseBacklog(end int64, n int) {
 	}
 }
 
-// Effect 1: a lapsed position's weight resurrected. Updating another
-// position at the validator re-filed the voter from totals read before the
+// Effect 1: a lapsed vote's weight resurrected. Re-casting another vote at
+// the validator re-filed the voter from totals read before the
 // settle that retired the lapsed one: the allocation voter carried the
 // lapsed weight (sharing emission after its expiry) while the totals did
 // not.
@@ -52,17 +50,17 @@ func TestGroundworksLeaseBacklogNoResurrection(t *testing.T) {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			g := initGwEnv(t)
 			setGwLease(t, g.stakeEnv)
-			x := g.lockPos(g.v, 1_000*gwE, 1, g.split(100))
-			ex := g.storedPosition(x).SplitExpiresAt
+			x := g.castGw(g.v, 1_000*gwE, g.split(100))
+			ex := g.storedVote(x.id).SplitExpiresAt
 			g.next(time.Hour)
-			y := g.lockPos(g.v, 2_000*gwE, 2, g.split(0, 100))
+			y := g.castGw(g.v, 2_000*gwE, g.split(0, 100))
 
 			g.atUnix(ex - int64(n) - 100)
 			g.lapseBacklog(ex, n)
 			g.atUnix(ex + 10) // one late block: the whole backlog and x's lease due
 			g.requireEquivalent(g.v, 2)
 
-			g.updatePos(y, 2, g.split(0, 100))
+			g.recastGw(y, g.split(0, 100))
 			require.NotContains(t, g.totals(g.v), g.opts[0])
 			require.NotContains(t, g.voter(g.v), g.opts[0], "the lapsed weight is not filed again")
 			require.True(t, g.allocated(g.opts[0]).IsZero())
@@ -71,24 +69,24 @@ func TestGroundworksLeaseBacklogNoResurrection(t *testing.T) {
 	}
 }
 
-// Effect 2: a double subtraction, then a stuck unlock. Unlocking the lapsing
-// position took its contribution off the totals, then the settle's lapse
-// read the still-stored position and took it off again; the last position
-// on that option could then never unlock (groundworks total below zero).
-func TestGroundworksLeaseBacklogUnlock(t *testing.T) {
+// Effect 2: a double subtraction, then a stuck cancel. Cancelling the
+// lapsing vote took its contribution off the totals, then the settle's
+// lapse read the still-stored vote and took it off again; the last vote on
+// that option could then never be cancelled (groundworks total below zero).
+func TestGroundworksLeaseBacklogCancel(t *testing.T) {
 	g := initGwEnv(t)
 	setGwLease(t, g.stakeEnv)
-	x := g.lockPos(g.v, 1_000*gwE, 1, g.split(100))
-	ex := g.storedPosition(x).SplitExpiresAt
+	x := g.castGw(g.v, 1_000*gwE, g.split(100))
+	ex := g.storedVote(x.id).SplitExpiresAt
 	g.next(time.Hour)
-	z := g.lockPos(g.v, 2_000*gwE, 2, g.split(100))
+	z := g.castGw(g.v, 2_000*gwE, g.split(100))
 
 	g.atUnix(ex - backlogSeconds - 100)
 	g.lapseBacklog(ex, backlogSeconds)
 	g.atUnix(ex + 10)
 
-	g.unlockPos(x, 1)
-	require.NoError(t, g.tryUnlockPos(z, 2), "the last position on the option unlocks")
+	g.cancelGw(x)
+	require.NoError(t, g.tryCancelGw(z), "the last vote on the option cancels")
 	require.Empty(t, g.totals(g.v))
 	require.Nil(t, g.voter(g.v))
 	require.True(t, g.allocated(g.opts[0]).IsZero())
@@ -124,13 +122,4 @@ func TestGroundworksLeaseBacklogOperator(t *testing.T) {
 	require.True(t, errors.Is(err, collections.ErrNotFound), "the lapsed vote stays retired")
 	require.Equal(t, base, g.allocated())
 	require.NoError(t, g.app.AllocationKeeper.AssertHotInvariants(g.ctx()))
-}
-
-// tryUnlockPos is unlockPos returning the handler's error.
-func (g *gwEnv) tryUnlockPos(id uint64, owner int) error {
-	st := fakeStake("gw-back-"+fmt.Sprint(id), false)
-	st.OwnerTag = ownerTag(owner)
-	m := &sstypes.MsgUnlockPosition{PositionId: id, Stake: st}
-	_, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).UnlockPosition(g.fakeAuthorized(m), m)
-	return err
 }

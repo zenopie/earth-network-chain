@@ -238,13 +238,14 @@ func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	e.days(1)
 	e.invariants()
 
-	// --- pro rata to A's book (audit 7, A7-1): a delegation this epoch
-	// waits in A's queue; a redelegation takes its value out of the queue
+	// --- pro rata to A's book (audit 7, A7-1): value waits in A's queue (a
+	// deposit from before v1.2.0; rewards); a redelegation takes its value out of the queue
 	// and the bonded stake in the book's proportion, never out of the queue
 	// first, so its bonded part keeps an x/staking entry and a move that a
 	// slash of A reaches. Its credit, labelled, cannot merge into the
 	// labelled B note: a second B note.
 	q2 := e.delegate(vA, uint64(500*ssErth))
+	e.queueDeposit(vA, 50_000*ssErth)
 	vsA := e.state(vA)
 	pA, dA0 := vsA.PendingDelegation, e.modDelegation(vA).Sub(vsA.PendingUndelegation)
 	pB := e.state(vB).PendingDelegation
@@ -638,11 +639,12 @@ func TestRedelegateMergeRules(t *testing.T) {
 	m := &sstypes.MsgRestake{Bundle: p.b, Validator: e.valoper(vB), Stake: sp.proof}
 	_, err := e.tryProveStake(m, sp)
 	requireRefused(t, err)
-	// Nor does a lock take exposed derth.
+	// Nor does an undelegation take exposed derth.
 	p = e.feeOnly()
-	lsp := e.changePlan(other, other.amount, positionKey(9), false)
-	lm := &sstypes.MsgLockPosition{Bundle: p.b, Validator: e.valoper(vB), Amount: other.amount, Stake: lsp.proof}
-	_, err = e.tryProveStake(lm, lsp)
+	usp := e.changePlan(other, other.amount, false)
+	um := &sstypes.MsgUndelegate{Bundle: p.b, Validator: e.valoper(vB), Amount: other.amount, Stake: usp.proof,
+		Pc: privacy.FieldBytes(ssDet("exposed-pc", 0)), Ciphertext: shieldedtest.BlindCT("exposed")}
+	_, err = e.tryProveStake(um, usp)
 	requireRefused(t, err)
 	// Nor can a label clear before its window closes (the chain refuses an
 	// early clear_before; the circuit, an open window).
@@ -754,12 +756,12 @@ func TestRedelegateVoteSnapshot(t *testing.T) {
 	e.invariants()
 }
 
-// Groundworks weight is per validator and lives in positions. A note
-// redelegation leaves A's positions and rates as they are; a position's
-// weight moves from A to B by unlocking it (its derth merged back into the
-// A note), redelegating and, once the move's window closes and the label
-// clears, locking at B: A's voter loses the weight, B's voter gains it at
-// B's epoch rate, and the option's allocation follows.
+// Groundworks weight is per validator and lives in stake note votes. A
+// voting note's weight moves from A to B: a move out of the voting note carries the vote
+// to its change, a restake without a split cancels it, and once the move's
+// window closes and the label clears, a merge at B votes there: A's voter
+// loses the weight, B's voter gains it at B's epoch rate, and the option's
+// allocation follows.
 func TestRedelegateGroundworksWeight(t *testing.T) {
 	e := initStakeEnv(t)
 	vA, _ := e.createValidator(1000 * ssErth)
@@ -794,22 +796,39 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 	rateA := e.state(vA).EpochRate
 	require.True(t, rateA.GT(math.LegacyOneDec()))
 
-	id := e.lock(dn, uint64(500*ssErth), positionKey(1), opt)
-	wA := rateA.MulInt64(500 * ssErth).TruncateInt()
+	// The note votes in place: A's voter weighs it at A's epoch rate.
+	va := e.restakeVote([]*snote{dn}, false, opt)
+	wA := rateA.MulInt(math.NewIntFromUint64(va.amount)).TruncateInt()
 	vtA, err := voter(vA)
 	require.NoError(t, err)
 	require.Equal(t, wA, vtA.Weight)
 	require.Equal(t, wA, allocated())
 
-	// A note redelegation (the lock's change) leaves A's positions and
-	// epoch rate alone.
-	change := e.unspentStake(dn.denom)
-	require.NotNil(t, change)
-	_, rres := e.redelegate(vA, vB, change, uint64(200*ssErth))
+	// A redelegation out of the voting note carries the vote to its change
+	// (the note's tag cancels the old vote, the change casts the new) and
+	// leaves A's epoch rate alone.
+	p := e.feeOnly()
+	dA := sstypes.DerthDenom(e.valoper(vA))
+	dB := sstypes.DerthDenom(e.valoper(vB))
+	sp := &stakePlan{denom: dA, ins: []*snote{va}, vOut: uint64(200 * ssErth),
+		out: e.freshStake(dA, va.amount-uint64(200*ssErth)), vote: true, split: opt,
+		credit: &creditLane{denom: dB, vIn: e.quoteRedelegate(vA, vB, uint64(200*ssErth)), moveTime: uint64(e.now.Unix())}}
+	e.stake(sp)
+	m := &sstypes.MsgRedelegate{Bundle: p.b, SrcValidator: e.valoper(vA), DstValidator: e.valoper(vB), Amount: uint64(200 * ssErth),
+		DstDerth: sp.credit.vIn, MoveTime: sp.credit.moveTime, Stake: sp.proof, GroundworksSplit: opt}
+	e.prove(m, p)
+	e.proveStake(m, sp)
+	rres := e.run(e.privateTx(m))
+	require.Equal(t, uint32(0), rres.Code, rres.Log)
+	e.settle(p)
+	e.settleStake(sp)
+	change := sp.out
 	require.Equal(t, rateA, e.state(vA).EpochRate)
+	wA = rateA.MulInt(math.NewIntFromUint64(change.amount)).TruncateInt()
 	vtA, err = voter(vA)
 	require.NoError(t, err)
 	require.Equal(t, wA, vtA.Weight)
+	require.Equal(t, wA, allocated(), "the moved derth does not vote: its credit lane did not")
 	// Both sides were re-filed at the end of the move's block (audit 7):
 	// the re-weigh set is empty again.
 	for _, v := range []sdk.ValAddress{vA, vB} {
@@ -820,29 +839,17 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 	require.NotEmpty(t, eventsOf(rres.Events, sstypes.EventTypeRedelegate))
 	e.invariants()
 
-	// Unlock the position: its derth merges into the A note; A's voter goes.
-	pt := e.feeOnly()
-	usp := e.unlockPlan(id, positionKey(1))
-	um := &sstypes.MsgUnlockPosition{Bundle: pt.b, PositionId: id, Stake: usp.proof}
-	e.prove(um, pt)
-	e.proveStake(um, usp)
-	fb := e.run(e.privateTx(um))
-	require.Equal(t, uint32(0), fb.Code, fb.Log)
-	e.settle(pt)
-	e.settleStake(usp)
-	back := usp.out
-	require.True(t, back.known)
+	// A restake that does not vote cancels it: A's voter goes.
+	back := e.restake([]*snote{change}, false)
 	_, err = voter(vA)
 	require.ErrorIs(t, err, collections.ErrNotFound)
 	require.True(t, allocated().IsZero())
 
-	// Redelegate it all to B (merged into the labelled B note? no: a
-	// labelled note takes no credit, so a second B note); once the windows
-	// close, clear and merge, and lock at B: B's voter carries it, at B's
-	// epoch rate.
+	// Redelegate it all to B (a labelled B note takes no credit: a second B
+	// note); once the windows close, clear and merge, voting: B's voter
+	// carries it, at B's epoch rate.
 	e.redelegate(vA, vB, back, back.amount)
 	e.days(22)
-	dB := sstypes.DerthDenom(e.valoper(vB))
 	var bs []*snote
 	for _, n := range e.sw.notes {
 		if n.known && !n.spent && n.denom == dB {
@@ -851,8 +858,7 @@ func TestRedelegateGroundworksWeight(t *testing.T) {
 	}
 	require.Len(t, bs, 2)
 	c1 := e.restake(bs[:1], true)
-	b := e.restake([]*snote{c1, bs[1]}, true)
-	e.lock(b, b.amount, positionKey(2), opt)
+	b := e.restakeVote([]*snote{c1, bs[1]}, true, opt)
 	wB := e.state(vB).EpochRate.MulInt(math.NewIntFromUint64(b.amount)).TruncateInt()
 	vtB, err := voter(vB)
 	require.NoError(t, err)
@@ -1253,8 +1259,8 @@ type a7Outcome struct {
 }
 
 // runA7Scenario: A has a 1,000 ERTH self-bond; an attacker holds 1,000 ERTH
-// of derth/A and an honest holder 3,000, both bonded; a newcomer queues
-// 2,000 in the current epoch. A double-signs; then, if move, the attacker
+// of derth/A and an honest holder 3,000, both bonded; 2,000 more wait in A's
+// queue (a deposit from before v1.2.0, which waited for the epoch end). A double-signs; then, if move, the attacker
 // moves all its derth/A to B (it saw the evidence coming); then the
 // evidence lands.
 func runA7Scenario(t *testing.T, move bool) a7Outcome {
@@ -1268,7 +1274,7 @@ func runA7Scenario(t *testing.T, move bool) a7Outcome {
 	e.fakeDelegate(vB, uint64(3_000*ssErth), "b")
 	e.days(1)
 	e.next(time.Hour)
-	e.fakeDelegate(vA, uint64(2_000*ssErth), "newcomer") // queued this epoch
+	e.queueDeposit(vA, 2_000*ssErth) // queued this epoch
 	require.True(t, e.state(vA).PendingDelegation.GTE(math.NewInt(2_000*ssErth)))
 
 	e.next(5 * time.Second)
@@ -1328,7 +1334,7 @@ func TestQueueEscapesSlash(t *testing.T) {
 
 // The queue-first path is kept only where no slash can reach the source's
 // stake: a validator the module holds no bonded stake at yet (its first
-// delegations wait in its queue) moves the value out of the queue alone, with
+// deposits waited in its queue before v1.2.0) moves the value out of the queue alone, with
 // no entry and no move, since a slash of it takes nothing from the book.
 func TestQueueOnlyWithoutBondedStake(t *testing.T) {
 	e := initStakeEnv(t)
@@ -1339,9 +1345,9 @@ func TestQueueOnlyWithoutBondedStake(t *testing.T) {
 	e.fakeDelegate(vB, uint64(1_000*ssErth), "b")
 	e.days(1)
 	e.next(time.Hour)
-	d := e.fakeDelegate(vA, uint64(2_000*ssErth), "first") // queued, nothing bonded at A
+	d := e.queueDeposit(vA, 2_000*ssErth) // queued (from before v1.2.0), nothing bonded at A
 	require.True(t, e.modDelegation(vA).IsZero())
-	r, err := e.fakeRedelegate(vA, vB, d.Derth/2, "queued")
+	r, err := e.fakeRedelegate(vA, vB, d/2, "queued")
 	require.NoError(t, err)
 	require.Zero(t, r.CompletionTime)
 	_, ok := e.move(fakeMoveKey("queued"))

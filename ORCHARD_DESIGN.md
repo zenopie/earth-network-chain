@@ -75,7 +75,8 @@ Tags are ASCII strings read as big-endian integers (`"earth.id"` ->
 | TAG_STAKE | `earth.stake` | stake note commitment |
 | TAG_SPC | `earth.spc` | stake note owner commitment |
 | TAG_SNF | `earth.snf` | stake note nullifier |
-| TAG_OTAG | `earth.otag` | position owner tag |
+| TAG_OTAG | `earth.otag` | retired (positions' owner tag, v1.2.0; never reuse) |
+| TAG_GW | `earth.gw` (`0x65617274682e6777`) | stake note Groundworks tag |
 | TAG_SNFL | `earth.snfl` (`0x65617274682e736e666c`) | stake nullifier tree leaf |
 | TAG_VNF | `earth.vnf` | stake vote nullifier |
 | TAG_VPAD | `earth.vpad` (`0x65617274682e76706164`) | padding vote nullifier of an unused vote slot |
@@ -319,7 +320,7 @@ move proof shows one is in the tree without saying which.
     label  = 0, or H(TAG_SLABEL, move_key, move_time, exposed)
     cm     = H(TAG_STAKE, AssetID(derth/<valoper>), amount, spc, label)
     nf     = H(TAG_SNF, nk, rho, position)
-    otag   = H(TAG_OTAG, owner_pk, salt)
+    gw     = H(TAG_GW, nk, rho)                 Groundworks tag (8.6)
 
 `derth/<valoper>` is not a coin and not a pool asset (`ExcludeAssetPrefix`:
 shielded-only for every transparent path; the dex refuses it). Stake notes are
@@ -377,9 +378,8 @@ When an x/gov proposal enters voting, x/shieldedstaking takes a
 of the end of the last block that changed it, so they describe one moment. A
 note under `root` was unspent then iff its nullifier is absent under
 `nf_root`. A snapshot taken after a failed root recording (`RootsStale`) takes
-no roots: no note votes on that proposal (position votes still count; with no
-note votes none is counted twice). A proposal x/gov cancelled takes no stake
-or position votes. Per-validator supply is
+no roots: no note votes on that proposal. A proposal x/gov cancelled takes
+no stake votes. Per-validator supply is
 checkpointed lazily (`SupplyCheckpoints`) for the tally.
 
 ---
@@ -394,7 +394,7 @@ counts (`bb gates`, nargo 1.0.0-beta.22):
 | Circuit | Gates | Dyadic | Public inputs (in order) |
 | --- | --- | --- | --- |
 | action | 8,098 | 2^13 | anchor, nf, cm_out, cv_x, cv_y, sighash |
-| stake | 16,242 | 2^14 | anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash |
+| stake | 16,574 | 2^15 | anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, sighash |
 | vote | 22,011 | 2^15 | note_root, nf_root, debt_root, asset, weight, proposal_id, vnf_0, vnf_1, sighash |
 | membership | 5,659 | 2^13 | root, scope, nullifier, signal, excluded_dsc, excluded_country, max_activation, max_predecessor |
 | move | 8,362 | 2^14 | root, scope, old_nullifier, new_nullifier, signal |
@@ -402,7 +402,7 @@ counts (`bb gates`, nargo 1.0.0-beta.22):
 
 The vote circuit fits the bundled SRS (2^15 + 1 points); the prover's SRS
 hint must be at least the circuit's dyadic size. Action has 94 gates of
-headroom under 2^13. nargo tests: action 41, stake 52, vote 50 (mobile
+headroom under 2^13. nargo tests: action 41, stake 71, vote 50 (mobile
 `circuits/`), plus privacy_core's Go parity vectors.
 
 Measured (Apple M2): action prove 0.34 s single-thread, 0.16 s on 8 threads;
@@ -429,7 +429,15 @@ Two lanes, one owner (nk), every input under `anchor`; every note amount
 - **Padding.** An amount-0 input publishes 0 or its own would-be nullifier
   (still derived from nk); an amount-0 output publishes 0 or the zero note's
   commitment.
-- `otag = H(TAG_OTAG, owner_pk, salt)` of the same owner; binds sighash.
+- **Groundworks tags.** Every input publishes `gw = H(TAG_GW, nk, rho)`
+  (`gw_0`, `gw_1`, `cr_gw`; a padding input 0 or its own, as for
+  nullifiers). Each output may vote: `gw_out` (`cr_gw_out`) is its own tag
+  and `w_out` (`cr_w_out`) its unexposed amount (lane A `out − exposed`;
+  lane B, when labelled, the input's part `cr_in`: derth moved in by a
+  redelegation votes only from a stake tx after its label clears), or both
+  0. A padding output cannot
+  vote. A tag needs no tree position.
+- Binds sighash.
 
 The chain fixes per msg the assets, `v_in`, `v_out`, `cr_v_in`,
 `cr_move_time`, `debt_root`, `clear_before` and which slots must be zero.
@@ -987,7 +995,9 @@ options.
 
 The module is the sole non-self delegator to x/staking. A validator's book:
 `D` (module delegation), `W` (unwithdrawn rewards), `P` (queue: ERTH waiting
-for the epoch end), `U` (pending undelegation); backing `B = D + W + P − U`,
+for the epoch end: withdrawn rewards, a redelegation's queued part, a
+delegation the validator could not take at once), `U` (pending
+undelegation); backing `B = D + W + P − U`,
 derth supply `S`, live rate `B / S`. Every conversion is an integer floor
 favouring the book. x/staking's MsgDelegate/MsgUndelegate/
 MsgCancelUnbondingDelegation are refused except for an operator's own
@@ -996,12 +1006,14 @@ ante filter, top level and in authz MsgExec, and the staking hooks, which
 nothing routes around).
 
 Params: `epoch_seconds` (1 day), `stake_root_window_seconds` (14 days),
-`min_position` (1 ERTH), `min_delegation` (1 ERTH).
+`min_position` (1 ERTH: the smallest Groundworks vote weight, derth × epoch
+rate; named for the retired positions, kept so the launch genesis reads),
+`min_delegation` (1 ERTH).
 
 ### 8.1 One stake note per validator
 
 The chain mints no stake note. Value the chain credits (a delegation's
-derth, an unlocked position's, a redelegation's arrival) is a public `v_in`
+derth, a redelegation's arrival) is a public `v_in`
 the stake proof merges into the owner's existing note: one note per (owner,
 validator). The credit follows the live rate, so **the wallet names the
 credit and the chain checks the price**: the credited derth is a public input,
@@ -1017,17 +1029,24 @@ looks like a partial one). No stake note's amount is ever public.
 
 ### 8.2 StakeProof and StakeFields
 
-    StakeProof {proof 1, anchor 2, nullifiers 3 (exactly 2), owner_tag 7,
+    StakeProof {proof 1, anchor 2, nullifiers 3 (exactly 2),
                 commitment 9, ciphertext 10, credit_nullifier 11, credit_commitment 12,
-                credit_ciphertext 13, clear_before 14, debt_root 15}
-                reserved 4, 5, 6, 8 ("commitments", "ciphertexts", "spc_mint", "spc_ciphertext")
+                credit_ciphertext 13, clear_before 14, debt_root 15,
+                groundworks_tags 16 (exactly 2), credit_groundworks_tag 17,
+                vote_tag 18, vote_weight 19, credit_vote_tag 20, credit_vote_weight 21}
+                reserved 4, 5, 6, 7, 8 ("commitments", "ciphertexts", "spc_mint",
+                "owner_tag", "spc_ciphertext")
 
     StakeFields = anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm, Bytes(credit_ct),
-                  owner_tag, clear_before, debt_root        (absent ciphertext: Bytes of nothing)
+                  clear_before, debt_root, gw_0, gw_1, credit_gw,
+                  vote_tag, vote_weight, credit_vote_tag, credit_vote_weight
+                  (absent ciphertext: Bytes of nothing)
 
 Every staking msg's sighash binds the StakeFields first, then its own fields.
 `ValidateBasic`: proof length, canonical fields, exactly two lane-A
-nullifiers, non-zero nullifiers distinct, a ciphertext exactly for a non-zero
+nullifiers and two lane-A Groundworks tags, non-zero nullifiers distinct, a
+vote tag exactly with a positive vote weight (each lane), the two vote tags
+distinct, a ciphertext exactly for a non-zero
 commitment and exactly **201 bytes** (wallet stake ciphertext; label fields
 zero when unlabelled, so the length says nothing), `debt_root` zero when
 `clear_before` is 0.
@@ -1040,10 +1059,8 @@ proof that clears looks like every other. `ClearBefore(now)` = block time −
 window (0 only while the block time is below the window, when clear_before
 must be 0).
 
-Owner tag salt: fresh random on every proof that does not act on a position
-(delegate, undelegate, redelegate, restake); a lock takes a fresh salt that
-stays the position's, and the position's update, vote and unlock reuse it. A
-reused salt links txs.
+The owner tag (field 7, public input `otag`) is retired with positions
+(v1.2.0).
 
 ### 8.3 Msgs
 
@@ -1052,22 +1069,25 @@ Every staking msg: `bundle` (fee: whole uerth balance, except MsgDelegate),
 
 | Msg (fields) | lane A | v_in / v_out | lane B | shape | sighash fields after StakeFields |
 | --- | --- | --- | --- | --- | --- |
-| Delegate {bundle 1, validator 2, stake 4, amount 5, derth 6} | derth/<v> | v_in = derth | – | spend + create | Bytes(validator), amount, derth |
-| Restake {bundle 1, validator 2, stake 4} | derth/<v> | – | – | spend + create | Bytes(validator) |
-| Undelegate {bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7} | derth/<v> | v_out = amount | – | spend + create | Bytes(validator), amount, pc, Bytes(ciphertext) |
-| LockPosition {bundle 1, validator 2, amount 3, splits 4, stake 6} | derth/<v> | v_out = amount | – | spend + create | Bytes(validator), amount, Bytes(SplitsBytes(splits)) |
-| UnlockPosition {bundle 1, position_id 2, stake 4} | derth/<position's v> | v_in = position's derth | – | spend + create | position_id |
-| UpdatePosition {bundle 1, position_id 2, splits 3, stake 5} | 0 | – | – | nothing | position_id, Bytes(SplitsBytes(splits)) |
-| PositionVote {bundle 1, position_id 2, proposal_id 3, options 4, stake 6} | 0 | – | – | nothing | position_id, proposal_id, Bytes(OptionsBytes(options)) |
-| Redelegate {bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7} | derth/<src> | v_out = amount | derth/<dst>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes | Bytes(src), Bytes(dst), amount, dst_derth, move_time |
+| Delegate {bundle 1, validator 2, stake 4, amount 5, derth 6, groundworks_split 7} | derth/<v> | v_in = derth | – | spend + create | Bytes(validator), amount, derth, Bytes(SplitsBytes(groundworks_split)) |
+| Restake {bundle 1, validator 2, stake 4, groundworks_split 5} | derth/<v> | – | – | spend + create | Bytes(validator), Bytes(SplitsBytes(groundworks_split)) |
+| Undelegate {bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7, groundworks_split 8} | derth/<v> | v_out = amount | – | spend + create | Bytes(validator), amount, pc, Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)) |
+| Redelegate {bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7, groundworks_split 8} | derth/<src> | v_out = amount | derth/<dst>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes | Bytes(src), Bytes(dst), amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)) |
+
+MsgLockPosition, MsgUpdatePosition, MsgUnlockPosition and MsgPositionVote
+are retired (v1.2.0); their type URLs are no longer registered.
 
 "spend" = nf_0 **and** nf_1 non-zero: each slot spends a note or pads with
 its own would-be nullifier `H(TAG_NF, nk, rho, 0)` for a fresh random rho
 (amount 0), so a merge of two notes and a spend of one look the same; a zero
 nf_1 beside a non-zero nf_0 is refused (a format change from "nf_1
-optional"; wallets always pad slot 1). "create" = cm non-zero. Position msgs prove the position's owner tag. `MsgRestake` merges
-an owner's second note at a validator (two devices, a labelled note beside an
-unlabelled credit); it never splits.
+optional"; wallets always pad slot 1); likewise both lane-A Groundworks
+tags (padding: the input's own). "create" = cm non-zero. A non-empty
+`groundworks_split` is required exactly when an output votes (vote_tag or
+credit_vote_tag non-zero), 8.6. `MsgRestake` merges an owner's second note
+at a validator (two devices, a labelled note beside an unlabelled credit);
+it never splits. Respending a single note onto itself with a split is how a
+note votes, changes its split or renews its lease without moving stake.
 
 Encodings: `SplitsBytes` is 16 bytes per entry (option_id, percent, big-endian
 u64). `OptionsBytes` is per option the option as big-endian u64, then the
@@ -1075,17 +1095,17 @@ weight's canonical decimal string (`LegacyDec.String`, 18 places) prefixed by
 its length as big-endian u32. At most `MaxOptionsPerVote` (4) options.
 
 Responses: `MsgDelegateResponse {derth 1, position 2}`,
-`MsgUnlockPositionResponse {position 1}`, `MsgRedelegateResponse {value 1,
-derth 2, position 3, completion_time 4}` (`position` the merged note's),
-`MsgUndelegateResponse {value 2, payout_id 4}` (1, 3 reserved),
-`MsgLockPositionResponse {position_id 1}`.
+`MsgRedelegateResponse {value 1, derth 2, position 3, completion_time 4}`
+(`position` the merged note's tree position),
+`MsgUndelegateResponse {value 2, payout_id 4}` (1, 3 reserved).
 
-**Gas** (`PrivateActionGas`, on top of the bundle's): base + proof_verification_gas
-+ writes × note_gas, writes = 2 per nullifier slot (an indexed-tree insert
+**Gas** (`PrivateActionGas`, on top of the bundle's): base + 300,000
+(`gasGroundworks`, every stake msg, voting or not, so gas does not tell a
+voting note from another) + proof_verification_gas + writes × note_gas, writes = 2 per nullifier slot (an indexed-tree insert
 rewrites two paths) + 1 per output slot: lane A 2 nullifiers and 1 output,
 lane B (Redelegate) 1 and 1, Undelegate +1 for its queued payout. Bases:
-Delegate 400,000; Restake 100,000; Undelegate 400,000; Lock 400,000; Update
-300,000; Unlock 300,000; PositionVote 250,000; StakeVote 250,000 (its writes:
+Delegate 600,000 (it bonds in its handler); Restake 100,000; Undelegate 400,000; StakeVote 250,000
+(no Groundworks part; its writes:
 1 + 2 vote nullifiers, padding included: the same for every vote); Redelegate 700,000 + 2,500 per entry of the pair's
 x/staking record, + 2,500 per entry + 128 × 20,000 while the pair is at the
 entry cap (wallets simulate).
@@ -1094,15 +1114,29 @@ Errors: 1101 invalid msg, 1102 validator cannot take delegations (unknown,
 jailed, tombstoned, slashed to nothing, or a book settling: no derth but
 backing), 1103 amount (below min_delegation, above a note, a credit the value
 does not buy, more derth than exists, a vote above the snapshot supply), 1104
-unbonding record is not open, 1106 no voting, 1108/1109 position, 1113 stake
+unbonding record is not open, 1106 no voting, 1108 Groundworks vote (below
+`min_position`, a tag already voting that the proof does not cancel), 1109
+retired, 1113 stake
 tree (anchor, clear_before, debt_root), 1114 stake nullifier spent, 1115 stake
 proof, 1119 vote nullifier used, 1120 redelegation (same validator, move_time
 out of range, genesis redelegation records).
 
 ### 8.4 Delegation and undelegation
 
-**Delegate**: the bundle releases `amount` uerth into the module (queued,
-delegated at the epoch end); `derth` credited at the live rate as 8.1.
+**Delegate**: the bundle releases `amount` uerth into the module, which
+delegates it to the validator in the same block (`bondNow`, x/staking's
+Delegate from the module account, as a redelegation's arrival is); `derth`
+credited at the live rate as 8.1. The delegation earns from that block and
+is exposed to slashes from it. The rewards the delegation change withdraws
+(x/distribution pays them out on every change) join the book's queue, so
+the backing grows by exactly `amount` and the rate does not move (up to the
+delegation's share truncation). A validator that cannot take a delegation
+now (gone, or slashed to nothing) gets it queued for the epoch end instead.
+Event `shieldedstaking_delegate` carries `delegated` (true when bonded at
+once). Priced at the live rate and earning from its own block, a delegation
+shares in no reward it did not earn. (Before v1.2.0 every delegation waited
+in the queue for the epoch end while its derth already shared the rewards
+accrued meanwhile.)
 
 **Undelegate** names its payout destination; the chain pays it:
 
@@ -1182,40 +1216,86 @@ while a proposal snapshotted before their spend is open). One weight per
 owner and validator; a wallet staked with several validators sends one vote
 each. The number of notes voted (1 or 2) is hidden (padding, 4.2).
 
-### 8.6 Positions (Groundworks)
+### 8.6 Groundworks votes (stake notes)
 
-A position is a public object `{validator, derth, owner tag, splits,
-split_epoch}`: `MsgLockPosition` moves derth out of a note into it
-(`min_position` 1 ERTH; at most 2^63−1), `MsgUpdatePosition` re-splits it,
-`MsgPositionVote` votes it on an x/gov proposal (stake-tree snapshot rule:
-created before the snapshot's block; replaceable), `MsgUnlockPosition`
-merges its derth back into the owner's note. Each proves the owner tag.
-Positions are uncapped. A position keeps its Groundworks weight whatever
-its validator's status (jailed, unbonding, unbonded) until its lease ends:
-it is the holder's private stake, not the validator's power. Only an
-operator's self-bond is gated to Bonded validators (section 9). Decided, not
-an oversight.
+A stake note votes in Groundworks in place, keyed by its Groundworks tag
+`gw = H(TAG_GW, nk, rho)` (4.1); the chain never learns its owner.
 
-A position's split is leased: `split_expires_at` = cast or renewed +
-`groundworks_lease_seconds` (section 9), 0 without a split. Lock and Update
-set it (Update with the same split renews); at the lapse the split is cleared
-and comes off its validator's totals at that exact time (section 9,
-Leases). Query/Position(s) and the `position` events show it, so a wallet
-reminds from its own positions; nothing new ties a position to an owner.
+- **Cancel.** Every stake proof publishes its inputs' tags (lane A's two,
+  padding its own; lane B's one), and the vote stored under each is deleted
+  (`applyGroundworks`, after the proof's spends). A voting note that is
+  spent stops counting in the same block. A tag no vote is stored under (a
+  note that did not vote, a padding input) cancels nothing.
+- **Cast.** A stake msg (Delegate, Restake, Undelegate, Redelegate) may carry
+  `groundworks_split`; then its output(s) vote: `vote_tag`/`vote_weight` for
+  lane A at its validator, `credit_vote_tag`/`credit_vote_weight` for lane B
+  at the destination (Redelegate's one split covers both). The weight is the
+  output's unexposed derth, proven by the circuit. Stored as
+  `GroundworksVote {id 1, validator 2, derth 3, splits 4, created_height 7,
+  weight 8 (not stored: derth × epoch rate, filled by queries), split_epoch
+  10, split_expires_at 11, tag 12}` (5, 6, 9 reserved: the positions'
+  pubkey, nonce, owner_tag). Without a split both outputs must not vote.
+- **Checked in the ante** (`checkGroundworks`): the split is valid for the
+  Groundworks stream; each vote fits a note, weighs something at its
+  validator, and weighs at least `min_position` (derth × epoch rate); its
+  tag is not already voting unless this proof cancels that vote (a reused
+  rho gives two notes one tag: the second vote is refused, and a spend only
+  ever cancels the spender's own vote).
+- **Carry forward.** Every unit of derth is in one unspent note, so the live
+  weight never exceeds the unspent voted derth (invariant 2). Wallets pass
+  the owner's split on every stake msg, so each delegate, undelegate, move
+  or merge ends the old note's vote and starts the new note's in one tx.
+  Voting, changing the split or renewing alone: a `MsgRestake` of the note
+  onto itself with the split. "Stop voting": a restake with no split.
+- **Lease.** `split_expires_at` = cast + `groundworks_lease_seconds`
+  (section 9). Every cast starts a new lease; at the lapse the vote comes
+  off its validator's totals at that exact time and is deleted (`voteLapser`,
+  section 9, Leases).
+- A vote keeps its Groundworks weight whatever its validator's status
+  (jailed, unbonding, unbonded) until its lease ends: it is the holder's
+  private stake, not the validator's power. Only an operator's self-bond is
+  gated to Bonded validators (section 9). Decided, not an oversight. Votes
+  are uncapped.
+- Votes do not vote on x/gov proposals: stake votes on proposals are
+  `MsgStakeVote` only (8.5).
 
 Weighed per validator: x/shieldedstaking keeps `T[v][o]` = Σ over v's live
-positions of derth × percent (`GwTotals`, exact integers); Lock, Update and
-Unlock add or remove exactly the position's own terms. All of v's positions
-are ONE weighted voter in x/allocation, key `"gwpos/" || val_bytes` (26 or 38
-bytes, never an account's 20/32 or a nullifier's 32), with weight per option
+votes of derth × percent (`GwTotals`, exact integers); each cast and cancel
+adds or removes exactly the vote's own terms. All of v's votes are ONE
+weighted voter in x/allocation, key `"gwpos/" || val_bytes` (26 or 38 bytes,
+never an account's 20/32 or a nullifier's 32), with weight per option
 `trunc(epoch_rate_v × T[v][o] / 100)` (`Voter.option_weights`,
-`allocation.SetWeightedVoter`). The epoch end, a later book in the sweep, a
-slash and both books of a redelegation (and the source and every
-destination of a slashed redelegation) re-file one voter per validator at
-the end of the block. A Groundworks stream reset is honoured lazily: stale
-`split_epoch`/`GwEpoch` count as zero; the owner re-votes. A split naming an
-option pruned since is left out when re-filed and dropped from the export.
-A position's weight is not stored; queries compute derth × epoch rate.
+`allocation.SetWeightedVoter`), beside the operator's self-bond. The epoch
+end, a later book in the sweep, a slash and both books of a redelegation
+(and the source and every destination of a slashed redelegation) re-file one
+voter per validator at the end of the block. A Groundworks stream reset is
+honoured lazily: stale `split_epoch`/`GwEpoch` count as zero; the owner
+votes again. A split naming an option pruned since is left out when
+re-filed and dropped from the export (a vote left with no option is not
+exported).
+
+Queries: `Query/GroundworksVotes` (`/earth/shieldedstaking/v1/groundworks_votes`,
+paginated; a wallet finds its own by its notes' tags) and
+`Query/GroundworksVote {id}` (`/earth/shieldedstaking/v1/groundworks_votes/{id}`).
+Event `shieldedstaking_groundworks_vote {action (cast, cancelled, lapsed),
+vote_id, tag, validator, derth, weight, options, split_expires_at}`.
+
+**Privacy (accepted).** Per vote, the validator, the weight (about the
+voting note's derth) and the split are public; the owner is not. A voter's
+stake txs at a validator are linked into one pseudonymous history with
+amounts: each tx publishes the tag of the note the previous one voted with
+and starts the next vote. A non-voter's tags are random-looking values that
+link nothing (a note's tag appears once, when it is spent).
+
+**Positions (retired, v1.2.0).** Groundworks was voted by positions: derth
+locked out of a note into a public object under an owner tag, with its own
+lock, update, unlock and gov-vote msgs. The v1.2.0 handler
+(`MigrateV1_2_0`) deletes any left (records, leases, totals, the
+by-validator index and their gov votes; their derth leaves the
+validator's supply, its backing staying with the remaining holders, unless
+it is the whole supply) and re-files the voters they fed.
+earth-1 had none. Genesis keeps the field names `positions` (5) and
+`next_position_id` (6), now holding the votes and the next vote id.
 
 ### 8.7 Redelegation and the slash debt
 
@@ -1267,7 +1347,7 @@ events.
 note while the label is open: lane A spends at most one labelled note and
 keeps the exposure in the output; lane B merges only into an unlabelled note
 (a redelegation into a validator where the owner's note is labelled makes a
-second note). Undelegating, locking or redelegating exposed derth waits for
+second note). Undelegating or redelegating exposed derth waits for
 the label to clear; the unexposed part moves freely. Chained moves (X -> A
 -> B within the window) therefore label each move separately.
 
@@ -1358,7 +1438,7 @@ validator (1118). The only way to take income out is to unbond the self-bond.
 - The validators' Groundworks voters are x/shieldedstaking's weighted voters
   (8.6).
 - A self-bond counts toward Groundworks weight only at a Bonded validator
-  (`bondedWeight`, `PositionWeightSource.Weight`); the operator is resynced
+  (`bondedWeight`, `GroundworksWeightSource.Weight`); the operator is resynced
   when its validator bonds or starts unbonding, and while its bond remains
   its vote is kept at weight zero (the weight returns with no new vote). A
   self-bond withdrawn takes its weight with it.
@@ -1367,13 +1447,13 @@ validator (1118). The only way to take income out is to unbond the self-bond.
 - **Leases.** Every Groundworks split is leased for
   `groundworks_lease_seconds` (x/allocation param 2; 0 = default 365 days;
   else 1 day to 2 years), as a caretaker split is for caretaker_vote_seconds:
-  a stake position's (`Position.split_expires_at`, 8.6) and an operator's
+  a stake note's vote (`GroundworksVote.split_expires_at`, 8.6) and an operator's
   (`MsgSetAllocations`, `Voter.expires_at` field 5) alike. Operators get the
   same rule because their vote is the same kind of power (stake directing
   public money); one param keeps the stream uniform. Casting again renews
   the lease (from that block); a resync at a new weight keeps it. Genesis
   refuses an account's Groundworks split with no `expires_at`, as it refuses
-  a position's split with no `split_expires_at`.
+  a Groundworks vote with no `split_expires_at`.
   - **Where a lease retires: only x/allocation's BeginBlock sweep**
     (`SweepLapses`, from the BeginBlocker's settle of each stream). It walks
     every lease due by the block time in time order (`VoterLapses` here,
@@ -1387,24 +1467,24 @@ validator (1118). The only way to take income out is to unbond the self-bond.
     lease earlier, in one (slower) block.
     **Bound** (audit R3-C1): a lease ends at cast block time + L, so one
     block's casts share one lapse second and only a halt packs several
-    blocks' worth into one sweep. Position casts (Lock / Update) are private
-    actions, at most `max_private_actions_per_block` per block (32 by
+    blocks' worth into one sweep. Vote casts (stake msgs carrying a split)
+    are private actions, at most `max_private_actions_per_block` per block (32 by
     default, 256 at most); account leases are operators' only, one per
     operator. The first block after a halt of H seconds therefore retires at
-    most `max_private_actions_per_block` x H / block_time positions (32 per
+    most `max_private_actions_per_block` x H / block_time votes (32 per
     block of halt: a 6 h halt at 6 s blocks, about 115k, each some 10-20 KV
     operations and one event), plus at most one lease per operator. The
     total work is what those blocks would have done; only its spreading is
     lost. It cannot be weaponised: reaching the bound needs every block of
     the matching window, one lease (365 days) before the halt, full of
-    paid position casts, which crowds out every other private action for
-    that window and, since a position holds one lease, means about
-    32 x L / block_time (~1.7e8) live positions renewed round-robin, all to
+    paid vote casts, which crowds out every other private action for
+    that window and, since a vote holds one lease, means about
+    32 x L / block_time (~1.7e8) live votes renewed round-robin, all to
     hit a halt no one can schedule a year ahead. The worst case is one
     slow, event-heavy block, not a halt.
   - **Every other settle** (a tx, a staking hook, an EndBlock resync:
     `AdvanceIndex` / `advanceIndexTo`) moves the index only and never
-    touches a voter, position or total, so a caller that reads a position
+    touches a voter, vote or total, so a caller that reads a vote
     or voter, settles, then writes cannot undo or double a lapse. Callers
     also settle before they read. Should a lease ever be due at such a
     settle (only a module settling Groundworks in BeginBlock before
@@ -1412,26 +1492,26 @@ validator (1118). The only way to take income out is to unbond the self-bond.
     lapse time instead of passing it. (Audit round 2, CD-1: before, any
     settle retired leases, capped at 1000 lapse seconds; a backlog past the
     cap left leases due at tx time, where read-settle-write callers
-    resurrected lapsed weight, subtracted a position twice so its option's
-    last position could never unlock, or re-filed a lapsed operator vote
+    resurrected lapsed weight, subtracted a position (the votes'
+    predecessor) twice so its option's last position could never unlock, or re-filed a lapsed operator vote
     with no lease.)
   - A lease whose retirement fails is re-queued a day after the block it
     failed in (`LapseRetryAt`, `LapseRetrySeconds`), counting meanwhile,
     never halting. A deterministic failure therefore keeps its weight, and
     its options keep earning on it, for good: alert on it.
-  - Events: `split_lapsed` (operators), `position` with action
-    `split_lapsed` (positions; every position event carries
+  - Events: `split_lapsed` (operators), `shieldedstaking_groundworks_vote`
+    with action `lapsed` (stake note votes; every vote event carries
     `split_expires_at`).
   - **Alerting** (x/allocation/types/events.go; none halts anything):
 
     | event | attributes | meaning | alert |
     | --- | --- | --- | --- |
-    | `lease_retire_failed` | `stream`, `lapser` (`account` / `positions`), `key` (voter / valoper), `expires_at`, `retry_at`, `error` | a due lease could not be retired; it counts until `retry_at` and retries daily for ever | any occurrence (page) |
+    | `lease_retire_failed` | `stream`, `lapser` (`account` / `groundworks_votes`), `key` (voter / valoper), `expires_at`, `retry_at`, `error` | a due lease could not be retired; it counts until `retry_at` and retries daily for ever | any occurrence (page) |
     | `lease_settle_held` | `stream`, `expires_at` | a settle other than the sweep met a due lease and held the index there; should never happen | any occurrence (page) |
     | `lease_backlog_drained` | `stream`, `lapse_seconds` | one sweep walked more than 1000 lapse seconds (a halt's backlog), exact but slow | informational |
 
     x/shieldedstaking also emits `shieldedstaking_epoch_failure` (`stage`
-    `lapse_positions`) alongside `lease_retire_failed`.
+    `lapse_groundworks`) alongside `lease_retire_failed`.
 - The gov module account is on the blocked list.
 
 ---
@@ -1497,7 +1577,8 @@ the tree and checks the recorded roots against it; the turnstile invariant
 ### 11.2 x/shieldedstaking
 
 Genesis fields: params 1, epoch 2, validators 3, unbond_records 4, positions
-5, next_position_id 6, snapshots 7, votes 8, stake_commitments 9,
+5 (the Groundworks votes; named for the retired positions), next_position_id
+6 (the next vote id), snapshots 7, votes 8, stake_commitments 9,
 stake_nullifiers 10 (insertion order), stake_roots 11, snapshot_seq 12,
 supply_checkpoints 13, epoch_sweep 14, pending_releases 15, retiring_escrows
 16, unbond_payouts 17, next_unbond_payout_id 18, moves 19, debt_rows 20
@@ -1518,10 +1599,12 @@ such an entry's completion).
 Validate refuses: a zero or repeated stake nullifier; a malformed nf_root or
 an nf_size beyond the tree; a repeated or malformed vote key; a note vote
 without exactly 2 non-zero vote nullifiers (the first its key's) or sharing one with
-another vote on the proposal; a position vote with any; payouts per record
+another vote on the proposal; a vote key other than `0x00 || nullifier` (the
+retired position votes' `0x01 || id` included); payouts per record
 not summing to its outstanding, values outside 1..2^63−1, a payout without a
 pc or blind ciphertext, retry_at not set exactly when attempts > 0; a
-genesis position's derth outside 1..2^63−1; move and debt row keys not
+Groundworks vote's derth outside 1..2^63−1, a malformed, zero or repeated
+tag, or a vote without a split and a lease; move and debt row keys not
 canonical, distinct and nonzero; retained outside 0..credited; a cut move
 without its row; a move or debt row key that is not a spent stake nullifier;
 a move's completion different from its entry's. x/personhood genesis refuses
@@ -1529,12 +1612,12 @@ records dated after genesis and handle leases past genesis +
 handle_lease_max.
 
 Invariants (`AssertInvariants`; the epoch end reports, never halts; skipped
-with an event above `InvariantBookLimit` 1,000 books/records/positions; each
+with an event above `InvariantBookLimit` 1,000 books/records/Groundworks votes; each
 redelegation record decoded once a pass):
 
 1. ERTH: module uerth balance == queued delegations + matured payouts not yet
    made.
-2. derth is never a coin; derth locked in v's positions ≤ derth_supply_v.
+2. derth is never a coin; derth of v's Groundworks votes ≤ derth_supply_v.
 3. Unbonding: per validator, UNBONDING records' sum == the module's SDK
    entries' initial balances; each record's height has an entry.
 4. Rate: pending_undelegation == PENDING targets, `D + W + P ≥ U`, and
@@ -1542,7 +1625,7 @@ redelegation record decoded once a pass):
    ceil(supply × 1e-18) + 1 uerth, never over).
 5. Reward escrows: every validator's escrow recorded and its withdraw
    address; no other; the module account's withdraw address is itself.
-6. Groundworks totals == Σ derth × percent of live positions.
+6. Groundworks totals == Σ derth × percent of live Groundworks votes.
 7. Stake nullifier tree (O(1)): size 0 or 1 + its last value's leaf index;
    recorded latest size ≤ size.
 8. Payouts: each record's payouts sum to its outstanding; every payout in
@@ -1558,7 +1641,7 @@ redelegation record decoded once a pass):
 
 ### 11.3 Exports
 
-Allocation and position splits drop options pruned since. A zero-height
+Allocation splits and Groundworks votes drop options pruned since. A zero-height
 export drops open moves (8.7).
 
 ### 11.4 Launch ceremony
@@ -1618,8 +1701,15 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
 - **Stake proofs**: clear_before = `Query/DebtTree.clear_before` and
   debt_root = `Query/DebtTree.root`, read at proving time (accepted while
   clear_before ≥ the chain's − 3,600 s and the root is current; a slash
-  reaching a redelegation changes the root: re-prove). Owner tag salt as
-  8.2.
+  reaching a redelegation changes the root: re-prove). Every input
+  publishes its Groundworks tag (padding: its own, for the padding rho).
+- **Groundworks**: the owner picks one split; every stake msg then carries
+  it (`groundworks_split`) with `vote_tag = H(TAG_GW, nk, out_rho)` and
+  `vote_weight` = the output's unexposed amount (for a redelegation, both
+  outputs; a zero-amount output does not vote). To vote all stake, send one
+  `MsgRestake` per validator with the split; to stop, one with none. A
+  restored wallet adopts its split from `Query/GroundworksVotes` (the vote
+  whose tag is one of its notes'). Re-vote before `split_expires_at`.
 - **Validator list** (`Query/Validators`, `/earth/shieldedstaking/v1/validators`):
   wallets read **every page** of it, at one height (the response's `height`;
   pin later pages with the `x-cosmos-block-height` header), and quote from
@@ -1643,7 +1733,7 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
   amount exactly while S = 0. Lane A spends your derth/<v> note or pads (a
   fresh rho, position 0, nf = H(TAG_SNF, nk, rho, 0)); output = old + derth (a
   labelled input keeps its label and exposure).
-- **Undelegate / Lock**: the change, or a zero note (amount 0, fresh rho/rcm)
+- **Undelegate**: the change, or a zero note (amount 0, fresh rho/rcm)
   when nothing is left; a labelled note releases only its unexposed part (or
   clears first). Undelegate: a fresh pool opening, pc = PC(owner_pk, rho,
   rcm), ciphertext = EncryptBlindNote(rho, rcm, memo) to your own key;
@@ -1660,7 +1750,6 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
   derth/<dst> note (or pads), cr_v_in = dst_derth, cr_move_time = move_time =
   the latest block's time. Gas varies with the pair's entry count: simulate.
   A refused quote costs nothing.
-- **Unlock**: lane A merges the position's derth into your note there.
 - **Clearing**: after move_time + window, any lane-A proof may clear, with
   the witness from the debt rows (rebuild with zk/debt from Query/DebtTree or
   `shieldedstaking_debt_row` events; a move without a row: its low leaf).

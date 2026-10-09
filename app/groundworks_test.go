@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -32,15 +31,16 @@ import (
 	"github.com/earth-network/earth/zk/privacy"
 )
 
-// Groundworks positions are weighed per validator: one weighted voter per
-// validator holding trunc(rate x sum(derth x pct) / 100) per option. These
-// tests drive the position handlers directly (the ante, and so the proofs,
-// faked: fakeAuthorized), so they can make many positions cheaply.
+// Groundworks votes are weighed per validator: one weighted voter per
+// validator holding trunc(rate x sum(derth x pct) / 100) per option. These tests drive the stake handlers directly (the ante,
+// and so the proofs, faked: fakeAuthorized), casting and cancelling note
+// votes with restakes, so they can make many votes cheaply.
 
 type gwEnv struct {
 	*stakeEnv
 	v    sdk.ValAddress
 	opts []uint64
+	seq  uint64
 }
 
 const gwStream = allocationtypes.STREAM_ID_GROUNDWORKS
@@ -68,12 +68,10 @@ func initGwEnv(t *testing.T) *gwEnv {
 		require.NoError(t, e.app.BankKeeper.SendCoins(e.ctx(), gov, e.userAddr(), left))
 	}
 	e.fakeDelegate(v, uint64(200_000*gwE), "gw")
-	e.days(2) // processed, then rewards compounded: rate > 1
+	e.days(2) // joined, then rewards compounded: rate > 1
 	require.True(t, e.state(v).EpochRate.GT(math.LegacyOneDec()))
 	return g
 }
-
-func ownerTag(i int) []byte { return privacy.FieldBytes(ssDet("gw-owner", uint64(i))) }
 
 func (g *gwEnv) split(pcts ...uint64) []allocationtypes.AllocationWeight {
 	var out []allocationtypes.AllocationWeight
@@ -85,29 +83,80 @@ func (g *gwEnv) split(pcts ...uint64) []allocationtypes.AllocationWeight {
 	return out
 }
 
-func (g *gwEnv) lockPos(v sdk.ValAddress, amount uint64, owner int, splits []allocationtypes.AllocationWeight) uint64 {
-	g.t.Helper()
-	m := &sstypes.MsgLockPosition{Validator: g.valoper(v), Amount: amount, Splits: splits,
-		Stake: sstypes.StakeProof{OwnerTag: ownerTag(owner)}}
-	res, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).LockPosition(g.fakeAuthorized(m), m)
-	require.NoError(g.t, err)
-	return res.PositionId
+// gwVote is a test note's Groundworks vote: the voting note's tag, and the
+// vote's id.
+type gwVote struct {
+	tag []byte
+	id  uint64
 }
 
-func (g *gwEnv) updatePos(id uint64, owner int, splits []allocationtypes.AllocationWeight) {
-	g.t.Helper()
-	m := &sstypes.MsgUpdatePosition{PositionId: id, Splits: splits, Stake: sstypes.StakeProof{OwnerTag: ownerTag(owner)}}
-	_, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).UpdatePosition(g.fakeAuthorized(m), m)
+// tryCastGw is a restake (ante faked) whose output votes derth at v with
+// splits, spending prev's note (its tag cancels prev) when given.
+func (g *gwEnv) tryCastGw(v sdk.ValAddress, derth uint64, splits []allocationtypes.AllocationWeight, prev *gwVote) (*gwVote, error) {
+	g.seq++
+	st := fakeStake(fmt.Sprintf("gw-vote-%d", g.seq), false)
+	if prev != nil {
+		st.GroundworksTags[0] = prev.tag
+	}
+	tag := privacy.FieldBytes(ssDet("gw-tag", g.seq))
+	st.VoteTag, st.VoteWeight = tag, derth
+	m := &sstypes.MsgRestake{Validator: g.valoper(v), Stake: st, GroundworksSplit: splits}
+	if _, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).Restake(g.fakeAuthorized(m), m); err != nil {
+		return nil, err
+	}
+	id, err := g.app.ShieldedStakingKeeper.GwVotesByTag.Get(g.ctx(), tag)
 	require.NoError(g.t, err)
+	return &gwVote{tag: tag, id: id}, nil
 }
 
-func (g *gwEnv) unlockPos(id uint64, owner int) {
+// castGw votes a note of derth at v with splits.
+func (g *gwEnv) castGw(v sdk.ValAddress, derth uint64, splits []allocationtypes.AllocationWeight) *gwVote {
 	g.t.Helper()
-	st := fakeStake("gw-back-"+strconv.FormatUint(id, 10), false)
-	st.OwnerTag = ownerTag(owner)
-	m := &sstypes.MsgUnlockPosition{PositionId: id, Stake: st}
-	_, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).UnlockPosition(g.fakeAuthorized(m), m)
+	gv, err := g.tryCastGw(v, derth, splits, nil)
 	require.NoError(g.t, err)
+	return gv
+}
+
+// recastGw spends prev's note into one voting splits (the same derth): a
+// split changed, or renewed.
+func (g *gwEnv) recastGw(prev *gwVote, splits []allocationtypes.AllocationWeight) *gwVote {
+	g.t.Helper()
+	old := g.vote(prev.id)
+	val, err := sdk.ValAddressFromBech32(old.Validator)
+	require.NoError(g.t, err)
+	gv, err := g.tryCastGw(val, old.Derth.Uint64(), splits, prev)
+	require.NoError(g.t, err)
+	return gv
+}
+
+// tryCancelGw spends prev's note into one that does not vote.
+func (g *gwEnv) tryCancelGw(prev *gwVote) error {
+	g.seq++
+	st := fakeStake(fmt.Sprintf("gw-cancel-%d", g.seq), false)
+	st.GroundworksTags[0] = prev.tag
+	m := &sstypes.MsgRestake{Validator: g.valoper(g.v), Stake: st}
+	_, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).Restake(g.fakeAuthorized(m), m)
+	return err
+}
+
+func (g *gwEnv) cancelGw(prev *gwVote) {
+	g.t.Helper()
+	require.NoError(g.t, g.tryCancelGw(prev))
+}
+
+// vote is the stored vote id with its live weight (queries' view).
+func (g *gwEnv) vote(id uint64) sstypes.GroundworksVote {
+	g.t.Helper()
+	res, err := sskeeper.NewQueryServerImpl(g.app.ShieldedStakingKeeper).GroundworksVote(g.ctx(), &sstypes.QueryGroundworksVoteRequest{Id: id})
+	require.NoError(g.t, err)
+	return res.Vote
+}
+
+// hasVote reports whether vote id is stored.
+func (g *gwEnv) hasVote(id uint64) bool {
+	has, err := g.app.ShieldedStakingKeeper.GwVotes.Has(g.ctx(), id)
+	require.NoError(g.t, err)
+	return has
 }
 
 // voter is v's Groundworks voter's option weights (nil when it has none).
@@ -144,14 +193,14 @@ func (g *gwEnv) totals(v sdk.ValAddress) map[uint64]math.Int {
 	return out
 }
 
-// perPosition is what voting one position at a time gave each option:
-// sum over live positions of trunc(trunc(rate x derth) x pct / 100).
-func (g *gwEnv) perPosition(v sdk.ValAddress) map[uint64]math.Int {
+// perVote is what voting one note at a time gave each option: sum over live
+// votes of trunc(trunc(rate x derth) x pct / 100).
+func (g *gwEnv) perVote(v sdk.ValAddress) map[uint64]math.Int {
 	rate := g.state(v).EpochRate
 	epoch, err := g.app.AllocationKeeper.StreamEpoch(g.ctx(), gwStream)
 	require.NoError(g.t, err)
 	out := map[uint64]math.Int{}
-	require.NoError(g.t, g.app.ShieldedStakingKeeper.Positions.Walk(g.ctx(), nil, func(_ uint64, p sstypes.Position) (bool, error) {
+	require.NoError(g.t, g.app.ShieldedStakingKeeper.GwVotes.Walk(g.ctx(), nil, func(_ uint64, p sstypes.GroundworksVote) (bool, error) {
 		if p.Validator != g.valoper(v) || p.SplitEpoch != epoch {
 			return false, nil
 		}
@@ -169,18 +218,18 @@ func (g *gwEnv) perPosition(v sdk.ValAddress) map[uint64]math.Int {
 }
 
 // requireEquivalent: the aggregate voter puts on each option what voting
-// position by position did, up to rounding (the aggregate truncates once,
-// never less, by at most 2 per position).
-func (g *gwEnv) requireEquivalent(v sdk.ValAddress, positions int) {
+// note by note did, up to rounding (the aggregate truncates once, never
+// less, by at most 2 per vote).
+func (g *gwEnv) requireEquivalent(v sdk.ValAddress, votes int) {
 	g.t.Helper()
-	agg, per := g.voter(v), g.perPosition(v)
+	agg, per := g.voter(v), g.perVote(v)
 	require.Equal(g.t, len(per), len(agg))
 	rate := g.state(v).EpochRate
 	for opt, want := range per {
 		got := agg[opt]
 		d := got.Sub(want)
-		require.False(g.t, d.IsNegative(), "option %d: aggregate %s < per-position %s", opt, got, want)
-		require.True(g.t, d.LTE(math.NewInt(int64(2*positions))), "option %d: aggregate %s, per-position %s", opt, got, want)
+		require.False(g.t, d.IsNegative(), "option %d: aggregate %s < per-vote %s", opt, got, want)
+		require.True(g.t, d.LTE(math.NewInt(int64(2*votes))), "option %d: aggregate %s, per-vote %s", opt, got, want)
 		require.Equal(g.t, rate.MulInt(g.totals(v)[opt]).QuoInt64(100).TruncateInt(), got)
 	}
 	require.NoError(g.t, g.app.ShieldedStakingKeeper.AssertInvariants(g.ctx()))
@@ -189,23 +238,23 @@ func (g *gwEnv) requireEquivalent(v sdk.ValAddress, positions int) {
 
 func TestGroundworksAggregateEquivalence(t *testing.T) {
 	g := initGwEnv(t)
-	type pos struct {
+	type vote struct {
 		amt  uint64
 		pcts []uint64
 	}
-	plan := []pos{
+	plan := []vote{
 		{1_000*gwE + 7, []uint64{100}},
 		{333*gwE + 1, []uint64{30, 70}},
 		{777*gwE + 3, []uint64{0, 100}},
 		{1 * gwE, []uint64{33, 33, 34}},
 		{12_345*gwE + 11, []uint64{1, 0, 99}},
 	}
-	var ids []uint64
+	var vs []*gwVote
 	for i, p := range plan {
-		ids = append(ids, g.lockPos(g.v, p.amt, i, g.split(p.pcts...)))
+		vs = append(vs, g.castGw(g.v, p.amt, g.split(p.pcts...)))
 		g.requireEquivalent(g.v, i+1)
 	}
-	// Only one Groundworks voter for all of v's positions.
+	// Only one Groundworks voter for all of v's votes.
 	n := 0
 	require.NoError(t, g.app.AllocationKeeper.Voters.Walk(g.ctx(), collections.NewPrefixedPairRange[uint32, []byte](uint32(gwStream)),
 		func(collections.Pair[uint32, []byte], allocationtypes.Voter) (bool, error) {
@@ -217,10 +266,10 @@ func TestGroundworksAggregateEquivalence(t *testing.T) {
 	for opt, w := range g.voter(g.v) {
 		require.Equal(t, w, g.allocated(opt))
 	}
-	// Queries show each position's live weight: derth x epoch rate.
+	// Queries show each vote's live weight: derth x epoch rate.
 	rate := g.state(g.v).EpochRate
-	for i, id := range ids {
-		require.Equal(t, rate.MulInt(math.NewIntFromUint64(plan[i].amt)).TruncateInt(), g.position(id).Weight)
+	for i, gv := range vs {
+		require.Equal(t, rate.MulInt(math.NewIntFromUint64(plan[i].amt)).TruncateInt(), g.vote(gv.id).Weight)
 	}
 
 	// An epoch later: re-weighed at the new rate, still equivalent.
@@ -229,28 +278,34 @@ func TestGroundworksAggregateEquivalence(t *testing.T) {
 	g.requireEquivalent(g.v, len(plan))
 }
 
-// Lock, update and unlock move the totals by exactly what they added: after
-// every position is gone, nothing is left, on the totals or on the options.
+// Casts, re-casts and cancels move the totals by exactly what they added:
+// after every vote is gone, nothing is left, on the totals or on the
+// options. A vote under a tag already voting is refused unless the proof
+// cancels it; a split with no vote, and a vote with no split, are refused.
 func TestGroundworksTotalsExact(t *testing.T) {
 	g := initGwEnv(t)
-	a := g.lockPos(g.v, 501*gwE+3, 1, g.split(37, 63))
-	b := g.lockPos(g.v, 2*gwE+1, 2, g.split(0, 51, 49))
-	c := g.lockPos(g.v, 9*gwE, 3, nil) // no split: no weight
+	a := g.castGw(g.v, 501*gwE+3, g.split(37, 63))
+	b := g.castGw(g.v, 2*gwE+1, g.split(0, 51, 49))
 	g.requireEquivalent(g.v, 2)
-	require.True(t, g.position(c).Weight.IsZero())
 
-	g.updatePos(a, 1, g.split(0, 0, 100))
+	g.seq++
+	st := fakeStake(fmt.Sprintf("gw-twice-%d", g.seq), false)
+	st.VoteTag, st.VoteWeight = a.tag, 5*gwE
+	twice := &sstypes.MsgRestake{Validator: g.valoper(g.v), Stake: st, GroundworksSplit: g.split(100)}
+	_, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).Restake(g.fakeAuthorized(twice), twice)
+	require.ErrorIs(t, err, sstypes.ErrGroundworksVote, "one vote per tag")
+	require.Error(t, (&sstypes.MsgRestake{Validator: g.valoper(g.v), Stake: st}).ValidateBasic(), "a vote names a split")
+
+	a = g.recastGw(a, g.split(0, 0, 100))
 	g.requireEquivalent(g.v, 2)
-	g.updatePos(c, 3, g.split(50, 50))
-	g.requireEquivalent(g.v, 3)
-	g.updatePos(b, 2, nil)
-	g.requireEquivalent(g.v, 3)
+	b = g.recastGw(b, g.split(50, 50))
+	g.requireEquivalent(g.v, 2)
 	g.days(1)
-	g.requireEquivalent(g.v, 3)
+	g.requireEquivalent(g.v, 2)
 
-	g.unlockPos(a, 1)
-	g.unlockPos(b, 2)
-	g.unlockPos(c, 3)
+	g.cancelGw(a)
+	g.cancelGw(b)
+	require.False(t, g.hasVote(a.id))
 	require.Empty(t, g.totals(g.v))
 	require.Nil(t, g.voter(g.v))
 	for _, o := range g.opts {
@@ -262,45 +317,46 @@ func TestGroundworksTotalsExact(t *testing.T) {
 	require.NoError(t, g.app.ShieldedStakingKeeper.AssertInvariants(g.ctx()))
 }
 
-// There is no position cap, and 1 ERTH locks a position.
-func TestGroundworksManyPositionsNoCap(t *testing.T) {
+// There is no vote cap, and a vote weighs at least 1 ERTH (derth x rate).
+func TestGroundworksManyVotesNoCap(t *testing.T) {
 	g := initGwEnv(t)
 	params, err := g.app.ShieldedStakingKeeper.Params.Get(g.ctx())
 	require.NoError(t, err)
-	require.Equal(t, sstypes.DefaultMinPosition, params.MinPosition)
+	require.Equal(t, sstypes.DefaultMinGroundworksVote, params.MinPosition)
 	require.Equal(t, math.NewInt(1_000_000), params.MinPosition)
-	m := &sstypes.MsgLockPosition{Validator: g.valoper(g.v), Amount: uint64(gwE) - 1, Splits: g.split(100),
-		Stake: sstypes.StakeProof{OwnerTag: ownerTag(0)}}
-	_, err = sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).LockPosition(g.fakeAuthorized(m), m)
-	require.ErrorIs(t, err, sstypes.ErrPosition)
+	rate := g.state(g.v).EpochRate
+	under := math.LegacyNewDec(int64(gwE)).Quo(rate).TruncateInt().Uint64() - 1
+	_, err = g.tryCastGw(g.v, under, g.split(100), nil)
+	require.ErrorIs(t, err, sstypes.ErrGroundworksVote)
+	_, err = g.tryCastGw(g.v, under+2, g.split(100), nil)
+	require.NoError(t, err)
 
 	const n = 300
 	for i := 0; i < n; i++ {
-		g.lockPos(g.v, uint64(gwE)+uint64(i), i, g.split(uint64(1+i%99), uint64(99-i%99)))
+		g.castGw(g.v, uint64(gwE)+uint64(i), g.split(uint64(1+i%99), uint64(99-i%99)))
 	}
-	g.requireEquivalent(g.v, n)
+	g.requireEquivalent(g.v, n+1)
 	g.days(1)
-	g.requireEquivalent(g.v, n)
+	g.requireEquivalent(g.v, n+1)
 }
 
 // The epoch's Groundworks work is one voter per validator: re-weighing costs
-// the same gas with 1 position as with 200 on the same validator and
-// options.
-func TestGroundworksEpochCostIndependentOfPositions(t *testing.T) {
-	gas := func(positions int) uint64 {
+// the same gas with 1 vote as with 200 on the same validator and options.
+func TestGroundworksEpochCostIndependentOfVotes(t *testing.T) {
+	gas := func(votes int) uint64 {
 		g := initGwEnv(t)
-		for i := 0; i < positions; i++ {
-			g.lockPos(g.v, uint64(10*gwE), i, g.split(40, 60))
+		for i := 0; i < votes; i++ {
+			g.castGw(g.v, uint64(10*gwE), g.split(40, 60))
 		}
 		ctx, _ := g.ctx().WithGasMeter(storetypes.NewGasMeter(1 << 60)).CacheContext()
 		g.app.ShieldedStakingKeeper.ReweighGroundworks(ctx)
 		return ctx.GasMeter().GasConsumed()
 	}
 	one, many := gas(1), gas(200)
-	t.Logf("re-weigh gas: 1 position %d, 200 positions %d", one, many)
+	t.Logf("re-weigh gas: 1 vote %d, 200 votes %d", one, many)
 	require.Positive(t, one)
 	// Only the stored integers grow (a few more digits in each value): no
-	// per-position read or write, each of which alone costs 1,000 gas flat.
+	// per-vote read or write, each of which alone costs 1,000 gas flat.
 	require.InDelta(t, float64(one), float64(many), 2_000)
 }
 
@@ -311,9 +367,9 @@ func TestGroundworksSlashReweigh(t *testing.T) {
 	vA := g.genesisValidator()
 	g.fakeDelegate(vA, uint64(50_000*gwE), "gw-a")
 	g.days(1)
-	g.lockPos(vA, 10_000*gwE, 1, g.split(100))
-	g.lockPos(vA, 3_000*gwE, 2, g.split(20, 80))
-	g.lockPos(g.v, 5_000*gwE, 3, g.split(100))
+	g.castGw(vA, 10_000*gwE, g.split(100))
+	g.castGw(vA, 3_000*gwE, g.split(20, 80))
+	g.castGw(g.v, 5_000*gwE, g.split(100))
 	before, beforeV := g.voter(vA), g.voter(g.v)
 	g.requireEquivalent(vA, 2)
 
@@ -336,44 +392,44 @@ func TestGroundworksSlashReweigh(t *testing.T) {
 	g.requireEquivalent(vA, 2)
 }
 
-// A governance reset of the Groundworks stream retires every position's
-// split, lazily: the validator voter goes, its totals count as zero (and are
-// dropped at the next epoch end), a stale position updates and unlocks
-// without touching them, and a re-vote counts again.
+// A governance reset of the Groundworks stream retires every vote, lazily:
+// the validator voter goes, its totals count as zero (and are dropped at the
+// next epoch end), a stale vote is cancelled without touching them, and a
+// re-cast counts again.
 func TestGroundworksResetIsLazy(t *testing.T) {
 	g := initGwEnv(t)
-	a := g.lockPos(g.v, 1_000*gwE, 1, g.split(100))
-	b := g.lockPos(g.v, 2_000*gwE, 2, g.split(50, 50))
+	a := g.castGw(g.v, 1_000*gwE, g.split(100))
+	b := g.castGw(g.v, 2_000*gwE, g.split(50, 50))
 	require.NotNil(t, g.voter(g.v))
 
 	gov := authtypes.NewModuleAddress("gov")
 	_, err := allocationkeeper.NewMsgServerImpl(g.app.AllocationKeeper).ResetAllocations(g.ctx(),
 		&allocationtypes.MsgResetAllocations{Authority: g.bech(gov), Stream: gwStream})
 	require.NoError(t, err)
-	require.True(t, g.position(a).Weight.IsZero(), "a stale split carries nothing")
+	require.True(t, g.vote(a.id).Weight.IsZero(), "a stale vote carries nothing")
 	require.NoError(t, g.app.ShieldedStakingKeeper.AssertInvariants(g.ctx()))
 
 	g.days(1) // the epoch end drops v's stale totals and its voter
 	require.Empty(t, g.totals(g.v))
 	require.Nil(t, g.voter(g.v))
 
-	g.updatePos(a, 1, g.split(0, 100)) // a votes again
+	a = g.recastGw(a, g.split(0, 100)) // a votes again
 	g.requireEquivalent(g.v, 1)
 	require.Equal(t, map[uint64]math.Int{g.opts[1]: math.NewInt(100_000 * ssErth)}, g.totals(g.v))
-	g.unlockPos(b, 2) // stale: nothing to take off
+	g.cancelGw(b) // stale: nothing to take off
 	g.requireEquivalent(g.v, 1)
-	g.unlockPos(a, 1)
+	g.cancelGw(a)
 	require.Empty(t, g.totals(g.v))
 	require.Nil(t, g.voter(g.v))
 }
 
-// Export and import: the totals are rebuilt from the positions, and the
+// Export and import: the totals are rebuilt from the votes, and the
 // allocation module's validator voters come back as exported.
 func TestGroundworksGenesisRoundTrip(t *testing.T) {
 	g := initGwEnv(t)
-	g.lockPos(g.v, 1_000*gwE, 1, g.split(10, 90))
-	g.lockPos(g.v, 4_321*gwE, 2, g.split(0, 0, 100))
-	g.lockPos(g.v, 7*gwE, 3, nil)
+	g.castGw(g.v, 1_000*gwE, g.split(10, 90))
+	g.castGw(g.v, 4_321*gwE, g.split(0, 0, 100))
+	g.castGw(g.v, 9*gwE, g.split(50, 50))
 	g.days(1)
 	want, wantV := g.totals(g.v), g.voter(g.v)
 
@@ -409,15 +465,15 @@ func TestGroundworksGenesisRoundTrip(t *testing.T) {
 	require.Equal(t, vt.OptionWeights, vt2.OptionWeights)
 }
 
-// Audit 7: an option pruned while positions still name it. The validator's
-// voter is re-filed without it at once (it took nothing anyway); an export
-// drops it from the positions' splits (as x/allocation's from its voters), so
-// the imported chain rebuilds totals and a voter that never name it, and
-// re-filing there needs nothing more.
-func TestGroundworksPrunedOptionLeavesPositions(t *testing.T) {
+// Audit 7: an option pruned while votes still name it. The validator's voter
+// is re-filed without it at once (it took nothing anyway); an export drops it
+// from the votes' splits (as x/allocation's from its voters), and a vote left
+// with nothing is not exported, so the imported chain rebuilds totals and a
+// voter that never name it.
+func TestGroundworksPrunedOptionLeavesVotes(t *testing.T) {
 	g := initGwEnv(t)
-	id1 := g.lockPos(g.v, 1_000*gwE, 1, g.split(10, 90))
-	id2 := g.lockPos(g.v, 500*gwE, 2, g.split(100))
+	v1 := g.castGw(g.v, 1_000*gwE, g.split(10, 90))
+	v2 := g.castGw(g.v, 500*gwE, g.split(100))
 	g.days(1)
 	pruned := g.opts[0]
 	// The chamber strikes option 0; thirty idle days later it is pruned.
@@ -426,8 +482,8 @@ func TestGroundworksPrunedOptionLeavesPositions(t *testing.T) {
 	has, err := g.app.AllocationKeeper.Options.Has(g.ctx(), collections.Join(uint32(gwStream), pruned))
 	require.NoError(t, err)
 	require.False(t, has, "pruned")
-	// Still named by the positions and their totals at runtime...
-	require.Equal(t, g.opts[0], g.position(id2).Splits[0].OptionId)
+	// Still named by the votes and their totals at runtime...
+	require.Equal(t, g.opts[0], g.vote(v2.id).Splits[0].OptionId)
 	_, named := g.totals(g.v)[pruned]
 	require.True(t, named)
 	// ...but the re-filed voter leaves it out.
@@ -442,17 +498,17 @@ func TestGroundworksPrunedOptionLeavesPositions(t *testing.T) {
 	require.NoError(t, json.Unmarshal(exported.AppState, &appState))
 	var gs sstypes.GenesisState
 	require.NoError(t, g.app.AppCodec().UnmarshalJSON(appState[sstypes.ModuleName], &gs))
-	for _, p := range gs.Positions {
-		for _, w := range p.Splits {
-			require.NotEqual(t, pruned, w.OptionId, "position %d", p.Id)
+	ids := map[uint64]bool{}
+	for _, v := range gs.Positions {
+		ids[v.Id] = true
+		for _, w := range v.Splits {
+			require.NotEqual(t, pruned, w.OptionId, "vote %d", v.Id)
 		}
-		if p.Id == id2 {
-			require.Empty(t, p.Splits, "its only option is gone: no split")
-		}
-		if p.Id == id1 {
-			require.Equal(t, g.split(0, 90), p.Splits)
+		if v.Id == v1.id {
+			require.Equal(t, g.split(0, 90), v.Splits)
 		}
 	}
+	require.False(t, ids[v2.id], "its only option is gone: no vote")
 	fresh := New(log.NewNopLogger(), dbm.NewMemDB(), nil, true, simtestutil.AppOptionsMap{flags.FlagHome: t.TempDir()},
 		baseapp.SetChainID(ssChainID))
 	fctx := fresh.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: g.height, Time: g.now})
@@ -705,15 +761,15 @@ func TestGroundworksBondedOnly(t *testing.T) {
 }
 
 // Re-audit R5 (GwEpoch leak): a validator's Groundworks entry goes with its
-// last position, and the epoch end never walks the Groundworks index: its
+// last vote, and the epoch end never walks the Groundworks index: its
 // voters re-weigh with the bounded book sweep. Stale entries (here forced in
 // state) cost an epoch end nothing.
 func TestGroundworksIndexNoLeakAndEpochCostBounded(t *testing.T) {
 	g := initGwEnv(t)
-	a := g.lockPos(g.v, 2*gwE, 1, g.split(100))
-	g.unlockPos(a, 1)
+	a := g.castGw(g.v, 2*gwE, g.split(100))
+	g.cancelGw(a)
 	_, err := g.app.ShieldedStakingKeeper.GwEpoch.Get(g.ctx(), g.valoper(g.v))
-	require.ErrorIs(t, err, collections.ErrNotFound, "GwEpoch removed with the last position")
+	require.ErrorIs(t, err, collections.ErrNotFound, "GwEpoch removed with the last vote")
 
 	epochEndGas := func(n int) uint64 {
 		cc, _ := g.ctx().CacheContext()

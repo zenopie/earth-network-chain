@@ -49,6 +49,28 @@ func (e *stakeEnv) fundPoolDirect(amt int64) {
 	require.NoError(e.t, err)
 }
 
+// queueDeposit books a deposit of amt uerth at val in its queue, as one made
+// before v1.2.0 waited for the epoch end (and as one a validator that cannot
+// take a delegation now still does): its ERTH in the module account, the
+// derth it bought in the supply.
+func (e *stakeEnv) queueDeposit(val sdk.ValAddress, amt int64) uint64 {
+	e.t.Helper()
+	ctx := e.ctx()
+	d := e.exactDerth(val, uint64(amt))
+	coins := sdk.NewCoins(sdk.NewInt64Coin("uerth", amt))
+	// Into the module account by a path its send restriction admits
+	// (distribution's: in and straight out again).
+	require.NoError(e.t, e.app.BankKeeper.MintCoins(ctx, earthtypes.ModuleName, coins))
+	require.NoError(e.t, e.app.BankKeeper.SendCoinsFromModuleToModule(ctx, earthtypes.ModuleName, distrtypes.ModuleName, coins))
+	require.NoError(e.t, e.app.BankKeeper.SendCoinsFromModuleToModule(ctx, distrtypes.ModuleName, sstypes.ModuleName, coins))
+	vs, err := e.app.ShieldedStakingKeeper.ValidatorState(ctx, e.valoper(val))
+	require.NoError(e.t, err)
+	vs.PendingDelegation = vs.PendingDelegation.AddRaw(amt)
+	vs.DerthSupply = vs.DerthSupply.Add(math.NewIntFromUint64(d))
+	require.NoError(e.t, e.app.ShieldedStakingKeeper.Validators.Set(ctx, e.valoper(val), vs))
+	return d
+}
+
 // exactDerth is what amt buys at val's live rate now: floor(amt x S / B),
 // amt while nothing is outstanding.
 func (e *stakeEnv) exactDerth(val sdk.ValAddress, amt uint64) uint64 {
@@ -65,12 +87,14 @@ func (e *stakeEnv) exactDerth(val sdk.ValAddress, amt uint64) uint64 {
 // and the second slot's padding) and creates a note; with credit, the credit lane likewise (a redelegation's).
 func fakeStake(label string, credit bool) sstypes.StakeProof {
 	z := make([]byte, 32)
-	p := sstypes.StakeProof{Anchor: z, OwnerTag: z, DebtRoot: z,
-		Nullifiers: [][]byte{privacy.FieldBytes(ssDet("fake-snf/"+label, 0)), privacy.FieldBytes(ssDet("fake-snf/"+label, 2))},
-		Commitment: privacy.FieldBytes(ssDet("fake-scm/"+label, 0)), Ciphertext: shieldedtest.StakeCT("fake/" + label),
-		CreditNullifier: z, CreditCommitment: z}
+	p := sstypes.StakeProof{Anchor: z, DebtRoot: z,
+		Nullifiers:      [][]byte{privacy.FieldBytes(ssDet("fake-snf/"+label, 0)), privacy.FieldBytes(ssDet("fake-snf/"+label, 2))},
+		GroundworksTags: [][]byte{privacy.FieldBytes(ssDet("fake-sgw/"+label, 0)), privacy.FieldBytes(ssDet("fake-sgw/"+label, 2))},
+		Commitment:      privacy.FieldBytes(ssDet("fake-scm/"+label, 0)), Ciphertext: shieldedtest.StakeCT("fake/" + label),
+		CreditNullifier: z, CreditCommitment: z, CreditGroundworksTag: z, VoteTag: z, CreditVoteTag: z}
 	if credit {
 		p.CreditNullifier = privacy.FieldBytes(ssDet("fake-snf/"+label, 1))
+		p.CreditGroundworksTag = privacy.FieldBytes(ssDet("fake-sgw/"+label, 1))
 		p.CreditCommitment = privacy.FieldBytes(ssDet("fake-scm/"+label, 1))
 		p.CreditCiphertext = shieldedtest.StakeCT("fake-cr/" + label)
 	}
@@ -133,7 +157,7 @@ func TestValoperCaseAliasDrainsDelegation(t *testing.T) {
 
 		for _, msg := range []interface{ ValidateBasic() error }{
 			&sstypes.MsgRestake{Validator: alias},
-			&sstypes.MsgStakeVote{Validator: alias, Weight: 1}, &sstypes.MsgLockPosition{Validator: alias, Amount: 1},
+			&sstypes.MsgStakeVote{Validator: alias, Weight: 1},
 		} {
 			require.Error(t, msg.ValidateBasic(), "%T", msg)
 		}
@@ -184,12 +208,14 @@ func TestEpochValidatorStarvation(t *testing.T) {
 		vals = append(vals, v)
 	}
 	e.next(5 * time.Second)
-	for i, v := range vals {
-		e.fakeDelegate(v, uint64(ssErth), fmt.Sprintf("book-%d", i)) // the minimum: 1 ERTH
+	// Queues to delegate (deposits bond at once; a queue is what the sweep
+	// delegates: rewards, a redelegation's queued part).
+	for _, v := range vals {
+		e.queueDeposit(v, ssErth) // the minimum: 1 ERTH
 	}
 	sort.Slice(vals, func(i, j int) bool { return e.valoper(vals[i]) < e.valoper(vals[j]) })
 	victim := vals[len(vals)-1] // sorts last
-	e.fakeDelegate(victim, uint64(1_000*ssErth), "victim")
+	e.queueDeposit(victim, 1_000*ssErth)
 
 	e.next(25 * time.Hour) // epoch end: the first EpochValidatorLimit books
 	sweep, err := e.app.ShieldedStakingKeeper.EpochSweep.Get(e.ctx())
@@ -420,9 +446,9 @@ func TestEscrowReleasedOnRetirement(t *testing.T) {
 	e.invariants()
 }
 
-// F9: UpdatePosition accepted a split on a position with no weight
-// (LockPosition refused it).
-func TestUpdatePositionNeedsWeight(t *testing.T) {
+// F9 (then on positions): a Groundworks vote that weighs nothing at its
+// validator is refused, in the ante.
+func TestGroundworksVoteNeedsWeight(t *testing.T) {
 	e := initStakeEnv(t)
 	k := e.app.ShieldedStakingKeeper
 	gov := authtypes.NewModuleAddress("gov")
@@ -437,11 +463,9 @@ func TestUpdatePositionNeedsWeight(t *testing.T) {
 	require.NoError(t, err)
 	vs.EpochRate = math.LegacyNewDecWithPrec(1, 18) // weight floors to zero
 	require.NoError(t, k.Validators.Set(ctx, v, vs))
-	tag := privacy.FieldBytes(ssDet("audit-owner", 0))
-	require.NoError(t, k.Positions.Set(ctx, 7, sstypes.Position{Id: 7, Validator: v, Derth: math.NewInt(ssErth),
-		OwnerTag: tag, Weight: math.ZeroInt()}))
-	m := &sstypes.MsgUpdatePosition{PositionId: 7, Splits: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 100}},
-		Stake: sstypes.StakeProof{OwnerTag: tag}}
+	st := fakeStake("no-weight", false)
+	st.VoteTag, st.VoteWeight = privacy.FieldBytes(ssDet("no-weight-tag", 0)), uint64(ssErth)
+	m := &sstypes.MsgRestake{Validator: v, Stake: st, GroundworksSplit: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 100}}}
 	_, err = sskeeper.NewActionHandler(k).CheckPrivateAction(ctx, m)
 	require.ErrorIs(t, err, allocationtypes.ErrNoWeight)
 }
@@ -571,13 +595,12 @@ func TestEpochEndCostIndependentOfUnclaimedRecords(t *testing.T) {
 	require.InDelta(t, float64(few), float64(many), 5_000)
 }
 
-// Audit 6 C-L2: a position holds at most 2^63-1 derth, as its unlock note and
-// genesis require; v_out is a public u64, so the bound is the chain's.
-func TestLockPositionNoteBound(t *testing.T) {
+// Audit 6 C-L2 (then on positions): a Groundworks vote weighs at most
+// 2^63-1 derth, a stake note's bound, as genesis requires; its weight is a
+// public u64, so the bound is the chain's.
+func TestGroundworksVoteNoteBound(t *testing.T) {
 	g := initGwEnv(t)
-	m := &sstypes.MsgLockPosition{Validator: g.valoper(g.v), Amount: ^uint64(0) - 1, Splits: g.split(100),
-		Stake: sstypes.StakeProof{OwnerTag: ownerTag(0)}}
-	_, err := sskeeper.NewMsgServerImpl(g.app.ShieldedStakingKeeper).LockPosition(g.fakeAuthorized(m), m)
+	_, err := g.tryCastGw(g.v, ^uint64(0)-1, g.split(100), nil)
 	require.ErrorIs(t, err, sstypes.ErrAmount)
 }
 

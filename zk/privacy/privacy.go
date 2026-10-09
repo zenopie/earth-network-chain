@@ -36,7 +36,9 @@ var (
 	TagStake = tag("earth.stake")
 	TagSPC   = tag("earth.spc")
 	TagSNF   = tag("earth.snf")
-	TagOTag  = tag("earth.otag")
+	TagOTag  = tag("earth.otag") // retired (Groundworks positions); never reuse
+	// TagGW: a stake note's Groundworks tag (its vote's key).
+	TagGW = tag("earth.gw")
 	// The stake nullifier indexed tree's leaves and stake vote nullifiers
 	// (circuits/vote).
 	TagSNFL = tag("earth.snfl")
@@ -129,6 +131,10 @@ func StakeCM(asset fr.Element, amount uint64, spc, label fr.Element) fr.Element 
 	return H(TagStake, asset, U64(amount), spc, label)
 }
 
+// StakeGW is a stake note's Groundworks tag: H(TAG_GW, nk, rho)
+// (privacy_core::stake_gw), under which the chain stores its vote.
+func StakeGW(nk, rho fr.Element) fr.Element { return H(TagGW, nk, rho) }
+
 // StakeLabel is a stake note's slash label: H(TAG_SLABEL, move_key,
 // move_time, exposed). The note holds `exposed` derth a redelegation
 // credited (move_key: its credit nullifier; move_time: the time it named,
@@ -149,11 +155,6 @@ func DebtLeaf(key, nextKey fr.Element, nextIndex, retained uint64) fr.Element {
 func StakeNF(nk, rho fr.Element, position uint32) fr.Element {
 	return H(TagSNF, nk, rho, U64(uint64(position)))
 }
-
-// OwnerTag commits to an owner: H(TAG_OTAG, owner_pk, salt). x/shieldedstaking
-// stores one per Groundworks position; its owner proves it again (stake
-// circuit) to update, unlock or vote the position.
-func OwnerTag(ownerPK, salt fr.Element) fr.Element { return H(TagOTag, ownerPK, salt) }
 
 // NFLeaf is a leaf of the stake nullifier indexed tree: H(TAG_SNFL, value,
 // next_value, next_index) (privacy_core::nf_leaf).

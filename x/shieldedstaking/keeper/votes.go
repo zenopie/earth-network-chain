@@ -40,10 +40,7 @@ import (
 // outputs) is not under its note root; a note spent before it cannot prove
 // its nullifier absent; a note spent after it still votes, and its outputs
 // do not, so every unit of derth at the snapshot votes at most once per
-// proposal. A position created before the snapshot votes by its owner's proof
-// (its locked notes were spent before the snapshot, so they cannot); one
-// created in or after the snapshot's block may not (its notes can).
-// The weight is public; the voter is not.
+// proposal. The weight is public; the voter is not.
 //
 // The tally (StakeTally, x/gov's custom tally function) turns each validator's
 // privately voted derth into a fraction of the module's CURRENT shares at v:
@@ -55,8 +52,8 @@ import (
 // the module's un-voted derth, and any delegator that did not vote.
 //
 // A vote outlives the stake that cast it (audit F6, by design): a note may be
-// undelegated after it voted (or after the snapshot, and then vote), and a
-// position may unlock after voting; the vote still counts. The
+// undelegated after it voted (or after the snapshot, and then vote); the
+// vote still counts. The
 // chain cannot tell which derth left (the notes are private), so it counts
 // a vote as a fraction of the validator's snapshot supply applied to the
 // module's current shares: undelegations during the vote shrink every
@@ -247,12 +244,10 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	snap := types.ProposalSnapshot{ProposalId: proposalID, Height: sdkCtx.BlockHeight(), VotingEnd: prop.VotingEndTime.UnixNano()}
 	// The latest recorded roots are the end of the last block only if that
-	// block's recording succeeded. If it failed, a note spent since by a
-	// position lock is still unspent under the recorded nf root, and the
-	// position votes too: the snapshot takes no roots, so no note votes on
-	// this proposal; positions still do (openSnapshot with notes false), and
-	// with no note votes none can be counted twice. Not attacker-reachable;
-	// a failure is a store error (audit 6 C-L4).
+	// block's recording succeeded. If it failed, the snapshot takes no roots
+	// and no note votes on this proposal: roots of different blocks are
+	// never paired. Not attacker-reachable; a failure is a store error
+	// (audit 6 C-L4).
 	stale, err := k.RootsStale.Has(ctx)
 	if err != nil {
 		return err
@@ -299,11 +294,10 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 }
 
 // openSnapshot returns proposalID's snapshot and valoper's derth supply as
-// of it, if the proposal is still open to stake votes. notes: the vote is a
-// note's (MsgStakeVote), which proves against the snapshot's roots; a
-// position's (MsgPositionVote) needs none, so a snapshot taken without roots
-// (RootsStale) still takes position votes.
-func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper string, notes bool) (types.ProposalSnapshot, math.Int, error) {
+// of it, if the proposal is still open to stake votes: a vote proves against
+// the snapshot's roots, so a snapshot taken without them (RootsStale, an
+// empty tree) takes none.
+func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper string) (types.ProposalSnapshot, math.Int, error) {
 	snap, err := k.Snapshots.Get(ctx, proposalID)
 	if errors.Is(err, collections.ErrNotFound) {
 		return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d has no stake-vote snapshot", proposalID)
@@ -326,7 +320,7 @@ func (k Keeper) openSnapshot(ctx context.Context, proposalID uint64, valoper str
 			return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d is not in its voting period", proposalID)
 		}
 	}
-	if notes && len(snap.Root) == 0 {
+	if len(snap.Root) == 0 {
 		return snap, math.Int{}, types.ErrNoVoting.Wrap("the snapshot has no stake root (the tree was empty, or its roots were not recorded)")
 	}
 	supply, err := k.snapshotSupply(ctx, snap, valoper)
@@ -447,13 +441,11 @@ func (k Keeper) putVote(ctx context.Context, v types.StakeVote) error {
 		sdk.NewAttribute(types.AttributeKeyDerth, v.Derth.String()),
 		sdk.NewAttribute(types.AttributeKeyOptions, v1.WeightedVoteOptions(v.Options).String()),
 	}
-	if !v.Position {
-		hs := make([]string, len(v.VoteNullifiers))
-		for i, vnf := range v.VoteNullifiers {
-			hs[i] = hex.EncodeToString(vnf)
-		}
-		attrs = append(attrs, sdk.NewAttribute(types.AttributeKeyVoteNFs, strings.Join(hs, ",")))
+	hs := make([]string, len(v.VoteNullifiers))
+	for i, vnf := range v.VoteNullifiers {
+		hs[i] = hex.EncodeToString(vnf)
 	}
+	attrs = append(attrs, sdk.NewAttribute(types.AttributeKeyVoteNFs, strings.Join(hs, ",")))
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeStakeVote, attrs...))
 	return nil
 }

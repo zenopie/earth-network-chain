@@ -12,7 +12,7 @@ import "google/api/annotations.proto";
 
 option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
 
-// Query is private staking's read side: rates, supplies, records, positions
+// Query is private staking's read side: rates, supplies, records, Groundworks votes
 // and proposal snapshots. Nothing here is per-owner.
 service Query {
   // Params queries the module parameters.
@@ -46,13 +46,14 @@ service Query {
   rpc UnbondPayout(QueryUnbondPayoutRequest) returns (QueryUnbondPayoutResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/unbond_payouts/{id}";
   }
-  // Position is one Groundworks position.
-  rpc Position(QueryPositionRequest) returns (QueryPositionResponse) {
-    option (google.api.http).get = "/earth/shieldedstaking/v1/positions/{id}";
+  // GroundworksVote is one Groundworks vote, by id.
+  rpc GroundworksVote(QueryGroundworksVoteRequest) returns (QueryGroundworksVoteResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/groundworks_votes/{id}";
   }
-  // Positions lists the positions.
-  rpc Positions(QueryPositionsRequest) returns (QueryPositionsResponse) {
-    option (google.api.http).get = "/earth/shieldedstaking/v1/positions";
+  // GroundworksVotes lists every Groundworks vote (a wallet finds its own by
+  // its notes' tags; nothing asks about one tag).
+  rpc GroundworksVotes(QueryGroundworksVotesRequest) returns (QueryGroundworksVotesResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/groundworks_votes";
   }
   // Snapshot is a proposal's stake-vote snapshot.
   rpc Snapshot(QuerySnapshotRequest) returns (QuerySnapshotResponse) {
@@ -251,24 +252,24 @@ message QueryUnbondPayoutResponse {
   UnbondRecord record = 2 [(gogoproto.nullable) = false];
 }
 
-// QueryPositionRequest is the request type for Query/Position.
-message QueryPositionRequest {
+// QueryGroundworksVoteRequest is the request type for Query/GroundworksVote.
+message QueryGroundworksVoteRequest {
   uint64 id = 1;
 }
 
-// QueryPositionResponse is the response type for Query/Position.
-message QueryPositionResponse {
-  Position position = 1 [(gogoproto.nullable) = false];
+// QueryGroundworksVoteResponse is the response type for Query/GroundworksVote.
+message QueryGroundworksVoteResponse {
+  GroundworksVote vote = 1 [(gogoproto.nullable) = false];
 }
 
-// QueryPositionsRequest is the request type for Query/Positions.
-message QueryPositionsRequest {
+// QueryGroundworksVotesRequest is the request type for Query/GroundworksVotes.
+message QueryGroundworksVotesRequest {
   cosmos.base.query.v1beta1.PageRequest pagination = 1;
 }
 
-// QueryPositionsResponse is the response type for Query/Positions.
-message QueryPositionsResponse {
-  repeated Position positions = 1 [(gogoproto.nullable) = false];
+// QueryGroundworksVotesResponse is the response type for Query/GroundworksVotes.
+message QueryGroundworksVotesResponse {
+  repeated GroundworksVote votes = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 

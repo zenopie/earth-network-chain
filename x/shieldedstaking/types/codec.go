@@ -16,10 +16,6 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 		&MsgRestake{},
 		&MsgUndelegate{},
 		&MsgStakeVote{},
-		&MsgLockPosition{},
-		&MsgUpdatePosition{},
-		&MsgUnlockPosition{},
-		&MsgPositionVote{},
 		&MsgRedelegate{},
 	)
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)
@@ -35,12 +31,8 @@ func noSigners(name string) signing.CustomGetSigner {
 	}
 }
 
-func ProvideDelegateGetSigners() signing.CustomGetSigner       { return noSigners("MsgDelegate") }
-func ProvideRestakeGetSigners() signing.CustomGetSigner        { return noSigners("MsgRestake") }
-func ProvideUndelegateGetSigners() signing.CustomGetSigner     { return noSigners("MsgUndelegate") }
-func ProvideStakeVoteGetSigners() signing.CustomGetSigner      { return noSigners("MsgStakeVote") }
-func ProvideLockPositionGetSigners() signing.CustomGetSigner   { return noSigners("MsgLockPosition") }
-func ProvideUpdatePositionGetSigners() signing.CustomGetSigner { return noSigners("MsgUpdatePosition") }
-func ProvideUnlockPositionGetSigners() signing.CustomGetSigner { return noSigners("MsgUnlockPosition") }
-func ProvidePositionVoteGetSigners() signing.CustomGetSigner   { return noSigners("MsgPositionVote") }
-func ProvideRedelegateGetSigners() signing.CustomGetSigner     { return noSigners("MsgRedelegate") }
+func ProvideDelegateGetSigners() signing.CustomGetSigner   { return noSigners("MsgDelegate") }
+func ProvideRestakeGetSigners() signing.CustomGetSigner    { return noSigners("MsgRestake") }
+func ProvideUndelegateGetSigners() signing.CustomGetSigner { return noSigners("MsgUndelegate") }
+func ProvideStakeVoteGetSigners() signing.CustomGetSigner  { return noSigners("MsgStakeVote") }
+func ProvideRedelegateGetSigners() signing.CustomGetSigner { return noSigners("MsgRedelegate") }

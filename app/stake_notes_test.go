@@ -15,6 +15,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/stretchr/testify/require"
 
+	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	shieldedtest "github.com/earth-network/earth/x/shielded/testutil"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
@@ -65,6 +66,9 @@ func (e *stakeEnv) label(n *snote) fr.Element {
 func (e *stakeEnv) scm(n *snote) fr.Element {
 	return privacy.StakeCM(privacy.AssetID(n.denom), n.amount, e.spc(n), e.label(n))
 }
+
+// sgw is a stake note's Groundworks tag.
+func (e *stakeEnv) sgw(n *snote) fr.Element { return privacy.StakeGW(e.w.nk, n.rho) }
 
 func (e *stakeEnv) snf(n *snote) fr.Element { return privacy.StakeNF(e.w.nk, n.rho, uint32(n.pos)) }
 
@@ -159,23 +163,25 @@ type creditLane struct {
 }
 
 // stakePlan is a stake proof being built. Lane A: up to two inputs of denom
-// (none: a padding input, unless noSpend), one output (nil: a zero padding
-// note, unless noSpend), v_in credited, v_out leaving; a labelled input's
-// label is kept on the output, or cleared (clear) once its window closed.
-// Lane B: credit (a redelegation). An owner tag salt, and the size of the
-// stake tree the inputs are proven under (0: the current tree).
+// (none: a padding input), one output (nil: a zero padding note), v_in
+// credited, v_out leaving; a labelled input's label is kept on the output,
+// or cleared (clear) once its window closed. Lane B: credit (a
+// redelegation). vote and creditVote: the outputs that vote in Groundworks
+// with split. The size of the stake tree the inputs are proven under (0: the
+// current tree).
 type stakePlan struct {
-	denom   string
-	ins     []*snote
-	noSpend bool
-	out     *snote
-	vIn     uint64
-	vOut    uint64
-	clear   bool
-	credit  *creditLane
-	salt    fr.Element
-	atSize  uint64
-	proof   sstypes.StakeProof
+	denom      string
+	ins        []*snote
+	out        *snote
+	vIn        uint64
+	vOut       uint64
+	clear      bool
+	credit     *creditLane
+	vote       bool
+	creditVote bool
+	split      []allocationtypes.AllocationWeight
+	atSize     uint64
+	proof      sstypes.StakeProof
 	// filled by stake: the padding inputs and zero output, the debt witness.
 	pad     *snote
 	pad1    *snote
@@ -229,32 +235,29 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 		size = sp.atSize
 	}
 	sp.atSize = size
-	var anchor fr.Element
-	if !sp.noSpend {
-		r, err := e.stakeTree(size).Root()
-		require.NoError(e.t, err)
-		anchor = r
-	}
+	r, err := e.stakeTree(size).Root()
+	require.NoError(e.t, err)
 	z := privacy.FieldBytes(fr.Element{})
-	p := sstypes.StakeProof{Anchor: privacy.FieldBytes(anchor), DebtRoot: z, CreditNullifier: z, CreditCommitment: z,
-		Commitment: z, OwnerTag: privacy.FieldBytes(privacy.OwnerTag(privacy.OwnerPK(e.w.nk), sp.salt))}
-	nfs := [2]fr.Element{}
+	p := sstypes.StakeProof{Anchor: privacy.FieldBytes(r), DebtRoot: z, CreditNullifier: z, CreditCommitment: z,
+		Commitment: z, CreditGroundworksTag: z, VoteTag: z, CreditVoteTag: z}
+	nfs, gws := [2]fr.Element{}, [2]fr.Element{}
 	for i, n := range sp.ins {
 		require.True(e.t, n.known && n.pos < size, "stake input outside the anchor's tree")
-		nfs[i] = e.snf(n)
+		nfs[i], gws[i] = e.snf(n), e.sgw(n)
 	}
-	if !sp.noSpend && len(sp.ins) == 0 {
-		// A padding input: the owner's own would-be nullifier.
+	if len(sp.ins) == 0 {
+		// A padding input: the owner's own would-be nullifier and tag.
 		sp.pad = e.freshStake(sp.denom, 0)
-		nfs[0] = privacy.StakeNF(e.w.nk, sp.pad.rho, 0)
+		nfs[0], gws[0] = privacy.StakeNF(e.w.nk, sp.pad.rho, 0), e.sgw(sp.pad)
 	}
-	if !sp.noSpend && len(sp.ins) < 2 {
+	if len(sp.ins) < 2 {
 		// The second slot is always spent too (padding with a fresh rho), so
 		// a merge of two notes looks like a spend of one.
 		sp.pad1 = e.freshStake(sp.denom, 0)
-		nfs[1] = privacy.StakeNF(e.w.nk, sp.pad1.rho, 0)
+		nfs[1], gws[1] = privacy.StakeNF(e.w.nk, sp.pad1.rho, 0), e.sgw(sp.pad1)
 	}
 	p.Nullifiers = [][]byte{privacy.FieldBytes(nfs[0]), privacy.FieldBytes(nfs[1])}
+	p.GroundworksTags = [][]byte{privacy.FieldBytes(gws[0]), privacy.FieldBytes(gws[1])}
 	// Lane A's output: a kept label goes with it.
 	if li := sp.labelledIn(); li != nil && !sp.clear && sp.out != nil {
 		sp.out.moveKey, sp.out.moveTime, sp.out.exposed = li.moveKey, li.moveTime, li.exposed
@@ -279,33 +282,39 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 			sp.debtW = &w
 		}
 	}
-	if !sp.noSpend {
-		out := sp.out
-		if out == nil {
-			sp.zeroOut = e.freshStake(sp.denom, 0)
-			out = sp.zeroOut
-		}
-		p.Commitment = privacy.FieldBytes(e.scm(out))
-		p.Ciphertext = shieldedtest.StakeCT(fmt.Sprintf("%d/%d", e.w.seq, len(e.sw.leaves)))
+	out := sp.out
+	if out == nil {
+		sp.zeroOut = e.freshStake(sp.denom, 0)
+		out = sp.zeroOut
+	}
+	p.Commitment = privacy.FieldBytes(e.scm(out))
+	p.Ciphertext = shieldedtest.StakeCT(fmt.Sprintf("%d/%d", e.w.seq, len(e.sw.leaves)))
+	if sp.vote {
+		require.NotNil(e.t, sp.out, "a padding output cannot vote")
+		p.VoteTag = privacy.FieldBytes(e.sgw(sp.out))
+		p.VoteWeight = sp.out.amount - sp.out.exposed
 	}
 	if c := sp.credit; c != nil {
 		var nf fr.Element
-		if c.in != nil {
-			require.True(e.t, c.in.known && c.in.pos < size && !c.in.labelled(), "credit input: an unlabelled note in the anchor's tree")
-			nf = e.snf(c.in)
+		in := c.in
+		if in != nil {
+			require.True(e.t, in.known && in.pos < size && !in.labelled(), "credit input: an unlabelled note in the anchor's tree")
+			nf = e.snf(in)
 		} else {
 			c.pad = e.freshStake(c.denom, 0)
+			in = c.pad
 			nf = privacy.StakeNF(e.w.nk, c.pad.rho, 0)
 		}
-		amount := c.vIn
-		if c.in != nil {
-			amount += c.in.amount
-		}
-		c.out = e.freshStake(c.denom, amount)
+		c.out = e.freshStake(c.denom, in.amount+c.vIn)
 		c.out.moveKey, c.out.moveTime, c.out.exposed = nf, c.moveTime, c.vIn
 		p.CreditNullifier = privacy.FieldBytes(nf)
+		p.CreditGroundworksTag = privacy.FieldBytes(e.sgw(in))
 		p.CreditCommitment = privacy.FieldBytes(e.scm(c.out))
 		p.CreditCiphertext = shieldedtest.StakeCT(fmt.Sprintf("cr/%d/%d", e.w.seq, len(e.sw.leaves)))
+		if sp.creditVote {
+			p.CreditVoteTag = privacy.FieldBytes(e.sgw(c.out))
+			p.CreditVoteWeight = c.out.amount - c.out.exposed
+		}
 	}
 	sp.proof = p
 	return sp
@@ -379,9 +388,6 @@ func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, lanes sstyp
 	if out == nil {
 		out = sp.zeroOut
 	}
-	if out == nil { // nothing spent or created (a position msg)
-		out = &snote{rho: ssDet("stake-dummy", 3), rcm: ssDet("stake-dummy", 4)}
-	}
 	fmt.Fprintf(&b, "out_amount = %s\nout_rho = %s\nout_rcm = %s\nclear = %t\n", tomlU(out.amount), tomlQ(out.rho), tomlQ(out.rcm), sp.clear)
 	var w debt.Witness
 	if sp.debtW != nil {
@@ -402,11 +408,13 @@ func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, lanes sstyp
 	if crIn.amount > 0 {
 		crPos = crIn.pos
 	}
-	fmt.Fprintf(&b, "cr_in_amount = %s\ncr_in_rho = %s\ncr_in_rcm = %s\ncr_in_pos = %s\ncr_in_path = %s\ncr_out_rho = %s\ncr_out_rcm = %s\ntag_salt = %s\n",
-		tomlU(crIn.amount), tomlQ(crIn.rho), tomlQ(crIn.rcm), tomlU(crPos), path(crIn), tomlQ(crOut.rho), tomlQ(crOut.rcm), tomlQ(sp.salt))
+	fmt.Fprintf(&b, "cr_in_amount = %s\ncr_in_rho = %s\ncr_in_rcm = %s\ncr_in_pos = %s\ncr_in_path = %s\ncr_out_rho = %s\ncr_out_rcm = %s\n",
+		tomlU(crIn.amount), tomlQ(crIn.rho), tomlQ(crIn.rcm), tomlU(crPos), path(crIn), tomlQ(crOut.rho), tomlQ(crOut.rcm))
 	names := []string{"anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in", "v_out", "clear_before", "debt_root",
-		"cr_asset", "cr_nf", "cr_cm", "cr_v_in", "cr_move_time", "otag", "sighash"}
-	ints := map[string]bool{"v_in": true, "v_out": true, "clear_before": true, "cr_v_in": true, "cr_move_time": true}
+		"cr_asset", "cr_nf", "cr_cm", "cr_v_in", "cr_move_time",
+		"gw_0", "gw_1", "cr_gw", "gw_out", "w_out", "cr_gw_out", "cr_w_out", "sighash"}
+	ints := map[string]bool{"v_in": true, "v_out": true, "clear_before": true, "cr_v_in": true, "cr_move_time": true,
+		"w_out": true, "cr_w_out": true}
 	for i, n := range names {
 		if ints[n] {
 			var v fr.Element
@@ -419,16 +427,8 @@ func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, lanes sstyp
 	return b.String(), pub
 }
 
-// stakeLanes is what the chain supplies for msg (an unlock's lane A follows
-// its position).
-func (e *stakeEnv) stakeLanes(msg sstypes.StakeMsg) sstypes.StakeLanes {
-	if m, ok := msg.(*sstypes.MsgUnlockPosition); ok {
-		p, err := e.app.ShieldedStakingKeeper.Positions.Get(e.ctx(), m.PositionId)
-		require.NoError(e.t, err)
-		return sstypes.UnlockLanes(p)
-	}
-	return msg.StakeLanes()
-}
+// stakeLanes is what the chain supplies for msg.
+func (e *stakeEnv) stakeLanes(msg sstypes.StakeMsg) sstypes.StakeLanes { return msg.StakeLanes() }
 
 // proveStake proves msg's stake proof from sp, under msg's sighash (every
 // other field of msg must be final).

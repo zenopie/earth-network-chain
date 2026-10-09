@@ -14,6 +14,9 @@
 # from the mobile repo and writes each key everywhere the chain reads it:
 #
 #   networks/genesis/shielded-verifying-keys/<circuit>.vk.b64   launch genesis source
+#                       (a circuit changed since launch: the upgrade that
+#                       installs its key instead, app/upgrades/<name>/; see
+#                       current_dir below)
 #   config.yml  genesis.app_state.shielded.params.verifying_keys  dev chain
 #   x/shielded/testdata/action.vk                                 tests (raw)
 #   x/personhood/testdata/app/membership.vk                       tests (raw)
@@ -134,6 +137,16 @@ done
 REG="$CHAIN_DIR/networks/genesis/verifying-keys"
 
 GEN="$CHAIN_DIR/networks/genesis/shielded-verifying-keys"
+# Where each circuit's current key lives: the launch genesis source until an
+# upgrade replaced the key, then that upgrade's directory (embedded in the
+# binary, installed by its handler). networks/genesis stays as earth-1
+# launched (make genesis-check pins it).
+current_dir() {
+  case "$1" in
+    stake) echo "$CHAIN_DIR/app/upgrades/v1_2_0" ;;
+    *) echo "$GEN" ;;
+  esac
+}
 raw_targets() {
   echo "action $CHAIN_DIR/x/shielded/testdata/action.vk"
   echo "membership $CHAIN_DIR/x/personhood/testdata/app/membership.vk"
@@ -145,7 +158,8 @@ raw_targets() {
 if [ "$CHECK" -eq 1 ]; then
   fail=0
   for c in action membership stake vote move; do
-    cmp -s "$WORK/$c.vk.b64" "$GEN/$c.vk.b64" || { echo "stale: $GEN/$c.vk.b64" >&2; fail=1; }
+    d="$(current_dir "$c")"
+    cmp -s "$WORK/$c.vk.b64" "$d/$c.vk.b64" || { echo "stale: $d/$c.vk.b64" >&2; fail=1; }
   done
   while read -r c f; do
     cmp -s "$WORK/vk-$c/vk" "$f" || { echo "stale: $f" >&2; fail=1; }
@@ -178,8 +192,11 @@ PY
   exit 0
 fi
 
-mkdir -p "$GEN"
-for c in action membership stake vote move; do cp "$WORK/$c.vk.b64" "$GEN/$c.vk.b64"; done
+for c in action membership stake vote move; do
+  d="$(current_dir "$c")"
+  mkdir -p "$d"
+  cp "$WORK/$c.vk.b64" "$d/$c.vk.b64"
+done
 while read -r c f; do cp "$WORK/vk-$c/vk" "$f"; done < <(raw_targets)
 python3 - "$CHAIN_DIR/config.yml" "$WORK" <<'PY'
 import re, sys

@@ -12,7 +12,7 @@ import (
 // decoded bytes produces it.
 //
 // This module keys everything by the string (books, derth denoms, unbond
-// records, positions, snapshots, tallies), while x/staking keys by the
+// records, Groundworks votes, snapshots, tallies), while x/staking keys by the
 // decoded bytes. bech32 decodes an all-uppercase string to the same bytes, so
 // without this check "EARTHVALOPER1..." was a second, independent book over
 // the same SDK delegation (audit F0): its backing counted the whole module

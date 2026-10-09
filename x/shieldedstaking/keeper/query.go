@@ -226,28 +226,30 @@ func (q queryServer) UnbondPayout(ctx context.Context, req *types.QueryUnbondPay
 	return &types.QueryUnbondPayoutResponse{Payout: p, Record: r}, nil
 }
 
-func (q queryServer) Position(ctx context.Context, req *types.QueryPositionRequest) (*types.QueryPositionResponse, error) {
+func (q queryServer) GroundworksVote(ctx context.Context, req *types.QueryGroundworksVoteRequest) (*types.QueryGroundworksVoteResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
-	p, err := q.k.Positions.Get(ctx, req.Id)
+	v, err := q.k.GwVotes.Get(ctx, req.Id)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	return &types.QueryPositionResponse{Position: q.k.withLiveWeight(ctx, p)}, nil
+	return &types.QueryGroundworksVoteResponse{Vote: q.k.withLiveWeight(ctx, v)}, nil
 }
 
-func (q queryServer) Positions(ctx context.Context, req *types.QueryPositionsRequest) (*types.QueryPositionsResponse, error) {
+func (q queryServer) GroundworksVotes(ctx context.Context, req *types.QueryGroundworksVotesRequest) (*types.QueryGroundworksVotesResponse, error) {
 	var pr *query.PageRequest
 	if req != nil {
 		pr = req.Pagination
 	}
-	ps, page, err := query.CollectionPaginate(ctx, q.k.Positions, pr,
-		func(_ uint64, p types.Position) (types.Position, error) { return q.k.withLiveWeight(ctx, p), nil })
+	vs, page, err := query.CollectionPaginate(ctx, q.k.GwVotes, pr,
+		func(_ uint64, v types.GroundworksVote) (types.GroundworksVote, error) {
+			return q.k.withLiveWeight(ctx, v), nil
+		})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &types.QueryPositionsResponse{Positions: ps, Pagination: page}, nil
+	return &types.QueryGroundworksVotesResponse{Votes: vs, Pagination: page}, nil
 }
 
 func (q queryServer) Snapshot(ctx context.Context, req *types.QuerySnapshotRequest) (*types.QuerySnapshotResponse, error) {

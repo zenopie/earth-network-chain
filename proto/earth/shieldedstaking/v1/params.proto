@@ -16,9 +16,11 @@ message Params {
   // queued during an epoch are executed, and rewards compounded, at its end.
   uint64 epoch_seconds = 1;
 
-  // min_position is the smallest derth a Groundworks position may lock.
-  // Positions are weighed per validator (one Groundworks voter each), so no
-  // epoch work grows with their number; this only keeps dust out.
+  // min_position is the smallest weight (derth x epoch rate, in uerth) a
+  // Groundworks vote may carry. Votes are weighed per validator (one
+  // Groundworks voter each), so no epoch work grows with their number; this
+  // only keeps dust out. (Named for the retired positions it once bounded:
+  // the name is kept so earth-1's launch genesis still reads.)
   string min_position = 2 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",

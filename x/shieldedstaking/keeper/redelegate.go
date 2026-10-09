@@ -342,7 +342,7 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 
 	// 6. The notes: the source's spent (the change back), the owner's
 	// derth/<dst> note spent (or padded) and the merged, labelled one created.
-	positions, err := k.applyStakeProof(ctx, &m.Stake)
+	positions, err := k.applyStake(ctx, m)
 	if err != nil {
 		return nil, err
 	}

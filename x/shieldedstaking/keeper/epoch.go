@@ -26,7 +26,7 @@ import (
 // bookkeeping.
 //
 //  0. slashed: validators slashed this block take their live (post-slash)
-//     rate as their epoch rate, and their positions re-weigh at it;
+//     rate as their epoch rate, and their Groundworks votes re-weigh at it;
 //  1. payouts: mint the payouts of records matured in earlier blocks
 //     (payouts.go), bounded;
 //     mature: records whose SDK unbonding entry completes in this block read
@@ -36,7 +36,7 @@ import (
 //     delegate the queue plus the rewards, undelegate the epoch's private
 //     undelegations; compound every active validator's self-bond rewards and
 //     commission into its self-bond;
-//     re-weigh positions; sweep non-ERTH rewards to the community pool.
+//     re-weigh Groundworks votes; sweep non-ERTH rewards to the community pool.
 //  3. forget proposals whose voting has ended (x/gov has tallied them).
 //
 // Before those it settles any unfinished slash watch, restores sheltered
@@ -72,10 +72,8 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	}); err != nil {
 		k.failure(ctx, "stake_roots", "", err)
 		// A snapshot taken before the next successful recording would pair
-		// the stale roots with positions locked since, whose spent notes'
-		// nullifiers the stale nf root lacks: the same derth could vote as a
-		// note and as a position. Snapshots take no roots until then (audit
-		// 6 C-L4).
+		// roots of different blocks. Snapshots take no roots until then
+		// (audit 6 C-L4).
 		if err := k.RootsStale.Set(ctx, true); err != nil {
 			k.failure(ctx, "stake_roots_stale", "", err)
 		}
@@ -184,7 +182,7 @@ func (k Keeper) continueSweep(ctx context.Context, maxEpoch uint64) {
 
 // resyncBooks re-files the Groundworks voter of each book the sweep just
 // processed (at the epoch rate processValidator set), for those with
-// positions. The voters re-weigh with the bounded sweep, EpochValidatorLimit
+// Groundworks votes. The voters re-weigh with the bounded sweep, EpochValidatorLimit
 // a block, never in one walk over every validator at the epoch end: until
 // its book's turn, a validator's voter keeps the previous epoch's rate.
 func (k Keeper) resyncBooks(ctx context.Context, vals []string) {
@@ -232,7 +230,7 @@ func (k Keeper) sweepBooks(ctx context.Context, sweep types.EpochSweep, maxEpoch
 }
 
 // reportInvariants runs AssertInvariants at the epoch end, bounded (skipped,
-// with an event, past InvariantBookLimit books, unbond records, positions,
+// with an event, past InvariantBookLimit books, unbond records, Groundworks votes,
 // validators (counted by their reward escrows, twice: invariant 5 walks
 // both), moves and redelegation entries) and
 // guarded: it reports a broken invariant or a panic, it never halts EndBlock.
@@ -257,9 +255,9 @@ func (k Keeper) reportInvariants(ctx context.Context) {
 		})
 	}
 	if n <= types.InvariantBookLimit {
-		// Positions are uncapped: the walks over them (invariants 2 and 6)
-		// count against the same bound.
-		_ = k.Positions.Walk(ctx, nil, func(uint64, types.Position) (bool, error) {
+		// Groundworks votes are uncapped: the walks over them count against
+		// the same bound.
+		_ = k.GwVotes.Walk(ctx, nil, func(uint64, types.GroundworksVote) (bool, error) {
 			n++
 			return n > types.InvariantBookLimit, nil
 		})
@@ -291,7 +289,7 @@ func (k Keeper) reportInvariants(ctx context.Context) {
 	}
 	if n > types.InvariantBookLimit {
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypeInvariant,
-			sdk.NewAttribute(types.AttributeKeyError, "skipped: too many books, unbond records and positions for one block")))
+			sdk.NewAttribute(types.AttributeKeyError, "skipped: too many books, unbond records and groundworks votes for one block")))
 		return
 	}
 	err := func() (err error) {

@@ -57,11 +57,10 @@ func (k Keeper) BookRewardsForZeroHeight(ctx context.Context) error {
 // ResetHeightsForZeroHeight follows x/staking's reset of its unbonding and
 // redelegation entries' creation heights to 0: every UNBONDING record's
 // creation height becomes 0 too. Heights this module compares with the new
-// chain's (a position's created_height against a snapshot's height, which
-// refuses a position made after voting began) are shifted below 1 keeping
-// their order: h becomes h - height - 1, with height the export height, so
-// every position or snapshot made on the new chain sorts after every old
-// one.
+// chain's (a snapshot's height; a Groundworks vote's created_height) are
+// shifted below 1 keeping their order: h becomes h - height - 1, with height
+// the export height, so every vote or snapshot made on the new chain sorts
+// after every old one.
 //
 // The open moves are dropped (audit 7, A7-2): their entries are at height 0
 // now, which a slash on the new chain reaches only for a double sign at its
@@ -104,16 +103,16 @@ func (k Keeper) ResetHeightsForZeroHeight(ctx context.Context, height int64) err
 			return err
 		}
 	}
-	var ps []types.Position
-	if err := k.Positions.Walk(ctx, nil, func(_ uint64, p types.Position) (bool, error) {
-		ps = append(ps, p)
+	var gvs []types.GroundworksVote
+	if err := k.GwVotes.Walk(ctx, nil, func(_ uint64, v types.GroundworksVote) (bool, error) {
+		gvs = append(gvs, v)
 		return false, nil
 	}); err != nil {
 		return err
 	}
-	for _, p := range ps {
-		p.CreatedHeight = shift(p.CreatedHeight)
-		if err := k.setPosition(ctx, p); err != nil {
+	for _, v := range gvs {
+		v.CreatedHeight = shift(v.CreatedHeight)
+		if err := k.setVote(ctx, v); err != nil {
 			return err
 		}
 	}

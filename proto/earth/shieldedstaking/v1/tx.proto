@@ -25,8 +25,7 @@ option go_package = "github.com/earth-network/earth/x/shieldedstaking/types";
 // shielded pool or an account, and never changes owner: every stake note a
 // msg spends or creates belongs to the one owner_pk its stake proof knows nk
 // for. One stake note per (owner, validator): the chain never mints a stake
-// note; value it credits (a delegation's derth, an unlocked position's, a
-// redelegation's arrival) is merged by the proof into the owner's existing
+// note; value it credits (a delegation's derth, a redelegation's arrival) is merged by the proof into the owner's existing
 // note (ORCHARD_DESIGN.md 8.1). An undelegation is paid out by the
 // chain itself at maturity, as ERTH notes in the shielded pool (no claim
 // msg).
@@ -46,15 +45,6 @@ service Msg {
   // StakeVote votes up to two stake notes of one owner at one validator on
   // an x/gov proposal, with one weight.
   rpc StakeVote(MsgStakeVote) returns (MsgStakeVoteResponse);
-  // LockPosition locks derth into a Groundworks position.
-  rpc LockPosition(MsgLockPosition) returns (MsgLockPositionResponse);
-  // UpdatePosition changes a position's split (its owner proves it).
-  rpc UpdatePosition(MsgUpdatePosition) returns (MsgUpdatePositionResponse);
-  // UnlockPosition returns a position's derth into its owner's stake note.
-  rpc UnlockPosition(MsgUnlockPosition) returns (MsgUnlockPositionResponse);
-  // PositionVote votes a position's derth on an x/gov proposal (its owner
-  // proves it).
-  rpc PositionVote(MsgPositionVote) returns (MsgPositionVoteResponse);
   // Redelegate moves derth from one validator to another with no unbonding
   // gap: derth/<src> notes are spent, derth/<dst> is merged into their
   // owner's derth/<dst> note.
@@ -87,19 +77,25 @@ message MsgUpdateParamsResponse {}
 // the exposure never leaves its note until the label clears (lane A, once
 // move_time < clear_before, at what the debt tree under debt_root says).
 //
-// The chain supplies asset (the msg's stake asset id, 0 for a position
-// update or vote), v_in (derth it credits), v_out (derth leaving), cr_asset,
+// The chain supplies asset (the msg's stake asset id), v_in (derth it credits), v_out (derth leaving), cr_asset,
 // cr_v_in, cr_move_time (0, 0 and 0 unless the msg credits a second asset:
 // a redelegation's derth/<dst> and its move_time) and the sighash. Public
 // input order: anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before,
-// debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, owner_tag,
-// sighash.
+// debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1,
+// cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, sighash.
 //
 // An input of amount 0 publishes 0 (none) or its own would-be nullifier
 // H(TAG_SNF, nk, rho, position) (padding: indistinguishable from a real
 // spend). An output of amount 0 publishes 0 (none) or the commitment of a
 // zero note of the owner (padding). The chain requires, per msg, which slots
 // are non-zero, so that every msg of a kind has the same shape.
+//
+// Groundworks votes (circuits/stake gw = H(TAG_GW, nk, rho)): a note's vote
+// is stored under its tag. Every input publishes its tag (a padding input: 0
+// or its own), and the chain cancels the vote stored under each, so a voting
+// note that is spent stops counting in the same block. Each output may vote:
+// its tag and its unexposed amount (the weight), with the msg's
+// groundworks_split; 0 and 0 when it does not.
 message StakeProof {
   // proof is the bb v5.0.0 UltraHonk proof of circuits/stake.
   bytes proof = 1;
@@ -112,16 +108,9 @@ message StakeProof {
   // commitments (4) and ciphertexts (5): two lane A outputs, replaced by one
   // (commitment, ciphertext). spc_mint (6), spc_ciphertext (8): the note the
   // chain minted; the chain mints no stake note any more.
-  reserved 4, 5, 6, 8;
-  reserved "commitments", "ciphertexts", "spc_mint", "spc_ciphertext";
-  // owner_tag is H(TAG_OTAG, owner_pk, salt) (32 bytes): stored by
-  // LockPosition, compared by a position's later msgs. Every proof publishes
-  // it, so the salt is a fresh random field element on every proof that does
-  // not act on a position (MsgDelegate, MsgUndelegate, MsgRedelegate,
-  // MsgRestake): a salt used twice links the two txs to one owner. A
-  // MsgLockPosition's salt is fresh too and stays that position's; the
-  // position's later msgs (update, vote, unlock) reuse it, as they must.
-  bytes owner_tag = 7;
+  // owner_tag (7): the retired Groundworks positions' owner tag.
+  reserved 4, 5, 6, 7, 8;
+  reserved "commitments", "ciphertexts", "spc_mint", "spc_ciphertext", "owner_tag";
   // commitment is lane A's output (32 bytes): the owner's merged note, change
   // or a padding zero note; zero for none. Appended to the stake tree first.
   bytes commitment = 9;
@@ -150,20 +139,34 @@ message StakeProof {
   // root): the current one on every proof. It changes only when a slash
   // reaches a redelegation, at the start of a block.
   bytes debt_root = 15;
+  // groundworks_tags: exactly two (lane A's inputs, in nullifier order), 32
+  // bytes each; zero for none. credit_groundworks_tag is lane B's input's.
+  // The vote stored under each is cancelled.
+  repeated bytes groundworks_tags = 16;
+  bytes credit_groundworks_tag = 17;
+  // vote_tag and vote_weight: lane A's output votes vote_weight derth (its
+  // unexposed amount) under vote_tag; zero and 0 when it does not.
+  bytes vote_tag = 18;
+  uint64 vote_weight = 19;
+  // credit_vote_tag and credit_vote_weight: the same for lane B's output.
+  bytes credit_vote_tag = 20;
+  uint64 credit_vote_weight = 21;
 }
 
 // MsgDelegate: bundle releases amount uerth into the module for validator
-// (the rest of its uerth balance is the fee) and the owner's derth/<validator>
-// note grows by derth: the stake proof (asset derth/<validator>, v_in =
-// derth, v_out = 0) spends the owner's existing derth/<validator> note (or a
-// padding input) and creates the merged note. The wallet names derth; the
-// chain refuses it unless amount buys it at the live rate:
-// derth <= floor(amount x S / B) (= amount while S is 0), and derth >=
-// min_delegation. Whatever amount buys beyond derth stays in the validator's
-// book (every holder's rate, the delegator's included). The ERTH is delegated
-// at the epoch's end.
+// (the rest of its uerth balance is the fee), which delegates it to the
+// validator at once (bonded in the same block, earning from it), and the
+// owner's derth/<validator> note grows by derth: the stake proof (asset
+// derth/<validator>, v_in = derth, v_out = 0) spends the owner's existing
+// derth/<validator> note (or a padding input) and creates the merged note.
+// The wallet names derth; the chain refuses it unless amount buys it at the
+// live rate: derth <= floor(amount x S / B) (= amount while S is 0), and
+// derth >= min_delegation. Whatever amount buys beyond derth stays in the
+// validator's book (every holder's rate, the delegator's included). The
+// rewards the delegation change pays out join the book's queue.
 //
-// sighash fields: StakeFields(stake), Bytes(validator), amount, derth.
+// sighash fields: StakeFields(stake), Bytes(validator), amount, derth,
+// Bytes(SplitsBytes(groundworks_split)).
 message MsgDelegate {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
@@ -175,6 +178,9 @@ message MsgDelegate {
   uint64 amount = 5;
   // derth is the derth/<validator> credited to the owner's note (v_in).
   uint64 derth = 6;
+  // groundworks_split is the Groundworks split the output votes with
+  // (StakeProof.vote_tag); empty when it does not vote.
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 7 [(gogoproto.nullable) = false];
 }
 
 // MsgDelegateResponse returns the derth credited and the merged stake note's
@@ -186,12 +192,14 @@ message MsgDelegateResponse {
 
 // MsgRestake merges stake notes: the proof spends one or two of the owner's
 // derth/<validator> notes and creates one of the same owner, the amounts
-// balancing (hidden). Needed only for an owner holding more than one note at
-// a validator (notes made before a wallet adopted the one-note rule, or by
-// two devices at once); every other msg merges as it goes. bundle pays the
-// fee only.
+// balancing (hidden). Needed for an owner holding more than one note at a
+// validator (notes made by two devices at once, or beside a labelled one);
+// every other msg merges as it goes. It is also how a note votes in
+// Groundworks, changes its split or renews it without moving any stake: the
+// note respent onto itself with groundworks_split. bundle pays the fee only.
 //
-// sighash fields: StakeFields(stake), Bytes(validator).
+// sighash fields: StakeFields(stake), Bytes(validator),
+// Bytes(SplitsBytes(groundworks_split)).
 message MsgRestake {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
@@ -199,6 +207,8 @@ message MsgRestake {
   reserved 3;
   reserved "fee";
   StakeProof stake = 4 [(gogoproto.nullable) = false];
+  // groundworks_split: as MsgDelegate's.
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 5 [(gogoproto.nullable) = false];
 }
 
 // MsgRestakeResponse returns the merged note's position (one entry).
@@ -219,7 +229,7 @@ message MsgRestakeResponse {
 // zero note when nothing is left.
 //
 // sighash fields: StakeFields(stake), Bytes(validator), amount, pc,
-// Bytes(ciphertext).
+// Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)).
 message MsgUndelegate {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string validator = 2;
@@ -234,6 +244,8 @@ message MsgUndelegate {
   // ciphertext is the payout notes' amount-blind v2 ciphertext (zk/privacy
   // EncryptBlindNote, exactly 177 bytes), emitted with every payout note.
   bytes ciphertext = 7;
+  // groundworks_split: as MsgDelegate's (the change votes).
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 8 [(gogoproto.nullable) = false];
 }
 
 // MsgUndelegateResponse returns the ERTH value booked and the payout's id
@@ -313,89 +325,6 @@ message MsgStakeVoteResponse {
   reserved "position";
 }
 
-// MsgLockPosition: the proof spends the owner's derth/<validator> notes,
-// amount of them leaving (v_out) into a new Groundworks position splitting
-// its weight by splits, the change (or a padding zero note) back to the
-// owner. The position stores stake.owner_tag: only its owner can update,
-// unlock or vote it. bundle pays the fee only.
-//
-// sighash fields: StakeFields(stake), Bytes(validator), amount,
-// Bytes(SplitsBytes(splits)).
-message MsgLockPosition {
-  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
-  string validator = 2;
-  uint64 amount = 3;
-  repeated earth.allocation.v1.AllocationWeight splits = 4 [(gogoproto.nullable) = false];
-  // fee (5): the fee is the bundle's uerth balance.
-  reserved 5;
-  reserved "fee";
-  StakeProof stake = 6 [(gogoproto.nullable) = false];
-}
-
-// MsgLockPositionResponse returns the position id.
-message MsgLockPositionResponse {
-  uint64 position_id = 1;
-}
-
-// MsgUpdatePosition replaces a position's split. The proof spends and creates
-// nothing; its owner_tag must be the position's. bundle pays the fee only.
-//
-// sighash fields: StakeFields(stake), position_id, Bytes(SplitsBytes(splits)).
-message MsgUpdatePosition {
-  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
-  uint64 position_id = 2;
-  repeated earth.allocation.v1.AllocationWeight splits = 3 [(gogoproto.nullable) = false];
-  // fee (4): the fee is the bundle's uerth balance.
-  reserved 4;
-  reserved "fee";
-  StakeProof stake = 5 [(gogoproto.nullable) = false];
-}
-
-// MsgUpdatePositionResponse is empty.
-message MsgUpdatePositionResponse {}
-
-// MsgUnlockPosition closes a position and credits its derth to its owner's
-// derth/<validator> note: the stake proof (asset derth/<position's
-// validator>, v_in = the position's derth, v_out = 0) spends the owner's
-// existing note (or a padding input) and creates the merged note; its
-// owner_tag must be the position's. bundle pays the fee only.
-//
-// sighash fields: StakeFields(stake), position_id.
-message MsgUnlockPosition {
-  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
-  uint64 position_id = 2;
-  // fee (3): the fee is the bundle's uerth balance.
-  reserved 3;
-  reserved "fee";
-  StakeProof stake = 4 [(gogoproto.nullable) = false];
-}
-
-// MsgUnlockPositionResponse returns the merged stake note's position.
-message MsgUnlockPositionResponse {
-  uint64 position = 1;
-}
-
-// MsgPositionVote votes a position (created before the proposal entered
-// voting) on an x/gov proposal; a later vote replaces it. The proof spends and
-// creates nothing; its owner_tag must be the position's. bundle pays the fee
-// only.
-//
-// sighash fields: StakeFields(stake), position_id, proposal_id,
-// Bytes(OptionsBytes(options)).
-message MsgPositionVote {
-  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
-  uint64 position_id = 2;
-  uint64 proposal_id = 3;
-  repeated cosmos.gov.v1.WeightedVoteOption options = 4;
-  // fee (5): the fee is the bundle's uerth balance.
-  reserved 5;
-  reserved "fee";
-  StakeProof stake = 6 [(gogoproto.nullable) = false];
-}
-
-// MsgPositionVoteResponse is empty.
-message MsgPositionVoteResponse {}
-
 // MsgRedelegate moves amount of the owner's derth/<src_validator> to
 // dst_validator with no unbonding gap. The proof's lane A (asset
 // derth/<src>, v_out = amount) spends derth/<src> notes, the change (or a
@@ -419,13 +348,14 @@ message MsgPositionVoteResponse {}
 // The credited derth is labelled with the move: until the move's x/staking
 // entry matures (the label window), a slash of src_validator for an
 // infraction before the move cuts it (the slash debt tree), and it cannot
-// leave the note (no undelegating, locking or redelegating it on; the rest
+// leave the note (no undelegating or redelegating it on; the rest
 // of the note moves freely). x/staking's transitive and max_entries limits
 // do not apply: the module moves its stake with x/staking's primitives and
 // records the entry itself.
 //
 // sighash fields: StakeFields(stake), Bytes(src_validator),
-// Bytes(dst_validator), amount, dst_derth, move_time.
+// Bytes(dst_validator), amount, dst_derth, move_time,
+// Bytes(SplitsBytes(groundworks_split)).
 message MsgRedelegate {
   earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
   string src_validator = 2;
@@ -440,6 +370,9 @@ message MsgRedelegate {
   // block time must be in [move_time, move_time + move_time_slack]. The
   // label's window closes at move_time + the label window (Query/DebtTree).
   uint64 move_time = 7;
+  // groundworks_split: as MsgDelegate's, for both outputs that vote (the
+  // source's change and the destination's merged note).
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 8 [(gogoproto.nullable) = false];
 }
 
 // MsgRedelegateResponse: the ERTH value moved, the derth/<dst_validator>

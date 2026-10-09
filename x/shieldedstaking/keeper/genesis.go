@@ -106,15 +106,12 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.UnbondPayoutSeq.Set(ctx, gs.NextUnbondPayoutId); err != nil {
 		return err
 	}
-	for _, p := range gs.Positions {
-		if err := k.setPosition(ctx, p); err != nil {
-			return err
-		}
-		if err := k.PositionsByVal.Set(ctx, collections.Join(p.Validator, p.Id)); err != nil {
+	for _, v := range gs.Positions {
+		if err := k.setVote(ctx, v); err != nil {
 			return err
 		}
 	}
-	if err := k.PositionSeq.Set(ctx, gs.NextPositionId); err != nil {
+	if err := k.GwVoteSeq.Set(ctx, gs.NextPositionId); err != nil {
 		return err
 	}
 	if err := k.rebuildGwTotals(ctx); err != nil {
@@ -136,13 +133,13 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			return err
 		}
 	}
-	// An open snapshot's height is compared with the new chain's heights (a
-	// position created at or after it may not vote), so it must be below the
+	// An open snapshot's height is compared with the new chain's heights, so
+	// it must be below the
 	// chain's first height: a zero-height export shifts it below 1
 	// (ResetHeightsForZeroHeight), and an export relaunched at
 	// initial_height = export height + 1 has it below already. A snapshot at
-	// or above the initial height would let positions created on the new
-	// chain vote on it (audit 4, I2).
+	// or above the initial height would sort with the new chain's heights
+	// (audit 4, I2).
 	// (InitChain's context carries the initial height when it is above 1,
 	// and 0 for a chain starting at 1.)
 	initialHeight := sdk.UnwrapSDKContext(ctx).BlockHeight()
@@ -220,7 +217,7 @@ func (k Keeper) checkUnbondingEntries(ctx context.Context, p types.Params) error
 	return nil
 }
 
-// checkGenesisValidators refuses a genesis whose books, records, positions,
+// checkGenesisValidators refuses a genesis whose books, records, Groundworks votes,
 // snapshots or votes name a validator by any string but its canonical
 // encoding under this chain's validator codec (keeper.valAddr).
 func (k Keeper) checkGenesisValidators(_ context.Context, gs types.GenesisState) error {
@@ -240,8 +237,8 @@ func (k Keeper) checkGenesisValidators(_ context.Context, gs types.GenesisState)
 			return err
 		}
 	}
-	for _, p := range gs.Positions {
-		if err := check("position", p.Validator); err != nil {
+	for _, v := range gs.Positions {
+		if err := check("groundworks vote", v.Validator); err != nil {
 			return err
 		}
 	}
@@ -466,27 +463,24 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	if gs.NextUnbondPayoutId, err = k.UnbondPayoutSeq.Peek(ctx); err != nil {
 		return nil, err
 	}
-	if err := k.Positions.Walk(ctx, nil, func(_ uint64, p types.Position) (bool, error) {
+	if err := k.GwVotes.Walk(ctx, nil, func(_ uint64, v types.GroundworksVote) (bool, error) {
 		// A split naming an option pruned since loses it (audit 7, as
-		// x/allocation's export drops it from its voters); a split left with
-		// nothing is no split.
-		if len(p.Splits) > 0 {
-			kept, err := k.existingSplits(ctx, p.Splits)
-			if err != nil {
-				return true, err
-			}
-			if len(kept) == 0 {
-				p.Splits, p.SplitEpoch, p.SplitExpiresAt = nil, 0, 0
-			} else {
-				p.Splits = kept
-			}
+		// x/allocation's export drops it from its voters); a vote left with
+		// nothing is no vote.
+		kept, err := k.existingSplits(ctx, v.Splits)
+		if err != nil {
+			return true, err
 		}
-		gs.Positions = append(gs.Positions, p)
+		if len(kept) == 0 {
+			return false, nil
+		}
+		v.Splits = kept
+		gs.Positions = append(gs.Positions, v)
 		return false, nil
 	}); err != nil {
 		return nil, err
 	}
-	if gs.NextPositionId, err = k.PositionSeq.Peek(ctx); err != nil {
+	if gs.NextPositionId, err = k.GwVoteSeq.Peek(ctx); err != nil {
 		return nil, err
 	}
 	if gs.SnapshotSeq, err = k.SnapshotSeq.Peek(ctx); err != nil {

@@ -32,7 +32,7 @@ func (k Keeper) resyncFromBonded(ctx context.Context, delAddr sdk.AccAddress, re
 	// The stream's weight source decides whose bonded stake is weight (on
 	// this chain: a validator operator's self-bond, never the private staking
 	// module's own delegations, which change every epoch and are counted
-	// through positions instead).
+	// through its Groundworks votes instead).
 	if src, err := k.weightSource(types.STREAM_ID_GROUNDWORKS); err == nil {
 		if bt, ok := src.(types.BondedTracker); ok && !bt.TracksBonded(addrBz) {
 			return nil

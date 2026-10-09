@@ -36,25 +36,105 @@ see evidence exit at the pre-slash value; and rewards already accrued in `W_v`
 must be priced in, or a deposit just before the epoch end would buy a whole
 epoch's rewards. The fix must keep both properties.
 
-**Check first.** Whether waiting stake can be undelegated before it ever joins
-(a deposit and an undelegation booked in the same epoch net in the sweep). If
-so, a holder could collect a share of rewards without ever being exposed to a
-slash, repeatedly. Quantify before choosing the fix.
+**Checked (2026-10-08).** A deposit and an undelegation never net: the epoch
+end delegates the whole queue, then undelegates the records' target from the
+bonded stake through x/staking's full unbonding. Nobody can collect rewards
+without staying staked; the issue is only the dilution above.
 
-**Intended fix (to design and audit).** A deposit enters a per-validator
-*entry queue* outside the share pool: it holds ERTH, not derth, and is not in
-`S_v` or `B_v` until the epoch end that delegates it, when it is credited derth
-at that epoch end's rate (after that epoch's rewards and slashes are booked).
-The note minted at deposit then has to carry the queued ERTH amount and be
-converted to derth at its join epoch, or be minted at the join (a chain-minted
-note, like payouts). Redelegation's destination leg (`redelegate.go`,
-`PendingDelegation += r`) and genesis export/import of queued entries
-(`export.go`) follow the same rule. Undelegating a still-queued deposit returns
-its ERTH (no rate involved).
+**Decided (user, 2026-10-08): bond a delegation in its own block.** The
+queue was the only reason a deposit shared rewards it did not earn: priced at
+the live rate and earning from the same block, it is exactly fair.
+MsgDelegate's handler delegates the amount to the validator at once
+(`bondNow`, x/staking's Delegate from the module, as a redelegation's arrival
+already is); the rewards that delegation change pays out (x/distribution
+withdraws them on every change) join the book's queue, so the backing grows
+by exactly the amount and the rate does not move. A validator that cannot
+take a delegation now (gone, or slashed to nothing) queues it for the epoch
+end, as before. The epoch end still delegates the queue (rewards, a
+redelegation's queued part). No note, circuit or wallet change: the wallet
+still names derth at the live rate, with its quote margin (build 28).
 
-**Touches.** x/shieldedstaking (msg_server, epoch, rate, redelegate, export,
-invariants, the stake note format and the stake circuit if a note can hold a
-queued amount), the wallets (stake note valuation, the Stake tab's "waiting to
-start earning" state, which then shows an ERTH amount rather than derth), the
-backend indexer (stake note events), docs (staking). A stake-note format change
-means a circuit change and a new verifying key in the upgrade.
+Weighed and dropped: pending ERTH in the note plus an epoch rate tree (exact
+but a circuit, note format and vote circuit change), the chain minting a
+note at the join, and a projected epoch-end rate (an estimate).
+
+Checked: a deposit bonded at once is exposed to slashes from that block;
+leaving still takes x/staking's full unbonding; the live rate already prices
+the rewards accrued so far, so nothing can be bought below its worth; the
+deposit's amount and validator were public already.
+
+**Touches.** x/shieldedstaking Delegate (`bondNow`), its tests and docs
+(staking). Ships with item 2 in one upgrade (v1.2.0).
+
+## 2. Groundworks votes by stake note, not positions (x/shieldedstaking, x/allocation, stake circuit)
+
+**Status (2026-10-08):** built for v1.2.0 with item 1: the stake circuit
+(Groundworks tags, no owner tag), the chain (votes keyed by tag, positions
+deleted, the v1.2.0 handler installing the stake key), tests, both wallets
+and the backend indexer (positions no longer indexed).
+
+**Found:** 2026-10-08, from the wallet. A position is a separate, locked
+record: stake in it cannot be moved or unstaked without an unlock, stake added
+at the same validator does not join it, and wallets end up wrapping every
+stake action in unlock / act / relock. Users read it as their stake being stuck.
+
+**Decided (user, 2026-10-08):** simplicity over privacy, one transaction over
+two. One stake note per validator (as now), and that note carries the vote.
+
+**Design: a note votes in place, and every stake tx carries the vote forward.**
+
+- **Stake circuit change** (new verifying key `stake`, set by the upgrade
+  handler in x/shielded `verifying_keys`). A Groundworks tag per note that
+  needs no tree position: `gw = H(TAG_GW, nk, rho)`. New public inputs:
+  - `gw_0`, `gw_1`, `cr_gw`: each spent input's tag (padding: 0 or its own,
+    as nullifiers are);
+  - `gw_out`, `w_out`: the lane A output's tag and its unexposed amount
+    (`out_amount - out_ex`), or both 0 when it does not vote;
+  - `cr_gw_out`, `cr_w_out`: the same for the credit lane's output.
+- **Votes**: `GroundworksVotes[gw] = {validator, weight, split, expires}`.
+  - A stake msg may carry `groundworks_split`; with it, a nonzero `gw_out`
+    (and `cr_gw_out`) is stored as a vote of `w_out` derth at that split.
+    Without it both must be 0.
+  - **Every stake tx cancels**: each revealed input tag removes the vote keyed
+    by it. So every delegate / undelegate / move / merge ends the old note's
+    vote and, when the wallet passes the split, starts the new note's in the
+    same block. Every unit of derth is in one unspent note, so live weight
+    never exceeds unspent voted derth.
+  - Voting, changing the split, or renewing the lease alone: a restake of
+    the note onto itself with the split (`MsgRestake` + `groundworks_split`).
+  - The lease (`groundworks_lease_seconds`) runs from each vote; a stake tx
+    that carries the vote forward renews it.
+  - A reused `rho` gives two notes one tag: a second vote under a live tag is
+    refused, and a spend only ever cancels the spender's own vote. Harmless.
+- **Tally**: each vote's derth at its validator's live rate, as positions are
+  weighed now, in that validator's one Groundworks voter beside its
+  operator's self-bond. Slashes need nothing new.
+
+**Positions are deleted, not migrated.** The only holder (the user) unlocks
+before the upgrade. The upgrade removes `MsgLockPosition`, `MsgUpdatePosition`,
+`MsgUnlockPosition`, `MsgPositionVote`, the position store, sequences and
+events, and positions as a Groundworks weight source. The handler deletes
+any position left (an upgrade handler that errors halts the chain, so it
+does not refuse); earth-1 holds none (checked 2026-10-08, height 28665). Both wallets drop
+every position screen, reminder and lease record.
+
+**Privacy (accepted).** Per vote, as with positions: weight, validator and
+split are public; the owner is not. New: a voter's stake txs at a validator
+are linked into one pseudonymous history with amounts (each tx cancels the
+previous vote and starts the next). Non-voters reveal a random-looking tag per
+spend, which links nothing.
+
+**Old wallets.** Their stake proofs fail against the new key from the upgrade
+height. With one user, no dual-circuit transition: install the new build right
+after the upgrade lands.
+
+**Check first.** Genesis export/import of votes; the tally against the
+one-voter-per-validator weighting (AUDIT_HISTORY G); gas for one KV delete per
+input tag; that every stake msg's handler fixes the new public inputs (zero
+where a msg may not vote: `MsgStakeVote`).
+
+**Touches.** stake circuit (+ tools/privacyvectors), x/shielded verifying key
+via the upgrade handler, x/shieldedstaking (msgs, vote store, cancel, tally
+source, position deletion, export/import), x/allocation (Groundworks weight
+source), proto, backend indexer, both wallets (prover, msgs, the
+Groundworks screen), docs (emission, privacy, using-the-app).

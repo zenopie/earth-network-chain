@@ -244,7 +244,7 @@ func TestDexReleaseMapMatchesHandler(t *testing.T) {
 	p := e.buildLegs(ssFee, leg{anml, 5})
 	pc := privacy.FieldBytes(ssDet("l5", 0))
 	st := fakeStake("l5", false)
-	st.Proof, st.OwnerTag = make([]byte, shieldedtypes.ProofBytes), pc
+	st.Proof, st.Commitment = make([]byte, shieldedtypes.ProofBytes), pc
 	m := &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: st}
 	require.Error(t, m.ValidateBasic(), "the first line")
 	ctx := shieldedtypes.WithTxFields(e.ctx(), ssTx)

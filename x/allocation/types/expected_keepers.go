@@ -24,7 +24,7 @@ type WeightSource interface {
 // from a tx-time settle. The stream's index is settled up to each lapse
 // time before Lapse runs, and Lapse writes voters without settling further
 // (SetWeightedVoterSettled), so the emission after a lapse is never shared
-// with the lapsed weight. x/shieldedstaking's stake positions are one.
+// with the lapsed weight. x/shieldedstaking's Groundworks votes are one.
 type Lapser interface {
 	// NextLapse is the earliest pending lapse time (unix seconds) at or
 	// before t, if any.

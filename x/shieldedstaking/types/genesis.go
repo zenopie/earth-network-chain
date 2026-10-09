@@ -83,25 +83,29 @@ func (gs GenesisState) Validate() error {
 		return err
 	}
 	ids := map[uint64]bool{}
-	for _, p := range gs.Positions {
-		if ids[p.Id] || p.Id >= gs.NextPositionId {
-			return fmt.Errorf("position %d duplicated or not below next_position_id", p.Id)
+	tags := map[string]bool{}
+	for _, v := range gs.Positions {
+		if ids[v.Id] || v.Id >= gs.NextPositionId {
+			return fmt.Errorf("groundworks vote %d duplicated or not below next_groundworks_vote_id", v.Id)
 		}
-		ids[p.Id] = true
-		if err := CanonicalValoper(p.Validator); err != nil {
-			return fmt.Errorf("position %d: %w", p.Id, err)
+		ids[v.Id] = true
+		if err := CanonicalValoper(v.Validator); err != nil {
+			return fmt.Errorf("groundworks vote %d: %w", v.Id, err)
 		}
-		// A position's derth is a stake note's value (audit 5 L-ST2): at most
-		// 2^63-1, so unlocking it can always credit it to a stake note.
-		if p.Derth.IsNil() || !shieldedtypes.FitsNote(p.Derth) {
-			return fmt.Errorf("position %d is invalid: derth must be 1..2^63-1", p.Id)
+		// A vote's derth is a stake note's unexposed amount: at most 2^63-1.
+		if v.Derth.IsNil() || !shieldedtypes.FitsNote(v.Derth) {
+			return fmt.Errorf("groundworks vote %d is invalid: derth must be 1..2^63-1", v.Id)
 		}
-		if _, err := privacy.FieldFromBytes(p.OwnerTag); err != nil {
-			return fmt.Errorf("position %d owner_tag: %w", p.Id, err)
+		if t, err := privacy.FieldFromBytes(v.Tag); err != nil || t.IsZero() {
+			return fmt.Errorf("groundworks vote %d: malformed tag", v.Id)
 		}
-		// A split is leased (split_expires_at > 0); no split, no lease.
-		if (len(p.Splits) > 0) != (p.SplitExpiresAt > 0) {
-			return fmt.Errorf("position %d: split_expires_at %d does not fit its %d splits", p.Id, p.SplitExpiresAt, len(p.Splits))
+		if tags[string(v.Tag)] {
+			return fmt.Errorf("groundworks vote %d: tag repeated", v.Id)
+		}
+		tags[string(v.Tag)] = true
+		// A vote is cast with a split and leased.
+		if len(v.Splits) == 0 || v.SplitExpiresAt <= 0 {
+			return fmt.Errorf("groundworks vote %d: a vote has a split and a lease", v.Id)
 		}
 	}
 	snaps := map[uint64]bool{}
@@ -139,7 +143,7 @@ func (gs GenesisState) Validate() error {
 		} else {
 			voteKeys[k] = true
 		}
-		if len(v.Key) == 0 || (v.Key[0] == 0) == v.Position || (v.Key[0] == 0 && len(v.Key) != 33) || (v.Key[0] == 1 && len(v.Key) != 9) {
+		if len(v.Key) != 33 || v.Key[0] != 0 {
 			return fmt.Errorf("vote on proposal %d: malformed key %x", v.ProposalId, v.Key)
 		}
 		if !snaps[v.ProposalId] {
@@ -279,15 +283,8 @@ func (gs GenesisState) validatePayouts() error {
 // checkVoteNullifiers: a note vote names exactly MaxVoteNotes vote
 // nullifiers (padding included), non-zero canonical field elements, its
 // key's first, none used by another
-// vote on the proposal (used records proposal/vnf seen so far); a position
-// vote names none.
+// vote on the proposal (used records proposal/vnf seen so far).
 func checkVoteNullifiers(v StakeVote, used map[string]bool) error {
-	if v.Position {
-		if len(v.VoteNullifiers) != 0 {
-			return fmt.Errorf("position vote on proposal %d carries vote nullifiers", v.ProposalId)
-		}
-		return nil
-	}
 	if len(v.VoteNullifiers) != MaxVoteNotes {
 		return fmt.Errorf("note vote on proposal %d: %d vote nullifiers, want %d", v.ProposalId, len(v.VoteNullifiers), MaxVoteNotes)
 	}

@@ -357,6 +357,12 @@ func TestVerifyingKeysAreSeeded(t *testing.T) {
 // from the circuits fails here, not on the first private tx). That the test
 // keys match the circuits themselves is make privacy-vks-check (needs nargo
 // and bb).
+// upgradedKeys are the circuits whose launch key an upgrade replaced, by the
+// key it installs.
+var upgradedKeys = map[string]string{
+	"stake": "../app/upgrades/v1_2_0/stake.vk.b64",
+}
+
 func TestShieldedVerifyingKeysAreSeeded(t *testing.T) {
 	g := loadGenesis(t)
 	tests := map[string]string{
@@ -382,8 +388,18 @@ func TestShieldedVerifyingKeysAreSeeded(t *testing.T) {
 		if err != nil {
 			t.Fatalf("test key for %s: %v", c, err)
 		}
-		if gen != base64.StdEncoding.EncodeToString(raw) {
-			t.Errorf("genesis %s key differs from %s, which the real-proof tests verify against", c, testFile)
+		// The key in force: an upgrade that replaced the launch key installs
+		// its own (privacy-vks.sh current_dir).
+		cur, where := gen, "genesis"
+		if up, ok := upgradedKeys[c]; ok {
+			b, err := os.ReadFile(up)
+			if err != nil {
+				t.Fatalf("upgrade key for %s: %v", c, err)
+			}
+			cur, where = strings.TrimSpace(string(b)), up
+		}
+		if cur != base64.StdEncoding.EncodeToString(raw) {
+			t.Errorf("%s %s key differs from %s, which the real-proof tests verify against", where, c, testFile)
 		}
 	}
 }

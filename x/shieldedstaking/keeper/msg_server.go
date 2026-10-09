@@ -3,7 +3,6 @@ package keeper
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"strconv"
 
@@ -11,6 +10,8 @@ import (
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
@@ -39,9 +40,13 @@ func (k msgServer) UpdateParams(ctx context.Context, req *types.MsgUpdateParams)
 	return &types.MsgUpdateParamsResponse{}, k.Params.Set(ctx, req.Params)
 }
 
-// Delegate: the ERTH joins the validator's queue, and the derth it buys at
-// the live rate (the msg's derth, checked) is credited to the owner's
-// derth/v note: the proof spends it (or pads) and creates the merged note.
+// Delegate: the ERTH is delegated to the validator at once (bonded in this
+// block, earning from it), and the derth it buys at the live rate (the msg's
+// derth, checked) is credited to the owner's derth/v note: the proof spends
+// it (or pads) and creates the merged note. Priced at the live rate and
+// earning from the same block, a delegation shares in no reward it did not
+// earn. A validator that cannot take a delegation now (bondNow) queues it
+// for the epoch end, as rewards are.
 func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types.MsgDelegateResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
@@ -62,12 +67,19 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	if err := k.checkpointSupply(ctx, &vs); err != nil {
 		return nil, err
 	}
-	vs.PendingDelegation = vs.PendingDelegation.Add(paid.Amount)
+	bonded, late, err := k.bondNow(ctx, m.Validator, paid.Amount)
+	if err != nil {
+		return nil, err
+	}
+	if !bonded {
+		vs.PendingDelegation = vs.PendingDelegation.Add(paid.Amount)
+	}
+	vs.PendingDelegation = vs.PendingDelegation.Add(late)
 	vs.DerthSupply = vs.DerthSupply.Add(d)
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
-	pos, err := k.applyStakeProof(ctx, &m.Stake)
+	pos, err := k.applyStake(ctx, m)
 	if err != nil {
 		return nil, err
 	}
@@ -75,18 +87,50 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 		sdk.NewAttribute(types.AttributeKeyValidator, m.Validator),
 		sdk.NewAttribute(types.AttributeKeyAmount, paid.Amount.String()),
 		sdk.NewAttribute(types.AttributeKeyDerth, d.String()),
+		sdk.NewAttribute(types.AttributeKeyDelegated, strconv.FormatBool(bonded)),
 	))
 	return &types.MsgDelegateResponse{Derth: m.Derth, Position: firstPosition(pos)}, nil
 }
 
+// bondNow delegates amount uerth from the module to valoper at once, unless
+// the validator cannot take it (gone, or slashed to nothing: then the caller
+// queues it, as the epoch end would). late is what the delegation change
+// paid out: x/distribution withdraws the module's rewards at v on every
+// change, and they join v's queue, so the book's backing grows by exactly
+// the amount (its rate does not move, up to the delegation's share
+// truncation).
+func (k Keeper) bondNow(ctx context.Context, valoper string, amount math.Int) (bonded bool, late math.Int, err error) {
+	val, err := k.valAddr(valoper)
+	if err != nil {
+		return false, math.Int{}, err
+	}
+	v, err := k.staking.GetValidator(ctx, val)
+	if errors.Is(err, stakingtypes.ErrNoValidatorFound) {
+		return false, math.ZeroInt(), nil
+	} else if err != nil {
+		return false, math.Int{}, err
+	}
+	if !v.Tokens.IsPositive() || v.InvalidExRate() {
+		return false, math.ZeroInt(), nil
+	}
+	before := k.bank.GetBalance(ctx, k.modAddr, types.BondDenom).Amount
+	if _, err := k.staking.Delegate(ctx, k.modAddr, amount, stakingtypes.Unbonded, v, true); err != nil {
+		return false, math.Int{}, err
+	}
+	late = k.bank.GetBalance(ctx, k.modAddr, types.BondDenom).Amount.Sub(before.Sub(amount))
+	return true, late, nil
+}
+
 // Restake merges the owner's stake notes: the proof's output is appended,
-// its inputs spent. Nothing else changes.
+// its inputs spent, their Groundworks votes cancelled and the output's cast
+// (a note voting, changing its split or renewing it in place). Nothing else
+// changes.
 func (k msgServer) Restake(goCtx context.Context, m *types.MsgRestake) (*types.MsgRestakeResponse, error) {
 	ctx, err := k.authorized(goCtx, m)
 	if err != nil {
 		return nil, err
 	}
-	pos, err := k.applyStakeProof(ctx, &m.Stake)
+	pos, err := k.applyStake(ctx, m)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +154,7 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	if err != nil {
 		return nil, err
 	}
-	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
+	if _, err := k.applyStake(ctx, m); err != nil {
 		return nil, err
 	}
 	d := math.NewIntFromUint64(m.Amount)
@@ -184,121 +228,20 @@ func (k msgServer) StakeVote(goCtx context.Context, m *types.MsgStakeVote) (*typ
 	return &types.MsgStakeVoteResponse{}, nil
 }
 
-// LockPosition moves amount of the owner's derth from notes into a new
-// position owned by the proof's owner tag.
-func (k msgServer) LockPosition(goCtx context.Context, m *types.MsgLockPosition) (*types.MsgLockPositionResponse, error) {
-	ctx, err := k.authorized(goCtx, m)
+// applyStake applies a stake msg's proof (its spends and outputs, stake_tree.go)
+// and then its Groundworks effect (groundworks.go). Every stake msg's handler
+// goes through it.
+func (k Keeper) applyStake(ctx context.Context, m types.StakeMsg) ([]uint64, error) {
+	// The ante refused these already (CheckPrivateAction); the handler
+	// repeats them on the same state, so the two cannot disagree.
+	if err := k.checkGroundworks(ctx, m); err != nil {
+		return nil, err
+	}
+	pos, err := k.applyStakeProof(ctx, m.StakeProofOf())
 	if err != nil {
 		return nil, err
 	}
-	if err := k.checkLock(ctx, m); err != nil {
-		return nil, err
-	}
-	if _, err := k.applyStakeProof(ctx, &m.Stake); err != nil {
-		return nil, err
-	}
-	id, err := k.PositionSeq.Next(ctx)
-	if err != nil {
-		return nil, err
-	}
-	p := types.Position{
-		Id: id, Validator: m.Validator, Derth: math.NewIntFromUint64(m.Amount),
-		OwnerTag: m.Stake.OwnerTag, CreatedHeight: ctx.BlockHeight(), Weight: math.ZeroInt(),
-	}
-	if p, err = k.applyPositionSplit(ctx, p, m.Splits, false); err != nil {
-		return nil, err
-	}
-	if err := k.setPosition(ctx, p); err != nil {
-		return nil, err
-	}
-	if err := k.PositionsByVal.Set(ctx, collections.Join(p.Validator, id)); err != nil {
-		return nil, err
-	}
-	k.positionEvent(ctx, "lock", p)
-	return &types.MsgLockPositionResponse{PositionId: id}, nil
-}
-
-// UpdatePosition replaces a position's split.
-func (k msgServer) UpdatePosition(goCtx context.Context, m *types.MsgUpdatePosition) (*types.MsgUpdatePositionResponse, error) {
-	ctx, err := k.authorized(goCtx, m)
-	if err != nil {
-		return nil, err
-	}
-	p, err := k.checkUpdate(ctx, m)
-	if err != nil {
-		return nil, err
-	}
-	if p, err = k.applyPositionSplit(ctx, p, m.Splits, true); err != nil {
-		return nil, err
-	}
-	if err := k.setPosition(ctx, p); err != nil {
-		return nil, err
-	}
-	k.positionEvent(ctx, "update", p)
-	return &types.MsgUpdatePositionResponse{}, nil
-}
-
-// UnlockPosition closes a position; its derth is credited to its owner's
-// stake note (the proof spends it, or pads, and creates the merged note).
-func (k msgServer) UnlockPosition(goCtx context.Context, m *types.MsgUnlockPosition) (*types.MsgUnlockPositionResponse, error) {
-	ctx, err := k.authorized(goCtx, m)
-	if err != nil {
-		return nil, err
-	}
-	p, err := k.checkPositionOwner(ctx, m.PositionId, &m.Stake)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := k.applyPositionSplit(ctx, p, nil, true); err != nil {
-		return nil, err
-	}
-	pos, err := k.applyStakeProof(ctx, &m.Stake)
-	if err != nil {
-		return nil, err
-	}
-	if err := k.removePosition(ctx, p.Id); err != nil {
-		return nil, err
-	}
-	if err := k.PositionsByVal.Remove(ctx, collections.Join(p.Validator, p.Id)); err != nil {
-		return nil, err
-	}
-	k.positionEvent(ctx, "unlock", p)
-	return &types.MsgUnlockPositionResponse{Position: firstPosition(pos)}, nil
-}
-
-// PositionVote records (or replaces) a position's vote.
-func (k msgServer) PositionVote(goCtx context.Context, m *types.MsgPositionVote) (*types.MsgPositionVoteResponse, error) {
-	ctx, err := k.authorized(goCtx, m)
-	if err != nil {
-		return nil, err
-	}
-	p, _, err := k.checkPositionVote(ctx, m)
-	if err != nil {
-		return nil, err
-	}
-	v := types.StakeVote{
-		ProposalId: m.ProposalId, Key: binary.BigEndian.AppendUint64([]byte{1}, p.Id), Position: true,
-		Validator: p.Validator, Derth: p.Derth, Options: m.Options,
-	}
-	if err := k.putVote(ctx, v); err != nil {
-		return nil, err
-	}
-	return &types.MsgPositionVoteResponse{}, nil
-}
-
-func (k Keeper) positionEvent(ctx sdk.Context, action string, p types.Position) {
-	p = k.withLiveWeight(ctx, p)
-	if action == "unlock" {
-		p.Weight = math.ZeroInt()
-	}
-	ctx.EventManager().EmitEvent(sdk.NewEvent(types.EventTypePosition,
-		sdk.NewAttribute(types.AttributeKeyAction, action),
-		sdk.NewAttribute(types.AttributeKeyPosition, strconv.FormatUint(p.Id, 10)),
-		sdk.NewAttribute(types.AttributeKeyValidator, p.Validator),
-		sdk.NewAttribute(types.AttributeKeyDerth, p.Derth.String()),
-		sdk.NewAttribute(types.AttributeKeyWeight, p.Weight.String()),
-		sdk.NewAttribute(types.AttributeKeySplitExpiresAt, strconv.FormatInt(p.SplitExpiresAt, 10)),
-	))
+	return pos, k.applyGroundworks(ctx, m)
 }
 
 // firstPosition is lane A's output's position (the merged note's), 0 when

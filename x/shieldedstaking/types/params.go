@@ -13,10 +13,10 @@ const (
 	DefaultStakeRootWindowSeconds uint64 = 14 * 24 * 60 * 60
 )
 
-// DefaultMinPosition is 1 ERTH of derth. Positions are weighed per validator
-// (one Groundworks voter each), so their number costs no epoch work and needs
-// no cap; the floor only keeps dust out.
-var DefaultMinPosition = math.NewInt(1_000_000)
+// DefaultMinGroundworksVote is 1 ERTH of derth. Groundworks votes are weighed
+// per validator (one Groundworks voter each), so their number costs no epoch
+// work and needs no cap; the floor only keeps dust out.
+var DefaultMinGroundworksVote = math.NewInt(1_000_000)
 
 // DefaultMinDelegation is 1 ERTH: the smallest private delegation, and the
 // least derth one credits.
@@ -24,7 +24,7 @@ var DefaultMinDelegation = math.NewInt(1_000_000)
 
 // DefaultParams returns the default parameters.
 func DefaultParams() Params {
-	return Params{EpochSeconds: DefaultEpochSeconds, MinPosition: DefaultMinPosition,
+	return Params{EpochSeconds: DefaultEpochSeconds, MinPosition: DefaultMinGroundworksVote,
 		StakeRootWindowSeconds: DefaultStakeRootWindowSeconds, MinDelegation: DefaultMinDelegation}
 }
 
@@ -37,7 +37,7 @@ func (p Params) Validate() error {
 		return errors.New("epoch_seconds must be at most 30 days")
 	}
 	if p.MinPosition.IsNil() || !p.MinPosition.IsPositive() {
-		return errors.New("min_position must be positive")
+		return errors.New("min_groundworks_vote must be positive")
 	}
 	if p.StakeRootWindowSeconds == 0 {
 		return errors.New("stake_root_window_seconds must be positive")

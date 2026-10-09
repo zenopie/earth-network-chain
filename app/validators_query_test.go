@@ -40,7 +40,7 @@ func TestValidatorsQuery(t *testing.T) {
 	e.doubleSign(vA, infraction) // vA jailed and tombstoned
 	e.next(5 * time.Second)
 	// A queued delegation at vC (P > 0).
-	e.fakeDelegate(vC, uint64(5*ssErth), "c2")
+	e.queueDeposit(vC, 5*ssErth)
 
 	// A book whose validator x/staking no longer has.
 	gone := sdk.ValAddress(privacy.FieldBytes(ssDet("gone", 0))[:20]).String()
