@@ -360,7 +360,7 @@ func TestVerifyingKeysAreSeeded(t *testing.T) {
 // upgradedKeys are the circuits whose launch key an upgrade replaced, by the
 // key it installs.
 var upgradedKeys = map[string]string{
-	"stake": "../app/upgrades/v1_2_0/stake.vk.b64",
+	"stake": "../app/upgrades/v1_2_1/stake.vk.b64",
 }
 
 func TestShieldedVerifyingKeysAreSeeded(t *testing.T) {

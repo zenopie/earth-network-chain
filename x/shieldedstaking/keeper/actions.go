@@ -42,7 +42,7 @@ import (
 // output slot. Covers
 // the handler's reads and writes (the rate's reward computation is the
 // heaviest: a distribution period walk). A delegation also bonds in its
-// handler (x/staking Delegate and the reward withdrawal it triggers, v1.2.0).
+// handler (x/staking Delegate and the reward withdrawal it triggers, v1.2.1).
 const (
 	gasDelegate   uint64 = 600_000
 	gasRestake    uint64 = 100_000

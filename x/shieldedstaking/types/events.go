@@ -71,7 +71,11 @@ const (
 	// AttributeKeySplitExpiresAt: a Groundworks vote's lease end (unix
 	// seconds).
 	AttributeKeySplitExpiresAt = "split_expires_at"
-	AttributeKeyOptions        = "options"
+	// AttributeKeyPending: a Groundworks vote's pending exposure (derth, not
+	// yet counted); AttributeKeyMaturesAt: when it is due to count.
+	AttributeKeyPending   = "pending"
+	AttributeKeyMaturesAt = "matures_at"
+	AttributeKeyOptions   = "options"
 	// AttributeKeyPosition: a stake note's tree position (the stake note
 	// stream; the name is kept for indexers).
 	AttributeKeyPosition     = "position_id"

@@ -92,9 +92,21 @@ func (gs GenesisState) Validate() error {
 		if err := CanonicalValoper(v.Validator); err != nil {
 			return fmt.Errorf("groundworks vote %d: %w", v.Id, err)
 		}
-		// A vote's derth is a stake note's unexposed amount: at most 2^63-1.
-		if v.Derth.IsNil() || !shieldedtypes.FitsNote(v.Derth) {
-			return fmt.Errorf("groundworks vote %d is invalid: derth must be 1..2^63-1", v.Id)
+		// A vote's derth and pending exposure are parts of one stake note:
+		// together 1..2^63-1, each at least 0.
+		pending := v.Pending
+		if pending.IsNil() {
+			pending = math.ZeroInt()
+		}
+		if v.Derth.IsNil() || v.Derth.IsNegative() || pending.IsNegative() || !shieldedtypes.FitsNote(v.Derth.Add(pending)) {
+			return fmt.Errorf("groundworks vote %d is invalid: derth + pending must be 1..2^63-1", v.Id)
+		}
+		if pending.IsPositive() {
+			if k, err := privacy.FieldFromBytes(v.PendingKey); err != nil || k.IsZero() || v.PendingMoveTime == 0 || v.MaturesAt <= 0 {
+				return fmt.Errorf("groundworks vote %d: a pending exposure names its move and when it matures", v.Id)
+			}
+		} else if len(v.PendingKey) != 0 || v.PendingMoveTime != 0 || v.MaturesAt != 0 {
+			return fmt.Errorf("groundworks vote %d: a move without a pending exposure", v.Id)
 		}
 		if t, err := privacy.FieldFromBytes(v.Tag); err != nil || t.IsZero() {
 			return fmt.Errorf("groundworks vote %d: malformed tag", v.Id)

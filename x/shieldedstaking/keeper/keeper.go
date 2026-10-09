@@ -128,6 +128,9 @@ type Keeper struct {
 	// GwLapses: (split_expires_at, vote id) for every vote (groundworks.go,
 	// the Groundworks Lapser).
 	GwLapses collections.KeySet[collections.Pair[int64, uint64]]
+	// GwMatures: (matures_at, vote id) for every vote with a pending
+	// exposure (groundworks.go, matureVotes in BeginBlock).
+	GwMatures collections.KeySet[collections.Pair[int64, uint64]]
 	// RetiringEscrows: (release time ns, validator) for operators that
 	// removed their whole self-bond; PendingReleases: removed validators
 	// whose escrow release failed and is retried (escrow.go).
@@ -263,6 +266,8 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key), sdk.IntValue),
 		GwEpoch: collections.NewMap(sb, types.GwEpochKey, "gw_epoch", collections.StringKey, collections.Uint64Value),
 		GwLapses: collections.NewKeySet(sb, types.GwLapsesKey, "gw_lapses",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
+		GwMatures: collections.NewKeySet(sb, types.GwMaturesKey, "gw_matures",
 			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
 		RetiringEscrows: collections.NewKeySet(sb, types.RetiringEscrowsKey, "retiring_escrows",
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),

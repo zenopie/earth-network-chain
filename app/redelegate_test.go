@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"testing"
@@ -239,7 +240,7 @@ func TestRedelegateMovesStakeWithoutGap(t *testing.T) {
 	e.invariants()
 
 	// --- pro rata to A's book (audit 7, A7-1): value waits in A's queue (a
-	// deposit from before v1.2.0; rewards); a redelegation takes its value out of the queue
+	// deposit from before v1.2.1; rewards); a redelegation takes its value out of the queue
 	// and the bonded stake in the book's proportion, never out of the queue
 	// first, so its bonded part keeps an x/staking entry and a move that a
 	// slash of A reaches. Its credit, labelled, cannot merge into the
@@ -1260,7 +1261,7 @@ type a7Outcome struct {
 
 // runA7Scenario: A has a 1,000 ERTH self-bond; an attacker holds 1,000 ERTH
 // of derth/A and an honest holder 3,000, both bonded; 2,000 more wait in A's
-// queue (a deposit from before v1.2.0, which waited for the epoch end). A double-signs; then, if move, the attacker
+// queue (a deposit from before v1.2.1, which waited for the epoch end). A double-signs; then, if move, the attacker
 // moves all its derth/A to B (it saw the evidence coming); then the
 // evidence lands.
 func runA7Scenario(t *testing.T, move bool) a7Outcome {
@@ -1334,7 +1335,7 @@ func TestQueueEscapesSlash(t *testing.T) {
 
 // The queue-first path is kept only where no slash can reach the source's
 // stake: a validator the module holds no bonded stake at yet (its first
-// deposits waited in its queue before v1.2.0) moves the value out of the queue alone, with
+// deposits waited in its queue before v1.2.1) moves the value out of the queue alone, with
 // no entry and no move, since a slash of it takes nothing from the book.
 func TestQueueOnlyWithoutBondedStake(t *testing.T) {
 	e := initStakeEnv(t)
@@ -1345,7 +1346,7 @@ func TestQueueOnlyWithoutBondedStake(t *testing.T) {
 	e.fakeDelegate(vB, uint64(1_000*ssErth), "b")
 	e.days(1)
 	e.next(time.Hour)
-	d := e.queueDeposit(vA, 2_000*ssErth) // queued (from before v1.2.0), nothing bonded at A
+	d := e.queueDeposit(vA, 2_000*ssErth) // queued (from before v1.2.1), nothing bonded at A
 	require.True(t, e.modDelegation(vA).IsZero())
 	r, err := e.fakeRedelegate(vA, vB, d/2, "queued")
 	require.NoError(t, err)
@@ -1501,5 +1502,112 @@ func TestSlashSkipsDustEntry(t *testing.T) {
 	require.NoError(t, err, "the large move owes the slash")
 	_, err = k.DebtRetained.Get(e.ctx(), dustKey)
 	require.Error(t, err, "the dust move, which the slash skipped, owes nothing")
+	e.invariants()
+}
+
+// A move's credit votes at once, pending: the destination's vote holds the
+// moved derth apart (not counted) until the move's window closes, then
+// counts it by itself (BeginBlock) at what the slash debt tree says it is
+// worth: all of it unslashed, the retained part after a slash of the
+// source for an infraction before the move. A restake keeping the label
+// carries the pending part to its new note's vote. No re-vote is needed.
+func TestRedelegateVotesPendingThenCounts(t *testing.T) {
+	e := initStakeEnv(t)
+	vA, _ := e.createValidator(1000 * ssErth)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	e.shield(uint64(3_000 * ssErth))
+	for range 6 {
+		e.shield(uint64(100 * ssErth))
+	}
+	gw := allocationtypes.STREAM_ID_GROUNDWORKS
+	ak := e.app.AllocationKeeper
+	gov := authtypes.NewModuleAddress("gov")
+	require.NoError(t, e.app.BankKeeper.SendCoins(e.ctx(), e.userAddr(), gov, sdk.NewCoins(sdk.NewInt64Coin("uerth", 10*ssErth))))
+	_, err := allocationkeeper.NewMsgServerImpl(ak).AddAddressOption(e.ctx(), &allocationtypes.MsgAddAddressOption{
+		Submitter: e.bech(gov), Stream: gw, Description: "a public good", Recipient: e.bech(e.userAddr()),
+	})
+	require.NoError(t, err)
+	e.next(5 * time.Second)
+	opt := []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 100}}
+	k := e.app.ShieldedStakingKeeper
+	votesAt := func(v sdk.ValAddress) []sstypes.GroundworksVote {
+		var out []sstypes.GroundworksVote
+		require.NoError(t, k.GwVotes.Walk(e.ctx(), nil, func(_ uint64, gv sstypes.GroundworksVote) (bool, error) {
+			if gv.Validator == e.valoper(v) {
+				out = append(out, gv)
+			}
+			return false, nil
+		}))
+		return out
+	}
+	weightAt := func(v sdk.ValAddress) math.Int {
+		vt, err := ak.Voters.Get(e.ctx(), collections.Join(uint32(gw), sstypes.ValidatorVoterKey(v)))
+		if errors.Is(err, collections.ErrNotFound) {
+			return math.ZeroInt()
+		}
+		require.NoError(t, err)
+		return vt.Weight
+	}
+
+	dn := e.delegate(vA, uint64(1_000*ssErth))
+	e.days(2)
+	va := e.restakeVote([]*snote{dn}, false, opt)
+
+	// An infraction of A, then a voting move to B (no note at B: the credit
+	// lane pads): the change votes at A, the credit at B, all of it pending.
+	e.next(5 * time.Second)
+	infraction := e.height
+	e.next(5 * time.Second)
+	p := e.feeOnly()
+	dA := sstypes.DerthDenom(e.valoper(vA))
+	dB := sstypes.DerthDenom(e.valoper(vB))
+	sp := &stakePlan{denom: dA, ins: []*snote{va}, vOut: uint64(400 * ssErth),
+		out: e.freshStake(dA, va.amount-uint64(400*ssErth)), vote: true, creditVote: true, split: opt,
+		credit: &creditLane{denom: dB, vIn: e.quoteRedelegate(vA, vB, uint64(400*ssErth)), moveTime: uint64(e.now.Unix())}}
+	e.stake(sp)
+	m := &sstypes.MsgRedelegate{Bundle: p.b, SrcValidator: e.valoper(vA), DstValidator: e.valoper(vB), Amount: uint64(400 * ssErth),
+		DstDerth: sp.credit.vIn, MoveTime: sp.credit.moveTime, Stake: sp.proof, GroundworksSplit: opt}
+	e.prove(m, p)
+	e.proveStake(m, sp)
+	res := e.run(e.privateTx(m))
+	require.Equal(t, uint32(0), res.Code, res.Log)
+	e.settle(p)
+	e.settleStake(sp)
+	moved := sp.credit.out
+	vb := votesAt(vB)
+	require.Len(t, vb, 1)
+	require.True(t, vb[0].Derth.IsZero())
+	require.Equal(t, math.NewIntFromUint64(moved.exposed), vb[0].Pending)
+	require.Equal(t, privacy.FieldBytes(moved.moveKey), vb[0].PendingKey)
+	require.Greater(t, vb[0].MaturesAt, e.now.Unix())
+	require.True(t, weightAt(vB).IsZero(), "pending derth does not count yet")
+	require.True(t, weightAt(vA).IsPositive())
+	e.invariants()
+
+	// A restake keeping the label carries the pending part to its new note.
+	kept := e.restakeVote([]*snote{moved}, false, opt)
+	require.True(t, kept.labelled())
+	vb = votesAt(vB)
+	require.Len(t, vb, 1)
+	require.Equal(t, math.NewIntFromUint64(moved.exposed), vb[0].Pending)
+
+	// A is slashed for the infraction before the move: a debt row for it.
+	sres := e.doubleSign(vA, infraction)
+	require.NotEmpty(t, eventsOf(sres.Events, sstypes.EventTypeDebtRow))
+	retained, err := k.DebtRetained.Get(e.ctx(), privacy.FieldBytes(moved.moveKey))
+	require.NoError(t, err)
+	require.Less(t, retained, moved.exposed)
+	e.invariants()
+
+	// The window closes: the vote counts the retained part by itself.
+	e.days(22)
+	vb = votesAt(vB)
+	require.Len(t, vb, 1)
+	require.Equal(t, math.NewIntFromUint64(retained), vb[0].Derth)
+	require.True(t, vb[0].Pending.IsZero())
+	require.Zero(t, vb[0].MaturesAt)
+	rateB := e.state(vB).EpochRate
+	require.Equal(t, rateB.MulInt(math.NewIntFromUint64(retained)).TruncateInt(), weightAt(vB))
 	e.invariants()
 }

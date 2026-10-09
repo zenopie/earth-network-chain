@@ -50,7 +50,7 @@ func (e *stakeEnv) fundPoolDirect(amt int64) {
 }
 
 // queueDeposit books a deposit of amt uerth at val in its queue, as one made
-// before v1.2.0 waited for the epoch end (and as one a validator that cannot
+// before v1.2.1 waited for the epoch end (and as one a validator that cannot
 // take a delegation now still does): its ERTH in the module account, the
 // derth it bought in the supply.
 func (e *stakeEnv) queueDeposit(val sdk.ValAddress, amt int64) uint64 {
@@ -91,7 +91,7 @@ func fakeStake(label string, credit bool) sstypes.StakeProof {
 		Nullifiers:      [][]byte{privacy.FieldBytes(ssDet("fake-snf/"+label, 0)), privacy.FieldBytes(ssDet("fake-snf/"+label, 2))},
 		GroundworksTags: [][]byte{privacy.FieldBytes(ssDet("fake-sgw/"+label, 0)), privacy.FieldBytes(ssDet("fake-sgw/"+label, 2))},
 		Commitment:      privacy.FieldBytes(ssDet("fake-scm/"+label, 0)), Ciphertext: shieldedtest.StakeCT("fake/" + label),
-		CreditNullifier: z, CreditCommitment: z, CreditGroundworksTag: z, VoteTag: z, CreditVoteTag: z}
+		CreditNullifier: z, CreditCommitment: z, CreditGroundworksTag: z, VoteTag: z, CreditVoteTag: z, PendingKey: z}
 	if credit {
 		p.CreditNullifier = privacy.FieldBytes(ssDet("fake-snf/"+label, 1))
 		p.CreditGroundworksTag = privacy.FieldBytes(ssDet("fake-sgw/"+label, 1))

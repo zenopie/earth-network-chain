@@ -239,7 +239,7 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 	require.NoError(e.t, err)
 	z := privacy.FieldBytes(fr.Element{})
 	p := sstypes.StakeProof{Anchor: privacy.FieldBytes(r), DebtRoot: z, CreditNullifier: z, CreditCommitment: z,
-		Commitment: z, CreditGroundworksTag: z, VoteTag: z, CreditVoteTag: z}
+		Commitment: z, CreditGroundworksTag: z, VoteTag: z, CreditVoteTag: z, PendingKey: z}
 	nfs, gws := [2]fr.Element{}, [2]fr.Element{}
 	for i, n := range sp.ins {
 		require.True(e.t, n.known && n.pos < size, "stake input outside the anchor's tree")
@@ -293,6 +293,11 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 		require.NotNil(e.t, sp.out, "a padding output cannot vote")
 		p.VoteTag = privacy.FieldBytes(e.sgw(sp.out))
 		p.VoteWeight = sp.out.amount - sp.out.exposed
+		// A kept label's exposure votes pending.
+		if sp.out.exposed > 0 {
+			p.PendingKey = privacy.FieldBytes(sp.out.moveKey)
+			p.PendingTime, p.PendingExposed = sp.out.moveTime, sp.out.exposed
+		}
 	}
 	if c := sp.credit; c != nil {
 		var nf fr.Element
@@ -412,9 +417,9 @@ func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, lanes sstyp
 		tomlU(crIn.amount), tomlQ(crIn.rho), tomlQ(crIn.rcm), tomlU(crPos), path(crIn), tomlQ(crOut.rho), tomlQ(crOut.rcm))
 	names := []string{"anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in", "v_out", "clear_before", "debt_root",
 		"cr_asset", "cr_nf", "cr_cm", "cr_v_in", "cr_move_time",
-		"gw_0", "gw_1", "cr_gw", "gw_out", "w_out", "cr_gw_out", "cr_w_out", "sighash"}
+		"gw_0", "gw_1", "cr_gw", "gw_out", "w_out", "cr_gw_out", "cr_w_out", "p_key", "p_time", "p_ex", "sighash"}
 	ints := map[string]bool{"v_in": true, "v_out": true, "clear_before": true, "cr_v_in": true, "cr_move_time": true,
-		"w_out": true, "cr_w_out": true}
+		"w_out": true, "cr_w_out": true, "p_time": true, "p_ex": true}
 	for i, n := range names {
 		if ints[n] {
 			var v fr.Element

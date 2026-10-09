@@ -308,13 +308,23 @@ func (k Keeper) assertDenoms(ctx context.Context) error {
 		}
 	}
 	// Every unit of derth is in one unspent note and a note votes once, so a
-	// validator's Groundworks votes weigh at most its supply.
+	// validator's Groundworks votes, pending exposures included (at their
+	// worth after any slash), weigh at most its supply.
 	voted := map[string]math.Int{}
 	if err := k.GwVotes.Walk(ctx, nil, func(_ uint64, v types.GroundworksVote) (bool, error) {
+		d := v.Derth
+		if hasPending(v) {
+			// At what it is worth now: a slash's debt row cut it from the supply.
+			w, err := k.exposureWorth(ctx, v.PendingKey, v.Pending)
+			if err != nil {
+				return true, err
+			}
+			d = d.Add(w)
+		}
 		if cur, ok := voted[v.Validator]; ok {
-			voted[v.Validator] = cur.Add(v.Derth)
+			voted[v.Validator] = cur.Add(d)
 		} else {
-			voted[v.Validator] = v.Derth
+			voted[v.Validator] = d
 		}
 		return false, nil
 	}); err != nil {

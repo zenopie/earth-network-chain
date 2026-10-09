@@ -50,7 +50,7 @@ type Upgrade struct {
 // The privacy relaunch (shielded ERTH and ANML, private personhood) was a
 // fresh genesis; every earlier upgrade belongs to the chain it replaced.
 var Upgrades = []Upgrade{
-	{Name: UpgradeV1_2_0, CreateHandler: v1_2_0Handler},
+	{Name: UpgradeV1_2_1, CreateHandler: v1_2_1Handler},
 }
 
 // setupUpgrades registers the upgrade handlers and, if the node is restarting

@@ -11,12 +11,16 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
-## [v1.2.0]
+## [v1.2.1]
 
 Consensus-breaking. earth-1's first software upgrade: it goes through
-governance as a `MsgSoftwareUpgrade` named `v1.2.0` (stake chamber and two
+governance as a `MsgSoftwareUpgrade` named `v1.2.1` (stake chamber and two
 thirds of the human votes cast, x/assembly); never applied in place. Built,
 not yet released. UPGRADE_PLAN.md items 1 and 2.
+
+v1.2.0 was released and proposed (gov proposal 1), then withdrawn: the
+proposal was cancelled before it passed, to ship moved stake voting at once
+(below). v1.2.0 never ran on earth-1; propose `v1.2.1`.
 
 ### Changed
 
@@ -41,20 +45,35 @@ not yet released. UPGRADE_PLAN.md items 1 and 2.
   inputs their own), and the chain cancels the vote stored under it. A stake
   msg (`MsgDelegate`, `MsgRestake`, `MsgUndelegate`, `MsgRedelegate`) may
   carry `groundworks_split`; its output note(s) then vote with weight = the
-  output's unexposed derth (derth moved in under a redelegation label votes
-  only once a later stake tx clears the label). A vote must weigh at least
-  `min_position` (derth × epoch rate), lapses after
+  output's unexposed derth. A vote must weigh at least `min_position`
+  ((derth + pending) × epoch rate), lapses after
   `groundworks_lease_seconds` (x/allocation, default 365 days), and is
   renewed by any stake tx carrying the split. Votes still feed one weighted
   voter per validator, beside the operator's self-bond. With
   `MsgPositionVote` gone, stake votes on x/gov proposals are `MsgStakeVote`
   only.
+- **Moved stake votes at once, pending.** A voting output's exposure (derth
+  a redelegation brought in, still labelled) votes without a re-vote: it is
+  stored on the vote as `pending` (`GroundworksVote` fields 13 `pending`,
+  14 `pending_key` (the move key), 15 `pending_move_time`, 16 `matures_at`)
+  and not counted. Lane A's comes from the proof (the kept label's move);
+  the credit lane's is the credit itself (credit nullifier, the msg's
+  `move_time`, `dst_derth`), so a credit into a validator with no note votes
+  with weight 0 and all of it pending. The chain matures it by itself in
+  BeginBlock, after the slash watch settles, once the move's window has
+  closed (`matures_at` = move_time + label window + 1; a window grown since
+  is waited out): it adds `min(pending, the move's debt row retained)` (all
+  of it if never slashed) to the vote's derth and re-files the validator's
+  voter. At most 200 a block, each guarded; a failure is retried a day
+  later (`shieldedstaking_epoch_failure` stage `mature_groundworks`).
+  Maturity queue: store prefix 60.
 - **Privacy (accepted trade-off).** As with positions, a vote's validator,
   weight (about the voting note's derth) and split are public and its owner
   is not. New: a voter's stake txs at a validator are linked into one
   pseudonymous history with amounts (each tx cancels the previous vote and
-  starts the next). Non-voters reveal only random-looking tags that link
-  nothing.
+  starts the next). A vote with a pending part also names the move it came
+  from (its key, already public in the move tx). Non-voters reveal only
+  random-looking tags that link nothing.
 - **Gas.** Every stake msg costs 300,000 more (`gasGroundworks`), voting or
   not, so gas does not tell a voting note from another. MsgDelegate's base
   rises from 400,000 to 600,000: its handler now bonds through x/staking.
@@ -62,15 +81,21 @@ not yet released. UPGRADE_PLAN.md items 1 and 2.
 ### Wallets, indexers
 
 - **New `stake` verifying key; the vote circuit is unchanged.** Stake
-  circuit public inputs are now 22: anchor, asset, nf_0, nf_1, cm_out, v_in,
+  circuit public inputs are now 25: anchor, asset, nf_0, nf_1, cm_out, v_in,
   v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in,
   cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out,
-  sighash. **A wallet build from before v1.2.0 cannot make stake proofs after
+  p_key, p_time, p_ex, sighash. The v1.2.0 key is replaced too: v1.2.0
+  wallet builds do not work against v1.2.1. **A wallet build from before v1.2.1 cannot make stake proofs after
   the upgrade height**; install the new app once the upgrade lands.
-- Proto: `StakeProof` field 7 (`owner_tag`) reserved; new fields 16–21
+- Proto: `StakeProof` field 7 (`owner_tag`) reserved; new fields 16–24
   (`groundworks_tags` (exactly two), `credit_groundworks_tag`, `vote_tag`,
-  `vote_weight`, `credit_vote_tag`, `credit_vote_weight`), also bound by
-  StakeFields in that order after `debt_root`. `groundworks_split` is field 7
+  `vote_weight`, `credit_vote_tag`, `credit_vote_weight`, `pending_key`,
+  `pending_time`, `pending_exposed`), also bound by StakeFields in that order
+  after `debt_root` (the last two as U64). The pending three are all set or
+  all zero, set only when lane A's output votes and keeps a label; lane A's
+  vote tag is set iff its weight is positive or it has a pending part; a
+  credit vote weight needs its tag (a tag with weight 0 votes the credit
+  pending). `groundworks_split` is field 7
   of MsgDelegate, 5 of MsgRestake, 8 of MsgUndelegate and 8 of
   MsgRedelegate; each sighash appends `Bytes(SplitsBytes(groundworks_split))`
   (an empty split hashes as `Bytes` of nothing). A split is required exactly
@@ -78,12 +103,14 @@ not yet released. UPGRADE_PLAN.md items 1 and 2.
 - Queries: `GET /earth/shieldedstaking/v1/groundworks_votes` (paginated) and
   `/earth/shieldedstaking/v1/groundworks_votes/{id}` replace `positions` and
   `positions/{id}`. Event `shieldedstaking_groundworks_vote {action (cast,
-  cancelled, lapsed), vote_id, tag, validator, derth, weight, options,
-  split_expires_at}`. Error 1108 is now `ErrGroundworksVote`; 1109 is retired.
+  cancelled, matured, lapsed), vote_id, tag, validator, derth, weight,
+  options, split_expires_at, pending, matures_at}`. Error 1108 is now `ErrGroundworksVote`; 1109 is retired.
 - Wallets: the owner picks a split once (Govern tab); the wallet sends one
   restake per validator to vote all stake, and every later stake tx carries
   the split. "Stop voting" is restakes with no split. A restored wallet
-  adopts its split from the chain's votes.
+  adopts its split from the chain's votes. Moved stake needs no re-vote;
+  Govern shows "Voting X of Y ERTH" (pending included) and "Moved stake
+  counts from <date>".
 - Backend indexer: positions are no longer indexed;
   `/privacy/{chain_id}/{genesis}/stake/positions` is removed, and so is the
   `positions` count in the status response.
@@ -92,7 +119,7 @@ not yet released. UPGRADE_PLAN.md items 1 and 2.
 
 - **The handler** runs the module migrations, installs the new `stake`
   verifying key (x/shielded `verifying_keys["stake"]`, embedded at
-  `app/upgrades/v1_2_0/stake.vk.b64`), and runs `MigrateV1_2_0`, which
+  `app/upgrades/v1_2_1/stake.vk.b64`), and runs `MigrateV1_2_1`, which
   deletes any remaining positions with their leases, Groundworks totals,
   by-validator index and gov votes, and re-files the voters they fed. A
   deleted position's derth leaves its validator's supply (its backing stays

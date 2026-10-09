@@ -151,6 +151,15 @@ message StakeProof {
   // credit_vote_tag and credit_vote_weight: the same for lane B's output.
   bytes credit_vote_tag = 20;
   uint64 credit_vote_weight = 21;
+  // pending_key, pending_time, pending_exposed: lane A's voting output keeps
+  // a label (its move's key, move time and exposed derth): the exposure
+  // votes pending, added once the move's window closes at what the slash
+  // debt tree says it is worth. All zero when it keeps none or does not vote.
+  // (The credit lane's pending part is the credit itself: credit_nullifier,
+  // the msg's move_time and dst_derth.)
+  bytes pending_key = 22;
+  uint64 pending_time = 23;
+  uint64 pending_exposed = 24;
 }
 
 // MsgDelegate: bundle releases amount uerth into the module for validator

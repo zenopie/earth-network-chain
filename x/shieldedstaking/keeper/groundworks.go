@@ -38,6 +38,15 @@ import (
 // epoch end or a slash re-files one voter per validator: the work grows with
 // validators, never with votes, so votes need no cap.
 //
+// A note's exposure (derth a move brought in, labelled: a slash of the
+// move's source may still cut it until the move's window closes) votes too,
+// pending: stored beside the vote with the move's key and time and not
+// counted, then added to the vote's derth once the window closes, at what
+// the slash debt tree says it is worth (matureVotes, BeginBlock). Lane A's
+// is published by the proof (pending_key/time/exposed, the kept label's), the
+// credit lane's is the credit itself (the msg's move). No re-vote is needed
+// for moved stake to count.
+//
 // A vote is leased (x/allocation groundworks_lease_seconds, a year by
 // default, as a caretaker split): it counts until split_expires_at, and
 // every stake msg that re-casts it starts a new lease. At the lapse the vote
@@ -52,13 +61,19 @@ import (
 // reset both are stale, treated as zero, and the owner votes again (a
 // restake of the note onto itself with its split), as any voter does.
 
-// setVote stores v, keeping its lease in the lapse queue and its tag indexed.
+// setVote stores v, keeping its lease in the lapse queue, its pending
+// exposure in the maturity queue and its tag indexed.
 func (k Keeper) setVote(ctx context.Context, v types.GroundworksVote) error {
 	if err := k.unqueueLapse(ctx, v.Id); err != nil {
 		return err
 	}
 	if v.SplitExpiresAt > 0 {
 		if err := k.GwLapses.Set(ctx, collections.Join(v.SplitExpiresAt, v.Id)); err != nil {
+			return err
+		}
+	}
+	if hasPending(v) {
+		if err := k.GwMatures.Set(ctx, collections.Join(v.MaturesAt, v.Id)); err != nil {
 			return err
 		}
 	}
@@ -80,7 +95,8 @@ func (k Keeper) removeVote(ctx context.Context, v types.GroundworksVote) error {
 	return k.GwVotes.Remove(ctx, v.Id)
 }
 
-// unqueueLapse drops the stored vote id's lease from the lapse queue.
+// unqueueLapse drops the stored vote id's lease from the lapse queue and
+// its pending exposure from the maturity queue.
 func (k Keeper) unqueueLapse(ctx context.Context, id uint64) error {
 	old, err := k.GwVotes.Get(ctx, id)
 	if errors.Is(err, collections.ErrNotFound) {
@@ -89,9 +105,99 @@ func (k Keeper) unqueueLapse(ctx context.Context, id uint64) error {
 		return err
 	}
 	if old.SplitExpiresAt > 0 {
-		return k.GwLapses.Remove(ctx, collections.Join(old.SplitExpiresAt, id))
+		if err := k.GwLapses.Remove(ctx, collections.Join(old.SplitExpiresAt, id)); err != nil {
+			return err
+		}
+	}
+	if hasPending(old) {
+		return k.GwMatures.Remove(ctx, collections.Join(old.MaturesAt, id))
 	}
 	return nil
+}
+
+func hasPending(v types.GroundworksVote) bool { return !v.Pending.IsNil() && v.Pending.IsPositive() }
+
+// pendingPart is an output's exposure, voting pending: its move's key and
+// time and the exposed derth (none: exposed 0).
+type pendingPart struct {
+	key     []byte
+	time    uint64
+	exposed uint64
+}
+
+// gwOutput is one output's vote: its tag, its weight now, its pending
+// exposure, and the validator it votes at.
+type gwOutput struct {
+	tag     []byte
+	w       uint64
+	pending pendingPart
+	val     string
+}
+
+func (o gwOutput) votes() bool { return o.w > 0 || o.pending.exposed > 0 }
+
+// gwOutputs is m's two outputs' votes: lane A's (its pending exposure the
+// proof's), the credit lane's (a move's: its pending exposure the credit,
+// keyed by the credit lane's nullifier, at the msg's move_time).
+func gwOutputs(m types.StakeMsg) []gwOutput {
+	p := m.StakeProofOf()
+	laneA, credit := m.Validators()
+	a := gwOutput{tag: p.VoteTag, w: p.VoteWeight, val: laneA,
+		pending: pendingPart{key: p.PendingKey, time: p.PendingTime, exposed: p.PendingExposed}}
+	b := gwOutput{tag: p.CreditVoteTag, w: p.CreditVoteWeight, val: credit}
+	if r, ok := m.(*types.MsgRedelegate); ok && !isZeroBytes(p.CreditVoteTag) {
+		b.pending = pendingPart{key: p.CreditNullifier, time: r.MoveTime, exposed: r.DstDerth}
+	}
+	return []gwOutput{a, b}
+}
+
+func isZeroBytes(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// maturesAt is when an exposure moved under key at moveTime may count: the
+// first second its label could clear (moveTime < ClearBefore, under the
+// label window as it stands now), and not before its move's x/staking entry
+// completes: an entry merged into a later one (mergeOldEntries) stays
+// slashable past the label window, and a debt row it takes then must still
+// cut the exposure before it counts.
+func (k Keeper) maturesAt(ctx context.Context, key []byte, moveTime uint64) (int64, error) {
+	w, err := k.labelWindow(ctx)
+	if err != nil {
+		return 0, err
+	}
+	t := moveTime + w + 1
+	if t < moveTime || t > uint64(1<<62) {
+		return 1 << 62, nil
+	}
+	at := int64(t)
+	mv, err := k.Moves.Get(ctx, key)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return 0, err
+	}
+	if err == nil && mv.Completion > 0 {
+		if c := mv.Completion/1_000_000_000 + 1; c > at {
+			at = c
+		}
+	}
+	return at, nil
+}
+
+// exposureWorth is what exposed derth moved under key is worth now: the
+// slash debt row's retained derth if the move was slashed, else all of it.
+func (k Keeper) exposureWorth(ctx context.Context, key []byte, exposed math.Int) (math.Int, error) {
+	r, err := k.DebtRetained.Get(ctx, key)
+	if errors.Is(err, collections.ErrNotFound) {
+		return exposed, nil
+	} else if err != nil {
+		return math.Int{}, err
+	}
+	return math.MinInt(exposed, math.NewIntFromUint64(r)), nil
 }
 
 // voteByTag returns the vote stored under tag, if any.
@@ -324,7 +430,7 @@ func (k Keeper) ReweighGroundworks(ctx context.Context) {
 // leased from now: its contribution goes on the validator's totals in the
 // current epoch and the validator's voter is re-filed. The stream is settled
 // first (syncValidatorVoter reads the totals after).
-func (k Keeper) castVote(ctx context.Context, tag []byte, validator string, derth math.Int, splits []allocationtypes.AllocationWeight) error {
+func (k Keeper) castVote(ctx context.Context, tag []byte, validator string, derth math.Int, pending pendingPart, splits []allocationtypes.AllocationWeight) error {
 	if err := k.allocation.AdvanceIndex(ctx, allocationtypes.STREAM_ID_GROUNDWORKS); err != nil {
 		return err
 	}
@@ -343,7 +449,29 @@ func (k Keeper) castVote(ctx context.Context, tag []byte, validator string, dert
 	v := types.GroundworksVote{
 		Id: id, Validator: validator, Derth: derth, Splits: splits, Tag: tag,
 		CreatedHeight: sdk.UnwrapSDKContext(ctx).BlockHeight(), Weight: math.ZeroInt(),
-		SplitEpoch: epoch, SplitExpiresAt: expires,
+		SplitEpoch: epoch, SplitExpiresAt: expires, Pending: math.ZeroInt(),
+	}
+	if pending.exposed > 0 {
+		at, err := k.maturesAt(ctx, pending.key, pending.time)
+		if err != nil {
+			return err
+		}
+		ex := math.NewIntFromUint64(pending.exposed)
+		if sdk.UnwrapSDKContext(ctx).BlockTime().Unix() >= at {
+			// Its window closed already (a label not cleared yet): it counts now.
+			worth, err := k.exposureWorth(ctx, pending.key, ex)
+			if err != nil {
+				return err
+			}
+			v.Derth = v.Derth.Add(worth)
+		} else {
+			v.Pending, v.PendingKey, v.PendingMoveTime, v.MaturesAt = ex, pending.key, pending.time, at
+		}
+	}
+	// Nothing to weigh (a fully exposed note whose move a slash cut to
+	// nothing): no vote.
+	if v.Derth.IsZero() && !hasPending(v) {
+		return nil
 	}
 	if err := k.addVoteTotals(ctx, v, 1, epoch); err != nil {
 		return err
@@ -407,17 +535,12 @@ func (k Keeper) applyGroundworks(ctx context.Context, m types.StakeMsg) error {
 			return err
 		}
 	}
-	laneA, credit := m.Validators()
 	split := m.GroundworksSplitOf()
-	for _, o := range []struct {
-		tag []byte
-		w   uint64
-		val string
-	}{{p.VoteTag, p.VoteWeight, laneA}, {p.CreditVoteTag, p.CreditVoteWeight, credit}} {
-		if o.w == 0 {
+	for _, o := range gwOutputs(m) {
+		if !o.votes() {
 			continue
 		}
-		if err := k.castVote(ctx, o.tag, o.val, math.NewIntFromUint64(o.w), split); err != nil {
+		if err := k.castVote(ctx, o.tag, o.val, math.NewIntFromUint64(o.w), o.pending, split); err != nil {
 			return err
 		}
 	}
@@ -426,7 +549,7 @@ func (k Keeper) applyGroundworks(ctx context.Context, m types.StakeMsg) error {
 
 // checkGroundworks refuses, in the ante, a msg whose Groundworks effect
 // applyGroundworks would refuse: a split the stream does not take, a vote
-// below min_groundworks_vote (derth x epoch rate), beyond a note's value or
+// below min_groundworks_vote ((derth + pending) x epoch rate), beyond a note's value or
 // weighing nothing at its validator, or under a tag a vote is already stored under that this
 // proof does not cancel.
 func (k Keeper) checkGroundworks(ctx context.Context, m types.StakeMsg) error {
@@ -446,16 +569,12 @@ func (k Keeper) checkGroundworks(ctx context.Context, m types.StakeMsg) error {
 	for _, t := range p.InputTags() {
 		cancelled[string(t)] = true
 	}
-	laneA, credit := m.Validators()
-	for _, o := range []struct {
-		tag []byte
-		w   uint64
-		val string
-	}{{p.VoteTag, p.VoteWeight, laneA}, {p.CreditVoteTag, p.CreditVoteWeight, credit}} {
-		if o.w == 0 {
+	for _, o := range gwOutputs(m) {
+		if !o.votes() {
 			continue
 		}
-		d := math.NewIntFromUint64(o.w)
+		// Weighed with its pending exposure: what it counts once matured.
+		d := math.NewIntFromUint64(o.w).Add(math.NewIntFromUint64(o.pending.exposed))
 		if err := fitsNote(d); err != nil {
 			return err
 		}
@@ -605,6 +724,13 @@ func (k Keeper) gwTotalsOf(ctx context.Context, epoch uint64) (map[gwKey]math.In
 		}
 		return false, nil
 	})
+	// Stored totals are never zero (addTotal deletes them): a vote all of
+	// whose weight is still pending adds none.
+	for key, c := range out {
+		if c.IsZero() {
+			delete(out, key)
+		}
+	}
 	return out, err
 }
 
@@ -792,5 +918,135 @@ func (k Keeper) voteEvent(ctx context.Context, action string, v types.Groundwork
 		sdk.NewAttribute(types.AttributeKeyWeight, v.Weight.String()),
 		sdk.NewAttribute(types.AttributeKeyOptions, splitsAttr(v.Splits)),
 		sdk.NewAttribute(types.AttributeKeySplitExpiresAt, strconv.FormatInt(v.SplitExpiresAt, 10)),
+		sdk.NewAttribute(types.AttributeKeyPending, pendingAttr(v)),
+		sdk.NewAttribute(types.AttributeKeyMaturesAt, strconv.FormatInt(v.MaturesAt, 10)),
 	))
+}
+
+func pendingAttr(v types.GroundworksVote) string {
+	if v.Pending.IsNil() {
+		return "0"
+	}
+	return v.Pending.String()
+}
+
+// maturesPerBlock bounds matureVotes' work in one block; the rest waits a
+// block (each is a few writes and a voter re-filed).
+const maturesPerBlock = 200
+
+// matureVotes adds every due pending exposure to its vote (BeginBlock,
+// after the slash watch settles, so a debt row written this block is seen):
+// at what the debt tree says it is worth, the vote's validator's totals and
+// voter updated. A window grown since the vote was cast (unbonding_time
+// raised) is waited out (re-queued). Each in its own cache: one that fails
+// is retried a day later and never halts the block.
+func (k Keeper) matureVotes(ctx context.Context) {
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+	var due []collections.Pair[int64, uint64]
+	it, err := k.GwMatures.Iterate(ctx, new(collections.Range[collections.Pair[int64, uint64]]).
+		EndExclusive(collections.Join(now+1, uint64(0))))
+	if err != nil {
+		k.failure(ctx, "mature_groundworks", "", err)
+		return
+	}
+	for ; it.Valid() && len(due) < maturesPerBlock; it.Next() {
+		key, err := it.Key()
+		if err != nil {
+			break
+		}
+		due = append(due, key)
+	}
+	it.Close()
+	for _, key := range due {
+		err := k.guarded(ctx, func(cc context.Context) error { return k.matureVote(cc, key) })
+		if err != nil {
+			k.failure(ctx, "mature_groundworks", "", err)
+			_ = k.guarded(ctx, func(cc context.Context) error {
+				v, err := k.GwVotes.Get(cc, key.K2())
+				if err != nil {
+					return k.GwMatures.Remove(cc, key)
+				}
+				if err := k.GwMatures.Remove(cc, key); err != nil {
+					return err
+				}
+				v.MaturesAt = key.K1() + 86400
+				return k.setVote(cc, v)
+			})
+		}
+	}
+}
+
+// matureVote counts vote key.K2()'s pending exposure (due at key.K1()).
+func (k Keeper) matureVote(ctx context.Context, key collections.Pair[int64, uint64]) error {
+	v, err := k.GwVotes.Get(ctx, key.K2())
+	if errors.Is(err, collections.ErrNotFound) {
+		return k.GwMatures.Remove(ctx, key)
+	} else if err != nil {
+		return err
+	}
+	if !hasPending(v) || v.MaturesAt != key.K1() {
+		return k.GwMatures.Remove(ctx, key)
+	}
+	at, err := k.maturesAt(ctx, v.PendingKey, v.PendingMoveTime)
+	if err != nil {
+		return err
+	}
+	if sdk.UnwrapSDKContext(ctx).BlockTime().Unix() < at {
+		// The window grew, or the move's entry completes later (merged): wait it out.
+		if err := k.GwMatures.Remove(ctx, key); err != nil {
+			return err
+		}
+		v.MaturesAt = at
+		return k.setVote(ctx, v)
+	}
+	worth, err := k.exposureWorth(ctx, v.PendingKey, v.Pending)
+	if err != nil {
+		return err
+	}
+	if err := k.allocation.AdvanceIndex(ctx, allocationtypes.STREAM_ID_GROUNDWORKS); err != nil {
+		return err
+	}
+	epoch, err := k.gwEpoch(ctx)
+	if err != nil {
+		return err
+	}
+	live := voteLive(v, epoch)
+	if live {
+		if err := k.addVoteTotals(ctx, v, -1, epoch); err != nil {
+			return err
+		}
+	}
+	if err := k.GwMatures.Remove(ctx, key); err != nil {
+		return err
+	}
+	v.Derth = v.Derth.Add(worth)
+	v.Pending, v.PendingKey, v.PendingMoveTime, v.MaturesAt = math.ZeroInt(), nil, 0, 0
+	if v.Derth.IsZero() {
+		// A slash cut it to nothing: the vote weighs nothing, and goes.
+		if err := k.removeVote(ctx, v); err != nil {
+			return err
+		}
+		if live {
+			if err := k.syncValidatorVoter(ctx, v.Validator); err != nil {
+				return err
+			}
+		}
+		k.voteEvent(ctx, "cancelled", v)
+		return nil
+	}
+	if live {
+		if err := k.addVoteTotals(ctx, v, 1, epoch); err != nil {
+			return err
+		}
+	}
+	if err := k.setVote(ctx, v); err != nil {
+		return err
+	}
+	if live {
+		if err := k.syncValidatorVoter(ctx, v.Validator); err != nil {
+			return err
+		}
+	}
+	k.voteEvent(ctx, "matured", v)
+	return nil
 }

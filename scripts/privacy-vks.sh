@@ -143,7 +143,7 @@ GEN="$CHAIN_DIR/networks/genesis/shielded-verifying-keys"
 # launched (make genesis-check pins it).
 current_dir() {
   case "$1" in
-    stake) echo "$CHAIN_DIR/app/upgrades/v1_2_0" ;;
+    stake) echo "$CHAIN_DIR/app/upgrades/v1_2_1" ;;
     *) echo "$GEN" ;;
   esac
 }

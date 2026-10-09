@@ -206,6 +206,9 @@ var (
 	// GwVotesByTagKey maps a Groundworks vote's note tag to its id: what a
 	// stake proof's input tags cancel.
 	GwVotesByTagKey = collections.NewPrefix(59)
+	// GwMaturesKey orders the Groundworks votes holding a pending exposure
+	// by when it is due to count: (matures_at, vote id).
+	GwMaturesKey = collections.NewPrefix(60)
 )
 
 // MoveTimeSlackSeconds is how far a redelegation's block time may be after

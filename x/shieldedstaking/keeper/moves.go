@@ -275,10 +275,13 @@ func countedEntries(es []stakingtypes.RedelegationEntry) int {
 // the later completion (audit C-2: the earlier one let x/staking complete
 // the merged entry before the newer moves' slash window closed, so their
 // share of a late slash fell on src's holders). Each entry's queue slot
-// stays, and the one at the later completion completes it. Labels still
-// clear only after move_time + the longest unbonding time + slack, past
-// either completion, so no slash reaches a cleared label. Its moves' entry
-// height and completion follow. Returns false, with nothing changed, when no pair
+// stays, and the one at the later completion completes it. The older
+// entry's moves stay slashable to the later completion, past their own
+// label window: a slash then writes their debt row after their labels could
+// clear (a label cleared already carries none of it; the cut falls on dst's
+// holders), and a Groundworks vote's pending exposure waits for the move's
+// completion before it counts (maturesAt). Its moves' entry height and
+// completion follow. Returns false, with nothing changed, when no pair
 // qualifies.
 func (k Keeper) mergeOldEntries(ctx context.Context, red *stakingtypes.Redelegation) (bool, error) {
 	id := entryID(red.ValidatorSrcAddress, red.ValidatorDstAddress)

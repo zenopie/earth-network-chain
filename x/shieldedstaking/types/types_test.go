@@ -64,7 +64,7 @@ func proofOf() StakeProof {
 	return StakeProof{Proof: make([]byte, 14_656), Anchor: z, DebtRoot: z,
 		Nullifiers: [][]byte{el32(1), el32(3)}, GroundworksTags: [][]byte{el32(21), el32(23)},
 		Commitment: el32(7), Ciphertext: make([]byte, privacy.WalletStakeCiphertextBytes),
-		CreditNullifier: z, CreditCommitment: z, CreditGroundworksTag: z, VoteTag: z, CreditVoteTag: z}
+		CreditNullifier: z, CreditCommitment: z, CreditGroundworksTag: z, VoteTag: z, CreditVoteTag: z, PendingKey: z}
 }
 
 // A stake proof: one encoding per msg. A ciphertext exactly for a created
@@ -84,6 +84,12 @@ func TestStakeProofForm(t *testing.T) {
 	voting := proofOf()
 	voting.VoteTag, voting.VoteWeight = el32(30), 5
 	require.NoError(t, voting.ValidateBasic())
+	pendingOnly := proofOf()
+	pendingOnly.VoteTag, pendingOnly.PendingKey, pendingOnly.PendingTime, pendingOnly.PendingExposed = el32(30), el32(40), 9, 7
+	require.NoError(t, pendingOnly.ValidateBasic(), "a fully exposed note votes its exposure pending")
+	creditPending := proofOf()
+	creditPending.CreditVoteTag = el32(31)
+	require.NoError(t, creditPending.ValidateBasic(), "a credit into no note votes it pending (weight 0)")
 	for name, mutate := range map[string]func(p *StakeProof){
 		"one nullifier":          func(p *StakeProof) { p.Nullifiers = p.Nullifiers[:1] },
 		"one groundworks tag":    func(p *StakeProof) { p.GroundworksTags = p.GroundworksTags[:1] },
@@ -100,6 +106,20 @@ func TestStakeProofForm(t *testing.T) {
 		"credit repeats lane A":  func(p *StakeProof) { p.CreditNullifier = el32(1) },
 		"vote tag, no weight":    func(p *StakeProof) { p.VoteTag = el32(30) },
 		"weight, no vote tag":    func(p *StakeProof) { p.VoteWeight = 5 },
+		"credit weight, no tag":  func(p *StakeProof) { p.CreditVoteWeight = 5 },
+		"pending without vote": func(p *StakeProof) {
+			p.PendingKey, p.PendingTime, p.PendingExposed = el32(40), 9, 7
+		},
+		"pending, no key": func(p *StakeProof) {
+			p.VoteTag, p.VoteWeight, p.PendingTime, p.PendingExposed = el32(30), 5, 9, 7
+		},
+		"pending, no time": func(p *StakeProof) {
+			p.VoteTag, p.VoteWeight, p.PendingKey, p.PendingExposed = el32(30), 5, el32(40), 7
+		},
+		"pending, no amount": func(p *StakeProof) {
+			p.VoteTag, p.VoteWeight, p.PendingKey, p.PendingTime = el32(30), 5, el32(40), 9
+		},
+		"pending key missing": func(p *StakeProof) { p.PendingKey = nil },
 		"one tag for two votes": func(p *StakeProof) {
 			p.VoteTag, p.VoteWeight, p.CreditVoteTag, p.CreditVoteWeight = el32(30), 5, el32(30), 6
 		},
@@ -152,12 +172,13 @@ func TestStakeProofShape(t *testing.T) {
 // The stake circuit's public inputs, in order: anchor, asset, nf_0, nf_1,
 // cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm,
 // cr_v_in, cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out,
-// cr_w_out, sighash.
+// cr_w_out, p_key, p_time, p_ex, sighash.
 func TestStakePublicInputs(t *testing.T) {
 	p := StakeProof{Anchor: el32(1), Nullifiers: [][]byte{el32(2), el32(3)}, Commitment: el32(4), ClearBefore: 5,
 		DebtRoot: el32(6), CreditNullifier: el32(7), CreditCommitment: el32(8),
 		GroundworksTags: [][]byte{el32(16), el32(17)}, CreditGroundworksTag: el32(18),
-		VoteTag: el32(19), VoteWeight: 20, CreditVoteTag: el32(22), CreditVoteWeight: 23}
+		VoteTag: el32(19), VoteWeight: 20, CreditVoteTag: el32(22), CreditVoteWeight: 23,
+		PendingKey: el32(24), PendingTime: 25, PendingExposed: 26}
 	l := StakeLanes{Denom: "derth/a", VIn: 10, VOut: 11, CreditDenom: "derth/b", CreditIn: 12, CreditMoveTime: 13}
 	var sig fr.Element
 	sig.SetUint64(14)
@@ -167,7 +188,7 @@ func TestStakePublicInputs(t *testing.T) {
 	require.Equal(t, [][]byte{
 		el32(1), privacy.FieldBytes(privacy.AssetID("derth/a")), el32(2), el32(3), el32(4), u(10), u(11), u(5), el32(6),
 		privacy.FieldBytes(privacy.AssetID("derth/b")), el32(7), el32(8), u(12), u(13),
-		el32(16), el32(17), el32(18), el32(19), u(20), el32(22), u(23), u(14),
+		el32(16), el32(17), el32(18), el32(19), u(20), el32(22), u(23), el32(24), u(25), u(26), u(14),
 	}, pub)
 }
 

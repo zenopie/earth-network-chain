@@ -164,7 +164,7 @@ func bundle(b *shieldedtypes.Bundle) []*shieldedtypes.Bundle { return []*shielde
 // ---- the stake proof -------------------------------------------------------
 
 // StakeProofInputs is the stake circuit's public input count.
-const StakeProofInputs = 22
+const StakeProofInputs = 25
 
 var zero32 = make([]byte, 32)
 
@@ -197,8 +197,11 @@ type StakeLanes struct {
 // 32-byte element, exactly two lane A nullifiers and Groundworks tags, the
 // non-zero nullifiers distinct, a zero debt_root with a zero clear_before, a
 // 201-byte (privacy.WalletStakeCiphertextBytes) wallet stake ciphertext
-// exactly for each non-zero commitment, and each output's vote whole (a tag
-// with a positive weight, or neither), the two votes' tags distinct. Which slots a msg must use is shape's; that
+// exactly for each non-zero commitment, each output's vote whole (lane A's:
+// a tag with a positive weight or a pending exposure, or neither; the credit
+// lane's: a positive weight only with a tag, a tag with weight 0 voting its
+// credit pending), lane A's pending exposure whole (key, time and amount, or
+// none) and only with its vote, and the two votes' tags distinct. Which slots a msg must use is shape's; that
 // clear_before and debt_root are the current ones, the keeper's
 // (checkStakeClear).
 func (p *StakeProof) ValidateBasic() error {
@@ -213,6 +216,7 @@ func (p *StakeProof) ValidateBasic() error {
 		{"stake credit_nullifier", p.CreditNullifier}, {"stake credit_commitment", p.CreditCommitment},
 		{"stake debt_root", p.DebtRoot}, {"stake credit_groundworks_tag", p.CreditGroundworksTag},
 		{"stake vote_tag", p.VoteTag}, {"stake credit_vote_tag", p.CreditVoteTag},
+		{"stake pending_key", p.PendingKey},
 	} {
 		if _, err := field(f.name, f.b); err != nil {
 			return err
@@ -234,14 +238,15 @@ func (p *StakeProof) ValidateBasic() error {
 			return err
 		}
 	}
-	for _, v := range []struct {
-		name string
-		tag  []byte
-		w    uint64
-	}{{"vote", p.VoteTag, p.VoteWeight}, {"credit vote", p.CreditVoteTag, p.CreditVoteWeight}} {
-		if isZero(v.tag) != (v.w == 0) {
-			return errorsmod.Wrapf(ErrInvalidMsg, "a %s names a tag and a positive weight, or neither", v.name)
-		}
+	pending := !isZero(p.PendingKey)
+	if pending != (p.PendingTime != 0) || pending != (p.PendingExposed != 0) {
+		return errorsmod.Wrap(ErrInvalidMsg, "a pending exposure names its move key, move time and amount, or none of them")
+	}
+	if isZero(p.VoteTag) != (p.VoteWeight == 0 && !pending) {
+		return errorsmod.Wrap(ErrInvalidMsg, "a vote names a tag and a positive weight or a pending exposure, or neither")
+	}
+	if isZero(p.CreditVoteTag) && p.CreditVoteWeight != 0 {
+		return errorsmod.Wrap(ErrInvalidMsg, "a credit vote's weight without its tag")
 	}
 	if !isZero(p.VoteTag) && bytes.Equal(p.VoteTag, p.CreditVoteTag) {
 		return errorsmod.Wrap(ErrInvalidMsg, "the two outputs vote under one tag")
@@ -328,7 +333,7 @@ func (p *StakeProof) shape(credit, split bool) error {
 		if isZero(p.CreditNullifier) || isZero(p.CreditCommitment) || isZero(p.CreditGroundworksTag) {
 			return errorsmod.Wrap(ErrInvalidMsg, "the stake proof's credit lane spends a note (or pads) with its tag and creates the merged note")
 		}
-	} else if !isZero(p.CreditNullifier) || !isZero(p.CreditCommitment) || !isZero(p.CreditGroundworksTag) || !isZero(p.CreditVoteTag) {
+	} else if !isZero(p.CreditNullifier) || !isZero(p.CreditCommitment) || !isZero(p.CreditGroundworksTag) || !isZero(p.CreditVoteTag) || p.CreditVoteWeight != 0 {
 		return errorsmod.Wrap(ErrInvalidMsg, "this msg credits no second asset: the credit lane is zero")
 	}
 	if votes := !isZero(p.VoteTag) || !isZero(p.CreditVoteTag); votes != split {
@@ -358,8 +363,8 @@ func fieldOrZero(b []byte) fr.Element {
 // StakeFields are the stake proof's values every staking msg's sighash binds
 // first: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
 // Bytes(credit_ct), clear_before, debt_root, gw_0, gw_1, credit_gw,
-// vote_tag, vote_weight, credit_vote_tag, credit_vote_weight (an absent
-// ciphertext is Bytes of nothing).
+// vote_tag, vote_weight, credit_vote_tag, credit_vote_weight, pending_key,
+// pending_time, pending_exposed (an absent ciphertext is Bytes of nothing).
 func (p *StakeProof) StakeFields() []fr.Element {
 	at := func(xs [][]byte, i int) []byte {
 		if i < len(xs) {
@@ -374,13 +379,14 @@ func (p *StakeProof) StakeFields() []fr.Element {
 		privacy.U64(p.ClearBefore), fieldOrZero(p.DebtRoot),
 		fieldOrZero(at(p.GroundworksTags, 0)), fieldOrZero(at(p.GroundworksTags, 1)), fieldOrZero(p.CreditGroundworksTag),
 		fieldOrZero(p.VoteTag), privacy.U64(p.VoteWeight), fieldOrZero(p.CreditVoteTag), privacy.U64(p.CreditVoteWeight),
+		fieldOrZero(p.PendingKey), privacy.U64(p.PendingTime), privacy.U64(p.PendingExposed),
 	}
 }
 
 // PublicInputs lays out the stake circuit's public inputs: anchor, asset,
 // nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf,
 // cr_cm, cr_v_in, cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out,
-// cr_w_out, sighash. Call after ValidateBasic.
+// cr_w_out, p_key, p_time, p_ex, sighash. Call after ValidateBasic.
 func (p *StakeProof) PublicInputs(l StakeLanes, sighash fr.Element) [][]byte {
 	u := func(v uint64) []byte { return privacy.FieldBytes(privacy.U64(v)) }
 	return [][]byte{
@@ -388,7 +394,8 @@ func (p *StakeProof) PublicInputs(l StakeLanes, sighash fr.Element) [][]byte {
 		u(l.VIn), u(l.VOut), u(p.ClearBefore), p.DebtRoot,
 		privacy.FieldBytes(StakeAsset(l.CreditDenom)), p.CreditNullifier, p.CreditCommitment, u(l.CreditIn),
 		u(l.CreditMoveTime), p.GroundworksTags[0], p.GroundworksTags[1], p.CreditGroundworksTag,
-		p.VoteTag, u(p.VoteWeight), p.CreditVoteTag, u(p.CreditVoteWeight), privacy.FieldBytes(sighash),
+		p.VoteTag, u(p.VoteWeight), p.CreditVoteTag, u(p.CreditVoteWeight),
+		p.PendingKey, u(p.PendingTime), u(p.PendingExposed), privacy.FieldBytes(sighash),
 	}
 }
 

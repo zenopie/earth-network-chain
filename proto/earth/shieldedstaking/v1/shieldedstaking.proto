@@ -295,6 +295,22 @@ message GroundworksVote {
   int64 split_expires_at = 11;
   // tag is the note's Groundworks tag (32 bytes).
   bytes tag = 12;
+  // pending is derth the note holds exposed to a move's source (its label,
+  // move pending_key made at pending_move_time): not yet counted, added to
+  // derth once the move's window closes (the label could clear: move_time <
+  // ClearBefore) at what the slash debt tree says it is worth (pending_key's
+  // row, else all of it). matures_at is when that is due (the window as it
+  // stands; a window grown since is waited out). Zero once matured or when
+  // there is none.
+  string pending = 13 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  bytes pending_key = 14;
+  uint64 pending_move_time = 15;
+  int64 matures_at = 16;
 }
 
 // StakeRoot is a stake-tree root recorded at the end of a block that changed

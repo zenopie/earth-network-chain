@@ -574,6 +574,8 @@ func (k Keeper) restoreSheltered(ctx context.Context) {
 func (k Keeper) BeginBlocker(ctx context.Context) error {
 	k.finishSlashWatch(ctx)
 	k.restoreSheltered(ctx)
+	// After the slash settles: a debt row this block writes is seen.
+	k.matureVotes(ctx)
 	return nil
 }
 

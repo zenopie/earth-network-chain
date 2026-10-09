@@ -64,14 +64,16 @@ the rewards accrued so far, so nothing can be bought below its worth; the
 deposit's amount and validator were public already.
 
 **Touches.** x/shieldedstaking Delegate (`bondNow`), its tests and docs
-(staking). Ships with item 2 in one upgrade (v1.2.0).
+(staking). Ships with item 2 in one upgrade (v1.2.1).
 
 ## 2. Groundworks votes by stake note, not positions (x/shieldedstaking, x/allocation, stake circuit)
 
-**Status (2026-10-08):** built for v1.2.0 with item 1: the stake circuit
+**Status (2026-10-08):** built for v1.2.1 with item 1: the stake circuit
 (Groundworks tags, no owner tag), the chain (votes keyed by tag, positions
-deleted, the v1.2.0 handler installing the stake key), tests, both wallets
-and the backend indexer (positions no longer indexed).
+deleted, the v1.2.1 handler installing the stake key), tests, both wallets
+and the backend indexer (positions no longer indexed). Released first as
+v1.2.0 (gov proposal 1), cancelled before it passed to ship moved stake
+voting at once (below); v1.2.0 never ran. Ships as v1.2.1.
 
 **Found:** 2026-10-08, from the wallet. A position is a separate, locked
 record: stake in it cannot be moved or unstaked without an unlock, stake added
@@ -104,6 +106,14 @@ two. One stake note per validator (as now), and that note carries the vote.
     the note onto itself with the split (`MsgRestake` + `groundworks_split`).
   - The lease (`groundworks_lease_seconds`) runs from each vote; a stake tx
     that carries the vote forward renews it.
+  - **Moved stake votes at once, pending** (2026-10-09, replacing "re-vote
+    once the label clears"). A voting output's exposure (derth a move
+    brought in, still labelled) is stored on the vote as `pending` with the
+    move key and time, not counted. Lane A's is published by the proof
+    (`p_key`, `p_time`, `p_ex`: the kept label's); the credit lane's is the
+    credit itself. The chain adds `min(pending, the move's debt row)` (all
+    of it if never slashed) to the vote's derth in BeginBlock once the
+    move's window closes, at most 200 a block. No re-vote.
   - A reused `rho` gives two notes one tag: a second vote under a live tag is
     refused, and a spend only ever cancels the spender's own vote. Harmless.
 - **Tally**: each vote's derth at its validator's live rate, as positions are

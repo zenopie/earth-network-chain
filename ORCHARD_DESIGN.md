@@ -75,7 +75,7 @@ Tags are ASCII strings read as big-endian integers (`"earth.id"` ->
 | TAG_STAKE | `earth.stake` | stake note commitment |
 | TAG_SPC | `earth.spc` | stake note owner commitment |
 | TAG_SNF | `earth.snf` | stake note nullifier |
-| TAG_OTAG | `earth.otag` | retired (positions' owner tag, v1.2.0; never reuse) |
+| TAG_OTAG | `earth.otag` | retired (positions' owner tag, v1.2.1; never reuse) |
 | TAG_GW | `earth.gw` (`0x65617274682e6777`) | stake note Groundworks tag |
 | TAG_SNFL | `earth.snfl` (`0x65617274682e736e666c`) | stake nullifier tree leaf |
 | TAG_VNF | `earth.vnf` | stake vote nullifier |
@@ -394,7 +394,7 @@ counts (`bb gates`, nargo 1.0.0-beta.22):
 | Circuit | Gates | Dyadic | Public inputs (in order) |
 | --- | --- | --- | --- |
 | action | 8,098 | 2^13 | anchor, nf, cm_out, cv_x, cv_y, sighash |
-| stake | 16,574 | 2^15 | anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, sighash |
+| stake | 16,597 | 2^15 | anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, p_key, p_time, p_ex, sighash |
 | vote | 22,011 | 2^15 | note_root, nf_root, debt_root, asset, weight, proposal_id, vnf_0, vnf_1, sighash |
 | membership | 5,659 | 2^13 | root, scope, nullifier, signal, excluded_dsc, excluded_country, max_activation, max_predecessor |
 | move | 8,362 | 2^14 | root, scope, old_nullifier, new_nullifier, signal |
@@ -402,7 +402,7 @@ counts (`bb gates`, nargo 1.0.0-beta.22):
 
 The vote circuit fits the bundled SRS (2^15 + 1 points); the prover's SRS
 hint must be at least the circuit's dyadic size. Action has 94 gates of
-headroom under 2^13. nargo tests: action 41, stake 71, vote 50 (mobile
+headroom under 2^13. nargo tests: action 41, stake 80, vote 50 (mobile
 `circuits/`), plus privacy_core's Go parity vectors.
 
 Measured (Apple M2): action prove 0.34 s single-thread, 0.16 s on 8 threads;
@@ -432,11 +432,14 @@ Two lanes, one owner (nk), every input under `anchor`; every note amount
 - **Groundworks tags.** Every input publishes `gw = H(TAG_GW, nk, rho)`
   (`gw_0`, `gw_1`, `cr_gw`; a padding input 0 or its own, as for
   nullifiers). Each output may vote: `gw_out` (`cr_gw_out`) is its own tag
-  and `w_out` (`cr_w_out`) its unexposed amount (lane A `out − exposed`;
-  lane B, when labelled, the input's part `cr_in`: derth moved in by a
-  redelegation votes only from a stake tx after its label clears), or both
-  0. A padding output cannot
-  vote. A tag needs no tree position.
+  and `w_out` (`cr_w_out`) its unexposed amount, the weight that counts now
+  (lane A `out − exposed`; lane B, when labelled, the input's part `cr_in`),
+  or both 0. A padding output cannot vote. A tag needs no tree position.
+- **Pending exposure.** A voting lane-A output that keeps a label publishes
+  it as `(p_key, p_time, p_ex)` = the label's (move_key, move_time,
+  exposed); otherwise all three are 0. The credit lane's exposure is the
+  credit itself (`cr_nf`, `cr_move_time`, `cr_v_in`), public already. The
+  chain counts both once the move's window closes (8.6).
 - Binds sighash.
 
 The chain fixes per msg the assets, `v_in`, `v_out`, `cr_v_in`,
@@ -1033,20 +1036,24 @@ looks like a partial one). No stake note's amount is ever public.
                 commitment 9, ciphertext 10, credit_nullifier 11, credit_commitment 12,
                 credit_ciphertext 13, clear_before 14, debt_root 15,
                 groundworks_tags 16 (exactly 2), credit_groundworks_tag 17,
-                vote_tag 18, vote_weight 19, credit_vote_tag 20, credit_vote_weight 21}
+                vote_tag 18, vote_weight 19, credit_vote_tag 20, credit_vote_weight 21,
+                pending_key 22, pending_time 23, pending_exposed 24}
                 reserved 4, 5, 6, 7, 8 ("commitments", "ciphertexts", "spc_mint",
                 "owner_tag", "spc_ciphertext")
 
     StakeFields = anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm, Bytes(credit_ct),
                   clear_before, debt_root, gw_0, gw_1, credit_gw,
-                  vote_tag, vote_weight, credit_vote_tag, credit_vote_weight
+                  vote_tag, vote_weight, credit_vote_tag, credit_vote_weight,
+                  pending_key, U64(pending_time), U64(pending_exposed)
                   (absent ciphertext: Bytes of nothing)
 
 Every staking msg's sighash binds the StakeFields first, then its own fields.
 `ValidateBasic`: proof length, canonical fields, exactly two lane-A
-nullifiers and two lane-A Groundworks tags, non-zero nullifiers distinct, a
-vote tag exactly with a positive vote weight (each lane), the two vote tags
-distinct, a ciphertext exactly for a non-zero
+nullifiers and two lane-A Groundworks tags, non-zero nullifiers distinct;
+pending_key, pending_time and pending_exposed all set or all zero; lane A's
+vote tag exactly when its weight is positive or it has a pending exposure;
+a credit vote weight only with its tag (a credit tag with weight 0 votes the
+credit pending); the two vote tags distinct, a ciphertext exactly for a non-zero
 commitment and exactly **201 bytes** (wallet stake ciphertext; label fields
 zero when unlabelled, so the length says nothing), `debt_root` zero when
 `clear_before` is 0.
@@ -1060,7 +1067,7 @@ window (0 only while the block time is below the window, when clear_before
 must be 0).
 
 The owner tag (field 7, public input `otag`) is retired with positions
-(v1.2.0).
+(v1.2.1).
 
 ### 8.3 Msgs
 
@@ -1075,7 +1082,7 @@ Every staking msg: `bundle` (fee: whole uerth balance, except MsgDelegate),
 | Redelegate {bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7, groundworks_split 8} | derth/<src> | v_out = amount | derth/<dst>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes | Bytes(src), Bytes(dst), amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)) |
 
 MsgLockPosition, MsgUpdatePosition, MsgUnlockPosition and MsgPositionVote
-are retired (v1.2.0); their type URLs are no longer registered.
+are retired (v1.2.1); their type URLs are no longer registered.
 
 "spend" = nf_0 **and** nf_1 non-zero: each slot spends a note or pads with
 its own would-be nullifier `H(TAG_NF, nk, rho, 0)` for a fresh random rho
@@ -1134,7 +1141,7 @@ delegation's share truncation). A validator that cannot take a delegation
 now (gone, or slashed to nothing) gets it queued for the epoch end instead.
 Event `shieldedstaking_delegate` carries `delegated` (true when bonded at
 once). Priced at the live rate and earning from its own block, a delegation
-shares in no reward it did not earn. (Before v1.2.0 every delegation waited
+shares in no reward it did not earn. (Before v1.2.1 every delegation waited
 in the queue for the epoch end while its derth already shared the rewards
 accrued meanwhile.)
 
@@ -1233,16 +1240,38 @@ A stake note votes in Groundworks in place, keyed by its Groundworks tag
   output's unexposed derth, proven by the circuit. Stored as
   `GroundworksVote {id 1, validator 2, derth 3, splits 4, created_height 7,
   weight 8 (not stored: derth × epoch rate, filled by queries), split_epoch
-  10, split_expires_at 11, tag 12}` (5, 6, 9 reserved: the positions'
+  10, split_expires_at 11, tag 12, pending 13, pending_key 14,
+  pending_move_time 15, matures_at 16}` (5, 6, 9 reserved: the positions'
   pubkey, nonce, owner_tag). Without a split both outputs must not vote.
+- **Pending (moved stake votes at once).** A voting output's exposure (derth
+  a move brought in, still labelled) votes too, without a re-vote: lane A's
+  from the proof (`pending_key/time/exposed`), the credit lane's the credit
+  itself (key = the credit nullifier, the msg's `move_time`, `dst_derth`;
+  a credit into a validator where the owner has no note votes with weight 0,
+  all of it pending). It is stored as `pending` with its move key and time
+  and `matures_at` = move_time + label window + 1 (the first second the
+  label could clear, `move_time < ClearBefore`), queued under prefix 60
+  (`GwMatures`), and not counted. If the window has already closed when the
+  vote is cast, it counts at once. In BeginBlock, after the slash watch
+  settles (so a debt row written this block is seen), `matureVotes` takes
+  the due ones (at most 200 a block, each in its own guarded cache): a
+  window grown since (unbonding_time raised) is waited out (re-queued);
+  otherwise `min(pending, the move's debt row retained)` (all of it when the
+  move was never slashed) is added to the vote's derth, the validator's
+  totals and voter re-filed, and event action `matured` emitted. A failure
+  is retried a day later (`shieldedstaking_epoch_failure` stage
+  `mature_groundworks`), never halting.
 - **Checked in the ante** (`checkGroundworks`): the split is valid for the
   Groundworks stream; each vote fits a note, weighs something at its
-  validator, and weighs at least `min_position` (derth × epoch rate); its
+  validator, and weighs at least `min_position` ((weight + pending) × epoch
+  rate); its
   tag is not already voting unless this proof cancels that vote (a reused
   rho gives two notes one tag: the second vote is refused, and a spend only
   ever cancels the spender's own vote).
 - **Carry forward.** Every unit of derth is in one unspent note, so the live
-  weight never exceeds the unspent voted derth (invariant 2). Wallets pass
+  weight never exceeds the unspent voted derth (invariant 2: a validator's
+  votes' derth plus pending, the pending at its post-slash worth, is at most
+  its supply). Wallets pass
   the owner's split on every stake msg, so each delegate, undelegate, move
   or merge ends the old note's vote and starts the new note's in one tx.
   Voting, changing the split or renewing alone: a `MsgRestake` of the note
@@ -1277,20 +1306,23 @@ exported).
 Queries: `Query/GroundworksVotes` (`/earth/shieldedstaking/v1/groundworks_votes`,
 paginated; a wallet finds its own by its notes' tags) and
 `Query/GroundworksVote {id}` (`/earth/shieldedstaking/v1/groundworks_votes/{id}`).
-Event `shieldedstaking_groundworks_vote {action (cast, cancelled, lapsed),
-vote_id, tag, validator, derth, weight, options, split_expires_at}`.
+Event `shieldedstaking_groundworks_vote {action (cast, cancelled, matured,
+lapsed), vote_id, tag, validator, derth, weight, options, split_expires_at,
+pending, matures_at}`.
 
 **Privacy (accepted).** Per vote, the validator, the weight (about the
-voting note's derth) and the split are public; the owner is not. A voter's
+voting note's derth) and the split are public; the owner is not. A vote
+with a pending part also names its move (the move key, already public in
+the move tx). A voter's
 stake txs at a validator are linked into one pseudonymous history with
 amounts: each tx publishes the tag of the note the previous one voted with
 and starts the next vote. A non-voter's tags are random-looking values that
 link nothing (a note's tag appears once, when it is spent).
 
-**Positions (retired, v1.2.0).** Groundworks was voted by positions: derth
+**Positions (retired, v1.2.1).** Groundworks was voted by positions: derth
 locked out of a note into a public object under an owner tag, with its own
-lock, update, unlock and gov-vote msgs. The v1.2.0 handler
-(`MigrateV1_2_0`) deletes any left (records, leases, totals, the
+lock, update, unlock and gov-vote msgs. The v1.2.1 handler
+(`MigrateV1_2_1`) deletes any left (records, leases, totals, the
 by-validator index and their gov votes; their derth leaves the
 validator's supply, its backing staying with the remaining holders, unless
 it is the whole supply) and re-files the voters they fed.
@@ -1316,9 +1348,14 @@ earth-1 had none. Genesis keeps the field names `positions` (5) and
    At `MaxEntryHeightsPerPair` (1,024) entries of positive height, a move
    first merges the two oldest adjacent entries whose moves (at most
    `MaxMergeMoves` = 128) can be re-filed, trying at most `MergeTries` = 8
-   pairs: the merged entry takes the later height and the earlier
-   completion, the merged-away entry's unbonding id is deleted, its moves'
-   entry height and completion follow; then the move adds its own entry. A
+   pairs: the merged entry takes the later height and the later
+   completion (audit C-2), the merged-away entry's unbonding id is deleted,
+   its moves' entry height and completion follow; then the move adds its own
+   entry. The older entry's moves so stay slashable past their own label
+   window: a debt row written then reaches a label not cleared yet (a cleared
+   one carries none of it: the cut falls on dst's holders), and a
+   Groundworks vote's pending exposure waits for the move's completion
+   before it counts. A
    move is never in an entry older than itself; joining the latest entry is a
    last resort when no pair qualifies. Src unbonded: no entry; src unbonding:
    the validator's unbonding time and height. Entries at height ≤ 0 are not
@@ -1603,7 +1640,9 @@ another vote on the proposal; a vote key other than `0x00 || nullifier` (the
 retired position votes' `0x01 || id` included); payouts per record
 not summing to its outstanding, values outside 1..2^63−1, a payout without a
 pc or blind ciphertext, retry_at not set exactly when attempts > 0; a
-Groundworks vote's derth outside 1..2^63−1, a malformed, zero or repeated
+Groundworks vote's derth + pending outside 1..2^63−1 (either negative), a
+pending exposure without its move key, move time and matures_at (or those
+without a pending exposure), a malformed, zero or repeated
 tag, or a vote without a split and a lease; move and debt row keys not
 canonical, distinct and nonzero; retained outside 0..credited; a cut move
 without its row; a move or debt row key that is not a spent stake nullifier;
@@ -1617,7 +1656,8 @@ redelegation record decoded once a pass):
 
 1. ERTH: module uerth balance == queued delegations + matured payouts not yet
    made.
-2. derth is never a coin; derth of v's Groundworks votes ≤ derth_supply_v.
+2. derth is never a coin; derth of v's Groundworks votes plus their pending
+   exposures (at their post-slash worth) ≤ derth_supply_v.
 3. Unbonding: per validator, UNBONDING records' sum == the module's SDK
    entries' initial balances; each record's height has an entry.
 4. Rate: pending_undelegation == PENDING targets, `D + W + P ≥ U`, and
@@ -1705,8 +1745,10 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
   publishes its Groundworks tag (padding: its own, for the padding rho).
 - **Groundworks**: the owner picks one split; every stake msg then carries
   it (`groundworks_split`) with `vote_tag = H(TAG_GW, nk, out_rho)` and
-  `vote_weight` = the output's unexposed amount (for a redelegation, both
-  outputs; a zero-amount output does not vote). To vote all stake, send one
+  `vote_weight` = the output's unexposed amount and, for a kept label,
+  `pending_key/time/exposed` = the label's (for a redelegation, both
+  outputs, the credit's pending part implied; a zero-amount output does not
+  vote). Moved stake needs no re-vote. To vote all stake, send one
   `MsgRestake` per validator with the split; to stop, one with none. A
   restored wallet adopts its split from `Query/GroundworksVotes` (the vote
   whose tag is one of its notes'). Re-vote before `split_expires_at`.
