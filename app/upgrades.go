@@ -51,6 +51,7 @@ type Upgrade struct {
 // fresh genesis; every earlier upgrade belongs to the chain it replaced.
 var Upgrades = []Upgrade{
 	{Name: UpgradeV1_2_1, CreateHandler: v1_2_1Handler},
+	{Name: UpgradeV1_2_2, CreateHandler: v1_2_2Handler},
 }
 
 // setupUpgrades registers the upgrade handlers and, if the node is restarting

@@ -1489,3 +1489,33 @@ func TestStakeNotesOwnerLocked(t *testing.T) {
 	res = e.checkTx(e.privateTx(swap))
 	require.Equal(t, dextypes.ErrPoolNotFound.ABCICode(), res.Code, res.Log)
 }
+
+// The epoch rate is the rate the epoch end leaves, not that plus the queue it
+// just delegated: the book's pending delegation is stored before the backing
+// is read (earth-1 height 50679 stored 1.914 against a true 1.565, its
+// 86,000 ERTH queue counted twice), so Groundworks votes weigh the stake there
+// is.
+func TestEpochRateCountsTheQueueOnce(t *testing.T) {
+	e := initStakeEnv(t)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+
+	e.shield(uint64(5_000 * ssErth))
+	e.shield(uint64(100 * ssErth)) // fees
+
+	e.delegate(vB, uint64(2_000*ssErth))
+	e.days(1)
+	// Rewards accrue; the next delegation change pays them into the queue.
+	e.next(6 * time.Hour)
+	e.delegate(vB, uint64(1_000*ssErth))
+	queued := e.state(vB).PendingDelegation
+	require.True(t, queued.IsPositive(), "rewards paid by the delegation change are queued")
+
+	e.days(1)
+	st := e.state(vB)
+	require.True(t, st.PendingDelegation.IsZero(), "the queue was delegated: %s", st.PendingDelegation)
+	live := e.rate(vB)
+	require.True(t, st.EpochRate.Sub(live).Abs().LT(math.LegacyNewDecWithPrec(1, 9)),
+		"epoch rate %s, live %s at the epoch end (queue %s)", st.EpochRate, live, queued)
+	e.invariants()
+}

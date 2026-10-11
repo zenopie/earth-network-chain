@@ -11,6 +11,24 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
+## [v1.2.2]
+
+Consensus-breaking (it changes a stored rate). Goes through governance as a
+`MsgSoftwareUpgrade` named `v1.2.2`; never applied in place. No state
+migration. UPGRADE_PLAN.md item 3.
+
+### Fixed
+
+- **The epoch rate counted the queue it had just bonded twice.** At an epoch
+  end the private staking book delegates its queue and then stores the rate
+  Groundworks votes weigh at, but it read the backing from the book as it
+  stood before the epoch: the pending delegation was counted both in the
+  delegation and as still pending, and an undelegated target subtracted twice.
+  On earth-1 the epoch end at height 50679 stored 1.914 against a true 1.565.
+  Only Groundworks vote weight reads this rate; staking, unstaking and moves
+  are priced at the live rate and were never affected. The book is now stored
+  before the rate is read.
+
 ## [v1.2.1]
 
 Consensus-breaking. earth-1's first software upgrade: it goes through

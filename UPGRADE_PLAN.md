@@ -148,3 +148,37 @@ via the upgrade handler, x/shieldedstaking (msgs, vote store, cancel, tally
 source, position deletion, export/import), x/allocation (Groundworks weight
 source), proto, backend indexer, both wallets (prover, msgs, the
 Groundworks screen), docs (emission, privacy, using-the-app).
+
+## 3. The epoch rate counts the bonded queue twice (x/shieldedstaking)
+
+**Found:** 2026-10-11, checking that both allocation funds pay out correctly.
+
+**What happens.** At an epoch end `processValidator` (`epoch.go`) delegates
+the book's queue and undelegates the ended epochs' target, updates the local
+`vs` (pending delegation and undelegation), then calls `k.Backing`, which
+re-reads the *stored* book. D already includes the queue, and the stored P
+still lists it, so `EpochRate = (D + W + P_old − U_old) / S` counts the queue
+twice and subtracts the undelegated target twice. Live proof: the epoch end
+at earth-1 height 50679 stored 1.9140, while the true rate was 1.5651. The
+difference times the supply is exactly the 86,000 ERTH queue.
+
+**Why it matters.** Only Groundworks vote weight reads the epoch rate
+(`voteWeight` = derth × EpochRate; `reweighSlashed` takes the lower of live
+and epoch). Money is priced at the live rate and is unaffected. With one
+validator and only note votes, every vote is inflated by the same factor, so
+the fund's split is right today. Once an operator's self-bond votes or there
+is a second validator, private stake at a validator with a large queue that
+epoch is over-weighted.
+
+**Status:** ships as v1.2.2 (handler `v1.2.2`, no migration).
+
+**Fix.** The book is stored before `Backing` reads it.
+`TestEpochRateCountsTheQueueOnce` (app) checks that the epoch rate equals the
+live rate at the epoch-end block with a queue present; it fails without the
+fix (59.8 vs 54.2).
+
+**Upgrade.** No migration: the next epoch end after the upgrade stores a
+correct rate, and the votes re-weigh at it.
+
+**Touches.** x/shieldedstaking `epoch.go`, an app test and three proof
+fixtures.

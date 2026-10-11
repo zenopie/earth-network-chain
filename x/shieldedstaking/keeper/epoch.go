@@ -599,6 +599,14 @@ func (k Keeper) processValidator(ctx context.Context, valoper string, maxEpoch u
 		))
 		vs.PendingDelegation = math.ZeroInt()
 	}
+	// Stored before Backing reads it: the delegation already includes the
+	// queue just delegated and excludes the target just undelegated, so the
+	// stored pre-epoch P_v and U_v would count both twice (the epoch rate
+	// 1.914 against a true 1.565 at earth-1's epoch end at height 50679,
+	// the 86,000 ERTH queue over again).
+	if err := k.Validators.Set(ctx, valoper, vs); err != nil {
+		return err
+	}
 	b, s, err := k.Backing(ctx, valoper)
 	if err != nil {
 		return err
