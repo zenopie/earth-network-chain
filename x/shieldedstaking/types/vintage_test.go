@@ -151,3 +151,53 @@ func TestVintageSighashCompat(t *testing.T) {
 	bad := &MsgRestake{Validator: a, Stake: st, Vintage: 202613}
 	require.ErrorIs(t, bad.ValidateBasic(), ErrVintage)
 }
+
+// credit_vintage (month-boundary grace): 0 hashes as before; a non-zero one
+// is appended after the vintage, and needs one, so (vintage X, credit 0)
+// and (vintage 0, credit X) never share a sighash. The credit lane's asset
+// follows it.
+func TestCreditVintageSighash(t *testing.T) {
+	hrp := sdk.GetConfig().GetBech32ValidatorAddrPrefix()
+	a, _ := bech32.ConvertAndEncode(hrp, make([]byte, 20))
+	b, _ := bech32.ConvertAndEncode(hrp, append(make([]byte, 19), 1))
+	z := make([]byte, 32)
+	st := StakeProof{Anchor: z, DebtRoot: z, Nullifiers: [][]byte{z, z}, Commitment: z, CreditNullifier: z, CreditCommitment: z}
+	r := &MsgRedelegate{SrcValidator: a, DstValidator: b, Stake: st, Amount: 1, DstDerth: 1, MoveTime: 1, Vintage: 202701}
+	f0, err := r.SighashFields(nil)
+	require.NoError(t, err)
+	r.CreditVintage = 202702
+	f1, err := r.SighashFields(nil)
+	require.NoError(t, err)
+	require.Equal(t, append(append([]fr.Element{}, f0...), privacy.U64(202702)), f1)
+	vc := VintageCtx{Base: 202610, Current: 202703, Grace: 202702}
+	require.Equal(t, VintageDenom(b, 202702, 202610), r.StakeLanes(vc).CreditDenom)
+	r.CreditVintage = 0
+	require.Equal(t, VintageDenom(b, 202703, 202610), r.StakeLanes(vc).CreditDenom)
+
+	c := &MsgCheckIn{Validator: a, Stake: st, FromVintage: 202612, Amount: 1}
+	g0, err := c.SighashFields(nil)
+	require.NoError(t, err)
+	c.CreditVintage = 202702
+	g1, err := c.SighashFields(nil)
+	require.NoError(t, err)
+	require.Equal(t, append(append([]fr.Element{}, g0...), privacy.U64(202702)), g1)
+	_, cr := c.LaneVintages(vc)
+	require.Equal(t, uint32(202702), cr)
+}
+
+// The grace is the month's first VintageGraceSeconds; a credit may name
+// the current month, or the previous one only then.
+func TestVintageGrace(t *testing.T) {
+	start := VintageStart(202703)
+	in := NewVintageCtx(202610, start.Add((VintageGraceSeconds-1)*time.Second))
+	require.Equal(t, uint32(202702), in.Grace)
+	require.NoError(t, in.CheckCredit(202703))
+	require.NoError(t, in.CheckCredit(202702))
+	require.ErrorIs(t, in.CheckCredit(202701), ErrVintage)
+	out := NewVintageCtx(202610, start.Add(VintageGraceSeconds*time.Second))
+	require.Zero(t, out.Grace)
+	require.ErrorIs(t, out.CheckCredit(202702), ErrVintage)
+	jan := NewVintageCtx(202610, VintageStart(202701))
+	require.Equal(t, uint32(202612), jan.Grace, "across a year")
+	require.Equal(t, uint32(202701), jan.Credit(0))
+}
