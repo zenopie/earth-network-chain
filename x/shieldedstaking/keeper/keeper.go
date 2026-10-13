@@ -176,9 +176,13 @@ type Keeper struct {
 	DebtRetained      collections.Map[[]byte, uint64]
 	DebtSize          collections.Item[uint64]
 	MaxUnbonding      collections.Item[uint64]
-	WatchSrc          collections.Item[string]
-	WatchShares       collections.Map[string, math.LegacyDec]
-	WatchCalls        collections.Map[string, uint64]
+	// MaxClearBefore is the highest clear_before an accepted stake proof
+	// has named: a label whose move_time is below it may have cleared
+	// (moves.go, settleSlash).
+	MaxClearBefore collections.Item[uint64]
+	WatchSrc       collections.Item[string]
+	WatchShares    collections.Map[string, math.LegacyDec]
+	WatchCalls     collections.Map[string, uint64]
 }
 
 type govRef struct{ k *govkeeper.Keeper }
@@ -310,14 +314,15 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
 		DebtNodes: collections.NewMap(sb, types.DebtNodesKey, "debt_nodes",
 			collections.PairKeyCodec(collections.Uint32Key, collections.Uint64Key), collections.BytesValue),
-		DebtIndex:    collections.NewMap(sb, types.DebtIndexKey, "debt_index", collections.BytesKey, collections.Uint64Value),
-		DebtLeafKeys: collections.NewMap(sb, types.DebtLeafKeysKey, "debt_leaf_keys", collections.Uint64Key, collections.BytesValue),
-		DebtRetained: collections.NewMap(sb, types.DebtRetainedKey, "debt_retained", collections.BytesKey, collections.Uint64Value),
-		DebtSize:     collections.NewItem(sb, types.DebtSizeKey, "debt_size", collections.Uint64Value),
-		MaxUnbonding: collections.NewItem(sb, types.MaxUnbondingKey, "max_unbonding", collections.Uint64Value),
-		WatchSrc:     collections.NewItem(sb, types.WatchSrcKey, "watch_src", collections.StringValue),
-		WatchShares:  collections.NewMap(sb, types.WatchSharesKey, "watch_shares", collections.StringKey, sdk.LegacyDecValue),
-		WatchCalls:   collections.NewMap(sb, types.WatchCallsKey, "watch_calls", collections.StringKey, collections.Uint64Value),
+		DebtIndex:      collections.NewMap(sb, types.DebtIndexKey, "debt_index", collections.BytesKey, collections.Uint64Value),
+		DebtLeafKeys:   collections.NewMap(sb, types.DebtLeafKeysKey, "debt_leaf_keys", collections.Uint64Key, collections.BytesValue),
+		DebtRetained:   collections.NewMap(sb, types.DebtRetainedKey, "debt_retained", collections.BytesKey, collections.Uint64Value),
+		DebtSize:       collections.NewItem(sb, types.DebtSizeKey, "debt_size", collections.Uint64Value),
+		MaxUnbonding:   collections.NewItem(sb, types.MaxUnbondingKey, "max_unbonding", collections.Uint64Value),
+		MaxClearBefore: collections.NewItem(sb, types.MaxClearBeforeKey, "max_clear_before", collections.Uint64Value),
+		WatchSrc:       collections.NewItem(sb, types.WatchSrcKey, "watch_src", collections.StringValue),
+		WatchShares:    collections.NewMap(sb, types.WatchSharesKey, "watch_shares", collections.StringKey, sdk.LegacyDecValue),
+		WatchCalls:     collections.NewMap(sb, types.WatchCallsKey, "watch_calls", collections.StringKey, collections.Uint64Value),
 	}
 	schema, err := sb.Build()
 	if err != nil {

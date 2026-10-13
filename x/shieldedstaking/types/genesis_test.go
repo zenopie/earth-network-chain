@@ -43,7 +43,6 @@ func TestGenesisValidation(t *testing.T) {
 		"zero tag":             func(v *GroundworksVote) { v.Tag = make([]byte, 32) },
 		"short tag":            func(v *GroundworksVote) { v.Tag = v.Tag[1:] },
 		"no split":             func(v *GroundworksVote) { v.Splits = nil },
-		"a lease":              func(v *GroundworksVote) { v.SplitExpiresAt = 99 },
 		"no vintage":           func(v *GroundworksVote) { v.Vintage = 0 },
 		"not a vintage":        func(v *GroundworksVote) { v.Vintage = 202613 },
 		"id past next_vote_id": func(v *GroundworksVote) { v.Id = 1 },
@@ -86,19 +85,20 @@ func TestGenesisVintages(t *testing.T) {
 	}
 	require.NoError(t, base().Validate())
 	for name, mutate := range map[string]func(g *GenesisState){
-		"sum short":           func(g *GenesisState) { g.VintageSupplies[1].Supply = math.NewInt(19) },
-		"repeated":            func(g *GenesisState) { g.VintageSupplies[1].Vintage = 202610 },
-		"zero supply":         func(g *GenesisState) { g.VintageSupplies[0].Supply = math.ZeroInt() },
-		"bad vintage":         func(g *GenesisState) { g.VintageSupplies[0].Vintage = 202600 },
-		"bad base":            func(g *GenesisState) { g.BaseVintage = 13 },
-		"no book":             func(g *GenesisState) { g.Validators = nil },
-		"held value differs":  func(g *GenesisState) { g.RetiredVintages[0].RemainingValue = math.NewInt(6) },
-		"no held payout":      func(g *GenesisState) { g.RetiredVintages[0].PayoutId = 5 },
-		"nothing remaining":   func(g *GenesisState) { g.RetiredVintages[0].RemainingSupply = math.ZeroInt() },
-		"remaining past":      func(g *GenesisState) { g.RetiredVintages[0].RemainingSupply = math.NewInt(10) },
-		"unheld payout no pc": func(g *GenesisState) { g.RetiredVintages = nil },
-		"held with pc":        func(g *GenesisState) { g.UnbondPayouts[0].Pc = privacy.FieldBytes(privacy.U64(1)) },
-		"bad move vintage":    func(g *GenesisState) { g.Moves = []Move{{Vintage: 7}} },
+		"sum short":            func(g *GenesisState) { g.VintageSupplies[1].Supply = math.NewInt(19) },
+		"repeated":             func(g *GenesisState) { g.VintageSupplies[1].Vintage = 202610 },
+		"zero supply":          func(g *GenesisState) { g.VintageSupplies[0].Supply = math.ZeroInt() },
+		"bad vintage":          func(g *GenesisState) { g.VintageSupplies[0].Vintage = 202600 },
+		"bad base":             func(g *GenesisState) { g.BaseVintage = 13 },
+		"no book":              func(g *GenesisState) { g.Validators = nil },
+		"held value differs":   func(g *GenesisState) { g.RetiredVintages[0].RemainingValue = math.NewInt(6) },
+		"no held payout":       func(g *GenesisState) { g.RetiredVintages[0].PayoutId = 5 },
+		"nothing remaining":    func(g *GenesisState) { g.RetiredVintages[0].RemainingSupply = math.ZeroInt() },
+		"remaining past":       func(g *GenesisState) { g.RetiredVintages[0].RemainingSupply = math.NewInt(10) },
+		"unheld payout no pc":  func(g *GenesisState) { g.RetiredVintages = nil },
+		"held with pc":         func(g *GenesisState) { g.UnbondPayouts[0].Pc = privacy.FieldBytes(privacy.U64(1)) },
+		"bad move vintage":     func(g *GenesisState) { g.Moves = []Move{{Vintage: 7}} },
+		"supplied and retired": func(g *GenesisState) { g.RetiredVintages[0].Vintage = 202611 }, // audit 1, L6
 	} {
 		g := base()
 		mutate(g)

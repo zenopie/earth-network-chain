@@ -137,6 +137,48 @@ func ParseDerthDenom(denom string) (valoper string, month uint32, ok bool) {
 // a redelegation's credit or a check-in lands in).
 type VintageCtx struct {
 	Base, Current uint32
+	// Grace is the previous month during the first VintageGraceSeconds of
+	// the current one (0 otherwise): a credit naming it is still accepted.
+	Grace uint32
+}
+
+// VintageGraceSeconds is how long into a month a credit (a delegation, a
+// redelegation's credit lane, a check-in) may still name the previous
+// month: a proof built against a block before 00:00 UTC on the 1st and
+// included after it. It equals ClearBeforeSlackSeconds, the longest a
+// stake proof stays valid after the block it was built against (its
+// clear_before must be within that of the current one), so every proof
+// still valid otherwise is valid for its vintage too. The credit lands in
+// the previous month's vintage, which is live for 12 more months.
+const VintageGraceSeconds = ClearBeforeSlackSeconds
+
+// NewVintageCtx is the vintage context at block time t.
+func NewVintageCtx(base uint32, t time.Time) VintageCtx {
+	vc := VintageCtx{Base: base, Current: MonthOf(t)}
+	if t.Unix()-VintageStart(vc.Current).Unix() < VintageGraceSeconds {
+		vc.Grace = AddMonths(vc.Current, -1)
+	}
+	return vc
+}
+
+// Credit resolves a credit_vintage field: 0 names the current month.
+func (vc VintageCtx) Credit(m uint32) uint32 {
+	if m == 0 {
+		return vc.Current
+	}
+	return m
+}
+
+// CheckCredit refuses a credit vintage other than the current month, or the
+// previous one during the grace (ErrVintage).
+func (vc VintageCtx) CheckCredit(m uint32) error {
+	if m == vc.Current || (vc.Grace != 0 && m == vc.Grace) {
+		return nil
+	}
+	if vc.Grace != 0 {
+		return ErrVintage.Wrapf("a credit lands in the current vintage %d (or %d until %ds into the month), not %d", vc.Current, vc.Grace, VintageGraceSeconds, m)
+	}
+	return ErrVintage.Wrapf("a credit lands in the current vintage %d, not %d", vc.Current, m)
 }
 
 // Resolve is a msg's vintage field: 0 names the base vintage.

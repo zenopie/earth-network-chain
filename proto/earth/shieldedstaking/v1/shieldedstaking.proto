@@ -292,9 +292,10 @@ message GroundworksVote {
   // cast in. A governance reset bumps that epoch, and a split from an older
   // one no longer counts (the owner votes again).
   uint64 split_epoch = 10;
-  // split_expires_at was the vote's lease end (unix seconds). Stake votes
-  // carry no lease since v1.3.0 (they end with their vintage): always 0.
-  int64 split_expires_at = 11;
+  // 11: split_expires_at, the vote's lease end. Stake votes carry no lease
+  // since v1.3.0 (they end with their vintage).
+  reserved 11;
+  reserved "split_expires_at";
   // tag is the note's Groundworks tag (32 bytes).
   bytes tag = 12;
   // pending is derth the note holds exposed to a move's source (its label,
@@ -445,9 +446,11 @@ message VintageSupply {
 }
 
 // RetiredVintage is a stake vintage that reached 00:00 UTC on the 1st of
-// its month + 13: its supply left the validator's book at the live rate as
-// one held private undelegation (payout_id, no pc), which its notes withdraw
-// from pro rata (MsgUndelegate on the retired asset).
+// its month + 13: at the first epoch end after that, its supply left the
+// validator's book at the live rate as one held private undelegation
+// (payout_id, no pc) of the epoch that ended, undelegated in the same step,
+// which its notes withdraw from pro rata (MsgUndelegate on the retired
+// asset).
 message RetiredVintage {
   string validator = 1;
   uint32 vintage = 2;
@@ -485,17 +488,24 @@ message RetiredVintage {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
-  // retired_at is the block time (unix seconds) the retirement was booked.
+  // retired_at is the block time (unix seconds) the retirement was booked
+  // (the epoch end).
   int64 retired_at = 9;
 }
 
-// VintageSweep is the monthly retirement sweep over the validator books:
-// month is the month the books are being brought up to (every vintage
-// older than month - 12 retires), cursor the last book done while active.
+// VintageSweep is the monthly pass over the validator books that drops
+// retired vintages' Groundworks totals (their value is booked at the epoch
+// end): month is the month the books are being brought up to (every
+// vintage older than month - 12 has retired), cursor the last book done
+// while active.
 // retry_at (unix seconds): a pass that failed a book runs again then.
+// failed: a book failed in an earlier block of the pass under way (a pass
+// spans several blocks past VintageRetireLimit books), so the pass ends
+// with retry_at set whatever its last block did.
 message VintageSweep {
   uint32 month = 1;
   string cursor = 2;
   bool active = 3;
   int64 retry_at = 4;
+  bool failed = 5;
 }

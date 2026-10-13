@@ -629,6 +629,11 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	} else if !errors.Is(err, collections.ErrNotFound) {
 		return nil, err
 	}
+	if m, err := k.MaxClearBefore.Get(ctx); err == nil {
+		gs.MaxClearBefore = m
+	} else if !errors.Is(err, collections.ErrNotFound) {
+		return nil, err
+	}
 	if gs.BaseVintage, err = k.baseVintage(ctx); err != nil {
 		return nil, err
 	}
@@ -898,6 +903,11 @@ func (k Keeper) initMoves(ctx context.Context, gs types.GenesisState) error {
 			return fmt.Errorf("genesis max_unbonding_seconds: %w", err)
 		}
 		if err := k.MaxUnbonding.Set(ctx, gs.MaxUnbondingSeconds); err != nil {
+			return err
+		}
+	}
+	if gs.MaxClearBefore > 0 {
+		if err := k.MaxClearBefore.Set(ctx, gs.MaxClearBefore); err != nil {
 			return err
 		}
 	}

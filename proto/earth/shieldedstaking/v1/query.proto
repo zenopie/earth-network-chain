@@ -88,10 +88,26 @@ service Query {
   }
   // Vintages is one validator's stake vintages (v1.3.0): the current month,
   // the base vintage, each live vintage with its supply, asset denom and
-  // retirement time, and (paged, oldest first) its retired vintages not yet
-  // fully withdrawn, with their held payout's state.
+  // retirement time, each retiring one, and (paged, oldest first) its
+  // retired vintages not yet fully withdrawn, with their held payout's
+  // state. For explorers: it names the validator, so wallets use
+  // VintageBooks.
   rpc Vintages(QueryVintagesRequest) returns (QueryVintagesResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/vintages/{validator}";
+  }
+  // VintageInfo is the chain's vintage clock: the current month, the base
+  // vintage (the unsuffixed denom's month) and the next retirement time.
+  // Names no validator.
+  rpc VintageInfo(QueryVintageInfoRequest) returns (QueryVintageInfoResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/vintage_info";
+  }
+  // VintageBooks is every validator's stake vintages in one whole-chain
+  // list, paged by (validator, vintage): live, retiring and retired (not
+  // fully withdrawn) vintages with their supply and, when retired, the
+  // held payout's state. Wallets read it whole, so that no query names the
+  // validators they hold (Query/Vintages, for explorers, does).
+  rpc VintageBooks(QueryVintageBooksRequest) returns (QueryVintageBooksResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/vintage_books";
   }
 }
 
@@ -389,6 +405,11 @@ message QueryVintagesResponse {
   // next_retirement is when the oldest live vintage retires (unix seconds):
   // 00:00 UTC on the 1st of current_vintage + 1.
   int64 next_retirement = 6;
+  // retiring is every vintage past its retirement time whose value the
+  // epoch end has not booked yet, oldest first: it still earns in the
+  // validator's book (refusing every msg) and becomes a retired vintage,
+  // withdrawable, at the next epoch end.
+  repeated LiveVintage retiring = 7 [(gogoproto.nullable) = false];
 }
 
 // LiveVintage is one live vintage at a validator.
@@ -406,6 +427,11 @@ message LiveVintage {
   // retires_at is 00:00 UTC on the 1st of vintage + 13 (unix seconds); a
   // check-in before then moves the stake into the current vintage.
   int64 retires_at = 4;
+  // expected_completion, for a retiring vintage only (0 otherwise): the
+  // earliest its value can be paid (unix seconds), the current epoch's end
+  // plus x/staking's unbonding_time. An estimate: the epoch end books and
+  // undelegates it, later if x/staking's max_entries defers it.
+  int64 expected_completion = 5;
 }
 
 // RetiredVintageState is a retired vintage, its asset and its held payout's
@@ -413,8 +439,76 @@ message LiveVintage {
 message RetiredVintageState {
   RetiredVintage vintage = 1 [(gogoproto.nullable) = false];
   string denom = 2;
+  // expected_completion (unix seconds) is when the held value's unbonding
+  // completes: the record's completion while UNBONDING (exact); while the
+  // record is still PENDING (x/staking's max_entries deferred its
+  // undelegation), an estimate, the current epoch's end plus
+  // unbonding_time (unknown until an epoch end undelegates it); 0 once
+  // MATURED (withdrawals are paid in the next block) or nothing is held.
+  int64 expected_completion = 4;
   // record is the held payout's unbond record (absent when nothing is
   // held); withdrawals before its maturity are paid at maturity, after it
   // in the next block.
   UnbondRecord record = 3;
+}
+
+// QueryVintageInfoRequest is the request type for Query/VintageInfo.
+message QueryVintageInfoRequest {}
+
+// QueryVintageInfoResponse: current_vintage is the vintage a delegation or
+// check-in credits now (the block time's UTC month, YYYYMM); base_vintage
+// the one whose asset is the unsuffixed derth/<validator>; next_retirement
+// when the oldest live vintage retires (unix seconds: 00:00 UTC on the 1st
+// of current_vintage + 1).
+message QueryVintageInfoResponse {
+  uint32 current_vintage = 1;
+  uint32 base_vintage = 2;
+  int64 next_retirement = 3;
+}
+
+// QueryVintageBooksRequest: pagination pages the whole list by
+// (validator, vintage) key (at most 100 entries a page; next_key from the
+// previous page, offset unsupported).
+message QueryVintageBooksRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryVintageBooksResponse is one page of every validator's vintages, with
+// the vintage clock as of the block read.
+message QueryVintageBooksResponse {
+  uint32 current_vintage = 1;
+  uint32 base_vintage = 2;
+  int64 next_retirement = 3;
+  repeated VintageBookEntry entries = 4 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 5;
+}
+
+// VintageBookEntry is one (validator, vintage) of Query/VintageBooks.
+message VintageBookEntry {
+  string validator = 1;
+  uint32 vintage = 2;
+  // denom is its stake asset's denom (zk/privacy.AssetID of it is the
+  // circuit's asset).
+  string denom = 3;
+  // state: "live" (msgs accepted), "retiring" (past retires_at, still in
+  // the book and earning; booked as retired at the next epoch end) or
+  // "retired" (withdrawals only; retired and record below).
+  string state = 4;
+  // supply is the vintage's derth in the book (live or retiring; empty
+  // when retired: see retired.remaining_supply).
+  string supply = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = true
+  ];
+  // retires_at is 00:00 UTC on the 1st of vintage + 13 (unix seconds).
+  int64 retires_at = 6;
+  RetiredVintage retired = 7;
+  // record is the held payout's unbond record while value is held.
+  UnbondRecord record = 8;
+  // expected_completion (unix seconds): when a retiring or retired
+  // vintage's value is paid, as RetiredVintageState.expected_completion
+  // (retiring: the current epoch's end plus unbonding_time, an estimate);
+  // 0 for a live vintage, a matured record or nothing held.
+  int64 expected_completion = 9;
 }

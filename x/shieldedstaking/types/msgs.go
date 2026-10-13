@@ -437,10 +437,10 @@ func (m *MsgUndelegate) LaneVintages(vc VintageCtx) (uint32, uint32) {
 	return vc.Resolve(m.Vintage), 0
 }
 func (m *MsgRedelegate) LaneVintages(vc VintageCtx) (uint32, uint32) {
-	return vc.Resolve(m.Vintage), vc.Current
+	return vc.Resolve(m.Vintage), vc.Credit(m.CreditVintage)
 }
 func (m *MsgCheckIn) LaneVintages(vc VintageCtx) (uint32, uint32) {
-	return m.FromVintage, vc.Current
+	return m.FromVintage, vc.Credit(m.CreditVintage)
 }
 
 // withVintage appends U64(vintage) to a pre-v1.3.0 msg's sighash fields when
@@ -644,11 +644,12 @@ func (m *MsgRedelegate) PrivateFee() uint64                      { return shield
 func (m *MsgRedelegate) StakeProofOf() *StakeProof               { return &m.Stake }
 
 // StakeLanes: the vintage's derth/<src> asset, amount leaving; the credit
-// lane dst's current vintage's asset, crediting dst_derth labelled with
+// lane dst's credit vintage's asset (the current month unless
+// credit_vintage names another), crediting dst_derth labelled with
 // move_time.
 func (m *MsgRedelegate) StakeLanes(vc VintageCtx) StakeLanes {
 	return StakeLanes{Denom: vc.Denom(m.SrcValidator, m.Vintage), VOut: m.Amount,
-		CreditDenom: VintageDenom(m.DstValidator, vc.Current, vc.Base), CreditIn: m.DstDerth, CreditMoveTime: m.MoveTime}
+		CreditDenom: VintageDenom(m.DstValidator, vc.Credit(m.CreditVintage), vc.Base), CreditIn: m.DstDerth, CreditMoveTime: m.MoveTime}
 }
 
 // MoveKey is the move's key: its credit nullifier (the label's move_key).
@@ -656,10 +657,15 @@ func (m *MsgRedelegate) MoveKey() []byte { return m.Stake.CreditNullifier }
 
 // SighashFields: StakeFields, Bytes(src_validator), Bytes(dst_validator),
 // amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)), then
-// U64(vintage) when non-zero.
+// U64(vintage) when non-zero, then U64(credit_vintage) when non-zero (it
+// requires a non-zero vintage, so the two never hash alike).
 func (m *MsgRedelegate) SighashFields(address.Codec) ([]fr.Element, error) {
-	return withVintage(withStake(&m.Stake, privacy.Bytes([]byte(m.SrcValidator)), privacy.Bytes([]byte(m.DstValidator)),
-		privacy.U64(m.Amount), privacy.U64(m.DstDerth), privacy.U64(m.MoveTime), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), m.Vintage), nil
+	f := withVintage(withStake(&m.Stake, privacy.Bytes([]byte(m.SrcValidator)), privacy.Bytes([]byte(m.DstValidator)),
+		privacy.U64(m.Amount), privacy.U64(m.DstDerth), privacy.U64(m.MoveTime), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), m.Vintage)
+	if m.CreditVintage != 0 {
+		f = append(f, privacy.U64(uint64(m.CreditVintage)))
+	}
+	return f, nil
 }
 
 // ValidateBasic: two different canonical validators; the proof spends
@@ -687,6 +693,14 @@ func (m *MsgRedelegate) ValidateBasic() error {
 	if err := checkMsgVintage(m.Vintage); err != nil {
 		return err
 	}
+	if m.CreditVintage != 0 {
+		if m.Vintage == 0 {
+			return errorsmod.Wrap(ErrVintage, "a credit_vintage needs an explicit vintage")
+		}
+		if err := ValidateVintage(m.CreditVintage); err != nil {
+			return err
+		}
+	}
 	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
@@ -700,18 +714,20 @@ func (m *MsgCheckIn) PrivateFee() uint64                      { return shieldedt
 func (m *MsgCheckIn) StakeProofOf() *StakeProof               { return &m.Stake }
 
 // StakeLanes: from_vintage's derth/<validator> asset, amount leaving; the
-// credit lane the current vintage's asset, crediting amount, unlabelled
+// credit lane the credit vintage's asset (the current month unless
+// credit_vintage names another), crediting amount, unlabelled
 // (cr_move_time 0).
 func (m *MsgCheckIn) StakeLanes(vc VintageCtx) StakeLanes {
 	return StakeLanes{Denom: VintageDenom(m.Validator, m.FromVintage, vc.Base), VOut: m.Amount,
-		CreditDenom: VintageDenom(m.Validator, vc.Current, vc.Base), CreditIn: m.Amount}
+		CreditDenom: VintageDenom(m.Validator, vc.Credit(m.CreditVintage), vc.Base), CreditIn: m.Amount}
 }
 
 // SighashFields: StakeFields, Bytes(validator), U64(from_vintage),
-// U64(amount), Bytes(SplitsBytes(groundworks_split)).
+// U64(amount), Bytes(SplitsBytes(groundworks_split)), then
+// U64(credit_vintage) when non-zero.
 func (m *MsgCheckIn) SighashFields(address.Codec) ([]fr.Element, error) {
-	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(uint64(m.FromVintage)),
-		privacy.U64(m.Amount), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), nil
+	return withVintage(withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(uint64(m.FromVintage)),
+		privacy.U64(m.Amount), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), m.CreditVintage), nil
 }
 
 // ValidateBasic: a canonical validator, a vintage (never 0), a positive
@@ -721,6 +737,9 @@ func (m *MsgCheckIn) ValidateBasic() error {
 		return err
 	}
 	if err := ValidateVintage(m.FromVintage); err != nil {
+		return err
+	}
+	if err := checkMsgVintage(m.CreditVintage); err != nil {
 		return err
 	}
 	if err := positive("amount", m.Amount); err != nil {

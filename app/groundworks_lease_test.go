@@ -63,7 +63,6 @@ func TestGroundworksVoteNoLease(t *testing.T) {
 	p1 := g.castGw(g.v, 1_000*gwE, g.split(100))
 	e1 := g.now.Unix() + gwLease
 	got := g.storedVote(p1.id)
-	require.Zero(t, got.SplitExpiresAt, "no lease")
 	cur := sstypes.MonthOf(g.now)
 	require.Equal(t, cur, got.Vintage, "the vote is in its note's vintage")
 	g.atUnix(e1 + 1800)
@@ -95,7 +94,6 @@ func TestGroundworksVoteGenesisRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	got, err := fresh.ShieldedStakingKeeper.GwVotes.Get(fctx, p)
 	require.NoError(t, err)
-	require.Zero(t, got.SplitExpiresAt)
 	require.Equal(t, vin, got.Vintage)
 	has, err := fresh.ShieldedStakingKeeper.GwVotesByVintage.Has(fctx, collections.Join3(vin, got.Validator, p))
 	require.NoError(t, err)

@@ -118,10 +118,10 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("groundworks vote %d: tag repeated", v.Id)
 		}
 		tags[string(v.Tag)] = true
-		// A vote is cast with a split, carries no lease (v1.3.0: it ends with
-		// its vintage) and names its vintage.
-		if len(v.Splits) == 0 || v.SplitExpiresAt != 0 {
-			return fmt.Errorf("groundworks vote %d: a vote has a split and no lease", v.Id)
+		// A vote is cast with a split and names its vintage (v1.3.0: it ends
+		// with its vintage; no lease).
+		if len(v.Splits) == 0 {
+			return fmt.Errorf("groundworks vote %d: a vote has a split", v.Id)
 		}
 		if err := ValidateVintage(v.Vintage); err != nil {
 			return fmt.Errorf("groundworks vote %d: %w", v.Id, err)
@@ -409,7 +409,7 @@ func (gs GenesisState) validateMoves() error {
 // validator with a book, a vintage and a positive supply, once, and a book's
 // vintage supplies sum to its derth_supply; every move names 0 (the base) or
 // a vintage; every retired vintage names a canonical validator and a
-// vintage, once, with 0 < remaining_supply <= supply, remaining_value <=
+// vintage, once and not also supplied, with 0 < remaining_supply <= supply, remaining_value <=
 // value, and a held payout (no pc) of exactly remaining_value when that is
 // positive (payout_id is meaningless otherwise), each held payout serving
 // one vintage.
@@ -475,6 +475,10 @@ func (gs GenesisState) validateVintages() error {
 		key := fmt.Sprintf("%s/%d", rv.Validator, rv.Vintage)
 		if retired[key] {
 			return fmt.Errorf("retired vintage %s repeated", key)
+		}
+		if seen[key] {
+			// Its booking would make a second held payout (audit 1, L6).
+			return fmt.Errorf("vintage %s is both supplied and retired", key)
 		}
 		retired[key] = true
 		if err := CanonicalValoper(rv.Validator); err != nil {

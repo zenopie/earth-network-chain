@@ -47,6 +47,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Show a validator's stake vintages: live ones with supply and retirement time, retired ones with their held payout",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "validator"}},
 				},
+				{RpcMethod: "VintageInfo", Use: "vintage-info", Short: "Show the current month, the base vintage and the next retirement time"},
+				{
+					RpcMethod: "VintageBooks", Use: "vintage-books",
+					Short: "List every validator's stake vintages (live, retiring, retired with their held payout), paged",
+				},
 				{
 					RpcMethod: "Snapshot", Use: "snapshot [proposal-id]", Short: "Show a proposal's stake-vote snapshot",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "proposal_id"}},

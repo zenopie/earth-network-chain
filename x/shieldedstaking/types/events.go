@@ -75,9 +75,10 @@ const (
 	AttributeKeyPayout      = "payout"
 	AttributeKeyProposal    = "proposal_id"
 	AttributeKeyWeight      = "weight"
-	// AttributeKeySplitExpiresAt: a Groundworks vote's lease end (unix
-	// seconds); always 0 since v1.3.0 (stake votes end with their vintage).
-	AttributeKeySplitExpiresAt = "split_expires_at"
+	// AttributeKeyLateMoves: on shieldedstaking_slash_debt, how many slashed
+	// moves were past their label window (their share of the burn stays
+	// with the destination's rate; no debt row, no vintage charged).
+	AttributeKeyLateMoves = "late_moves"
 	// AttributeKeyVintage: the stake vintage (YYYYMM) a msg's notes or a
 	// vote belong to; AttributeKeyFromVintage/ToVintage a check-in's;
 	// AttributeKeyDstVintage the vintage a redelegation's credit lands in.

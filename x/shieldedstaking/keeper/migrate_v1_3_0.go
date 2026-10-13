@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
@@ -21,22 +22,30 @@ type V130Report struct {
 }
 
 // MigrateV1_3_0 introduces stake vintages (app upgrade v1.3.0,
-// UPGRADE_PLAN.md item 4). It never returns an error (an upgrade handler
-// that errors halts the chain): each step runs in its own cache, and a
-// step that fails is reported (event shieldedstaking_epoch_failure, stage
+// UPGRADE_PLAN.md item 4). Steps 1 and 2 are the vintage accounting every
+// later block relies on: they run first, in one cache, and if either fails
+// the migration returns the error and writes nothing, so the upgrade
+// handler fails and the chain halts at the upgrade height, to be restarted
+// by a fixed binary (audit 1, L5: carrying on with no base vintage would
+// rename every pre-v1.3.0 note's vintage each month; with no vintage
+// supplies, every undelegation would fail). So does an x/staking
+// unbonding_time above MaxUnbondingSeconds (a governance change made before
+// the upgrade: the label windows would outlast the vintages). Steps 3 to 5
+// are best-effort: each runs in its own cache, and a step that fails is
+// reported (event shieldedstaking_epoch_failure, stage
 // "upgrade_v1_3_0/<step>") and left as it was.
 //
 //  1. The base vintage is the upgrade block's month: every existing note's
 //     unsuffixed derth/<valoper> asset names it.
 //  2. Every book's derth_supply becomes its base vintage's supply.
 //  3. Every Groundworks vote joins the base vintage and loses its lease
-//     (split_expires_at 0); the lease queue (prefix 58) is cleared and the
+//     (split_expires_at, field 11, now reserved: rewritten without it); the lease queue (prefix 58) is cleared and the
 //     totals move from (validator, option) (prefix 29, cleared) to
 //     (validator, vintage, option), rebuilt from the votes, so every voter
 //     weighs exactly what it did.
 //  4. Every open move's credit is in the base vintage.
 //  5. Every validator voter is re-filed (unchanged weights).
-func (k Keeper) MigrateV1_3_0(ctx context.Context) V130Report {
+func (k Keeper) MigrateV1_3_0(ctx context.Context) (V130Report, error) {
 	base := k.currentVintage(ctx)
 	rep := V130Report{BaseVintage: base}
 	step := func(name string, fn func(cc context.Context) error) {
@@ -45,8 +54,17 @@ func (k Keeper) MigrateV1_3_0(ctx context.Context) V130Report {
 			rep.Failures = append(rep.Failures, fmt.Sprintf("%s: %v", name, err))
 		}
 	}
-	step("base_vintage", func(cc context.Context) error { return k.BaseVintage.Set(cc, base) })
-	step("supplies", func(cc context.Context) error {
+	if err := k.guarded(ctx, func(cc context.Context) error {
+		ut, err := k.staking.UnbondingTime(cc)
+		if err != nil {
+			return err
+		}
+		if s := unbondingSeconds(ut); s > types.MaxUnbondingSeconds {
+			return types.ErrInvariant.Wrapf("x/staking unbonding_time is %ds, above the %ds a stake vintage's label window allows", s, types.MaxUnbondingSeconds)
+		}
+		if err := k.BaseVintage.Set(cc, base); err != nil {
+			return errorsmod.Wrap(err, "base_vintage")
+		}
 		var books []types.ValidatorState
 		if err := k.Validators.Walk(cc, nil, func(_ string, vs types.ValidatorState) (bool, error) {
 			books = append(books, vs)
@@ -59,12 +77,14 @@ func (k Keeper) MigrateV1_3_0(ctx context.Context) V130Report {
 				continue
 			}
 			if err := k.VintageSupplies.Set(cc, collections.Join(vs.Validator, base), vs.DerthSupply); err != nil {
-				return err
+				return errorsmod.Wrap(err, "supplies")
 			}
 			rep.Books++
 		}
 		return nil
-	})
+	}); err != nil {
+		return rep, errorsmod.Wrap(err, "v1.3.0: stake vintage accounting")
+	}
 	var vals []string
 	step("groundworks", func(cc context.Context) error {
 		if _, err := k.clearPrefix(cc, types.GwLapsesKey); err != nil {
@@ -81,7 +101,7 @@ func (k Keeper) MigrateV1_3_0(ctx context.Context) V130Report {
 			return err
 		}
 		for _, v := range votes {
-			v.Vintage, v.SplitExpiresAt = base, 0
+			v.Vintage = base // its lease (field 11, now reserved) is not decoded
 			if v.Pending.IsNil() {
 				v.Pending = math.ZeroInt()
 			}
@@ -127,5 +147,5 @@ func (k Keeper) MigrateV1_3_0(ctx context.Context) V130Report {
 		sdk.NewAttribute("moves", fmt.Sprint(rep.Moves)),
 		sdk.NewAttribute("failures", fmt.Sprint(len(rep.Failures))),
 	))
-	return rep
+	return rep, nil
 }

@@ -67,6 +67,10 @@ message GenesisState {
   repeated VintageSupply vintage_supplies = 23 [(gogoproto.nullable) = false];
   // retired_vintages are the retired vintages not fully withdrawn.
   repeated RetiredVintage retired_vintages = 24 [(gogoproto.nullable) = false];
+  // max_clear_before is the highest clear_before an accepted stake proof
+  // has named: a move whose move_time is below it may have cleared its
+  // label, and a slash reaching it later is not charged to its note.
+  uint64 max_clear_before = 25;
 }
 
 // RetiringEscrow is a scheduled reward-escrow retirement: validator's escrow

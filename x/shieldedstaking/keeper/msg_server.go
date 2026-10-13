@@ -79,7 +79,11 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
-	cur := k.currentVintage(ctx)
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cur := vc.Resolve(m.Vintage) // the current month, or the previous one in its grace (checkDelegate)
 	if err := k.addVintageSupply(ctx, m.Validator, cur, d); err != nil {
 		return nil, err
 	}
@@ -169,11 +173,7 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 		if err != nil {
 			return nil, err
 		}
-		value := uint64(0)
-		if w.IsUint64() {
-			value = w.Uint64()
-		}
-		return &types.MsgUndelegateResponse{Value: value, PayoutId: id}, nil
+		return &types.MsgUndelegateResponse{Value: w.Uint64(), PayoutId: id}, nil
 	}
 	epoch, err := k.Epoch.Get(ctx)
 	if err != nil {
@@ -266,8 +266,12 @@ func (k Keeper) applyStake(ctx context.Context, m types.StakeMsg) ([]uint64, err
 	if err := k.checkGroundworks(ctx, m); err != nil {
 		return nil, err
 	}
-	pos, err := k.applyStakeProof(ctx, m.StakeProofOf())
+	p := m.StakeProofOf()
+	pos, err := k.applyStakeProof(ctx, p)
 	if err != nil {
+		return nil, err
+	}
+	if err := k.noteClearBefore(ctx, p.ClearBefore); err != nil {
 		return nil, err
 	}
 	return pos, k.applyGroundworks(ctx, m)

@@ -414,6 +414,14 @@ message MsgRedelegate {
   // (Query/Vintages). 0 names the base vintage (wallets before v1.3.0). A
   // non-zero vintage is appended to the sighash as U64(vintage).
   uint32 vintage = 9;
+  // credit_vintage is the vintage of dst's asset the credit lane proves
+  // (cr_asset): 0 names the current month (wallets before the fix pass). A
+  // non-zero credit_vintage must be the current month, or the previous one
+  // during the first VintageGraceSeconds of a month (a proof built before
+  // 00:00 UTC on the 1st and included after it); it requires a non-zero
+  // vintage and is appended to the sighash after it, as
+  // U64(credit_vintage).
+  uint32 credit_vintage = 10;
 }
 
 // MsgRedelegateResponse: the ERTH value moved, the derth/<dst_validator>
@@ -453,6 +461,12 @@ message MsgCheckIn {
   StakeProof stake = 5 [(gogoproto.nullable) = false];
   // groundworks_split: as MsgDelegate's, for both outputs that vote.
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 6 [(gogoproto.nullable) = false];
+  // credit_vintage is the vintage the credit lane proves (cr_asset) and the
+  // stake moves into: 0 names the current month; a non-zero one must be the
+  // current month, or the previous one during the first
+  // VintageGraceSeconds of a month. A non-zero one is appended to the
+  // sighash as U64(credit_vintage).
+  uint32 credit_vintage = 7;
 }
 
 // MsgCheckInResponse: the vintage the stake now belongs to and the merged

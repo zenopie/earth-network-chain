@@ -266,13 +266,15 @@ func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) error {
 	if err := k.checkDelegatable(ctx, m.Validator); err != nil {
 		return err
 	}
-	// A delegation always credits the current vintage.
+	// A delegation credits the current vintage (or, in a month's first
+	// VintageGraceSeconds, the previous one: a proof built before the
+	// boundary).
 	vc, err := k.vintageCtx(ctx)
 	if err != nil {
 		return err
 	}
-	if v := vc.Resolve(m.Vintage); v != vc.Current {
-		return types.ErrVintage.Wrapf("a delegation credits the current vintage %d, not %d", vc.Current, v)
+	if err := vc.CheckCredit(vc.Resolve(m.Vintage)); err != nil {
+		return err
 	}
 	params, err := k.Params.Get(ctx)
 	if err != nil {

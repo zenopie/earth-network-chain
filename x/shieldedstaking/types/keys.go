@@ -200,8 +200,9 @@ var (
 	WatchSharesKey = collections.NewPrefix(56)
 	WatchCallsKey  = collections.NewPrefix(57)
 	// GwLapsesKey ordered the Groundworks votes' leases by when they lapsed:
-	// (split_expires_at, vote id). Stake votes carry no lease since v1.3.0
-	// (MigrateV1_3_0 cleared it); never reuse 58.
+	// (split_expires_at, vote id). Stake votes carry no lease since v1.3.0:
+	// kept only so the migrations (MigrateV1_2_1, MigrateV1_3_0) clear old
+	// data under it; nothing else reads or writes it. Never reuse 58.
 	GwLapsesKey = collections.NewPrefix(58)
 	// GwVotesByTagKey maps a Groundworks vote's note tag to its id: what a
 	// stake proof's input tags cancel.
@@ -226,26 +227,32 @@ var (
 	// BaseVintageKey: the vintage whose denom is the unsuffixed
 	// derth/<valoper>.
 	BaseVintageKey = collections.NewPrefix(64)
-	// VintageSweepKey: the monthly retirement sweep's state.
+	// VintageSweepKey: the monthly pass's state (retireVintages: retired
+	// vintages' Groundworks totals dropped at the boundary).
 	VintageSweepKey = collections.NewPrefix(65)
 	// GwVotesByVintageKey indexes the Groundworks votes by (vintage,
 	// validator, id): the votes of a retired vintage are found and deleted
 	// by it (sweepDeadVotes).
 	GwVotesByVintageKey = collections.NewPrefix(66)
-	// GwResyncKey: validators whose Groundworks voter EndBlock re-files (a
-	// retirement in BeginBlock dropped totals). Emptied every EndBlock.
+	// GwResyncKey: validators whose Groundworks voter EndBlock re-files (the
+	// monthly pass in BeginBlock dropped retired totals). Emptied every
+	// EndBlock.
 	GwResyncKey = collections.NewPrefix(67)
+	// MaxClearBeforeKey: the highest clear_before an accepted stake proof
+	// has named (a label with an earlier move_time may have cleared).
+	MaxClearBeforeKey = collections.NewPrefix(68)
 )
 
-// VintageRetireLimit caps the books one block's retirement sweep processes
-// (each retires all its due vintages: at most one a month, more after a
-// halt). DeadVoteSweepLimit caps the dead votes (of retired vintages) one
-// block deletes.
+// VintageRetireLimit caps the books one block of the monthly pass walks
+// (each drops the Groundworks totals of all its retired vintages: one a
+// month, more after a halt; their value is booked at the epoch end, with
+// the epoch sweep's own bound). DeadVoteSweepLimit caps the dead votes (of
+// retired vintages) one block deletes, parks or drops.
 const (
 	VintageRetireLimit = 200
 	DeadVoteSweepLimit = 200
-	// VintageRetryDelay is how long after a pass that failed a book the
-	// sweep runs again.
+	// VintageRetryDelay is how long after a pass that failed a book (in
+	// any of its blocks) the pass runs again.
 	VintageRetryDelay = 24 * 3600
 )
 

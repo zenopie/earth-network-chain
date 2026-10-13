@@ -216,6 +216,12 @@ func (k Keeper) sweepBooks(ctx context.Context, sweep types.EpochSweep, maxEpoch
 		return nil
 	}
 	for _, v := range vals {
+		// Stake vintages retired by now leave the book first, into the
+		// records processValidator undelegates (vintages.go). One that fails
+		// stays in the book, earning, until the next epoch end.
+		if err := k.guarded(ctx, func(cc context.Context) error { return k.retireDue(cc, v, maxEpoch) }); err != nil {
+			k.failure(ctx, "retire_vintage", v, err)
+		}
 		if err := k.guarded(ctx, func(cc context.Context) error { return k.processValidator(cc, v, maxEpoch) }); err != nil {
 			k.failure(ctx, "validator", v, err)
 		}

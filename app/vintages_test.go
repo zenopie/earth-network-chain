@@ -5,6 +5,7 @@ package app
 // test says it proves.
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -106,7 +107,13 @@ func (e *stakeEnv) requireVintageBooks() {
 	ctx := e.ctx()
 	sums := map[string]math.Int{}
 	require.NoError(e.t, k.VintageSupplies.Walk(ctx, nil, func(key collections.Pair[string, uint32], s math.Int) (bool, error) {
-		require.True(e.t, sstypes.VintageLive(key.K2(), k.CurrentVintage(ctx)), "vintage %d at %s is stored but not live", key.K2(), key.K1())
+		// Live, or retiring (past its boundary, booked at the next epoch
+		// end): never one that has not begun, nor one booked as retired.
+		cur := k.CurrentVintage(ctx)
+		require.True(e.t, sstypes.VintageLive(key.K2(), cur) || sstypes.VintageRetired(key.K2(), cur), "vintage %d at %s has not begun", key.K2(), key.K1())
+		has, err := k.RetiredVintages.Has(ctx, key)
+		require.NoError(e.t, err)
+		require.False(e.t, has, "vintage %d at %s is stored and retired", key.K2(), key.K1())
 		if c, ok := sums[key.K1()]; ok {
 			s = s.Add(c)
 		}
@@ -118,7 +125,7 @@ func (e *stakeEnv) requireVintageBooks() {
 		if !ok {
 			got = math.ZeroInt()
 		}
-		require.Equal(e.t, vs.DerthSupply.String(), got.String(), "%s: derth_supply is the sum of its live vintages", v)
+		require.Equal(e.t, vs.DerthSupply.String(), got.String(), "%s: derth_supply is the sum of its stored vintages", v)
 		return false, nil
 	}))
 	e.invariants()
@@ -236,7 +243,8 @@ func TestVintageDelegateCurrentOnly(t *testing.T) {
 	e.next(5 * time.Second)
 	jan := e.month()
 	e.fakeDelegate(vA, uint64(1_000*ssErth), "a")
-	e.toTime(sstypes.VintageStart(sstypes.AddMonths(jan, 1)).Add(time.Minute))
+	// Past the month's first VintageGraceSeconds (TestVintageBoundaryGrace).
+	e.toTime(sstypes.VintageStart(sstypes.AddMonths(jan, 1)).Add(sstypes.VintageGraceSeconds*time.Second + time.Minute))
 
 	m := fakeDelegateMsg(e.valoper(vA), uint64(ssErth), "old")
 	m.Derth = e.exactDerth(vA, m.Amount)
@@ -306,7 +314,7 @@ func TestVintageCheckIn(t *testing.T) {
 	unproven(m)
 	res2 := e.run(e.privateTx(m))
 	require.NotEqual(t, uint32(0), res2.Code)
-	require.Contains(t, res2.Log, "current one")
+	require.Contains(t, res2.Log, "not older than")
 }
 
 // ---- retirement and withdrawal --------------------------------------------------
@@ -341,25 +349,53 @@ func TestVintageRetirementAndWithdrawal(t *testing.T) {
 	require.Equal(t, janSupply, e.vsupply(vA, jan))
 	e.requireVintageBooks()
 
-	// The retirement's arithmetic, at the boundary (in a throwaway cache).
+	// Past the boundary, January is retiring: every msg on it is refused
+	// (by time), but its supply stays in the book, earning, until the epoch
+	// end; it cannot be withdrawn yet.
+	e.toTime(ret.Add(5 * time.Second))
+	epoch, err := k.Epoch.Get(e.ctx())
+	require.NoError(t, err)
+	require.Greater(t, epoch.EndTime, e.now.Unix(), "mid-epoch")
+	_, retired = e.retiredVintage(vA, jan)
+	require.False(t, retired, "booked at the epoch end")
+	require.Equal(t, janSupply, e.vsupply(vA, jan))
+	_, err = e.tryFakeUndelegate(vA, 0, 1, "too-early")
+	require.ErrorIs(t, err, sstypes.ErrRetiredVintage)
+	require.Contains(t, err.Error(), "next epoch end")
+	q, err := sskeeper.NewQueryServerImpl(k).Vintages(e.ctx(), &sstypes.QueryVintagesRequest{Validator: e.valoper(vA)})
+	require.NoError(t, err)
+	require.Len(t, q.Retiring, 1)
+	require.Equal(t, jan, q.Retiring[0].Vintage)
+	ut, err := e.app.StakingKeeper.UnbondingTime(e.ctx())
+	require.NoError(t, err)
+	require.Equal(t, epoch.EndTime+int64(ut/time.Second), q.Retiring[0].ExpectedCompletion)
+	e.requireVintageBooks()
+
+	// The retirement's arithmetic, at the epoch end (in a throwaway cache):
+	// V = floor(S_m x B / S) at the rate then, rewards since the boundary
+	// included.
 	{
-		ctx, _ := e.app.BaseApp.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: e.height + 1, Time: ret}).CacheContext()
+		end := time.Unix(epoch.EndTime, 0)
+		ctx, _ := e.app.BaseApp.NewUncachedContext(false, cmtproto.Header{ChainID: ssChainID, Height: e.height + 1, Time: end}).CacheContext()
 		b, s, err := k.Backing(ctx, e.valoper(vA))
 		require.NoError(t, err)
-		require.NoError(t, k.BeginBlocker(ctx))
+		require.NoError(t, k.EndBlocker(ctx))
 		rv, err := k.RetiredVintages.Get(ctx, collections.Join(e.valoper(vA), jan))
 		require.NoError(t, err)
 		want := janSupply.Mul(b).Quo(s)
 		require.Equal(t, want, rv.Value, "V = floor(S_m x B / S)")
 		require.True(t, rv.Value.Mul(s).LTE(janSupply.Mul(b)), "floored")
-		b2, s2, err := k.Backing(ctx, e.valoper(vA))
-		require.NoError(t, err)
-		require.Equal(t, s.Sub(janSupply), s2)
-		require.Equal(t, b.Sub(want), b2)
-		require.True(t, b2.Mul(s).GTE(b.Mul(s2)), "the live holders' rate does not fall")
+		require.Equal(t, epoch.Number, rv.Epoch, "the epoch that ended")
+		require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, func() sstypes.UnbondStatus {
+			r, err := k.UnbondRecords.Get(ctx, collections.Join(e.valoper(vA), rv.Epoch))
+			require.NoError(t, err)
+			return r.Status
+		}(), "undelegated in the step that booked it")
+		// The live holders' rate does not fall: (B - V) / (S - S_m) >= B / S.
+		require.True(t, b.Sub(want).Mul(s).GTE(b.Mul(s.Sub(janSupply))))
 	}
 
-	e.toTime(ret.Add(5 * time.Second))
+	e.toTime(time.Unix(epoch.EndTime, 0))
 	rv, retired := e.retiredVintage(vA, jan)
 	require.True(t, retired)
 	require.Equal(t, janSupply, rv.Supply)
@@ -373,7 +409,13 @@ func TestVintageRetirementAndWithdrawal(t *testing.T) {
 	require.True(t, e.vsupply(vA, jan).IsZero())
 	require.Equal(t, e.vsupply(vA, feb), e.state(vA).DerthSupply)
 	require.Equal(t, rv.Value, e.record(vA, rv.Epoch).Requested)
+	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vA, rv.Epoch).Status)
 	require.Len(t, eventsOf(e.events, sstypes.EventTypeVintageRetired), 1, "vB's February vintage is still live")
+	q, err = sskeeper.NewQueryServerImpl(k).Vintages(e.ctx(), &sstypes.QueryVintagesRequest{Validator: e.valoper(vA)})
+	require.NoError(t, err)
+	require.Empty(t, q.Retiring)
+	require.Len(t, q.Retired, 1)
+	require.Equal(t, e.record(vA, rv.Epoch).CompletionTime/int64(time.Second), q.Retired[0].ExpectedCompletion)
 	e.requireVintageBooks()
 
 	// Every msg but a withdrawal is refused on the retired asset.
@@ -397,7 +439,7 @@ func TestVintageRetirementAndWithdrawal(t *testing.T) {
 	_, err = e.tryFakeUndelegate(vA, 0, rv.Supply.Uint64()+1, "r-too-much")
 	require.ErrorIs(t, err, sstypes.ErrAmount)
 
-	// 1. A third, before the epoch end (the record pending).
+	// 1. A third, while unbonding.
 	d1 := rv.Supply.QuoRaw(3)
 	w1 := d1.Mul(rv.Value).Quo(rv.Supply)
 	res1, err := e.tryFakeUndelegate(vA, 0, d1.Uint64(), "w1")
@@ -412,7 +454,7 @@ func TestVintageRetirementAndWithdrawal(t *testing.T) {
 	e.next(5 * time.Second)
 	e.requireVintageBooks()
 
-	// 2. Half of the rest while unbonding.
+	// 2. Half of the rest, a day on.
 	e.days(1)
 	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vA, rv.Epoch).Status)
 	d2 := rv.RemainingSupply.QuoRaw(2)
@@ -508,9 +550,10 @@ func TestVintageRetirementHaltCatchUp(t *testing.T) {
 	require.Equal(t, sstypes.DerthDenom(e.valoper(vA)), q.Retired[0].Denom)
 }
 
-// A slash cuts a retired vintage's held value as it cuts any undelegation:
-// while pending (its record's target) and while unbonding (the SDK entry).
-// The withdrawals shrink with it.
+// A slash cuts a retired vintage's value as it cuts any stake: while the
+// vintage is retiring (still in its book: the rate falls, and the epoch end
+// books less) and while its held value unbonds (the SDK entry). The
+// withdrawals shrink with it.
 func TestVintageRetiredThroughSlashes(t *testing.T) {
 	e := initStakeEnv(t)
 	e.fundPoolDirect(500_000 * ssErth)
@@ -529,17 +572,28 @@ func TestVintageRetiredThroughSlashes(t *testing.T) {
 	e.toTime(ret.Add(-time.Hour)) // an epoch end
 	e.next(5 * time.Second)
 	infraction := e.height
-	e.toTime(ret.Add(time.Minute)) // both retire, pending
-	rvA, _ := e.retiredVintage(vA, jan)
-	rvB, _ := e.retiredVintage(vB, jan)
+	e.toTime(ret.Add(time.Minute)) // both retiring: still in their books
+	_, ok := e.retiredVintage(vA, jan)
+	require.False(t, ok)
 
-	// vA is slashed while its record is pending: the target falls.
+	// vA is slashed while January is retiring: the slash lowers its rate,
+	// so the value the epoch end books for January is cut with the rest.
+	bA, sA, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(vA))
+	require.NoError(t, err)
+	janA := e.vsupply(vA, jan)
 	e.doubleSign(vA, infraction)
-	rA := e.record(vA, rvA.Epoch)
-	require.True(t, rA.Target.LT(rA.Requested), "the pending target was cut")
-	// vB's record starts unbonding at the epoch end; then vB is slashed for
-	// an infraction before the entry: the entry is cut.
-	e.days(1)
+	bA2, sA2, err := e.app.ShieldedStakingKeeper.Backing(e.ctx(), e.valoper(vA))
+	require.NoError(t, err)
+	require.Equal(t, sA, sA2)
+	require.True(t, bA2.LT(bA), "the slash cut the book")
+	e.days(1) // the epoch end books both
+	rvA, ok := e.retiredVintage(vA, jan)
+	require.True(t, ok)
+	rvB, ok := e.retiredVintage(vB, jan)
+	require.True(t, ok)
+	require.True(t, rvA.Value.LT(janA.Mul(bA).Quo(sA)), "booked after the slash: %s", rvA.Value)
+	// vB's record is unbonding; then vB is slashed for an infraction before
+	// the entry: the entry is cut.
 	require.Equal(t, sstypes.UNBOND_STATUS_UNBONDING, e.record(vB, rvB.Epoch).Status)
 	e.next(5 * time.Second)
 	e.doubleSign(vB, e.height-2)
@@ -562,6 +616,12 @@ func TestVintageRetiredThroughSlashes(t *testing.T) {
 		require.Len(t, ev, 1, e.valoper(c.val))
 		paid, ok := math.NewIntFromString(ev[0]["amount"])
 		require.True(t, ok)
+		if c.val.Equals(vA) {
+			// Slashed before it was booked: paid what was booked, but for
+			// x/staking's rounding.
+			require.True(t, paid.GTE(c.rv.Value.SubRaw(2)) && paid.LTE(c.rv.Value), "%s of %s", paid, c.rv.Value)
+			continue
+		}
 		require.True(t, paid.LT(c.rv.Value), "%s: the slash reached the held value (%s of %s)", e.valoper(c.val), paid, c.rv.Value)
 		require.True(t, paid.GT(c.rv.Value.MulRaw(90).QuoRaw(100)), "a 5%% slash")
 	}
@@ -686,11 +746,21 @@ func TestVintageStakeVotes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before, after, "the snapshot keeps the supply it was taken at")
 
-	// A proposal snapshotted now counts the live vintages only.
+	// A proposal snapshotted now counts January too: retiring, its value is
+	// still bonded in the module's delegation until the epoch end books it.
 	pid2 := e.submitProposal()
 	s2, err := e.app.ShieldedStakingKeeper.SnapshotSupply(e.ctx(), pid2, e.valoper(vB))
 	require.NoError(t, err)
-	require.Equal(t, e.vsupply(vB, feb), s2)
+	require.Equal(t, e.state(vB).DerthSupply, s2)
+	require.True(t, e.vsupply(vB, jan).IsPositive())
+	// After the epoch end, the live vintages only.
+	e.days(1)
+	_, booked := e.retiredVintage(vB, jan)
+	require.True(t, booked)
+	pid3 := e.submitProposal()
+	s3, err := e.app.ShieldedStakingKeeper.SnapshotSupply(e.ctx(), pid3, e.valoper(vB))
+	require.NoError(t, err)
+	require.Equal(t, e.vsupply(vB, feb), s3)
 	e.requireVintageBooks()
 }
 
@@ -766,10 +836,17 @@ func TestUpgradeV1_3_0(t *testing.T) {
 		votes = append(votes, v)
 		return false, nil
 	}))
+	// Stored as v1.2.2 wrote them: no vintage, a lease in field 11 (now
+	// reserved, so appended by hand: tag 11<<3|varint).
+	rawVotes := collections.NewMap(sb, sstypes.GwVotesKey, "gw_votes_raw", collections.Uint64Key, collections.BytesValue)
 	for _, v := range votes {
-		v.Vintage, v.SplitExpiresAt = 0, g.now.Unix()+86400
-		require.NoError(t, k.GwVotes.Set(ctx, v.Id, v))
-		require.NoError(t, lapses.Set(ctx, collections.Join(v.SplitExpiresAt, v.Id)))
+		v.Vintage = 0
+		bz, err := v.Marshal()
+		require.NoError(t, err)
+		lease := g.now.Unix() + 86400
+		bz = binary.AppendUvarint(append(bz, 11<<3), uint64(lease))
+		require.NoError(t, rawVotes.Set(ctx, v.Id, bz))
+		require.NoError(t, lapses.Set(ctx, collections.Join(lease, v.Id)))
 	}
 	require.NoError(t, k.GwVotesByVintage.Clear(ctx, nil))
 	require.NoError(t, k.GwTotals.Walk(ctx, nil, func(key collections.Triple[string, uint32, uint64], t0 math.Int) (bool, error) {
@@ -807,7 +884,6 @@ func TestUpgradeV1_3_0(t *testing.T) {
 	for _, id := range []uint64{a.id, b.id} {
 		v := g.storedVote(id)
 		require.Equal(t, up, v.Vintage)
-		require.Zero(t, v.SplitExpiresAt)
 	}
 	n := 0
 	require.NoError(t, lapses.Walk(g.ctx(), nil, func(collections.Pair[int64, uint64]) (bool, error) { n++; return false, nil }))

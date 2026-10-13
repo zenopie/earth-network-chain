@@ -26,15 +26,19 @@ import (
 // B_v / S_v over every live vintage.
 //
 // A vintage is live in its own month and the 12 after it. At 00:00 UTC on
-// the 1st of month m + 13 vintage m retires: in the first block at or after
-// that time, the monthly sweep (retireVintages, BeginBlock; bounded per
-// block, catching up every month a halt skipped) takes each book's due
-// vintages out of its supply at the live rate, V = floor(S_{v,m} x B_v /
-// S_v), and books V as one private undelegation of the current epoch held
-// for the vintage (an UnbondPayout with no pc): it leaves x/staking with
-// the epoch's other undelegations, slashes cut it as they cut any (the
-// pending record's target, the SDK entry), and it earns nothing more. The
-// vintage's Groundworks totals are dropped at the same time.
+// the 1st of month m + 13 vintage m retires: from then on every msg on its
+// asset but a withdrawal is refused (by block time), and in the first
+// block at or after that time the monthly pass (retireVintages,
+// BeginBlock; bounded per block, catching up every month a halt skipped)
+// drops its Groundworks totals. Its supply stays in S_v, earning at the
+// rate, until the next epoch end reaches its book (retireDue, right before
+// processValidator): there it leaves the supply at the live rate, V =
+// floor(S_{v,m} x B_v / S_v), booked as one private undelegation of the
+// epoch that ended, held for the vintage (an UnbondPayout with no pc), and
+// is undelegated in that same step with the epoch's other undelegations.
+// Slashes cut it as they cut any (the SDK entry). So the retired value
+// earns, for its own holders, exactly until it leaves x/staking, and no
+// live holder can time a delegation to take its tail.
 //
 // A retired note withdraws its share: MsgUndelegate on the retired asset,
 // v_out = d, no split (withdrawRetired): floor(d x remaining_value /
@@ -52,15 +56,17 @@ func (k Keeper) vintageCtx(ctx context.Context) (types.VintageCtx, error) {
 	if err != nil {
 		return types.VintageCtx{}, err
 	}
-	return types.VintageCtx{Base: base, Current: k.currentVintage(ctx)}, nil
+	return types.NewVintageCtx(base, sdk.UnwrapSDKContext(ctx).BlockTime()), nil
 }
 
-// baseVintage is the vintage whose denom is the unsuffixed derth/<valoper>.
-// Unset only before InitGenesis / the v1.3.0 upgrade: the current month.
+// baseVintage is the vintage whose denom is the unsuffixed derth/<valoper>,
+// set once by InitGenesis or the v1.3.0 upgrade. Unset is an error, never a
+// fallback (audit 1, L5: falling back to the current month would rename
+// every pre-v1.3.0 note's vintage each month, so it never retired).
 func (k Keeper) baseVintage(ctx context.Context) (uint32, error) {
 	b, err := k.BaseVintage.Get(ctx)
 	if errors.Is(err, collections.ErrNotFound) {
-		return k.currentVintage(ctx), nil
+		return 0, types.ErrInvariant.Wrap("the base vintage is unset (InitGenesis or the v1.3.0 upgrade sets it)")
 	}
 	return b, err
 }
@@ -149,12 +155,18 @@ func (k Keeper) checkLaneVintage(ctx context.Context, m types.StakeMsg) (uint32,
 
 // ---- retirement --------------------------------------------------------------
 
-// retireVintages is the BeginBlock retirement sweep. Once a month (the
-// first block of a new UTC month, or after a halt the first block after
-// it) it walks every book, VintageRetireLimit a block from a persistent
-// cursor, retiring each book's vintages older than the month's oldest live
-// one (retireBook). A pass that failed a book runs again a day later. Never
-// fails.
+// retireVintages is the BeginBlock monthly pass over the Groundworks
+// voters. Once a month (the first block of a new UTC month, or after a
+// halt the first block after it) it walks every book, VintageRetireLimit a
+// block from a persistent cursor, dropping the totals of vintages older
+// than the month's oldest live one and queueing the voter's re-file
+// (GwResync, EndBlock), so a retired vintage stops voting at its boundary.
+// A pass during which any book failed, in any of its blocks, runs again a
+// day later (audit 1, L1: VintageSweep.failed carries a failure across the
+// pass's blocks). Never fails.
+//
+// The retired vintage's VALUE leaves its book at the epoch end instead
+// (retireDue): until then its supply stays in S_v and earns at the rate.
 func (k Keeper) retireVintages(ctx context.Context) {
 	cur := k.currentVintage(ctx)
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
@@ -182,24 +194,23 @@ func (k Keeper) retireVintages(ctx context.Context) {
 			return len(vals) >= types.VintageRetireLimit, nil
 		})
 	}); err != nil {
+		// Retried in the next block, from the same cursor.
 		k.failure(ctx, "vintage_sweep", sweep.Cursor, err)
 		return
 	}
-	failed := false
 	for _, v := range vals {
-		if err := k.guarded(ctx, func(cc context.Context) error { return k.retireBook(cc, v, cur) }); err != nil {
-			k.failure(ctx, "retire_vintage", v, err)
-			failed = true
+		if err := k.guarded(ctx, func(cc context.Context) error { return k.dropRetiredTotals(cc, v, cur) }); err != nil {
+			k.failure(ctx, "vintage_totals", v, err)
+			sweep.Failed = true
 		}
-	}
-	if failed && sweep.RetryAt == 0 {
-		sweep.RetryAt = now + types.VintageRetryDelay
 	}
 	if len(vals) < types.VintageRetireLimit {
-		sweep.Active, sweep.Cursor = false, ""
-		if !failed {
-			sweep.RetryAt = 0
+		// The pass is done: again in a day if any of its blocks failed a book.
+		sweep.Active, sweep.Cursor, sweep.RetryAt = false, "", 0
+		if sweep.Failed {
+			sweep.RetryAt = now + types.VintageRetryDelay
 		}
+		sweep.Failed = false
 	} else {
 		sweep.Cursor = vals[len(vals)-1]
 	}
@@ -208,13 +219,33 @@ func (k Keeper) retireVintages(ctx context.Context) {
 	}
 }
 
-// retireBook retires every vintage of valoper's book that has retired by
-// month cur (oldest first: all a halt skipped) and drops their Groundworks
-// totals; a voter that changed is re-filed at the end of the block
+// dropRetiredTotals drops valoper's Groundworks totals of vintages retired
+// by month cur; a voter that changed is re-filed at the end of the block
 // (GwResync), after x/allocation's BeginBlock has settled the stream.
-func (k Keeper) retireBook(ctx context.Context, valoper string, cur uint32) error {
-	oldest := types.OldestLiveVintage(cur)
-	rng := collections.NewPrefixedPairRange[string, uint32](valoper).EndExclusive(oldest)
+func (k Keeper) dropRetiredTotals(ctx context.Context, valoper string, cur uint32) error {
+	dropped, err := k.dropStaleTotals(ctx, valoper, cur)
+	if err != nil || !dropped {
+		return err
+	}
+	return k.GwResync.Set(ctx, valoper)
+}
+
+// retireDue books, at the epoch end, every vintage of valoper's book that
+// has retired by now (oldest first: all a halt skipped). It runs right
+// before processValidator (sweepBooks), which undelegates the book's
+// records of epochs up to maxEpoch in the same block: the retired value is
+// valued at the live rate in the step that takes it out of x/staking, so
+// it earned in the book, for its own holders, until it left (audit 1, L3:
+// valued at the boundary and undelegated up to an epoch later, its tail
+// rewards fell to whoever held live derth at the epoch end, a fresh
+// delegator to a wholly retired book included).
+//
+// Left for a later epoch end (still earning in the book) when x/staking
+// would defer the undelegation (max_entries; it would wait in U, earning
+// nothing) or when the record of maxEpoch is no longer pending.
+func (k Keeper) retireDue(ctx context.Context, valoper string, maxEpoch uint64) error {
+	cur := k.currentVintage(ctx)
+	rng := collections.NewPrefixedPairRange[string, uint32](valoper).EndExclusive(types.OldestLiveVintage(cur))
 	type due struct {
 		m uint32
 		s math.Int
@@ -226,18 +257,24 @@ func (k Keeper) retireBook(ctx context.Context, valoper string, cur uint32) erro
 	}); err != nil {
 		return err
 	}
-	for _, d := range dues {
-		if err := k.retireVintage(ctx, valoper, d.m, d.s); err != nil {
-			return err
-		}
+	if len(dues) == 0 {
+		return nil
 	}
-	dropped, err := k.dropStaleTotals(ctx, valoper, cur)
+	val, err := k.valAddr(valoper)
 	if err != nil {
 		return err
 	}
-	if dropped || len(dues) > 0 {
-		if _, err := k.GwEpoch.Get(ctx, valoper); err == nil || dropped {
-			return k.GwResync.Set(ctx, valoper)
+	if full, err := k.unbondingEntriesFull(ctx, val); err != nil || full {
+		return err
+	}
+	if r, err := k.UnbondRecords.Get(ctx, collections.Join(valoper, maxEpoch)); err == nil && r.Status != types.UNBOND_STATUS_PENDING {
+		return nil
+	} else if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	for _, d := range dues {
+		if err := k.retireVintage(ctx, valoper, d.m, d.s, maxEpoch); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -245,10 +282,17 @@ func (k Keeper) retireBook(ctx context.Context, valoper string, cur uint32) erro
 
 // retireVintage takes vintage m's supply s out of valoper's book at the
 // live rate and books its value V = floor(s x B / S) as a held
-// undelegation of the current epoch (the record's requested, target and
-// outstanding, the book's pending undelegation; an UnbondPayout with no
-// pc), recording the RetiredVintage the vintage's notes withdraw from.
-func (k Keeper) retireVintage(ctx context.Context, valoper string, m uint32, s math.Int) error {
+// undelegation of epoch (the record's requested, target and outstanding,
+// the book's pending undelegation; an UnbondPayout with no pc), recording
+// the RetiredVintage the vintage's notes withdraw from.
+func (k Keeper) retireVintage(ctx context.Context, valoper string, m uint32, s math.Int, epoch uint64) error {
+	key := collections.Join(valoper, m)
+	if has, err := k.RetiredVintages.Has(ctx, key); err != nil {
+		return err
+	} else if has {
+		// A second held payout would orphan the first (audit 1, L6).
+		return types.ErrInvariant.Wrapf("vintage %d at %s holds supply and has retired already", m, valoper)
+	}
 	b, S, err := k.Backing(ctx, valoper)
 	if err != nil {
 		return err
@@ -259,10 +303,6 @@ func (k Keeper) retireVintage(ctx context.Context, valoper string, m uint32, s m
 			return types.ErrInvariant.Wrapf("vintage %d at %s holds %s derth, the book %s", m, valoper, s, S)
 		}
 		v = s.Mul(b).Quo(S)
-	}
-	epoch, err := k.Epoch.Get(ctx)
-	if err != nil {
-		return err
 	}
 	vs, err := k.ValidatorState(ctx, valoper)
 	if err != nil {
@@ -276,30 +316,30 @@ func (k Keeper) retireVintage(ctx context.Context, valoper string, m uint32, s m
 		return types.ErrInvariant.Wrapf("%s: retiring vintage %d takes the supply below zero", valoper, m)
 	}
 	rv := types.RetiredVintage{
-		Validator: valoper, Vintage: m, Supply: s, Value: v, Epoch: epoch.Number,
+		Validator: valoper, Vintage: m, Supply: s, Value: v, Epoch: epoch,
 		RemainingSupply: s, RemainingValue: v, RetiredAt: sdk.UnwrapSDKContext(ctx).BlockTime().Unix(),
 	}
 	if v.IsPositive() {
-		key := collections.Join(valoper, epoch.Number)
-		r, err := k.UnbondRecords.Get(ctx, key)
+		rkey := collections.Join(valoper, epoch)
+		r, err := k.UnbondRecords.Get(ctx, rkey)
 		if errors.Is(err, collections.ErrNotFound) {
 			r = types.UnbondRecord{
-				Validator: valoper, Epoch: epoch.Number, Status: types.UNBOND_STATUS_PENDING,
+				Validator: valoper, Epoch: epoch, Status: types.UNBOND_STATUS_PENDING,
 				Requested: math.ZeroInt(), Target: math.ZeroInt(), Undelegated: math.ZeroInt(),
 				Payout: math.ZeroInt(), Outstanding: math.ZeroInt(), Paid: math.ZeroInt(),
 			}
 		} else if err != nil {
 			return err
 		} else if r.Status != types.UNBOND_STATUS_PENDING {
-			return types.ErrNotMatured.Wrapf("%s/%d is already %s", valoper, epoch.Number, r.Status)
+			return types.ErrNotMatured.Wrapf("%s/%d is already %s", valoper, epoch, r.Status)
 		}
 		r.Requested = r.Requested.Add(v)
 		r.Target = r.Target.Add(v)
 		r.Outstanding = r.Outstanding.Add(v)
-		if err := k.UnbondRecords.Set(ctx, key, r); err != nil {
+		if err := k.UnbondRecords.Set(ctx, rkey, r); err != nil {
 			return err
 		}
-		if err := k.PendingRecords.Set(ctx, key); err != nil {
+		if err := k.PendingRecords.Set(ctx, rkey); err != nil {
 			return err
 		}
 		vs.PendingUndelegation = vs.PendingUndelegation.Add(v)
@@ -309,7 +349,7 @@ func (k Keeper) retireVintage(ctx context.Context, valoper string, m uint32, s m
 		}
 		// Held: queued nowhere, so the sweep never pays it; withdrawals
 		// split it (withdrawRetired).
-		if err := k.UnbondPayouts.Set(ctx, id, types.UnbondPayout{Id: id, Validator: valoper, Epoch: epoch.Number, Value: v}); err != nil {
+		if err := k.UnbondPayouts.Set(ctx, id, types.UnbondPayout{Id: id, Validator: valoper, Epoch: epoch, Value: v}); err != nil {
 			return err
 		}
 		rv.PayoutId = id
@@ -317,10 +357,10 @@ func (k Keeper) retireVintage(ctx context.Context, valoper string, m uint32, s m
 	if err := k.Validators.Set(ctx, valoper, vs); err != nil {
 		return err
 	}
-	if err := k.VintageSupplies.Remove(ctx, collections.Join(valoper, m)); err != nil {
+	if err := k.VintageSupplies.Remove(ctx, key); err != nil {
 		return err
 	}
-	if err := k.RetiredVintages.Set(ctx, collections.Join(valoper, m), rv); err != nil {
+	if err := k.RetiredVintages.Set(ctx, key, rv); err != nil {
 		return err
 	}
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeVintageRetired,
@@ -328,7 +368,7 @@ func (k Keeper) retireVintage(ctx context.Context, valoper string, m uint32, s m
 		sdk.NewAttribute(types.AttributeKeyVintage, strconv.FormatUint(uint64(m), 10)),
 		sdk.NewAttribute(types.AttributeKeySupply, s.String()),
 		sdk.NewAttribute(types.AttributeKeyValue, v.String()),
-		sdk.NewAttribute(types.AttributeKeyEpoch, strconv.FormatUint(epoch.Number, 10)),
+		sdk.NewAttribute(types.AttributeKeyEpoch, strconv.FormatUint(epoch, 10)),
 		sdk.NewAttribute(types.AttributeKeyPayoutID, strconv.FormatUint(rv.PayoutId, 10)),
 	))
 	return nil
@@ -338,10 +378,13 @@ func (k Keeper) retireVintage(ctx context.Context, valoper string, m uint32, s m
 // retirement dropped this block. Never fails.
 func (k Keeper) resyncRetired(ctx context.Context) {
 	var vals []string
-	_ = k.GwResync.Walk(ctx, nil, func(v string) (bool, error) {
+	if err := k.GwResync.Walk(ctx, nil, func(v string) (bool, error) {
 		vals = append(vals, v)
 		return false, nil
-	})
+	}); err != nil {
+		// What was read is re-filed; the rest stays queued for the next block.
+		k.failure(ctx, "vintage_resync", "", err)
+	}
 	for _, v := range vals {
 		k.resyncValidatorVoter(ctx, v)
 		if err := k.GwResync.Remove(ctx, v); err != nil {
@@ -353,26 +396,37 @@ func (k Keeper) resyncRetired(ctx context.Context) {
 // sweepDeadVotes deletes, in BeginBlock, up to DeadVoteSweepLimit
 // Groundworks votes of vintages retired by now (oldest first). They count
 // for nothing already (their totals went with the retirement); a note's
-// withdrawal deletes its own sooner. Never fails.
+// withdrawal deletes its own sooner. Never fails, and never stalls on one
+// entry (audit 1, L4): an index entry whose vote is gone, or whose vote
+// is stored under another vintage or validator, is dropped; a vote whose
+// removal fails is reported (event shieldedstaking_epoch_failure, stage
+// dead_votes, its validator, "vote <id> parked" in the error) and parked: its index entry is dropped so the
+// sweep moves past it, and the vote itself stays, counting for nothing,
+// until its note is withdrawn (or a genesis import re-indexes it).
 func (k Keeper) sweepDeadVotes(ctx context.Context) {
 	oldest := types.OldestLiveVintage(k.currentVintage(ctx))
 	rng := new(collections.Range[collections.Triple[uint32, string, uint64]]).
 		EndExclusive(collections.TriplePrefix[uint32, string, uint64](oldest))
-	var dead []uint64
+	var dead []collections.Triple[uint32, string, uint64]
 	if err := k.GwVotesByVintage.Walk(ctx, rng, func(key collections.Triple[uint32, string, uint64]) (bool, error) {
-		dead = append(dead, key.K3())
+		dead = append(dead, key)
 		return len(dead) >= types.DeadVoteSweepLimit, nil
 	}); err != nil {
 		k.failure(ctx, "dead_votes", "", err)
 		return
 	}
-	for _, id := range dead {
+	for _, key := range dead {
+		id := key.K3()
 		err := k.guarded(ctx, func(cc context.Context) error {
 			v, err := k.GwVotes.Get(cc, id)
-			if errors.Is(err, collections.ErrNotFound) {
-				return nil
-			} else if err != nil {
+			switch {
+			case errors.Is(err, collections.ErrNotFound):
+				return k.GwVotesByVintage.Remove(cc, key) // orphaned: nothing to delete
+			case err != nil:
 				return err
+			case v.Vintage != key.K1() || v.Validator != key.K2():
+				// A stale entry: the vote is indexed (and swept) under its own.
+				return k.GwVotesByVintage.Remove(cc, key)
 			}
 			if err := k.removeVote(cc, v); err != nil {
 				return err
@@ -380,9 +434,12 @@ func (k Keeper) sweepDeadVotes(ctx context.Context) {
 			k.voteEvent(cc, "retired", v)
 			return nil
 		})
-		if err != nil {
-			k.failure(ctx, "dead_votes", "", err)
-			return
+		if err == nil {
+			continue
+		}
+		k.failure(ctx, "dead_votes", key.K2(), errorsmod.Wrapf(err, "vote %d parked", id))
+		if err := k.guarded(ctx, func(cc context.Context) error { return k.GwVotesByVintage.Remove(cc, key) }); err != nil {
+			k.failure(ctx, "dead_votes", key.K2(), errorsmod.Wrapf(err, "vote %d", id))
 		}
 	}
 }
@@ -399,7 +456,7 @@ func (k Keeper) checkWithdrawRetired(ctx context.Context, m *types.MsgUndelegate
 	}
 	rv, err := k.RetiredVintages.Get(ctx, collections.Join(m.Validator, vintage))
 	if errors.Is(err, collections.ErrNotFound) {
-		return rv, math.Int{}, types.ErrRetiredVintage.Wrapf("vintage %d at %s has nothing to withdraw (its retirement is not booked yet, or it was withdrawn whole)", vintage, m.Validator)
+		return rv, math.Int{}, types.ErrRetiredVintage.Wrapf("vintage %d at %s has nothing to withdraw (its retirement is booked at the next epoch end, or it was withdrawn whole)", vintage, m.Validator)
 	} else if err != nil {
 		return rv, math.Int{}, err
 	}
@@ -410,6 +467,13 @@ func (k Keeper) checkWithdrawRetired(ctx context.Context, m *types.MsgUndelegate
 	w := rv.RemainingValue
 	if !d.Equal(rv.RemainingSupply) {
 		w = d.Mul(rv.RemainingValue).Quo(rv.RemainingSupply)
+	}
+	// At most one note's worth, as an undelegation (its response's value is
+	// a u64); a larger share withdraws in parts.
+	if w.IsPositive() {
+		if err := fitsNote(w); err != nil {
+			return rv, math.Int{}, err
+		}
 	}
 	if err := k.shielded.CheckMint(ctx, m.Pc, m.Ciphertext); err != nil {
 		return rv, math.Int{}, err
@@ -489,18 +553,27 @@ func (k Keeper) withdrawRetired(ctx context.Context, m *types.MsgUndelegate, vin
 // ---- check-in -----------------------------------------------------------------
 
 // checkCheckIn refuses a check-in its handler would: a validator that is
-// not one, a from_vintage that is not live or not older than the current
-// month, more derth than the vintage holds.
+// not one, a credit vintage other than the current month (or the previous
+// one in a month's first VintageGraceSeconds), a from_vintage that is not
+// live or not older than the credit vintage, more derth than the vintage
+// holds.
 func (k Keeper) checkCheckIn(ctx context.Context, m *types.MsgCheckIn) error {
 	if _, err := k.valAddr(m.Validator); err != nil {
 		return err
 	}
-	cur := k.currentVintage(ctx)
-	if err := checkLive(m.FromVintage, cur); err != nil {
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
 		return err
 	}
-	if m.FromVintage == cur {
-		return types.ErrVintage.Wrapf("vintage %d is the current one: nothing to check in", cur)
+	to := vc.Credit(m.CreditVintage)
+	if err := vc.CheckCredit(to); err != nil {
+		return err
+	}
+	if err := checkLive(m.FromVintage, vc.Current); err != nil {
+		return err
+	}
+	if m.FromVintage >= to {
+		return types.ErrVintage.Wrapf("vintage %d is not older than %d: nothing to check in", m.FromVintage, to)
 	}
 	s, err := k.VintageSupply(ctx, m.Validator, m.FromVintage)
 	if err != nil {
@@ -524,7 +597,11 @@ func (k msgServer) CheckIn(goCtx context.Context, m *types.MsgCheckIn) (*types.M
 	if err := k.checkCheckIn(ctx, m); err != nil {
 		return nil, err
 	}
-	cur := k.currentVintage(ctx)
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cur := vc.Credit(m.CreditVintage)
 	pos, err := k.applyStake(ctx, m)
 	if err != nil {
 		return nil, err

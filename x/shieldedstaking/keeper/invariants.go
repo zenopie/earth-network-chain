@@ -55,8 +55,9 @@ import (
 //     as at genesis); no unbonding delegation is left set aside
 //     (ShelteredUnbondings is empty outside BeginBlock).
 //  11. Stake vintages: every book's derth_supply is the sum of its stored
-//     vintage supplies (each positive, none without a book) and, once the
-//     month's retirement sweep is done, every stored vintage is live; a
+//     vintage supplies (each positive, none without a book; a vintage past
+//     its retirement time stays stored, earning, until an epoch end books
+//     it), none of them also retired; a
 //     vintage's live Groundworks votes weigh at most its supply; every
 //     retired vintage holds 0 < remaining_supply <= supply and
 //     remaining_value <= value, with a held payout (no pc, in no queue) of
@@ -103,19 +104,15 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 
 // assertVintages is invariant 11.
 func (k Keeper) assertVintages(ctx context.Context) error {
-	cur := k.currentVintage(ctx)
-	sweep, err := k.VintageSweep.Get(ctx)
-	if err != nil && !errors.Is(err, collections.ErrNotFound) {
-		return err
-	}
-	swept := err == nil && sweep.Month == cur && !sweep.Active && sweep.RetryAt == 0
 	sums := map[string]math.Int{}
 	if err := k.VintageSupplies.Walk(ctx, nil, func(key collections.Pair[string, uint32], s math.Int) (bool, error) {
 		if !s.IsPositive() {
 			return true, types.ErrInvariant.Wrapf("vintage %d at %s holds %s", key.K2(), key.K1(), s)
 		}
-		if swept && !types.VintageLive(key.K2(), cur) {
-			return true, types.ErrInvariant.Wrapf("vintage %d at %s holds supply after the month's retirement sweep", key.K2(), key.K1())
+		if has, err := k.RetiredVintages.Has(ctx, key); err != nil {
+			return true, err
+		} else if has {
+			return true, types.ErrInvariant.Wrapf("vintage %d at %s holds supply and has retired", key.K2(), key.K1())
 		}
 		if c, ok := sums[key.K1()]; ok {
 			sums[key.K1()] = c.Add(s)

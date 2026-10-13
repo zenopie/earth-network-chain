@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -388,14 +389,26 @@ func (q queryServer) Vintages(ctx context.Context, req *types.QueryVintagesReque
 		CurrentVintage: vc.Current, BaseVintage: vc.Base,
 		NextRetirement: types.VintageStart(types.AddMonths(vc.Current, 1)).Unix(),
 	}
-	rng := collections.NewPrefixedPairRange[string, uint32](req.Validator).StartInclusive(types.OldestLiveVintage(vc.Current))
+	// At most 13 live vintages, and as many retiring as months since the
+	// book's last epoch end (one, but for a halt).
+	rng := collections.NewPrefixedPairRange[string, uint32](req.Validator)
 	if err := q.k.VintageSupplies.Walk(ctx, rng, func(key collections.Pair[string, uint32], s math.Int) (bool, error) {
 		m := key.K2()
-		if !types.VintageLive(m, vc.Current) {
-			return true, nil
+		lv := types.LiveVintage{Vintage: m, Denom: types.VintageDenom(req.Validator, m, vc.Base),
+			Supply: s, RetiresAt: types.VintageRetiresAt(m).Unix()}
+		switch {
+		case types.VintageLive(m, vc.Current):
+			res.Live = append(res.Live, lv)
+		case types.VintageRetired(m, vc.Current):
+			c, err := q.pendingCompletion(ctx)
+			if err != nil {
+				return true, err
+			}
+			lv.ExpectedCompletion = c
+			res.Retiring = append(res.Retiring, lv)
+		default:
+			return true, nil // not begun: none is ever stored
 		}
-		res.Live = append(res.Live, types.LiveVintage{Vintage: m, Denom: types.VintageDenom(req.Validator, m, vc.Base),
-			Supply: s, RetiresAt: types.VintageRetiresAt(m).Unix()})
 		return false, nil
 	}); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -418,11 +431,166 @@ func (q queryServer) Vintages(ctx context.Context, req *types.QueryVintagesReque
 				}
 				out.Record = &r
 			}
-			return out, nil
+			var err error
+			out.ExpectedCompletion, err = q.heldCompletion(ctx, out.Record)
+			return out, err
 		}, query.WithCollectionPaginationPairPrefix[string, uint32](req.Validator))
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	res.Retired, res.Pagination = retired, pr
+	return res, nil
+}
+
+// pendingCompletion is when a value the next epoch end undelegates would
+// complete: that epoch's end plus x/staking's unbonding_time (unix
+// seconds; an estimate, later if max_entries defers it).
+func (q queryServer) pendingCompletion(ctx context.Context) (int64, error) {
+	epoch, err := q.k.Epoch.Get(ctx)
+	if err != nil {
+		return 0, err
+	}
+	ut, err := q.k.staking.UnbondingTime(ctx)
+	if err != nil {
+		return 0, err
+	}
+	end := epoch.EndTime
+	if now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix(); end < now {
+		end = now // the epoch end is due (its sweep may span blocks)
+	}
+	return end + int64(unbondingSeconds(ut)), nil
+}
+
+// heldCompletion is when a retired vintage's held value completes:
+// UNBONDING, the record's completion; PENDING, pendingCompletion; else 0.
+func (q queryServer) heldCompletion(ctx context.Context, r *types.UnbondRecord) (int64, error) {
+	if r == nil {
+		return 0, nil
+	}
+	switch r.Status {
+	case types.UNBOND_STATUS_UNBONDING:
+		return r.CompletionTime / int64(time.Second), nil
+	case types.UNBOND_STATUS_PENDING:
+		return q.pendingCompletion(ctx)
+	default:
+		return 0, nil
+	}
+}
+
+// VintageInfo is the vintage clock.
+func (q queryServer) VintageInfo(ctx context.Context, _ *types.QueryVintageInfoRequest) (*types.QueryVintageInfoResponse, error) {
+	vc, err := q.k.vintageCtx(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QueryVintageInfoResponse{CurrentVintage: vc.Current, BaseVintage: vc.Base,
+		NextRetirement: types.VintageStart(types.AddMonths(vc.Current, 1)).Unix()}, nil
+}
+
+// vintageBookKey is Query/VintageBooks' page key: a (validator, vintage)
+// in the stores' own key encoding and order.
+var vintageBookKey = collections.PairKeyCodec(collections.StringKey, collections.Uint32Key)
+
+// VintageBooks is every validator's vintages, one page of the union of the
+// stored (live or retiring) and retired vintages in (validator, vintage)
+// order; no key is in both (invariant 11).
+func (q queryServer) VintageBooks(ctx context.Context, req *types.QueryVintageBooksRequest) (*types.QueryVintageBooksResponse, error) {
+	vc, err := q.k.vintageCtx(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	limit := uint64(MaxVintagesPage)
+	var rng *collections.Range[collections.Pair[string, uint32]]
+	if p := req.GetPagination(); p != nil {
+		if p.Offset != 0 {
+			return nil, status.Error(codes.InvalidArgument, "offset is not supported: page with next_key")
+		}
+		if p.Limit != 0 && p.Limit < limit {
+			limit = p.Limit
+		}
+		if len(p.Key) > 0 {
+			n, start, err := vintageBookKey.Decode(p.Key)
+			if err != nil || n != len(p.Key) {
+				return nil, status.Error(codes.InvalidArgument, "malformed page key")
+			}
+			rng = new(collections.Range[collections.Pair[string, uint32]]).StartInclusive(start)
+		}
+	}
+	res := &types.QueryVintageBooksResponse{CurrentVintage: vc.Current, BaseVintage: vc.Base,
+		NextRetirement: types.VintageStart(types.AddMonths(vc.Current, 1)).Unix(), Pagination: &query.PageResponse{}}
+	type item struct {
+		key collections.Pair[string, uint32]
+		s   math.Int
+		rv  *types.RetiredVintage
+	}
+	var stored, retired []item
+	var ranger collections.Ranger[collections.Pair[string, uint32]]
+	if rng != nil {
+		ranger = rng
+	}
+	if err := q.k.VintageSupplies.Walk(ctx, ranger, func(key collections.Pair[string, uint32], s math.Int) (bool, error) {
+		stored = append(stored, item{key: key, s: s})
+		return uint64(len(stored)) > limit, nil
+	}); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if err := q.k.RetiredVintages.Walk(ctx, ranger, func(key collections.Pair[string, uint32], rv types.RetiredVintage) (bool, error) {
+		retired = append(retired, item{key: key, rv: &rv})
+		return uint64(len(retired)) > limit, nil
+	}); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	less := func(a, b collections.Pair[string, uint32]) bool {
+		if a.K1() != b.K1() {
+			return a.K1() < b.K1()
+		}
+		return a.K2() < b.K2()
+	}
+	var merged []item
+	for i, j := 0, 0; i < len(stored) || j < len(retired); {
+		if j == len(retired) || (i < len(stored) && less(stored[i].key, retired[j].key)) {
+			merged = append(merged, stored[i])
+			i++
+		} else {
+			merged = append(merged, retired[j])
+			j++
+		}
+	}
+	if uint64(len(merged)) > limit {
+		next := merged[limit].key
+		bz := make([]byte, vintageBookKey.Size(next))
+		if _, err := vintageBookKey.Encode(bz, next); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		res.Pagination.NextKey = bz
+		merged = merged[:limit]
+	}
+	for _, it := range merged {
+		v, m := it.key.K1(), it.key.K2()
+		e := types.VintageBookEntry{Validator: v, Vintage: m, Denom: types.VintageDenom(v, m, vc.Base),
+			RetiresAt: types.VintageRetiresAt(m).Unix()}
+		switch {
+		case it.rv != nil:
+			e.State, e.Retired = "retired", it.rv
+			if it.rv.RemainingValue.IsPositive() {
+				r, err := q.k.UnbondRecords.Get(ctx, collections.Join(v, it.rv.Epoch))
+				if err != nil {
+					return nil, status.Error(codes.Internal, err.Error())
+				}
+				e.Record = &r
+			}
+			if e.ExpectedCompletion, err = q.heldCompletion(ctx, e.Record); err != nil {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+		case types.VintageLive(m, vc.Current):
+			e.State, e.Supply = "live", &it.s
+		default:
+			e.State, e.Supply = "retiring", &it.s
+			if e.ExpectedCompletion, err = q.pendingCompletion(ctx); err != nil {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+		}
+		res.Entries = append(res.Entries, e)
+	}
 	return res, nil
 }

@@ -172,9 +172,15 @@ func (k Keeper) checkRedelegate(ctx context.Context, m *types.MsgRedelegate) (ma
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "more derth than exists")
 	}
 	// The source notes' vintage is live and holds the derth; the credit
-	// lands in dst's current vintage.
+	// lands in dst's credit vintage: the current month, or the previous
+	// one in a month's first VintageGraceSeconds.
 	vin, err := k.checkLaneVintage(ctx, m)
 	if err != nil {
+		return math.Int{}, err
+	}
+	if vc, err := k.vintageCtx(ctx); err != nil {
+		return math.Int{}, err
+	} else if err := vc.CheckCredit(vc.Credit(m.CreditVintage)); err != nil {
 		return math.Int{}, err
 	}
 	if sv, err := k.VintageSupply(ctx, m.SrcValidator, vin); err != nil {
@@ -354,7 +360,7 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 	if err != nil {
 		return nil, err
 	}
-	credited, err := k.creditDst(ctx, m, bB0, sB0, bB1, late, params.MinDelegation)
+	credited, err := k.creditDst(ctx, m, vc.Credit(m.CreditVintage), bB0, sB0, bB1, late, params.MinDelegation)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +393,7 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 		mv := types.Move{
 			Key: m.MoveKey(), SrcValidator: m.SrcValidator, DstValidator: m.DstValidator,
 			Height: ctx.BlockHeight(), MoveTime: m.MoveTime, Credited: credited, Shares: shares,
-			EntryHeight: entryHeight, Completion: completion, Retained: credited, Vintage: vc.Current,
+			EntryHeight: entryHeight, Completion: completion, Retained: credited, Vintage: vc.Credit(m.CreditVintage),
 		}
 		if err := k.putMove(ctx, mv); err != nil {
 			return nil, err
@@ -409,7 +415,7 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 		sdk.NewAttribute(types.AttributeKeyMoveKey, hex.EncodeToString(m.MoveKey())),
 		sdk.NewAttribute(types.AttributeKeyMoveTime, strconv.FormatUint(m.MoveTime, 10)),
 		sdk.NewAttribute(types.AttributeKeyVintage, strconv.FormatUint(uint64(srcVintage), 10)),
-		sdk.NewAttribute(types.AttributeKeyDstVintage, strconv.FormatUint(uint64(vc.Current), 10)),
+		sdk.NewAttribute(types.AttributeKeyDstVintage, strconv.FormatUint(uint64(vc.Credit(m.CreditVintage)), 10)),
 	))
 	return &types.MsgRedelegateResponse{Value: u.Uint64(), Derth: credited.Uint64(), Position: pos, CompletionTime: completion}, nil
 }
@@ -422,7 +428,7 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 // lane (applyStakeProof): the owner's derth/<dst> note merged with
 // dst_derth. Kept apart from how the value moves, which a later redesign of
 // the redelegation's internals may replace.
-func (k Keeper) creditDst(ctx sdk.Context, m *types.MsgRedelegate, bB0, sB0, bB1, late, min math.Int) (math.Int, error) {
+func (k Keeper) creditDst(ctx sdk.Context, m *types.MsgRedelegate, vintage uint32, bB0, sB0, bB1, late, min math.Int) (math.Int, error) {
 	// late (nothing, in practice) is the existing holders': it joins the
 	// base the new derth is priced against, not what arrived.
 	base := bB0.Add(late)
@@ -446,8 +452,8 @@ func (k Keeper) creditDst(ctx sdk.Context, m *types.MsgRedelegate, bB0, sB0, bB1
 	if err := k.Validators.Set(ctx, m.DstValidator, vsB); err != nil {
 		return math.Int{}, err
 	}
-	// The credit lands in dst's current vintage.
-	if err := k.addVintageSupply(ctx, m.DstValidator, k.currentVintage(ctx), credited); err != nil {
+	// The credit lands in dst's credit vintage (checkRedelegate).
+	if err := k.addVintageSupply(ctx, m.DstValidator, vintage, credited); err != nil {
 		return math.Int{}, err
 	}
 	return credited, nil

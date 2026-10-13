@@ -104,6 +104,39 @@ func (k Keeper) noteMaxUnbonding(ctx context.Context) error {
 	return nil
 }
 
+// noteClearBefore records cb, an accepted stake proof's clear_before, if it
+// is the highest named: every label with an earlier move_time may have
+// cleared since (settleSlash).
+func (k Keeper) noteClearBefore(ctx context.Context, cb uint64) error {
+	cur, err := k.MaxClearBefore.Get(ctx)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	if cb > cur {
+		return k.MaxClearBefore.Set(ctx, cb)
+	}
+	return nil
+}
+
+// clearedBefore is the move_time below which a label may have cleared: the
+// highest clear_before a proof has named, or the current ClearBefore if
+// higher (any later proof may name that; a label window that governance
+// lengthened since does not lower it).
+func (k Keeper) clearedBefore(ctx context.Context) (uint64, error) {
+	named, err := k.MaxClearBefore.Get(ctx)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return 0, err
+	}
+	cb, err := k.ClearBefore(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if cb > named {
+		named = cb
+	}
+	return named, nil
+}
+
 // ClearBefore is the latest clear_before a stake proof may name now: the
 // block time less the label window (0 before the chain is that old).
 func (k Keeper) ClearBefore(ctx context.Context) (uint64, error) {
@@ -611,14 +644,45 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 		return nil
 	}
 	total := value.Mul(s).Quo(b.Add(value))
-	// Each move owes floor(total x weight / burnt), within its retained
-	// value. The flooring's remainder (under one derth per move; a capped
-	// move's excess is not passed on) goes, one derth each, to the moves
-	// owing most that still have retained value: rounding favours the book,
-	// not the movers (audit C-9).
+	// A move whose label may already have cleared (move_time below the
+	// highest clear_before named: only an x/staking entry merged into a
+	// later one keeps a move slashable past its window, mergeOldEntries)
+	// owes nothing on its note: its note may hold the whole exposure, and
+	// dst's supply already counts it. Its share of the burn stays with
+	// dst's rate, so dst's live holders bear it, once, through the rate,
+	// and no vintage is charged for derth its notes still hold (audit 1,
+	// L2: charging the credit's vintage left its last holders unable to
+	// leave, or, once it retired, stranded the debt in its held payout
+	// while the rate bore it too).
+	cleared, err := k.clearedBefore(ctx)
+	if err != nil {
+		return err
+	}
+	late := make([]bool, len(moves))
+	inWeight := math.LegacyZeroDec()
+	for i, o := range moves {
+		late[i] = o.mv.MoveTime < cleared
+		if !late[i] {
+			inWeight = inWeight.Add(o.weight)
+		}
+	}
+	// What the in-window moves owe: all of it when none is late.
+	owedIn := total
+	if inWeight.LT(burnt) {
+		owedIn = math.LegacyNewDecFromInt(total).Mul(inWeight).Quo(burnt).TruncateInt()
+	}
+	// Each in-window move owes floor(total x weight / burnt), within its
+	// retained value. The flooring's remainder (under one derth per move; a
+	// capped move's excess is not passed on) goes, one derth each, to the
+	// in-window moves owing most that still have retained value: rounding
+	// favours the book, not the movers (audit C-9).
 	debts := make([]math.Int, len(moves))
 	floors := math.ZeroInt()
 	for i, o := range moves {
+		if late[i] {
+			debts[i] = math.ZeroInt()
+			continue
+		}
 		d := math.LegacyNewDecFromInt(total).Mul(o.weight).Quo(burnt).TruncateInt()
 		floors = floors.Add(d)
 		if d.GT(o.mv.Retained) {
@@ -626,7 +690,7 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 		}
 		debts[i] = d
 	}
-	if rem := total.Sub(floors); rem.IsPositive() {
+	if rem := owedIn.Sub(floors); rem.IsPositive() {
 		order := make([]int, len(moves))
 		for i := range order {
 			order[i] = i
@@ -638,7 +702,7 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 			if !rem.IsPositive() {
 				break
 			}
-			if debts[i].LT(moves[i].mv.Retained) {
+			if !late[i] && debts[i].LT(moves[i].mv.Retained) {
 				debts[i] = debts[i].AddRaw(1)
 				rem = rem.SubRaw(1)
 			}
@@ -650,9 +714,13 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 	}
 	byVintage := map[uint32]math.Int{}
 	var vintages []uint32
+	absorbed := 0
 	for i, o := range moves {
 		mv := o.mv
 		d := debts[i]
+		if late[i] {
+			absorbed++
+		}
 		if !d.IsPositive() {
 			continue
 		}
@@ -682,27 +750,22 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 		))
 	}
 	// The debt comes off the supply of the vintage each move's credit
-	// landed in, at most what it holds. A vintage that holds none has
-	// retired (only an x/staking entry merged into later ones keeps a move
-	// slashable past its label window, and the window closes before the
-	// credit's vintage can retire: types.MaxUnbondingSeconds): its debt is
-	// not booked and the destination's live holders absorb the cut, as for
-	// a label already cleared.
+	// landed in. An in-window move's labelled note is in that vintage (a
+	// label never leaves its note's vintage: a check-in's credit lane is
+	// unlabelled) and the vintage is live (its window closes before the
+	// vintage can retire: types.MaxUnbondingSeconds), so the vintage holds
+	// at least the debt; less is an invariant failure, and the whole slash
+	// then stays with the rate (the guarded settle writes nothing).
 	sort.Slice(vintages, func(i, j int) bool { return vintages[i] < vintages[j] })
 	booked := math.ZeroInt()
 	for _, vin := range vintages {
-		sv, err := k.VintageSupply(ctx, dstoper, vin)
-		if err != nil {
-			return err
+		if !types.VintageLive(vin, k.currentVintage(ctx)) {
+			return types.ErrInvariant.Wrapf("slash debt on %s's vintage %d, which is not live", dstoper, vin)
 		}
-		take := math.MinInt(byVintage[vin], sv)
-		if !take.IsPositive() {
-			continue
+		if err := k.addVintageSupply(ctx, dstoper, vin, byVintage[vin].Neg()); err != nil {
+			return errorsmod.Wrapf(types.ErrInvariant, "slash debt on %s's vintage %d: %v", dstoper, vin, err)
 		}
-		if err := k.addVintageSupply(ctx, dstoper, vin, take.Neg()); err != nil {
-			return err
-		}
-		booked = booked.Add(take)
+		booked = booked.Add(byVintage[vin])
 	}
 	vs, err := k.ValidatorState(ctx, dstoper)
 	if err != nil {
@@ -725,6 +788,7 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 		sdk.NewAttribute(types.AttributeKeyValue, value.String()),
 		sdk.NewAttribute(types.AttributeKeyDebt, booked.String()),
 		sdk.NewAttribute(types.AttributeKeyEntries, strconv.FormatUint(calls, 10)),
+		sdk.NewAttribute(types.AttributeKeyLateMoves, strconv.Itoa(absorbed)),
 	))
 	return nil
 }

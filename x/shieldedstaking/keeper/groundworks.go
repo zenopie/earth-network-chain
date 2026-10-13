@@ -876,7 +876,6 @@ func (k Keeper) voteEvent(ctx context.Context, action string, v types.Groundwork
 		sdk.NewAttribute(types.AttributeKeyDerth, v.Derth.String()),
 		sdk.NewAttribute(types.AttributeKeyWeight, v.Weight.String()),
 		sdk.NewAttribute(types.AttributeKeyOptions, splitsAttr(v.Splits)),
-		sdk.NewAttribute(types.AttributeKeySplitExpiresAt, strconv.FormatInt(v.SplitExpiresAt, 10)),
 		sdk.NewAttribute(types.AttributeKeyVintage, strconv.FormatUint(uint64(v.Vintage), 10)),
 		sdk.NewAttribute(types.AttributeKeyPending, pendingAttr(v)),
 		sdk.NewAttribute(types.AttributeKeyMaturesAt, strconv.FormatInt(v.MaturesAt, 10)),
