@@ -48,6 +48,7 @@ func TestValidatorsQuery(t *testing.T) {
 		Validator: gone, PendingDelegation: math.NewInt(7), PendingUndelegation: math.ZeroInt(),
 		EpochRate: math.LegacyOneDec(), DerthSupply: math.NewInt(7), SupplyAtBlockStart: math.ZeroInt(), SlashDebt: math.ZeroInt(),
 	}))
+	require.NoError(t, e.app.ShieldedStakingKeeper.AddVintageSupply(e.ctx(), gone, e.app.ShieldedStakingKeeper.CurrentVintage(e.ctx()), math.NewInt(7)))
 
 	q := sskeeper.NewQueryServerImpl(e.app.ShieldedStakingKeeper)
 	all, err := e.app.StakingKeeper.GetAllValidators(e.ctx())

@@ -18,16 +18,18 @@ func TestTypeURLs(t *testing.T) {
 	for want, m := range map[string]sdk.Msg{
 		TypeMsgDelegate: &MsgDelegate{}, TypeMsgUndelegate: &MsgUndelegate{},
 		TypeMsgStakeVote: &MsgStakeVote{}, TypeMsgRestake: &MsgRestake{}, TypeMsgRedelegate: &MsgRedelegate{},
+		TypeMsgCheckIn: &MsgCheckIn{},
 	} {
 		require.Equal(t, want, sdk.MsgTypeURL(m))
 	}
 }
 
 func TestDenoms(t *testing.T) {
-	v, ok := ParseDerthDenom(DerthDenom("earthvaloper1abc"))
+	v, m, ok := ParseDerthDenom(DerthDenom("earthvaloper1abc"))
 	require.True(t, ok)
 	require.Equal(t, "earthvaloper1abc", v)
-	_, ok = ParseDerthDenom("derth/a/b")
+	require.Zero(t, m)
+	_, _, ok = ParseDerthDenom("derth/a/b")
 	require.False(t, ok)
 	vk := ValidatorVoterKey(make([]byte, 20))
 	require.Len(t, vk, 26)
@@ -215,8 +217,20 @@ func TestMsgRedelegateFields(t *testing.T) {
 	require.Equal(t, privacy.U64(6), fs[len(stake)+3])
 	require.Equal(t, privacy.U64(1_700_000_000), fs[len(stake)+4])
 	require.Equal(t, privacy.Bytes(nil), fs[len(stake)+5])
+	vc := VintageCtx{Base: 202610, Current: 202610}
 	require.Equal(t, StakeLanes{Denom: DerthDenom(a), VOut: 7, CreditDenom: DerthDenom(b), CreditIn: 6, CreditMoveTime: 1_700_000_000},
-		m.StakeLanes())
+		m.StakeLanes(vc))
+	// A later month: the credit lands in dst's current vintage; a vintage
+	// named by the msg is appended to its sighash.
+	vc.Current = 202611
+	require.Equal(t, StakeLanes{Denom: DerthDenom(a), VOut: 7, CreditDenom: DerthPrefix + b + "/202611", CreditIn: 6,
+		CreditMoveTime: 1_700_000_000}, m.StakeLanes(vc))
+	named := *m
+	named.Vintage = 202611
+	require.Equal(t, DerthPrefix+a+"/202611", named.StakeLanes(vc).Denom)
+	nfs, err := named.SighashFields(nil)
+	require.NoError(t, err)
+	require.Equal(t, append(append([]fr.Element{}, fs...), privacy.U64(202611)), nfs)
 	require.Equal(t, el32(3), m.MoveKey())
 
 	same := *m
@@ -249,7 +263,7 @@ func TestMsgDelegateFields(t *testing.T) {
 	require.NoError(t, err)
 	stake := m.Stake.StakeFields()
 	require.Equal(t, []fr.Element{privacy.Bytes([]byte(a)), privacy.U64(9), privacy.U64(8), privacy.Bytes(nil)}, fs[len(stake):])
-	require.Equal(t, StakeLanes{Denom: DerthDenom(a), VIn: 8}, m.StakeLanes())
+	require.Equal(t, StakeLanes{Denom: DerthDenom(a), VIn: 8}, m.StakeLanes(VintageCtx{Base: 202701, Current: 202701}))
 	noDerth := *m
 	noDerth.Derth = 0
 	require.ErrorContains(t, noDerth.ValidateBasic(), "derth must be positive")

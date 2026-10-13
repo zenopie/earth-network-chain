@@ -68,6 +68,8 @@ func (e *stakeEnv) queueDeposit(val sdk.ValAddress, amt int64) uint64 {
 	vs.PendingDelegation = vs.PendingDelegation.AddRaw(amt)
 	vs.DerthSupply = vs.DerthSupply.Add(math.NewIntFromUint64(d))
 	require.NoError(e.t, e.app.ShieldedStakingKeeper.Validators.Set(ctx, e.valoper(val), vs))
+	k := e.app.ShieldedStakingKeeper
+	require.NoError(e.t, k.AddVintageSupply(ctx, e.valoper(val), k.CurrentVintage(ctx), math.NewIntFromUint64(d)))
 	return d
 }
 
@@ -117,6 +119,7 @@ func fakeDelegateMsg(valoper string, amt uint64, label string) *sstypes.MsgDeleg
 func (e *stakeEnv) fakeDelegate(val sdk.ValAddress, amt uint64, label string) *sstypes.MsgDelegateResponse {
 	m := fakeDelegateMsg(e.valoper(val), amt, label)
 	m.Derth = e.exactDerth(val, amt)
+	m.Vintage = e.app.ShieldedStakingKeeper.CurrentVintage(e.ctx()) // a delegation credits the current vintage
 	res, err := sskeeper.NewMsgServerImpl(e.app.ShieldedStakingKeeper).Delegate(e.fakeAuthorized(m), m)
 	require.NoError(e.t, err)
 	return res
@@ -484,6 +487,7 @@ func TestOrphanDelegationToCommunityPool(t *testing.T) {
 	ctx := e.ctx()
 	vs, err := k.ValidatorState(ctx, e.valoper(v))
 	require.NoError(t, err)
+	require.NoError(t, k.AddVintageSupply(ctx, e.valoper(v), k.CurrentVintage(ctx), vs.DerthSupply.Neg()))
 	vs.DerthSupply = math.ZeroInt() // nobody holds derth/v any more
 	require.NoError(t, k.Validators.Set(ctx, e.valoper(v), vs))
 	orphan := e.modDelegation(v)

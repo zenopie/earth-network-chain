@@ -54,68 +54,34 @@ func (e *stakeEnv) gwIndex() (math.Int, math.Int) {
 	return idx, total
 }
 
-// A Groundworks vote is leased: it counts until split_expires_at (cast +
-// groundworks_lease_seconds), comes off its validator's totals at exactly
-// that time (the stream settled to the expiry first, however late the
-// block) and is deleted, and re-casting renews it. At the boundary: counting
-// one second before, gone at the second itself.
-func TestGroundworksVoteLease(t *testing.T) {
+// A stake note's Groundworks vote carries no lease (v1.3.0): it lives with
+// its note's stake vintage. Past what a lease would have been it still
+// counts, and nothing is queued for it.
+func TestGroundworksVoteNoLease(t *testing.T) {
 	g := initGwEnv(t)
 	setGwLease(t, g.stakeEnv)
 	p1 := g.castGw(g.v, 1_000*gwE, g.split(100))
 	e1 := g.now.Unix() + gwLease
-	require.Equal(t, e1, g.storedVote(p1.id).SplitExpiresAt)
-	g.next(time.Hour)
-	p2 := g.castGw(g.v, 2_000*gwE, g.split(0, 100))
-	e2 := g.storedVote(p2.id).SplitExpiresAt
-	require.Equal(t, g.now.Unix()+gwLease, e2)
-
-	// Ten minutes before p1's lapse, then a block half an hour after it
-	// (p2 lapses an hour after p1).
-	g.atUnix(e1 - 600)
-	require.Contains(t, g.totals(g.v), g.opts[0], "p1 still counts")
-	w := g.voter(g.v)[g.opts[0]]
-	require.True(t, w.IsPositive())
-	idx0, total0 := g.gwIndex()
+	got := g.storedVote(p1.id)
+	require.Zero(t, got.SplitExpiresAt, "no lease")
+	cur := sstypes.MonthOf(g.now)
+	require.Equal(t, cur, got.Vintage, "the vote is in its note's vintage")
 	g.atUnix(e1 + 1800)
-	idx1, _ := g.gwIndex()
-	require.NotContains(t, g.totals(g.v), g.opts[0], "p1's vote lapsed")
-	require.False(t, g.hasVote(p1.id), "a lapsed vote is deleted")
-	_, err := g.app.ShieldedStakingKeeper.GwVotesByTag.Get(g.ctx(), p1.tag)
-	require.ErrorIs(t, err, collections.ErrNotFound)
-	require.True(t, g.allocated(g.opts[0]).IsZero(), "nothing left on p1's option")
-	// The half hour after the lapse was shared only by the weight left: the
-	// index moved by 600 s over total0, then 1,800 s over total0 - w.
-	prec := math.NewInt(1_000_000_000_000_000_000)
-	eps := math.NewInt(allocationtypes.EmissionPerSecond)
-	want := eps.MulRaw(600).Mul(prec).Quo(total0).Add(eps.MulRaw(1800).Mul(prec).Quo(total0.Sub(w)))
-	require.Equal(t, want, idx1.Sub(idx0), "emission after the lapse is never shared with the lapsed weight")
-	g.requireEquivalent(g.v, 2)
-
-	// Renewal: p2 re-casts before its lease ends and keeps counting past it.
-	p2 = g.recastGw(p2, g.split(0, 100))
-	e2b := g.storedVote(p2.id).SplitExpiresAt
-	require.Greater(t, e2b, e2)
-	g.atUnix(e2 + 60)
-	require.Contains(t, g.totals(g.v), g.opts[1], "renewed: still counts")
-
-	// The boundary: one second before the lease end it counts, at it not.
-	g.atUnix(e2b - 1)
-	require.Contains(t, g.totals(g.v), g.opts[1])
-	g.atUnix(e2b)
-	require.NotContains(t, g.totals(g.v), g.opts[1])
-	require.False(t, g.hasVote(p2.id))
+	require.Contains(t, g.totals(g.v), g.opts[0], "still counts past a lease's length")
+	require.True(t, g.hasVote(p1.id))
+	require.True(t, g.allocated(g.opts[0]).IsPositive())
+	g.requireEquivalent(g.v, 1)
 	require.NoError(t, g.app.ShieldedStakingKeeper.AssertInvariants(g.ctx()))
 }
 
-// The lease travels through an export: votes carry split_expires_at, the
-// imported chain queues them again, and they lapse there on time.
-func TestGroundworksLeaseGenesisRoundTrip(t *testing.T) {
+// A vote travels through an export with its vintage and no lease; the
+// imported chain rebuilds its vintage's totals and indexes it by vintage.
+func TestGroundworksVoteGenesisRoundTrip(t *testing.T) {
 	g := initGwEnv(t)
 	setGwLease(t, g.stakeEnv)
 	gv := g.castGw(g.v, 1_000*gwE, g.split(100))
 	p := gv.id
-	exp := g.storedVote(p).SplitExpiresAt
+	vin := g.storedVote(p).Vintage
 	g.next(time.Hour)
 
 	exported, err := g.app.ExportAppStateAndValidators(false, nil, nil)
@@ -129,21 +95,15 @@ func TestGroundworksLeaseGenesisRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	got, err := fresh.ShieldedStakingKeeper.GwVotes.Get(fctx, p)
 	require.NoError(t, err)
-	require.Equal(t, exp, got.SplitExpiresAt)
-	has, err := fresh.ShieldedStakingKeeper.GwLapses.Has(fctx, collections.Join(exp, p))
+	require.Zero(t, got.SplitExpiresAt)
+	require.Equal(t, vin, got.Vintage)
+	has, err := fresh.ShieldedStakingKeeper.GwVotesByVintage.Has(fctx, collections.Join3(vin, got.Validator, p))
 	require.NoError(t, err)
-	require.True(t, has, "the imported lease is queued")
-	gp, err := fresh.AllocationKeeper.Params.Get(fctx)
+	require.True(t, has, "indexed by vintage")
+	t0, err := fresh.ShieldedStakingKeeper.GwTotals.Get(fctx, collections.Join3(got.Validator, vin, g.opts[0]))
 	require.NoError(t, err)
-	require.Equal(t, uint64(gwLease), gp.GroundworksLeaseSeconds)
-
-	// A block past the lease on the imported chain: its BeginBlock sweep
-	// retires the vote.
-	lctx := fctx.WithBlockTime(time.Unix(exp+10, 0))
-	require.NoError(t, fresh.AllocationKeeper.BeginBlocker(lctx))
-	has, err = fresh.ShieldedStakingKeeper.GwVotes.Has(lctx, p)
-	require.NoError(t, err)
-	require.False(t, has)
+	require.Equal(t, got.Derth.MulRaw(100), t0)
+	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
 }
 
 // An operator's Groundworks split (its self-bond's vote) is leased the same

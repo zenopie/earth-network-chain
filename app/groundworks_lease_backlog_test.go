@@ -40,59 +40,9 @@ func (e *stakeEnv) lapseBacklog(end int64, n int) {
 	}
 }
 
-// Effect 1: a lapsed vote's weight resurrected. Re-casting another vote at
-// the validator re-filed the voter from totals read before the
-// settle that retired the lapsed one: the allocation voter carried the
-// lapsed weight (sharing emission after its expiry) while the totals did
-// not.
-func TestGroundworksLeaseBacklogNoResurrection(t *testing.T) {
-	for _, n := range []int{1100, backlogSeconds} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			g := initGwEnv(t)
-			setGwLease(t, g.stakeEnv)
-			x := g.castGw(g.v, 1_000*gwE, g.split(100))
-			ex := g.storedVote(x.id).SplitExpiresAt
-			g.next(time.Hour)
-			y := g.castGw(g.v, 2_000*gwE, g.split(0, 100))
-
-			g.atUnix(ex - int64(n) - 100)
-			g.lapseBacklog(ex, n)
-			g.atUnix(ex + 10) // one late block: the whole backlog and x's lease due
-			g.requireEquivalent(g.v, 2)
-
-			g.recastGw(y, g.split(0, 100))
-			require.NotContains(t, g.totals(g.v), g.opts[0])
-			require.NotContains(t, g.voter(g.v), g.opts[0], "the lapsed weight is not filed again")
-			require.True(t, g.allocated(g.opts[0]).IsZero())
-			g.requireEquivalent(g.v, 1)
-		})
-	}
-}
-
-// Effect 2: a double subtraction, then a stuck cancel. Cancelling the
-// lapsing vote took its contribution off the totals, then the settle's
-// lapse read the still-stored vote and took it off again; the last vote on
-// that option could then never be cancelled (groundworks total below zero).
-func TestGroundworksLeaseBacklogCancel(t *testing.T) {
-	g := initGwEnv(t)
-	setGwLease(t, g.stakeEnv)
-	x := g.castGw(g.v, 1_000*gwE, g.split(100))
-	ex := g.storedVote(x.id).SplitExpiresAt
-	g.next(time.Hour)
-	z := g.castGw(g.v, 2_000*gwE, g.split(100))
-
-	g.atUnix(ex - backlogSeconds - 100)
-	g.lapseBacklog(ex, backlogSeconds)
-	g.atUnix(ex + 10)
-
-	g.cancelGw(x)
-	require.NoError(t, g.tryCancelGw(z), "the last vote on the option cancels")
-	require.Empty(t, g.totals(g.v))
-	require.Nil(t, g.voter(g.v))
-	require.True(t, g.allocated(g.opts[0]).IsZero())
-	require.NoError(t, g.app.ShieldedStakingKeeper.AssertInvariants(g.ctx()))
-	require.NoError(t, g.app.AllocationKeeper.AssertHotInvariants(g.ctx()))
-}
+// Effects 1 and 2 (a lapsed stake vote's weight resurrected, a double
+// subtraction) concerned the stake votes' leases, retired in v1.3.0: stake
+// votes end with their vintage (vintages.go), never at a lease.
 
 // Effect 3: an operator's vote written back with no lease. A delegation
 // change read the voter, settled (which retired the lapsed vote), then

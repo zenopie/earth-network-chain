@@ -150,7 +150,8 @@ func (e *stakeEnv) unlabelledStake(denom string) *snote {
 }
 
 // creditLane is a stake proof's lane B: dst derth credited into in (an
-// unlabelled note; nil: a padding input), labelled with the move.
+// unlabelled note; nil: a padding input), labelled with the move (none for
+// a check-in: moveTime 0).
 type creditLane struct {
 	denom    string
 	in       *snote
@@ -311,7 +312,11 @@ func (e *stakeEnv) stake(sp *stakePlan) *stakePlan {
 			nf = privacy.StakeNF(e.w.nk, c.pad.rho, 0)
 		}
 		c.out = e.freshStake(c.denom, in.amount+c.vIn)
-		c.out.moveKey, c.out.moveTime, c.out.exposed = nf, c.moveTime, c.vIn
+		if c.moveTime != 0 {
+			// A redelegation's credit is labelled with its move; a
+			// check-in's (move time 0) is not.
+			c.out.moveKey, c.out.moveTime, c.out.exposed = nf, c.moveTime, c.vIn
+		}
 		p.CreditNullifier = privacy.FieldBytes(nf)
 		p.CreditGroundworksTag = privacy.FieldBytes(e.sgw(in))
 		p.CreditCommitment = privacy.FieldBytes(e.scm(c.out))
@@ -432,8 +437,12 @@ func (e *stakeEnv) stakeWitness(msg sstypes.StakeMsg, sp *stakePlan, lanes sstyp
 	return b.String(), pub
 }
 
-// stakeLanes is what the chain supplies for msg.
-func (e *stakeEnv) stakeLanes(msg sstypes.StakeMsg) sstypes.StakeLanes { return msg.StakeLanes() }
+// stakeLanes is what the chain supplies for msg (in the next block).
+func (e *stakeEnv) stakeLanes(msg sstypes.StakeMsg) sstypes.StakeLanes {
+	l, err := e.app.ShieldedStakingKeeper.StakeLanes(e.ctx(), msg)
+	require.NoError(e.t, err)
+	return l
+}
 
 // proveStake proves msg's stake proof from sp, under msg's sighash (every
 // other field of msg must be final).

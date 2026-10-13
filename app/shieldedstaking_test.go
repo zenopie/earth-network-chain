@@ -928,6 +928,7 @@ func TestStakeVoteTally(t *testing.T) {
 		require.NoError(t, e.app.BankKeeper.SendCoinsFromModuleToModule(cc2, earthtypes.ModuleName, stakingtypes.BondedPoolName, coins))
 		vs.DerthSupply = vs.DerthSupply.Add(newDerth)
 		require.NoError(t, e.app.ShieldedStakingKeeper.Validators.Set(cc2, e.valoper(vB), vs))
+		require.NoError(t, e.app.ShieldedStakingKeeper.AddVintageSupply(cc2, e.valoper(vB), e.app.ShieldedStakingKeeper.CurrentVintage(cc2), newDerth))
 		p2, err := e.app.GovKeeper.Proposals.Get(cc2, prop)
 		require.NoError(t, err)
 		_, _, got2, err := e.app.GovKeeper.Tally(cc2, p2)

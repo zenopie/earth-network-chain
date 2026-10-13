@@ -165,7 +165,9 @@ func (e *stakeEnv) votePlanFor(ns []*snote, proposalID uint64) *votePlan {
 // voteWitness is vp's Prover.toml for msg under sighash, and the public
 // inputs. Unused slots: amount 0, everything else zero.
 func (e *stakeEnv) voteWitness(m *sstypes.MsgStakeVote, vp *votePlan, sighash fr.Element) (string, [][]byte) {
-	pub := m.VotePublicInputs(vp.snap.Root, vp.snap.NfRoot, sighash)
+	vc, err := e.app.ShieldedStakingKeeper.VintageContext(e.ctx())
+	require.NoError(e.t, err)
+	pub := m.VotePublicInputs(vc, vp.snap.Root, vp.snap.NfRoot, sighash)
 	const n = sstypes.MaxVoteNotes
 	var zero [merkle.Depth]fr.Element
 	var b strings.Builder
@@ -263,7 +265,7 @@ func (e *stakeEnv) voteNullifiers(ns []*snote, proposalID uint64) [][]byte {
 // refuses).
 func (e *stakeEnv) stakeVoteNotesMsg(ns []*snote, proposalID uint64, opts []*v1.WeightedVoteOption, weight uint64, prove bool) (*sstypes.MsgStakeVote, *pendingBundle, *votePlan) {
 	e.t.Helper()
-	v, ok := sstypes.ParseDerthDenom(ns[0].denom)
+	v, vin, ok := sstypes.ParseDerthDenom(ns[0].denom)
 	require.True(e.t, ok)
 	if weight == 0 {
 		var sum uint64
@@ -276,7 +278,7 @@ func (e *stakeEnv) stakeVoteNotesMsg(ns []*snote, proposalID uint64, opts []*v1.
 	vp := e.votePlanFor(ns, proposalID)
 	fee := e.feeOnly()
 	m := &sstypes.MsgStakeVote{Bundle: fee.b, ProposalId: proposalID, Validator: v, Options: opts,
-		Weight: weight, VoteNullifiers: e.voteNullifiers(ns, proposalID), DebtRoot: vp.debtRoot}
+		Weight: weight, VoteNullifiers: e.voteNullifiers(ns, proposalID), DebtRoot: vp.debtRoot, Vintage: vin}
 	if !prove {
 		unproven(m)
 		return m, fee, vp
@@ -342,7 +344,7 @@ func (e *stakeEnv) restake(ns []*snote, clear bool) *snote {
 // it does not vote; any vote its inputs held is cancelled either way).
 func (e *stakeEnv) restakeVote(ns []*snote, clear bool, split []allocationtypes.AllocationWeight) *snote {
 	e.t.Helper()
-	v, ok := sstypes.ParseDerthDenom(ns[0].denom)
+	v, vin, ok := sstypes.ParseDerthDenom(ns[0].denom)
 	require.True(e.t, ok)
 	var amount uint64
 	for _, n := range ns {
@@ -355,7 +357,7 @@ func (e *stakeEnv) restakeVote(ns []*snote, clear bool, split []allocationtypes.
 	out := e.freshStake(ns[0].denom, amount)
 	p := e.feeOnly()
 	sp := e.stake(&stakePlan{denom: ns[0].denom, ins: ns, out: out, clear: clear, vote: len(split) > 0, split: split})
-	m := &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: sp.proof, GroundworksSplit: split}
+	m := &sstypes.MsgRestake{Bundle: p.b, Validator: v, Stake: sp.proof, GroundworksSplit: split, Vintage: vin}
 	e.prove(m, p)
 	e.proveStake(m, sp)
 	res := e.run(e.privateTx(m))

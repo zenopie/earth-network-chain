@@ -183,11 +183,20 @@ func (g *gwEnv) allocated(opt uint64) math.Int {
 	return o.AmountAllocated
 }
 
+// totals is v's Groundworks totals per option: the sum over its live
+// vintages.
 func (g *gwEnv) totals(v sdk.ValAddress) map[uint64]math.Int {
 	out := map[uint64]math.Int{}
-	require.NoError(g.t, g.app.ShieldedStakingKeeper.GwTotals.Walk(g.ctx(), collections.NewPrefixedPairRange[string, uint64](g.valoper(v)),
-		func(k collections.Pair[string, uint64], t math.Int) (bool, error) {
-			out[k.K2()] = t
+	cur := sstypes.MonthOf(g.now)
+	require.NoError(g.t, g.app.ShieldedStakingKeeper.GwTotals.Walk(g.ctx(), collections.NewPrefixedTripleRange[string, uint32, uint64](g.valoper(v)),
+		func(k collections.Triple[string, uint32, uint64], t math.Int) (bool, error) {
+			if !sstypes.VintageLive(k.K2(), cur) {
+				return false, nil
+			}
+			if c, ok := out[k.K3()]; ok {
+				t = t.Add(c)
+			}
+			out[k.K3()] = t
 			return false, nil
 		}))
 	return out
@@ -445,9 +454,10 @@ func TestGroundworksGenesisRoundTrip(t *testing.T) {
 	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
 
 	got := map[uint64]math.Int{}
-	require.NoError(t, fresh.ShieldedStakingKeeper.GwTotals.Walk(fctx, nil, func(k collections.Pair[string, uint64], v math.Int) (bool, error) {
+	require.NoError(t, fresh.ShieldedStakingKeeper.GwTotals.Walk(fctx, nil, func(k collections.Triple[string, uint32, uint64], v math.Int) (bool, error) {
 		require.Equal(t, g.valoper(g.v), k.K1())
-		got[k.K2()] = v
+		require.Equal(t, sstypes.MonthOf(g.now), k.K2(), "one vintage")
+		got[k.K3()] = v
 		return false, nil
 	}))
 	require.Equal(t, want, got)
@@ -515,8 +525,8 @@ func TestGroundworksPrunedOptionLeavesVotes(t *testing.T) {
 	_, err = fresh.ModuleManager.InitGenesis(fctx, fresh.AppCodec(), appState)
 	require.NoError(t, err)
 	require.NoError(t, fresh.ShieldedStakingKeeper.AssertInvariants(fctx))
-	require.NoError(t, fresh.ShieldedStakingKeeper.GwTotals.Walk(fctx, nil, func(k collections.Pair[string, uint64], _ math.Int) (bool, error) {
-		require.NotEqual(t, pruned, k.K2())
+	require.NoError(t, fresh.ShieldedStakingKeeper.GwTotals.Walk(fctx, nil, func(k collections.Triple[string, uint32, uint64], _ math.Int) (bool, error) {
+		require.NotEqual(t, pruned, k.K3())
 		return false, nil
 	}))
 	fresh.ShieldedStakingKeeper.ReweighGroundworks(fctx)
