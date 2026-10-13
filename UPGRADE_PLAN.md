@@ -182,3 +182,59 @@ correct rate, and the votes re-weigh at it.
 
 **Touches.** x/shieldedstaking `epoch.go`, an app test and three proof
 fixtures.
+
+## 4. Abandoned private stake earns and votes for ever (x/shieldedstaking, x/allocation)
+
+**Status (2026-10-13):** built for v1.3.0 (branch `feat/stake-vintages`):
+chain, tests, real-proof fixtures, docs. Not released. Needs both wallets
+and the backend indexer (denoms, `MsgCheckIn`, withdrawals, queries).
+
+**What happens.** A stake note keeps earning and its Groundworks vote keeps
+counting whatever becomes of its owner: a lost seed phrase or an abandoned
+wallet directs public money and dilutes everyone else's vote for ever. The
+per-vote Groundworks lease (v1.2.1) bounded the vote, but not the stake's
+yield, and only for voters who keep re-voting; gov stake votes were not
+bounded at all.
+
+**Decided (user, 2026-10-13): monthly stake vintages.** A stake note's asset
+names the UTC month its stake was last checked in
+(`derth/<valoper>/<YYYYMM>`; the unsuffixed `derth/<valoper>`, baked into
+every existing note, is the upgrade month's vintage). A vintage is live for
+its month and the 12 after it; at 00:00 UTC on the 1st of month + 13 it
+retires: its supply leaves the validator's book at the live rate as one
+held private undelegation (the existing pipeline: epoch-end undelegation,
+slash haircuts, maturity), which its notes withdraw from pro rata
+(`MsgUndelegate` on the retired asset). Retired stake earns nothing and
+stops voting (its Groundworks totals dropped, its gov votes refused). A new
+`MsgCheckIn` moves a live vintage's derth into the current month; one per
+position per year keeps it earning. The per-vote Groundworks lease goes:
+votes end with their vintage. One pot and one rate per validator. No
+circuit or verifying-key change: the asset was always a public input.
+
+Weighed and dropped: a per-note expiry (needs the circuit), an
+account-style lease for stake (needs an owner), and a rate per vintage (a
+pot per month: more state, no gain).
+
+**Privacy (accepted).** Every stake action publishes its notes' vintage
+month; a check-in publishes its amount once per position per year; a
+vintage's holders are a smaller anonymity set than the validator's.
+Details: ORCHARD_DESIGN.md 8.9.
+
+**Upgrade.** `v1.3.0` handler, `MigrateV1_3_0` (never errors): the upgrade
+month becomes the base vintage holding every book's supply; Groundworks
+votes join it without a lease (lease queue and old totals cleared, totals
+rebuilt per vintage, voters unchanged); open moves' credits are in it.
+x/staking's `unbonding_time` is capped at 364 days from then on (router and
+genesis), so a slash label always closes before its vintage can retire.
+
+**Wallets and backend.** New msg `MsgCheckIn`; a `vintage` field on
+Delegate (8), Restake (6), Undelegate (9), Redelegate (9), StakeVote (12),
+appended to the sighash when non-zero (0 keeps the old sighash for the base
+vintage); `Query/Vintages`; new events. Old wallets keep working for the
+base vintage only: delegations (current month only) fail from the month
+after the upgrade. Full wire changes: the audit report
+`stake-vintages-chain.md`.
+
+**Touches.** x/shieldedstaking (types, keeper, genesis, invariants,
+queries, proto), x/allocation (no stake lapser), app (v1.3.0 handler,
+router guard), tests and fixtures, docs.

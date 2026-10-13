@@ -318,11 +318,15 @@ move proof shows one is in the tree without saying which.
 
     spc    = H(TAG_SPC, owner_pk, rho, rcm)
     label  = 0, or H(TAG_SLABEL, move_key, move_time, exposed)
-    cm     = H(TAG_STAKE, AssetID(derth/<valoper>), amount, spc, label)
+    cm     = H(TAG_STAKE, AssetID(stake denom), amount, spc, label)
     nf     = H(TAG_SNF, nk, rho, position)
     gw     = H(TAG_GW, nk, rho)                 Groundworks tag (8.6)
 
-`derth/<valoper>` is not a coin and not a pool asset (`ExcludeAssetPrefix`:
+The stake denom names the validator and the note's **stake vintage** (the UTC
+month its stake was last checked in, 8.9): `derth/<valoper>/<YYYYMM>`, or the
+unsuffixed `derth/<valoper>` for the base vintage (earth-1's v1.3.0 upgrade
+month; every note made before it carries that asset). Every `derth/` denom,
+either form, is not a coin and not a pool asset (`ExcludeAssetPrefix`:
 shielded-only for every transparent path; the dex refuses it). Stake notes are
 **owner-locked**: the stake circuit outputs only stake pcs of the spender's
 own owner_pk. **The chain mints no stake note**: every stake note is an
@@ -1076,10 +1080,18 @@ Every staking msg: `bundle` (fee: whole uerth balance, except MsgDelegate),
 
 | Msg (fields) | lane A | v_in / v_out | lane B | shape | sighash fields after StakeFields |
 | --- | --- | --- | --- | --- | --- |
-| Delegate {bundle 1, validator 2, stake 4, amount 5, derth 6, groundworks_split 7} | derth/<v> | v_in = derth | – | spend + create | Bytes(validator), amount, derth, Bytes(SplitsBytes(groundworks_split)) |
-| Restake {bundle 1, validator 2, stake 4, groundworks_split 5} | derth/<v> | – | – | spend + create | Bytes(validator), Bytes(SplitsBytes(groundworks_split)) |
-| Undelegate {bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7, groundworks_split 8} | derth/<v> | v_out = amount | – | spend + create | Bytes(validator), amount, pc, Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)) |
-| Redelegate {bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7, groundworks_split 8} | derth/<src> | v_out = amount | derth/<dst>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes | Bytes(src), Bytes(dst), amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)) |
+| Delegate {bundle 1, validator 2, stake 4, amount 5, derth 6, groundworks_split 7, vintage 8} | derth/<v>/<now> | v_in = derth | – | spend + create | Bytes(validator), amount, derth, Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
+| Restake {bundle 1, validator 2, stake 4, groundworks_split 5, vintage 6} | derth/<v>/<vintage> (live) | – | – | spend + create | Bytes(validator), Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
+| Undelegate {bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7, groundworks_split 8, vintage 9} | derth/<v>/<vintage> (live, or retired: a withdrawal, 8.9) | v_out = amount | – | spend + create | Bytes(validator), amount, pc, Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
+| Redelegate {bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7, groundworks_split 8, vintage 9} | derth/<src>/<vintage> (live) | v_out = amount | derth/<dst>/<now>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes | Bytes(src), Bytes(dst), amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
+| CheckIn {bundle 1, validator 2, from_vintage 3, amount 4, stake 5, groundworks_split 6} | derth/<v>/<from_vintage> (live, before now) | v_out = amount | derth/<v>/<now>, cr_v_in = amount, cr_move_time = 0 | spend + create, both lanes | Bytes(validator), U64(from_vintage), U64(amount), Bytes(SplitsBytes(groundworks_split)) |
+
+`<vintage>` and `<now>` are YYYYMM months (8.9), and the base vintage's
+denom is the unsuffixed `derth/<v>`. A pre-v1.3.0 msg's `vintage` field 0
+names the base vintage; a non-zero `vintage` is appended to its sighash as
+`U64(vintage)` (the bracketed field), so a wallet that predates vintages
+still signs the base vintage's msgs, and the base vintage's two encodings
+never share a sighash. MsgCheckIn always names its month (never 0).
 
 MsgLockPosition, MsgUpdatePosition, MsgUnlockPosition and MsgPositionVote
 are retired (v1.2.1); their type URLs are no longer registered.
@@ -1101,17 +1113,19 @@ u64). `OptionsBytes` is per option the option as big-endian u64, then the
 weight's canonical decimal string (`LegacyDec.String`, 18 places) prefixed by
 its length as big-endian u32. At most `MaxOptionsPerVote` (4) options.
 
-Responses: `MsgDelegateResponse {derth 1, position 2}`,
+Responses: `MsgCheckInResponse {vintage 1, position 2}`, `MsgDelegateResponse {derth 1, position 2}`,
 `MsgRedelegateResponse {value 1, derth 2, position 3, completion_time 4}`
 (`position` the merged note's tree position),
-`MsgUndelegateResponse {value 2, payout_id 4}` (1, 3 reserved).
+`MsgUndelegateResponse {value 2, payout_id 4}` (1, 3 reserved; a
+withdrawal's value is its share of the held value, 8.9, and payout_id
+means nothing when it is 0).
 
 **Gas** (`PrivateActionGas`, on top of the bundle's): base + 300,000
 (`gasGroundworks`, every stake msg, voting or not, so gas does not tell a
 voting note from another) + proof_verification_gas + writes × note_gas, writes = 2 per nullifier slot (an indexed-tree insert
 rewrites two paths) + 1 per output slot: lane A 2 nullifiers and 1 output,
-lane B (Redelegate) 1 and 1, Undelegate +1 for its queued payout. Bases:
-Delegate 600,000 (it bonds in its handler); Restake 100,000; Undelegate 400,000; StakeVote 250,000
+lane B (Redelegate, CheckIn) 1 and 1, Undelegate +1 for its queued payout. Bases:
+Delegate 600,000 (it bonds in its handler); Restake and CheckIn 100,000; Undelegate 400,000; StakeVote 250,000
 (no Groundworks part; its writes:
 1 + 2 vote nullifiers, padding included: the same for every vote); Redelegate 700,000 + 2,500 per entry of the pair's
 x/staking record, + 2,500 per entry + 128 × 20,000 while the pair is at the
@@ -1126,7 +1140,11 @@ unbonding record is not open, 1106 no voting, 1108 Groundworks vote (below
 retired, 1113 stake
 tree (anchor, clear_before, debt_root), 1114 stake nullifier spent, 1115 stake
 proof, 1119 vote nullifier used, 1120 redelegation (same validator, move_time
-out of range, genesis redelegation records).
+out of range, genesis redelegation records), 1121 retired vintage (any msg
+but a withdrawal on a retired asset; a withdrawal with a split or before its
+retirement is booked), 1122 vintage (not a YYYYMM month, not begun, a
+delegation not of the current month, a check-in from the current month, a
+stake vote after its snapshot's month).
 
 ### 8.4 Delegation and undelegation
 
@@ -1147,12 +1165,14 @@ accrued meanwhile.)
 
 **Undelegate** names its payout destination; the chain pays it:
 
-- The proof spends derth/<v>, `v_out = amount`, change or a zero note back.
+- The proof spends a live vintage's derth/<v> asset, `v_out = amount`
+  (at most the vintage's supply), change or a zero note back.
   `pc` is a pool pc (normally the wallet's own) and `ciphertext` its 177-byte
   v2 blind ciphertext, both bound by the sighash and checked like any mint.
   An undelegation worth more than 2^63−1 is refused.
 - The chain books the derth's live value u into the epoch's UnbondRecord
-  (requested, target, outstanding += u; pending_undelegation; supply −= amount)
+  (requested, target, outstanding += u; pending_undelegation; supply and
+  the vintage's supply −= amount)
   and queues an `UnbondPayout {id, validator, epoch, value = u, pc,
   ciphertext, payout_attempts, retry_at}`.
 - The epoch end undelegates each record's target from x/staking; maturity
@@ -1186,12 +1206,12 @@ The payout's pc and ciphertext link the undelegate tx to its payout notes
 ### 8.5 Stake votes
 
     MsgStakeVote {bundle 1 (fee), proposal_id 2, validator 3, options 4, weight 5,
-                  proof 8, vote_nullifiers 10 (exactly 2), debt_root 11}
+                  proof 8, vote_nullifiers 10 (exactly 2), debt_root 11, vintage 12}
                   reserved 6 ("fee"), 7 ("stake"), 9 ("vote_nullifier"); response field 1 reserved
-    public inputs: snapshot.root, snapshot.nf_root, debt_root, AssetID(derth/<validator>),
+    public inputs: snapshot.root, snapshot.nf_root, debt_root, AssetID(the vintage's stake denom),
                    weight, proposal_id, vote_nullifiers[0..1], sighash
     sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight,
-                    vote_nullifiers[0..1], debt_root
+                    vote_nullifiers[0..1], debt_root [, U64(vintage) when non-zero]
 
 - ValidateBasic: exactly 2 vote nullifiers, canonical, non-zero, distinct
   (`CheckVoteNullifiers`; an unused slot carries its padding nullifier);
@@ -1201,7 +1221,13 @@ The payout's pc and ciphertext link the undelegate tx to its payout notes
 - The chain refuses: no open snapshot, a snapshot without nf_root (1106), a
   debt_root that is not current, weight above the validator's snapshot
   supply (1103), any vote nullifier already used on the proposal
-  (`UsedVoteNullifiers`; `ErrVoteNullifierUsed` 1119, final, no re-vote).
+  (`UsedVoteNullifiers`; `ErrVoteNullifierUsed` 1119, final, no re-vote), a
+  vintage retired by now (1121) or after the snapshot's month
+  (`ProposalSnapshot.vintage` field 10, 1122; 0 for snapshots taken before
+  v1.3.0: not checked). The snapshot's per-validator supply is derth_supply,
+  which counts the live vintages only. A vote cast before its vintage
+  retired keeps counting until the proposal ends (as a vote outlives the
+  stake that cast it, audit F6).
 - It records ONE StakeVote under `0x00 || vote_nullifiers[0]` with both
   `vote_nullifiers` (field 7) and derth = weight, and marks both used on the
   proposal (padding included). Nothing is spent or minted.
@@ -1240,9 +1266,12 @@ A stake note votes in Groundworks in place, keyed by its Groundworks tag
   output's unexposed derth, proven by the circuit. Stored as
   `GroundworksVote {id 1, validator 2, derth 3, splits 4, created_height 7,
   weight 8 (not stored: derth × epoch rate, filled by queries), split_epoch
-  10, split_expires_at 11, tag 12, pending 13, pending_key 14,
-  pending_move_time 15, matures_at 16}` (5, 6, 9 reserved: the positions'
-  pubkey, nonce, owner_tag). Without a split both outputs must not vote.
+  10, split_expires_at 11 (0 since v1.3.0), tag 12, pending 13, pending_key
+  14, pending_move_time 15, matures_at 16, vintage 17}` (5, 6, 9 reserved:
+  the positions' pubkey, nonce, owner_tag). A vote is in its output's
+  vintage: lane A's the msg's, the credit lane's the current month (a
+  redelegation's or a check-in's credit). Without a split both outputs must
+  not vote.
 - **Pending (moved stake votes at once).** A voting output's exposure (derth
   a move brought in, still labelled) votes too, without a re-vote: lane A's
   from the proof (`pending_key/time/exposed`), the credit lane's the credit
@@ -1276,24 +1305,29 @@ A stake note votes in Groundworks in place, keyed by its Groundworks tag
   or merge ends the old note's vote and starts the new note's in one tx.
   Voting, changing the split or renewing alone: a `MsgRestake` of the note
   onto itself with the split. "Stop voting": a restake with no split.
-- **Lease.** `split_expires_at` = cast + `groundworks_lease_seconds`
-  (section 9). Every cast starts a new lease; at the lapse the vote comes
-  off its validator's totals at that exact time and is deleted (`voteLapser`,
-  section 9, Leases).
+- **No lease (v1.3.0).** A stake note's vote ends with its vintage (8.9):
+  at the vintage's retirement its totals are dropped and the voter
+  re-filed (EndBlock of the retirement block), and its record is deleted by
+  the note's withdrawal (its tag cancels it) or by the dead-vote sweep
+  (BeginBlock, `DeadVoteSweepLimit` 200 a block, event action `retired`). A
+  check-in re-casts it in the current vintage. (Before v1.3.0 each vote
+  carried `split_expires_at` = cast + `groundworks_lease_seconds` and lapsed
+  through x/allocation's lease sweep; operators' splits keep that lease.)
 - A vote keeps its Groundworks weight whatever its validator's status
-  (jailed, unbonding, unbonded) until its lease ends: it is the holder's
+  (jailed, unbonding, unbonded) until its vintage retires: it is the holder's
   private stake, not the validator's power. Only an operator's self-bond is
   gated to Bonded validators (section 9). Decided, not an oversight. Votes
   are uncapped.
 - Votes do not vote on x/gov proposals: stake votes on proposals are
   `MsgStakeVote` only (8.5).
 
-Weighed per validator: x/shieldedstaking keeps `T[v][o]` = Σ over v's live
-votes of derth × percent (`GwTotals`, exact integers); each cast and cancel
-adds or removes exactly the vote's own terms. All of v's votes are ONE
-weighted voter in x/allocation, key `"gwpos/" || val_bytes` (26 or 38 bytes,
-never an account's 20/32 or a nullifier's 32), with weight per option
-`trunc(epoch_rate_v × T[v][o] / 100)` (`Voter.option_weights`,
+Weighed per validator: x/shieldedstaking keeps `T[v][m][o]` = Σ over the
+live votes of v's vintage m of derth × percent (`GwTotals`, prefix 61, exact
+integers); each cast and cancel adds or removes exactly the vote's own
+terms. All of v's votes are ONE weighted voter in x/allocation, key
+`"gwpos/" || val_bytes` (26 or 38 bytes, never an account's 20/32 or a
+nullifier's 32), with weight per option `trunc(epoch_rate_v × Σ over v's
+live vintages m of T[v][m][o] / 100)` (`Voter.option_weights`,
 `allocation.SetWeightedVoter`), beside the operator's self-bond. The epoch
 end, a later book in the sweep, a slash and both books of a redelegation
 (and the source and every destination of a slashed redelegation) re-file one
@@ -1307,8 +1341,8 @@ Queries: `Query/GroundworksVotes` (`/earth/shieldedstaking/v1/groundworks_votes`
 paginated; a wallet finds its own by its notes' tags) and
 `Query/GroundworksVote {id}` (`/earth/shieldedstaking/v1/groundworks_votes/{id}`).
 Event `shieldedstaking_groundworks_vote {action (cast, cancelled, matured,
-lapsed), vote_id, tag, validator, derth, weight, options, split_expires_at,
-pending, matures_at}`.
+retired; lapsed before v1.3.0), vote_id, tag, validator, derth, weight,
+options, split_expires_at (0), vintage, pending, matures_at}`.
 
 **Privacy (accepted).** Per vote, the validator, the weight (about the
 voting note's derth) and the split are public; the owner is not. A vote
@@ -1372,8 +1406,10 @@ derth than exists, value or credit below min_delegation or above a note, a
 credit the value does not buy (1103), move_time out of range (1120).
 
 A move with an entry is recorded (`Move {key, src, dst, height, move_time,
-credited, shares, entry_height, completion, retained}`, key = the credit
-nullifier) until the entry matures; indexed by entry and by completion.
+credited, shares, entry_height, completion, retained, vintage 11}`, key = the
+credit nullifier, vintage = dst's current vintage, where the credit landed;
+0 before v1.3.0 = the base) until the entry matures; indexed by entry and by
+completion.
 
 Event `shieldedstaking_redelegate {src_validator, dst_validator, derth,
 value, credited, queued, bonded, completion_time (unix ns; "" when no
@@ -1411,8 +1447,11 @@ burns exactly the fall of the module's shares at dst is the slash. Then
     value = TokensFromShares(burnt) at dst
     debt  = floor(value × S / (B + value))          (B, S after the burn)
 
-comes off dst's derth_supply (`ValidatorState.slash_debt` += debt): dst's
-rate is unchanged for every honest holder. Each move of a slashed entry owes
+comes off dst's derth_supply (`ValidatorState.slash_debt` += debt), each
+move's part off its vintage's supply (at most what the vintage holds; a
+vintage with no supply left books none, its holders' cut falls on dst's
+live holders as for a cleared label: 8.9): dst's rate is unchanged for every
+honest holder. Each move of a slashed entry owes
 debt pro rata to its share of what the slash took from its entry: retained −=
 its part, and its debt row is written. With no matching replay, an event is
 emitted and dst's book absorbs it. Events `shieldedstaking_slash_debt
@@ -1468,6 +1507,172 @@ MsgSetWithdrawAddress (1116/1117). Compounding resets an operator withdraw
 address found pointing elsewhere. A vesting account cannot operate a
 validator (1118). The only way to take income out is to unbond the self-bond.
 
+### 8.9 Stake vintages (v1.3.0)
+
+Abandoned private stake stops earning and voting after about a year without
+a check-in, while amounts stay private except at the check-in.
+
+**Vintage.** A stake note's asset names its validator and its vintage: the
+UTC month (YYYYMM) its stake was last checked in. Denom
+`derth/<valoper>/<YYYYMM>` (`types.VintageDenom`), except the **base
+vintage** (`Query/Vintages.base_vintage`; earth-1: the v1.3.0 upgrade
+month; a new chain: its genesis month), whose denom is the unsuffixed
+`derth/<valoper>` every note made before v1.3.0 carries in its commitment:
+exactly one denom per (validator, vintage). `ParseDerthDenom` reads both
+forms (the unsuffixed one as month 0 = the base). A msg names its lane A
+vintage in its `vintage` field (0: the base vintage); the chain supplies
+the asset ids from it (no circuit or verifying key changed: the asset was
+always a public input).
+
+**Live.** A vintage is live in its own month and the 12 after it, and
+retires at 00:00 UTC on the 1st of its month + 13
+(`VintageRetiresAt`): stake earns 12 to 13 months after its last check-in.
+Which msg may use which vintage:
+
+| msg | lane A vintage | credit lane |
+| --- | --- | --- |
+| Delegate | the current month only (1122 otherwise) | – |
+| Restake, Redelegate (src) | live (1121 retired, 1122 not begun) | Redelegate: dst's current month |
+| Undelegate | live; or retired: a withdrawal (below) | – |
+| CheckIn | live and before the current month | the current month |
+| StakeVote | live and not after the snapshot's month | – |
+
+Lanes must match their assets as the circuit already enforces (one asset
+per lane), so a restake, a merge or a Groundworks re-vote happens within
+one vintage.
+
+**Supply per vintage.** `VintageSupplies[(v, m)]` = S_{v,m} (prefix 62);
+`derth_supply_v` = Σ over v's stored vintages (all live once the month's
+sweep ran: invariant 11). Every creation and destruction of derth has a
+public amount and is booked to its vintage: a delegation (+derth, now), an
+undelegation (−amount, its vintage), a redelegation (−amount at src's
+vintage, +dst_derth at dst's current), a check-in (−amount from_vintage,
++amount now), a slash debt (−each move's part at the vintage its credit
+landed in, `Move.vintage`), a retirement (−S_{v,m}). One pot per validator:
+the rate stays `B_v / S_v` over every live vintage.
+
+**Retirement** (`retireVintages`, BeginBlock, after the slash watch and
+`matureVotes`). In the first block of a new UTC month (or the first after a
+halt) a sweep walks every book, `VintageRetireLimit` (200) a block from a
+persistent cursor (`VintageSweep {month, cursor, active, retry_at}`, prefix
+65); each book retires every vintage older than `month − 12`, oldest first
+(all a halt skipped). Per (v, m) with S_{v,m} > 0:
+
+    V = floor(S_{v,m} × B_v / S_v)        (B, S live, before; floored toward the pool)
+    S_v −= S_{v,m}; S_{v,m} removed (the supply is checkpointed first: snapshots keep theirs)
+    record (v, current epoch): requested, target, outstanding += V; pending_undelegation += V
+    UnbondPayout {id, v, epoch, value V, no pc, no ciphertext}   (held: in no queue, never paid by itself)
+    RetiredVintage {validator, vintage, supply, value V, payout_id, epoch,
+                    remaining_supply = supply, remaining_value = V, retired_at}   (prefix 63)
+
+The held undelegation goes through the ordinary pipeline: the epoch end
+undelegates the record's target from x/staking, a slash while pending cuts
+the target (BeforeValidatorSlashed) and a slash of the SDK entry cuts its
+balance, and maturity reads the entry. Retired value earns nothing (it is
+out of B_v); the rewards it no longer takes go to the live holders, and
+Groundworks' fixed emission spreads over the votes left. The vintage's
+Groundworks totals `T[v][m]` are dropped in the same pass and the voter is
+re-filed once per validator at the end of the block (`GwResync`, prefix 67,
+after x/allocation's BeginBlock settled the stream). Event
+`shieldedstaking_vintage_retired {validator, vintage, supply, value, epoch,
+payout_id}`. A pass that failed a book (logged, `shieldedstaking_epoch_failure`
+stage `retire_vintage`) runs again a day later; between the boundary and its
+book's turn a retired-by-time vintage takes no msg, and its supply still
+earns (at most the blocks the sweep takes).
+
+**Withdrawal of a retired note** (`MsgUndelegate` on the retired asset):
+`v_out = d` public, the note spent in lane A, the output a zero note that
+does not vote (no `groundworks_split`, `vote_tag` zero; 1121 otherwise; the
+chain cannot see that the output is zero: a change note would stay in the
+retired vintage and withdraw later at the same pro rata price, nothing
+lost). It pays
+
+    w = floor(d × remaining_value / remaining_supply)    (the whole remaining_value when d == remaining_supply)
+
+split off the held payout as a new `UnbondPayout {w, pc, ciphertext}` of
+the same record: paid at the record's maturity like every payout
+(`w × payout / requested`, so slashes reach it), or by the next block's
+sweep when the record has matured already. remaining_supply −= d,
+remaining_value −= w; the held payout's value is always remaining_value and
+is deleted with the last withdrawal (as is the RetiredVintage). Refused
+(1121) before the retirement is booked (the sweep has not reached the book
+yet) and once nothing remains; d above remaining_supply: 1103. Event
+`shieldedstaking_retired_withdrawal {validator, vintage, derth, value,
+epoch, payout_id, remaining_supply, remaining_value}`. The input's tag
+cancels its (dead) Groundworks vote. A labelled retired note withdraws by
+clearing its label (`amount − exposed + retained`): its window has closed
+(below).
+
+**Label window bound.** x/staking's `unbonding_time` is at most
+`MaxUnbondingSeconds` = 364 days: refused on x/staking's `MsgUpdateParams`
+by the router every gov proposal executes through (`app/operator_router.go`),
+at genesis (and `max_unbonding_seconds`), and reported by the epoch end.
+A credit lands in its vintage at the block time and retires at least 12
+calendar months (≥ 365 days) later, so its label window (unbonding_time +
+600 s) has closed by then: every retired note can clear, and no slash debt
+reaches a retired vintage through an open label. The one exception is an
+x/staking entry kept slashable past its window by `mergeOldEntries` (8.7:
+merged entries take the later completion) under sustained entry-cap
+traffic; a debt then owed by a vintage with no supply left is not booked,
+and the destination's live holders absorb the cut as for a cleared label
+(the retired note clears at the lower retained, and that remainder stays in
+the held payout).
+
+**Check-in** (`MsgCheckIn`, 8.3): lane A spends notes of `from_vintage`
+(live, before the current month), `v_in` 0, `v_out = amount` (a kept
+label's exposure and any change stay in from_vintage); lane B credits
+`amount` to the current vintage's note, unlabelled (`cr_move_time` 0; its
+input an unlabelled note of the current vintage or padding). The chain
+checks the validator, that from_vintage is live and older than now, and
+amount ≤ S_{v,from}; it moves amount from S_{v,from} to S_{v,now}: no
+x/staking action, no value moves, the rate does not change. Inputs' tags
+cancel their votes; the outputs may vote with the split (lane A's in
+from_vintage, lane B's in the current one). Gas: a restake's base over two
+lanes. Event `shieldedstaking_check_in {validator, from_vintage,
+to_vintage, derth}`.
+
+**Groundworks** (8.6): votes are per note as before, with their vintage;
+totals are kept per vintage (`T[v][m][o]`) and the voter is Σ over the live
+vintages; at retirement `T[v][m]` is dropped. Votes have no lease. Dead
+votes (of retired vintages) are deleted by the note's withdrawal or the
+dead-vote sweep (`GwVotesByVintage` (vintage, validator, id), prefix 66).
+Pending exposure maturity, the minimum vote and ResetAllocations' epoch
+behave as before.
+
+**Gov** (8.5): a stake vote names its vintage, refused when retired or
+after the snapshot's month; the snapshot supply is derth_supply (live
+vintages only); a vote already cast keeps counting when its vintage retires
+mid-vote.
+
+**Queries.** `Query/Vintages {validator, pagination}`
+(`/earth/shieldedstaking/v1/vintages/{validator}`): `current_vintage`,
+`base_vintage`, `next_retirement` (unix s), `live` (each live vintage with
+supply: vintage, denom, supply, retires_at), `retired` (paged by month, at
+most 100: each RetiredVintage with its denom and, while value is held, its
+unbond record: status, completion_time, payout). `Query/UnbondPayout {id}`
+serves a withdrawal's payout. No lookup by tag or owner.
+
+**Privacy.** Every stake action now publishes its notes' vintage (the
+month of their last check-in): a note's age bucket, and which vintage
+supply each public amount moves. A check-in publishes its amount, the
+amount of one position (lane A's v_out, at most the note) once per
+position per year; a withdrawal publishes the retired note's amount (as an
+undelegation always did). Holders of one vintage at a validator form an
+anonymity set of that vintage's notes only, smaller than the validator's:
+wallets should check in early in a month, when the current vintage is
+young, and need not check in more than once a year. Within a vintage
+nothing new is revealed. A retired vintage's total supply and value are
+public (they were part of public books already).
+
+**Upgrade (MigrateV1_3_0, never errors).** The upgrade month becomes the
+base vintage; every book's derth_supply becomes its base vintage supply;
+every Groundworks vote joins the base vintage with `split_expires_at` 0; the
+lease queue (prefix 58) and the per-(validator, option) totals (prefix 29)
+are cleared and the totals rebuilt per vintage (voters unchanged, re-filed
+at the end of the block); every open move's credit is in the base vintage.
+A failed step is logged and evented (stage `upgrade_v1_3_0/<step>`), never
+returned.
+
 ---
 
 ## 9. Allocation (Groundworks)
@@ -1484,17 +1689,17 @@ validator (1118). The only way to take income out is to unbond the self-bond.
 - **Leases.** Every Groundworks split is leased for
   `groundworks_lease_seconds` (x/allocation param 2; 0 = default 365 days;
   else 1 day to 2 years), as a caretaker split is for caretaker_vote_seconds:
-  a stake note's vote (`GroundworksVote.split_expires_at`, 8.6) and an operator's
-  (`MsgSetAllocations`, `Voter.expires_at` field 5) alike. Operators get the
-  same rule because their vote is the same kind of power (stake directing
-  public money); one param keeps the stream uniform. Casting again renews
-  the lease (from that block); a resync at a new weight keeps it. Genesis
-  refuses an account's Groundworks split with no `expires_at`, as it refuses
-  a Groundworks vote with no `split_expires_at`.
+  an operator's split (`MsgSetAllocations`, `Voter.expires_at` field 5).
+  Casting again renews the lease (from that block); a resync at a new
+  weight keeps it. Genesis refuses an account's Groundworks split with no
+  `expires_at`. Stake notes' votes carry no lease since v1.3.0: they end
+  with their stake vintage (8.6, 8.9); x/shieldedstaking registers no
+  `Lapser` (its `GwLapses` queue, prefix 58, was cleared by the upgrade),
+  and genesis refuses a Groundworks vote with a `split_expires_at`.
   - **Where a lease retires: only x/allocation's BeginBlock sweep**
     (`SweepLapses`, from the BeginBlocker's settle of each stream). It walks
     every lease due by the block time in time order (`VoterLapses` here,
-    x/shieldedstaking's `GwLapses` through the registered `Lapser`), settles
+    and any registered `Lapser`'s queue: none since v1.3.0), settles
     the index to each lapse time and retires that weight there
     (`SetWeightedVoterSettled` / `writeVoter`, no further settle), then
     settles to the block time: the emission after a lapse is never shared
@@ -1504,21 +1709,12 @@ validator (1118). The only way to take income out is to unbond the self-bond.
     lease earlier, in one (slower) block.
     **Bound** (audit R3-C1): a lease ends at cast block time + L, so one
     block's casts share one lapse second and only a halt packs several
-    blocks' worth into one sweep. Vote casts (stake msgs carrying a split)
-    are private actions, at most `max_private_actions_per_block` per block (32 by
-    default, 256 at most); account leases are operators' only, one per
-    operator. The first block after a halt of H seconds therefore retires at
-    most `max_private_actions_per_block` x H / block_time votes (32 per
-    block of halt: a 6 h halt at 6 s blocks, about 115k, each some 10-20 KV
-    operations and one event), plus at most one lease per operator. The
-    total work is what those blocks would have done; only its spreading is
-    lost. It cannot be weaponised: reaching the bound needs every block of
-    the matching window, one lease (365 days) before the halt, full of
-    paid vote casts, which crowds out every other private action for
-    that window and, since a vote holds one lease, means about
-    32 x L / block_time (~1.7e8) live votes renewed round-robin, all to
-    hit a halt no one can schedule a year ahead. The worst case is one
-    slow, event-heavy block, not a halt.
+    blocks' worth into one sweep. Account leases are operators' only, one
+    per operator, so the first block after a halt retires at most one lease
+    per operator. (Until v1.3.0 stake note votes were leased too, bounded by
+    `max_private_actions_per_block` x H / block_time after a halt of H
+    seconds; they now end with their vintage, whose retirement is bounded
+    per block: 8.9.)
   - **Every other settle** (a tx, a staking hook, an EndBlock resync:
     `AdvanceIndex` / `advanceIndexTo`) moves the index only and never
     touches a voter, vote or total, so a caller that reads a vote
@@ -1536,9 +1732,9 @@ validator (1118). The only way to take income out is to unbond the self-bond.
     failed in (`LapseRetryAt`, `LapseRetrySeconds`), counting meanwhile,
     never halting. A deterministic failure therefore keeps its weight, and
     its options keep earning on it, for good: alert on it.
-  - Events: `split_lapsed` (operators), `shieldedstaking_groundworks_vote`
-    with action `lapsed` (stake note votes; every vote event carries
-    `split_expires_at`).
+  - Events: `split_lapsed` (operators). (Before v1.3.0 also
+    `shieldedstaking_groundworks_vote` with action `lapsed` for stake note
+    votes.)
   - **Alerting** (x/allocation/types/events.go; none halts anything):
 
     | event | attributes | meaning | alert |
@@ -1619,8 +1815,11 @@ Genesis fields: params 1, epoch 2, validators 3, unbond_records 4, positions
 stake_nullifiers 10 (insertion order), stake_roots 11, snapshot_seq 12,
 supply_checkpoints 13, epoch_sweep 14, pending_releases 15, retiring_escrows
 16, unbond_payouts 17, next_unbond_payout_id 18, moves 19, debt_rows 20
-(insertion order, latest retained), max_unbonding_seconds 21.
-`ValidatorState.slash_debt` is field 9.
+(insertion order, latest retained), max_unbonding_seconds 21, base_vintage
+22 (0: InitGenesis takes the genesis month), vintage_supplies 23,
+retired_vintages 24 (8.9). `ValidatorState.slash_debt` is field 9. The
+vintage sweep is not exported (the first block after import sweeps every
+book again; retiring is idempotent).
 
 InitGenesis: re-inserts stake nullifiers in order and checks every
 snapshot's nf_root against the tree at its nf_size; rebuilds
@@ -1638,12 +1837,18 @@ an nf_size beyond the tree; a repeated or malformed vote key; a note vote
 without exactly 2 non-zero vote nullifiers (the first its key's) or sharing one with
 another vote on the proposal; a vote key other than `0x00 || nullifier` (the
 retired position votes' `0x01 || id` included); payouts per record
-not summing to its outstanding, values outside 1..2^63−1, a payout without a
-pc or blind ciphertext, retry_at not set exactly when attempts > 0; a
+not summing to its outstanding, a value not positive, a payout without a
+pc or blind ciphertext (a held one: with one), retry_at not set exactly when attempts > 0; a
 Groundworks vote's derth + pending outside 1..2^63−1 (either negative), a
 pending exposure without its move key, move time and matures_at (or those
 without a pending exposure), a malformed, zero or repeated
-tag, or a vote without a split and a lease; move and debt row keys not
+tag, a vote without a split or a vintage, or with a lease (v1.3.0); a
+vintage supply that is not positive, repeated, not a vintage or at a
+validator with no book, or a book whose derth_supply is not its vintage
+supplies' sum; a retired vintage with remaining_supply outside
+1..supply or remaining_value above value, or whose held payout (no pc) is
+missing, shared or not its remaining_value; a payout with no pc that no
+retired vintage holds; move and debt row keys not
 canonical, distinct and nonzero; retained outside 0..credited; a cut move
 without its row; a move or debt row key that is not a spent stake nullifier;
 a move's completion different from its entry's. x/personhood genesis refuses
@@ -1656,8 +1861,9 @@ redelegation record decoded once a pass):
 
 1. ERTH: module uerth balance == queued delegations + matured payouts not yet
    made.
-2. derth is never a coin; derth of v's Groundworks votes plus their pending
-   exposures (at their post-slash worth) ≤ derth_supply_v.
+2. derth is never a coin; derth of the live Groundworks votes of v's
+   vintage m plus their pending exposures (at their post-slash worth) ≤
+   S_{v,m}.
 3. Unbonding: per validator, UNBONDING records' sum == the module's SDK
    entries' initial balances; each record's height has an entry.
 4. Rate: pending_undelegation == PENDING targets, `D + W + P ≥ U`, and
@@ -1665,11 +1871,13 @@ redelegation record decoded once a pass):
    ceil(supply × 1e-18) + 1 uerth, never over).
 5. Reward escrows: every validator's escrow recorded and its withdraw
    address; no other; the module account's withdraw address is itself.
-6. Groundworks totals == Σ derth × percent of live Groundworks votes.
+6. Groundworks totals of a live vintage == Σ derth × percent of its live
+   Groundworks votes (a retired vintage's are stale until swept).
 7. Stake nullifier tree (O(1)): size 0 or 1 + its last value's leaf index;
    recorded latest size ≤ size.
 8. Payouts: each record's payouts sum to its outstanding; every payout in
-   exactly one queue; every MATURED record with untried payouts marked.
+   exactly one queue (a held one, no pc, in none); every MATURED record
+   with untried payouts marked.
 9. Redelegations: every x/staking redelegation is the module's, between two
    different validators, 1..1,024 entries of positive height in
    creation-height order, every unmatured positive-height entry holding
@@ -1678,6 +1886,11 @@ redelegation record decoded once a pass):
     its height with its completion; retained is its row's (or its credit);
     the debt tree's size is 0 or 1 + its last leaf index, one key and one
     retained per leaf; no slash left watched outside BeginBlock.
+11. Stake vintages: derth_supply_v == Σ v's stored vintage supplies (each
+    positive, none without a book); once the month's sweep is done every
+    stored vintage is live; every retired vintage has 0 < remaining_supply
+    ≤ supply, remaining_value ≤ value and, while value remains, a held
+    payout (no pc) of exactly remaining_value.
 
 ### 11.3 Exports
 
@@ -1743,6 +1956,23 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
   clear_before ≥ the chain's − 3,600 s and the root is current; a slash
   reaching a redelegation changes the root: re-prove). Every input
   publishes its Groundworks tag (padding: its own, for the padding rho).
+- **Vintages** (8.9): read `Query/Vintages` (or every validator's) for
+  `base_vintage` and `current_vintage`; a note's asset is
+  `VintageDenom(valoper, vintage, base)`. A delegation and every credit
+  (redelegation, check-in) land in the current month: prove for it, and
+  re-prove if the month turns before the tx lands (the ante refuses at no
+  cost). Set every msg's `vintage` to the notes' month (0 is accepted for
+  the base vintage, for wallets before v1.3.0; a non-zero value is appended
+  to the sighash). Keep one note per (validator, vintage). Check in each
+  note before its vintage's `retires_at` (once a year is enough; early in a
+  month: the current vintage's anonymity set grows through the month): one
+  `MsgCheckIn` per note, all of it (`amount` = its unexposed amount; a kept
+  label's exposure stays, and checks in after it clears), merging into the
+  current vintage's unlabelled note or a padding input, passing the split
+  so the vote moves with it. After retirement, withdraw each retired note
+  whole (`MsgUndelegate`, `vintage` = its month, `amount` = its value
+  (labelled: clear it), a zero note out, no split) to a fresh pool pc; the
+  payout comes at the record's maturity (`Query/Vintages.retired[].record`).
 - **Groundworks**: the owner picks one split; every stake msg then carries
   it (`groundworks_split`) with `vote_tag = H(TAG_GW, nk, out_rho)` and
   `vote_weight` = the output's unexposed amount and, for a kept label,
@@ -1751,7 +1981,8 @@ Ciphertexts in msgs are at most `MaxCiphertextBytes` (1,024).
   vote). Moved stake needs no re-vote. To vote all stake, send one
   `MsgRestake` per validator with the split; to stop, one with none. A
   restored wallet adopts its split from `Query/GroundworksVotes` (the vote
-  whose tag is one of its notes'). Re-vote before `split_expires_at`.
+  whose tag is one of its notes'). Votes have no lease since v1.3.0: a
+  check-in carries them into the current vintage.
 - **Validator list** (`Query/Validators`, `/earth/shieldedstaking/v1/validators`):
   wallets read **every page** of it, at one height (the response's `height`;
   pin later pages with the `x-cosmos-block-height` header), and quote from
