@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,6 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 
-	allocationkeeper "github.com/earth-network/earth/x/allocation/keeper"
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
@@ -29,14 +29,17 @@ import (
 // Groundworks stream, at the rate of the last epoch end, so every vote of a
 // validator moves together once an epoch and not with every block's rewards.
 //
-// Votes are weighed per validator, not one by one. For each validator v and
-// option o the module keeps T[v][o] = sum over v's live votes of derth x
-// percent (exact integers: nothing is divided until the weight is taken),
-// adjusted by each cast and cancel in O(options). All of v's votes are one
-// Groundworks voter (types.ValidatorVoterKey) with an absolute weight on each
-// option, trunc(rate_v x T[v][o] / 100) (allocation.SetWeightedVoter). An
-// epoch end or a slash re-files one voter per validator: the work grows with
-// validators, never with votes, so votes need no cap.
+// Votes are weighed per validator, not one by one. For each validator v,
+// stake vintage m and option o the module keeps T[v][m][o] = sum over the
+// live votes of v's vintage m of derth x percent (exact integers: nothing is
+// divided until the weight is taken), adjusted by each cast and cancel in
+// O(options). All of v's votes are one Groundworks voter
+// (types.ValidatorVoterKey) with an absolute weight on each option,
+// trunc(rate_v x sum over v's live vintages of T[v][m][o] / 100)
+// (allocation.SetWeightedVoter). An epoch end, a slash or a vintage's
+// retirement re-files one voter per validator: the work grows with
+// validators (and their 13 live vintages), never with votes, so votes need
+// no cap.
 //
 // A note's exposure (derth a move brought in, labelled: a slash of the
 // move's source may still cut it until the move's window closes) votes too,
@@ -47,13 +50,12 @@ import (
 // credit lane's is the credit itself (the msg's move). No re-vote is needed
 // for moved stake to count.
 //
-// A vote is leased (x/allocation groundworks_lease_seconds, a year by
-// default, as a caretaker split): it counts until split_expires_at, and
-// every stake msg that re-casts it starts a new lease. At the lapse the vote
-// comes off its validator's totals at that exact time and is deleted:
-// x/allocation settles the stream to it first (voteLapser, a types.Lapser).
-// A vote at a jailed or unbonded validator keeps its weight until then
-// (audit C-8, decided).
+// A vote has no lease of its own (v1.3.0): it lives with its note's stake
+// vintage. When the vintage retires (vintages.go) its totals are dropped and
+// the voter re-filed, and the vote's record is deleted by the note's
+// withdrawal or by the dead-vote sweep. A check-in re-casts it in the
+// current vintage. A vote at a jailed or unbonded validator keeps its weight
+// meanwhile (audit C-8, decided).
 //
 // A governance reset of the stream (ResetAllocations) bumps its epoch. A
 // vote counts only in the epoch it was cast in (split_epoch), and a
@@ -61,16 +63,14 @@ import (
 // reset both are stale, treated as zero, and the owner votes again (a
 // restake of the note onto itself with its split), as any voter does.
 
-// setVote stores v, keeping its lease in the lapse queue, its pending
-// exposure in the maturity queue and its tag indexed.
+// setVote stores v, keeping its pending exposure in the maturity queue and
+// its tag and vintage indexed.
 func (k Keeper) setVote(ctx context.Context, v types.GroundworksVote) error {
-	if err := k.unqueueLapse(ctx, v.Id); err != nil {
+	if err := k.unqueueVote(ctx, v.Id); err != nil {
 		return err
 	}
-	if v.SplitExpiresAt > 0 {
-		if err := k.GwLapses.Set(ctx, collections.Join(v.SplitExpiresAt, v.Id)); err != nil {
-			return err
-		}
+	if err := k.GwVotesByVintage.Set(ctx, collections.Join3(v.Vintage, v.Validator, v.Id)); err != nil {
+		return err
 	}
 	if hasPending(v) {
 		if err := k.GwMatures.Set(ctx, collections.Join(v.MaturesAt, v.Id)); err != nil {
@@ -84,9 +84,9 @@ func (k Keeper) setVote(ctx context.Context, v types.GroundworksVote) error {
 	return k.GwVotes.Set(ctx, v.Id, v)
 }
 
-// removeVote deletes vote v, its lease and its tag.
+// removeVote deletes vote v, its queue entries and its tag.
 func (k Keeper) removeVote(ctx context.Context, v types.GroundworksVote) error {
-	if err := k.unqueueLapse(ctx, v.Id); err != nil {
+	if err := k.unqueueVote(ctx, v.Id); err != nil {
 		return err
 	}
 	if err := k.GwVotesByTag.Remove(ctx, v.Tag); err != nil {
@@ -95,19 +95,17 @@ func (k Keeper) removeVote(ctx context.Context, v types.GroundworksVote) error {
 	return k.GwVotes.Remove(ctx, v.Id)
 }
 
-// unqueueLapse drops the stored vote id's lease from the lapse queue and
-// its pending exposure from the maturity queue.
-func (k Keeper) unqueueLapse(ctx context.Context, id uint64) error {
+// unqueueVote drops the stored vote id from the vintage index and its
+// pending exposure from the maturity queue.
+func (k Keeper) unqueueVote(ctx context.Context, id uint64) error {
 	old, err := k.GwVotes.Get(ctx, id)
 	if errors.Is(err, collections.ErrNotFound) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	if old.SplitExpiresAt > 0 {
-		if err := k.GwLapses.Remove(ctx, collections.Join(old.SplitExpiresAt, id)); err != nil {
-			return err
-		}
+	if err := k.GwVotesByVintage.Remove(ctx, collections.Join3(old.Vintage, old.Validator, id)); err != nil {
+		return err
 	}
 	if hasPending(old) {
 		return k.GwMatures.Remove(ctx, collections.Join(old.MaturesAt, id))
@@ -126,12 +124,13 @@ type pendingPart struct {
 }
 
 // gwOutput is one output's vote: its tag, its weight now, its pending
-// exposure, and the validator it votes at.
+// exposure, and the validator and vintage it votes at.
 type gwOutput struct {
 	tag     []byte
 	w       uint64
 	pending pendingPart
 	val     string
+	vintage uint32
 }
 
 func (o gwOutput) votes() bool { return o.w > 0 || o.pending.exposed > 0 }
@@ -139,12 +138,13 @@ func (o gwOutput) votes() bool { return o.w > 0 || o.pending.exposed > 0 }
 // gwOutputs is m's two outputs' votes: lane A's (its pending exposure the
 // proof's), the credit lane's (a move's: its pending exposure the credit,
 // keyed by the credit lane's nullifier, at the msg's move_time).
-func gwOutputs(m types.StakeMsg) []gwOutput {
+func gwOutputs(m types.StakeMsg, vc types.VintageCtx) []gwOutput {
 	p := m.StakeProofOf()
 	laneA, credit := m.Validators()
-	a := gwOutput{tag: p.VoteTag, w: p.VoteWeight, val: laneA,
+	va, vb := m.LaneVintages(vc)
+	a := gwOutput{tag: p.VoteTag, w: p.VoteWeight, val: laneA, vintage: va,
 		pending: pendingPart{key: p.PendingKey, time: p.PendingTime, exposed: p.PendingExposed}}
-	b := gwOutput{tag: p.CreditVoteTag, w: p.CreditVoteWeight, val: credit}
+	b := gwOutput{tag: p.CreditVoteTag, w: p.CreditVoteWeight, val: credit, vintage: vb}
 	if r, ok := m.(*types.MsgRedelegate); ok && !isZeroBytes(p.CreditVoteTag) {
 		b.pending = pendingPart{key: p.CreditNullifier, time: r.MoveTime, exposed: r.DstDerth}
 	}
@@ -220,16 +220,17 @@ func (k Keeper) gwEpoch(ctx context.Context) (uint64, error) {
 	return k.allocation.StreamEpoch(ctx, allocationtypes.STREAM_ID_GROUNDWORKS)
 }
 
-// voteLive reports whether v counts in Groundworks epoch epoch.
-func voteLive(v types.GroundworksVote, epoch uint64) bool {
-	return len(v.Splits) > 0 && v.SplitEpoch == epoch
+// voteLive reports whether v counts in Groundworks epoch epoch in month
+// cur: its split is of that epoch and its vintage is live.
+func voteLive(v types.GroundworksVote, epoch uint64, cur uint32) bool {
+	return len(v.Splits) > 0 && v.SplitEpoch == epoch && types.VintageLive(v.Vintage, cur)
 }
 
 // withLiveWeight is v with Weight filled in: derth x its validator's epoch
 // rate while it counts, else zero (what queries and events show).
 func (k Keeper) withLiveWeight(ctx context.Context, v types.GroundworksVote) types.GroundworksVote {
 	v.Weight = math.ZeroInt()
-	if epoch, err := k.gwEpoch(ctx); err == nil && voteLive(v, epoch) {
+	if epoch, err := k.gwEpoch(ctx); err == nil && voteLive(v, epoch, k.currentVintage(ctx)) {
 		v.Weight = k.voteWeight(ctx, v.Validator, v.Derth)
 	}
 	return v
@@ -251,14 +252,42 @@ func (k Keeper) freshTotals(ctx context.Context, v string, epoch uint64) error {
 	return k.GwEpoch.Set(ctx, v, epoch)
 }
 
-// clearTotals deletes v's totals.
+// clearTotals deletes v's totals, every vintage's.
 func (k Keeper) clearTotals(ctx context.Context, v string) error {
-	return k.GwTotals.Clear(ctx, collections.NewPrefixedPairRange[string, uint64](v))
+	return k.GwTotals.Clear(ctx, collections.NewPrefixedTripleRange[string, uint32, uint64](v))
+}
+
+// liveTotalsRange is v's totals of the vintages live in month cur.
+func liveTotalsRange(v string, cur uint32) *collections.Range[collections.Triple[string, uint32, uint64]] {
+	return new(collections.Range[collections.Triple[string, uint32, uint64]]).
+		StartInclusive(collections.TripleSuperPrefix[string, uint32, uint64](v, types.OldestLiveVintage(cur))).
+		EndInclusive(collections.Join3(v, cur, ^uint64(0)))
+}
+
+// dropStaleTotals deletes v's totals of vintages retired by month cur,
+// reporting whether it deleted any.
+func (k Keeper) dropStaleTotals(ctx context.Context, v string, cur uint32) (bool, error) {
+	rng := new(collections.Range[collections.Triple[string, uint32, uint64]]).
+		StartInclusive(collections.TriplePrefix[string, uint32, uint64](v)).
+		EndExclusive(collections.TripleSuperPrefix[string, uint32, uint64](v, types.OldestLiveVintage(cur)))
+	var stale []collections.Triple[string, uint32, uint64]
+	if err := k.GwTotals.Walk(ctx, rng, func(key collections.Triple[string, uint32, uint64], _ math.Int) (bool, error) {
+		stale = append(stale, key)
+		return false, nil
+	}); err != nil {
+		return false, err
+	}
+	for _, key := range stale {
+		if err := k.GwTotals.Remove(ctx, key); err != nil {
+			return false, err
+		}
+	}
+	return len(stale) > 0, nil
 }
 
 // addTotal adds delta to m[key], deleting it at zero; below zero is an
 // invariant failure.
-func addTotal(ctx context.Context, m collections.Map[collections.Pair[string, uint64], math.Int], key collections.Pair[string, uint64], delta math.Int) error {
+func addTotal(ctx context.Context, m collections.Map[collections.Triple[string, uint32, uint64], math.Int], key collections.Triple[string, uint32, uint64], delta math.Int) error {
 	cur, err := m.Get(ctx, key)
 	if errors.Is(err, collections.ErrNotFound) {
 		cur = math.ZeroInt()
@@ -268,7 +297,7 @@ func addTotal(ctx context.Context, m collections.Map[collections.Pair[string, ui
 	next := cur.Add(delta)
 	switch {
 	case next.IsNegative():
-		return types.ErrInvariant.Wrapf("groundworks total %s/%d below zero", key.K1(), key.K2())
+		return types.ErrInvariant.Wrapf("groundworks total %s/%d/%d below zero", key.K1(), key.K2(), key.K3())
 	case next.IsZero():
 		return m.Remove(ctx, key)
 	default:
@@ -277,23 +306,25 @@ func addTotal(ctx context.Context, m collections.Map[collections.Pair[string, ui
 }
 
 // addVoteTotals adds (sign 1) or removes (sign -1) a live vote's
-// contribution, derth x percent per option, to its validator's totals.
-// Removing exactly what adding put there is the point: the same vote always
-// contributes the same integers.
+// contribution, derth x percent per option, to its validator's totals of
+// its vintage. Removing exactly what adding put there is the point: the same
+// vote always contributes the same integers.
 func (k Keeper) addVoteTotals(ctx context.Context, p types.GroundworksVote, sign int64, epoch uint64) error {
 	if err := k.freshTotals(ctx, p.Validator, epoch); err != nil {
 		return err
 	}
 	for _, w := range p.Splits {
-		if err := addTotal(ctx, k.GwTotals, collections.Join(p.Validator, w.OptionId), p.Derth.MulRaw(int64(w.Percent)).MulRaw(sign)); err != nil {
+		key := collections.Join3(p.Validator, p.Vintage, w.OptionId)
+		if err := addTotal(ctx, k.GwTotals, key, p.Derth.MulRaw(int64(w.Percent)).MulRaw(sign)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// validatorOptionWeights is v's Groundworks voter: trunc(rate_v x T[v][o] /
-// 100) per option, nothing when its totals are stale.
+// validatorOptionWeights is v's Groundworks voter: trunc(rate_v x sum over
+// v's live vintages m of T[v][m][o] / 100) per option, nothing when its
+// totals are stale (a reset since).
 //
 // Deliberately not gated on v's status (audit C-8, decided: keep). Votes are
 // private stake whose holders chose where Groundworks money goes; they
@@ -309,21 +340,37 @@ func (k Keeper) validatorOptionWeights(ctx context.Context, v string, epoch uint
 		return nil, err
 	}
 	rate := k.epochRate(ctx, v)
-	var ws []allocationtypes.OptionWeight
-	err = k.GwTotals.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](v),
-		func(key collections.Pair[string, uint64], t math.Int) (bool, error) {
-			// An option pruned since a vote named it takes nothing
-			// (x/allocation skips it); the voter leaves it out (audit 7).
-			if ok, err := k.gwOptionExists(ctx, key.K2()); err != nil || !ok {
-				return err != nil, err
-			}
-			w := rate.MulInt(t).QuoInt64(100).TruncateInt()
-			if w.IsPositive() {
-				ws = append(ws, allocationtypes.OptionWeight{OptionId: key.K2(), Weight: w})
+	sums := map[uint64]math.Int{}
+	var order []uint64
+	err = k.GwTotals.Walk(ctx, liveTotalsRange(v, k.currentVintage(ctx)),
+		func(key collections.Triple[string, uint32, uint64], t math.Int) (bool, error) {
+			if cur, ok := sums[key.K3()]; ok {
+				sums[key.K3()] = cur.Add(t)
+			} else {
+				sums[key.K3()] = t
+				order = append(order, key.K3())
 			}
 			return false, nil
 		})
-	return ws, err
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+	var ws []allocationtypes.OptionWeight
+	for _, o := range order {
+		// An option pruned since a vote named it takes nothing
+		// (x/allocation skips it); the voter leaves it out (audit 7).
+		if ok, err := k.gwOptionExists(ctx, o); err != nil {
+			return nil, err
+		} else if !ok {
+			continue
+		}
+		w := rate.MulInt(sums[o]).QuoInt64(100).TruncateInt()
+		if w.IsPositive() {
+			ws = append(ws, allocationtypes.OptionWeight{OptionId: o, Weight: w})
+		}
+	}
+	return ws, nil
 }
 
 // gwOptionExists reports whether Groundworks option id still exists (not
@@ -382,12 +429,21 @@ func (k Keeper) syncValidatorVoterWith(ctx context.Context, v string, settled bo
 			return err
 		}
 	}
-	// No live totals left (the last vote cancelled or lapsed): the
-	// validator leaves the Groundworks index, so nothing walks or re-files
-	// it until a note votes there again.
+	// Totals of vintages retired since are dropped (the retirement sweep
+	// does so too; a resync never counts them).
+	cur := k.currentVintage(ctx)
+	if _, err := k.dropStaleTotals(ctx, v, cur); err != nil {
+		return err
+	}
+	// No live totals left (the last vote cancelled, or its vintage
+	// retired): the validator leaves the Groundworks index, so nothing walks
+	// or re-files it until a note votes there again.
 	empty := true
-	if err := k.GwTotals.Walk(ctx, collections.NewPrefixedPairRange[string, uint64](v),
-		func(collections.Pair[string, uint64], math.Int) (bool, error) { empty = false; return true, nil }); err != nil {
+	if err := k.GwTotals.Walk(ctx, liveTotalsRange(v, cur),
+		func(collections.Triple[string, uint32, uint64], math.Int) (bool, error) {
+			empty = false
+			return true, nil
+		}); err != nil {
 		return err
 	}
 	if empty {
@@ -426,19 +482,16 @@ func (k Keeper) ReweighGroundworks(ctx context.Context) {
 	}
 }
 
-// castVote stores a vote of derth at validator under tag, split by splits,
-// leased from now: its contribution goes on the validator's totals in the
-// current epoch and the validator's voter is re-filed. The stream is settled
-// first (syncValidatorVoter reads the totals after).
-func (k Keeper) castVote(ctx context.Context, tag []byte, validator string, derth math.Int, pending pendingPart, splits []allocationtypes.AllocationWeight) error {
+// castVote stores a vote of derth at validator's vintage under tag, split
+// by splits (no lease: it ends with its vintage): its contribution goes on
+// the vintage's totals in the current epoch and the validator's voter is
+// re-filed. The stream is settled first (syncValidatorVoter reads the
+// totals after).
+func (k Keeper) castVote(ctx context.Context, tag []byte, validator string, vintage uint32, derth math.Int, pending pendingPart, splits []allocationtypes.AllocationWeight) error {
 	if err := k.allocation.AdvanceIndex(ctx, allocationtypes.STREAM_ID_GROUNDWORKS); err != nil {
 		return err
 	}
 	epoch, err := k.gwEpoch(ctx)
-	if err != nil {
-		return err
-	}
-	expires, err := k.allocation.GroundworksLeaseEnd(ctx)
 	if err != nil {
 		return err
 	}
@@ -449,7 +502,7 @@ func (k Keeper) castVote(ctx context.Context, tag []byte, validator string, dert
 	v := types.GroundworksVote{
 		Id: id, Validator: validator, Derth: derth, Splits: splits, Tag: tag,
 		CreatedHeight: sdk.UnwrapSDKContext(ctx).BlockHeight(), Weight: math.ZeroInt(),
-		SplitEpoch: epoch, SplitExpiresAt: expires, Pending: math.ZeroInt(),
+		SplitEpoch: epoch, Pending: math.ZeroInt(), Vintage: vintage,
 	}
 	if pending.exposed > 0 {
 		at, err := k.maturesAt(ctx, pending.key, pending.time)
@@ -505,7 +558,7 @@ func (k Keeper) cancelVote(ctx context.Context, tag []byte) error {
 	if err != nil {
 		return err
 	}
-	live := voteLive(v, epoch)
+	live := voteLive(v, epoch, k.currentVintage(ctx))
 	if live {
 		if err := k.addVoteTotals(ctx, v, -1, epoch); err != nil {
 			return err
@@ -535,12 +588,16 @@ func (k Keeper) applyGroundworks(ctx context.Context, m types.StakeMsg) error {
 			return err
 		}
 	}
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return err
+	}
 	split := m.GroundworksSplitOf()
-	for _, o := range gwOutputs(m) {
+	for _, o := range gwOutputs(m, vc) {
 		if !o.votes() {
 			continue
 		}
-		if err := k.castVote(ctx, o.tag, o.val, math.NewIntFromUint64(o.w), o.pending, split); err != nil {
+		if err := k.castVote(ctx, o.tag, o.val, o.vintage, math.NewIntFromUint64(o.w), o.pending, split); err != nil {
 			return err
 		}
 	}
@@ -569,7 +626,11 @@ func (k Keeper) checkGroundworks(ctx context.Context, m types.StakeMsg) error {
 	for _, t := range p.InputTags() {
 		cancelled[string(t)] = true
 	}
-	for _, o := range gwOutputs(m) {
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return err
+	}
+	for _, o := range gwOutputs(m, vc) {
 		if !o.votes() {
 			continue
 		}
@@ -699,23 +760,25 @@ func (k Keeper) reweighSlashed(ctx context.Context) {
 	}
 }
 
-// gwKey is a (validator, option) totals key as a comparable map key.
+// gwKey is a (validator, vintage, option) totals key as a comparable map
+// key.
 type gwKey struct {
-	val    string
-	option uint64
+	val     string
+	vintage uint32
+	option  uint64
 }
 
-// gwTotalsOf computes every validator's totals from the votes: the sum of
-// derth x percent over its votes that count in epoch. O(votes): for
-// InitGenesis and the invariant only.
-func (k Keeper) gwTotalsOf(ctx context.Context, epoch uint64) (map[gwKey]math.Int, error) {
+// gwTotalsOf computes every validator's totals from the votes: per vintage,
+// the sum of derth x percent over its votes that count in epoch in month
+// cur. O(votes): for InitGenesis, the upgrade and the invariant only.
+func (k Keeper) gwTotalsOf(ctx context.Context, epoch uint64, cur uint32) (map[gwKey]math.Int, error) {
 	out := map[gwKey]math.Int{}
 	err := k.GwVotes.Walk(ctx, nil, func(_ uint64, p types.GroundworksVote) (bool, error) {
-		if !voteLive(p, epoch) {
+		if !voteLive(p, epoch, cur) {
 			return false, nil
 		}
 		for _, w := range p.Splits {
-			key := gwKey{p.Validator, w.OptionId}
+			key := gwKey{p.Validator, p.Vintage, w.OptionId}
 			c := p.Derth.MulRaw(int64(w.Percent))
 			if cur, ok := out[key]; ok {
 				c = c.Add(cur)
@@ -741,12 +804,12 @@ func (k Keeper) rebuildGwTotals(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	totals, err := k.gwTotalsOf(ctx, epoch)
+	totals, err := k.gwTotalsOf(ctx, epoch, k.currentVintage(ctx))
 	if err != nil {
 		return err
 	}
 	for key, t := range totals {
-		if err := k.GwTotals.Set(ctx, collections.Join(key.val, key.option), t); err != nil {
+		if err := k.GwTotals.Set(ctx, collections.Join3(key.val, key.vintage, key.option), t); err != nil {
 			return err
 		}
 		if err := k.GwEpoch.Set(ctx, key.val, epoch); err != nil {
@@ -756,26 +819,29 @@ func (k Keeper) rebuildGwTotals(ctx context.Context) error {
 	return nil
 }
 
-// assertGwTotals: every validator's stored totals (in the current epoch)
-// equal the sum of its live votes' contributions.
+// assertGwTotals: every validator's stored totals of a live vintage (in
+// the current epoch) equal the sum of its live votes' contributions.
+// Totals of a vintage retired since are stale (counted as zero, deleted by
+// the retirement sweep or the next resync).
 func (k Keeper) assertGwTotals(ctx context.Context) error {
 	epoch, err := k.gwEpoch(ctx)
 	if err != nil {
 		return err
 	}
-	want, err := k.gwTotalsOf(ctx, epoch)
+	cur := k.currentVintage(ctx)
+	want, err := k.gwTotalsOf(ctx, epoch, cur)
 	if err != nil {
 		return err
 	}
 	seen := 0
-	err = k.GwTotals.Walk(ctx, nil, func(key collections.Pair[string, uint64], t math.Int) (bool, error) {
+	err = k.GwTotals.Walk(ctx, nil, func(key collections.Triple[string, uint32, uint64], t math.Int) (bool, error) {
 		e, err := k.GwEpoch.Get(ctx, key.K1())
-		if err != nil || e != epoch {
+		if err != nil || e != epoch || !types.VintageLive(key.K2(), cur) {
 			return false, nil // stale: counts as zero, deleted on next touch
 		}
-		w, ok := want[gwKey{key.K1(), key.K2()}]
+		w, ok := want[gwKey{key.K1(), key.K2(), key.K3()}]
 		if !ok || !w.Equal(t) {
-			return true, types.ErrInvariant.Wrapf("groundworks total %s/%d is %s, votes give %s", key.K1(), key.K2(), t, w)
+			return true, types.ErrInvariant.Wrapf("groundworks total %s/%d/%d is %s, votes give %s", key.K1(), key.K2(), key.K3(), t, w)
 		}
 		seen++
 		return false, nil
@@ -789,114 +855,6 @@ func (k Keeper) assertGwTotals(ctx context.Context) error {
 	return nil
 }
 
-// voteLapser retires Groundworks votes at their lease end (x/allocation
-// settles the stream to that time first; types.Lapser).
-type voteLapser struct{ k Keeper }
-
-// NewGroundworksLapser returns the lapser to register with x/allocation for
-// the Groundworks stream.
-func NewGroundworksLapser(k Keeper) allocationtypes.Lapser { return voteLapser{k: k} }
-
-func (l voteLapser) NextLapse(ctx context.Context, t int64) (int64, bool, error) {
-	it, err := l.k.GwLapses.Iterate(ctx, new(collections.Range[collections.Pair[int64, uint64]]).
-		EndExclusive(collections.Join(t+1, uint64(0))))
-	if err != nil {
-		return 0, false, err
-	}
-	defer it.Close()
-	if !it.Valid() {
-		return 0, false, nil
-	}
-	key, err := it.Key()
-	if err != nil {
-		return 0, false, err
-	}
-	return key.K1(), true, nil
-}
-
-// Lapse deletes every vote whose lease ends at t: off its validator's
-// totals, the validator's voter re-filed (settled: the stream is at t). Per
-// validator in its own cache; a validator whose lapse fails keeps those
-// votes counting a day longer (re-queued) instead of stalling.
-func (l voteLapser) Lapse(ctx context.Context, t int64) error {
-	k := l.k
-	byVal := map[string][]uint64{}
-	var vals []string
-	if err := k.GwLapses.Walk(ctx, collections.NewPrefixedPairRange[int64, uint64](t),
-		func(key collections.Pair[int64, uint64]) (bool, error) {
-			p, err := k.GwVotes.Get(ctx, key.K2())
-			v := ""
-			if err == nil {
-				v = p.Validator
-			} else if !errors.Is(err, collections.ErrNotFound) {
-				return true, err
-			}
-			if _, ok := byVal[v]; !ok {
-				vals = append(vals, v)
-			}
-			byVal[v] = append(byVal[v], key.K2())
-			return false, nil
-		}); err != nil {
-		return err
-	}
-	for _, v := range vals {
-		ids := byVal[v]
-		err := k.guarded(ctx, func(cc context.Context) error {
-			epoch, err := k.gwEpoch(cc)
-			if err != nil {
-				return err
-			}
-			touched := false
-			for _, id := range ids {
-				if err := k.GwLapses.Remove(cc, collections.Join(t, id)); err != nil {
-					return err
-				}
-				p, err := k.GwVotes.Get(cc, id)
-				if errors.Is(err, collections.ErrNotFound) {
-					continue
-				} else if err != nil {
-					return err
-				}
-				// Re-cast since (its new lease is queued under a new id).
-				if p.SplitExpiresAt > t {
-					continue
-				}
-				if voteLive(p, epoch) {
-					if err := k.addVoteTotals(cc, p, -1, epoch); err != nil {
-						return err
-					}
-					touched = true
-				}
-				if err := k.GwVotesByTag.Remove(cc, p.Tag); err != nil {
-					return err
-				}
-				if err := k.GwVotes.Remove(cc, id); err != nil {
-					return err
-				}
-				k.voteEvent(cc, "lapsed", p)
-			}
-			if touched {
-				return k.syncValidatorVoterWith(cc, v, true)
-			}
-			return nil
-		})
-		if err != nil {
-			k.failure(ctx, "lapse_groundworks", v, err)
-			retry := allocationkeeper.LapseRetryAt(ctx, t)
-			allocationkeeper.EmitLeaseRetireFailed(ctx, allocationtypes.STREAM_ID_GROUNDWORKS, "groundworks_votes", v, t, retry, err)
-			for _, id := range ids {
-				if err := k.GwLapses.Remove(ctx, collections.Join(t, id)); err != nil {
-					return err
-				}
-				if err := k.GwLapses.Set(ctx, collections.Join(retry, id)); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
 // splitsAttr is a split as an event attribute: option:percent, comma-separated.
 func splitsAttr(splits []allocationtypes.AllocationWeight) string {
 	parts := make([]string, len(splits))
@@ -906,7 +864,8 @@ func splitsAttr(splits []allocationtypes.AllocationWeight) string {
 	return strings.Join(parts, ",")
 }
 
-// voteEvent emits a Groundworks vote's change: cast, cancelled or lapsed.
+// voteEvent emits a Groundworks vote's change: cast, cancelled, matured or
+// retired (its vintage retired; a dead vote deleted).
 func (k Keeper) voteEvent(ctx context.Context, action string, v types.GroundworksVote) {
 	v = k.withLiveWeight(ctx, v)
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(types.EventTypeGroundworksVote,
@@ -918,6 +877,7 @@ func (k Keeper) voteEvent(ctx context.Context, action string, v types.Groundwork
 		sdk.NewAttribute(types.AttributeKeyWeight, v.Weight.String()),
 		sdk.NewAttribute(types.AttributeKeyOptions, splitsAttr(v.Splits)),
 		sdk.NewAttribute(types.AttributeKeySplitExpiresAt, strconv.FormatInt(v.SplitExpiresAt, 10)),
+		sdk.NewAttribute(types.AttributeKeyVintage, strconv.FormatUint(uint64(v.Vintage), 10)),
 		sdk.NewAttribute(types.AttributeKeyPending, pendingAttr(v)),
 		sdk.NewAttribute(types.AttributeKeyMaturesAt, strconv.FormatInt(v.MaturesAt, 10)),
 	))
@@ -1010,7 +970,7 @@ func (k Keeper) matureVote(ctx context.Context, key collections.Pair[int64, uint
 	if err != nil {
 		return err
 	}
-	live := voteLive(v, epoch)
+	live := voteLive(v, epoch, k.currentVintage(ctx))
 	if live {
 		if err := k.addVoteTotals(ctx, v, -1, epoch); err != nil {
 			return err

@@ -58,6 +58,15 @@ message GenesisState {
   // max_unbonding_seconds is the longest x/staking unbonding_time seen: a
   // label's window is this plus move_time_slack.
   uint64 max_unbonding_seconds = 21;
+  // base_vintage is the stake vintage (YYYYMM) whose asset is the unsuffixed
+  // derth/<valoper> (the upgrade month at v1.3.0; the genesis month of a new
+  // chain, set by InitGenesis when 0).
+  uint32 base_vintage = 22;
+  // vintage_supplies are the stored vintages' supplies; per validator they
+  // sum to its derth_supply.
+  repeated VintageSupply vintage_supplies = 23 [(gogoproto.nullable) = false];
+  // retired_vintages are the retired vintages not fully withdrawn.
+  repeated RetiredVintage retired_vintages = 24 [(gogoproto.nullable) = false];
 }
 
 // RetiringEscrow is a scheduled reward-escrow retirement: validator's escrow

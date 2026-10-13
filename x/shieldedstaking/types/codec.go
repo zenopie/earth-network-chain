@@ -17,6 +17,7 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 		&MsgUndelegate{},
 		&MsgStakeVote{},
 		&MsgRedelegate{},
+		&MsgCheckIn{},
 	)
 	msgservice.RegisterMsgServiceDesc(registrar, &_Msg_serviceDesc)
 }
@@ -36,3 +37,4 @@ func ProvideRestakeGetSigners() signing.CustomGetSigner    { return noSigners("M
 func ProvideUndelegateGetSigners() signing.CustomGetSigner { return noSigners("MsgUndelegate") }
 func ProvideStakeVoteGetSigners() signing.CustomGetSigner  { return noSigners("MsgStakeVote") }
 func ProvideRedelegateGetSigners() signing.CustomGetSigner { return noSigners("MsgRedelegate") }
+func ProvideCheckInGetSigners() signing.CustomGetSigner    { return noSigners("MsgCheckIn") }

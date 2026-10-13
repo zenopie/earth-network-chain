@@ -15,9 +15,11 @@ import (
 )
 
 // Leased Groundworks splits. A split counts for groundworks_lease_seconds
-// after it was cast or renewed (an operator's MsgSetAllocations here, a
-// stake position's in x/shieldedstaking), as a caretaker split counts for
-// caretaker_vote_seconds. The weight comes out at the exact lapse time.
+// after it was cast or renewed (an operator's MsgSetAllocations), as a
+// caretaker split counts for caretaker_vote_seconds. The weight comes out at
+// the exact lapse time. Another module may register a Lapser for leased
+// weight of its own; none does since x/shieldedstaking v1.3.0 (stake note
+// votes end with their stake vintage, not a lease).
 //
 // Leases retire in one place only: this module's BeginBlocker
 // (SweepLapses), which walks every lease due up to the block time, in time
@@ -70,7 +72,7 @@ func LapseRetryAt(ctx context.Context, t int64) int64 {
 
 // EmitLeaseRetireFailed reports a lease that could not be retired at t and
 // keeps counting until retryAt. lapser names the queue ("account" for
-// operators' splits here, "positions" for x/shieldedstaking's), key the
+// operators' splits here, a registered Lapser's name otherwise), key the
 // voter or validator.
 func EmitLeaseRetireFailed(ctx context.Context, stream types.StreamId, lapser, key string, t, retryAt int64, cause error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)

@@ -57,6 +57,35 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			return err
 		}
 	}
+	// Stake vintages: a new chain's base vintage (the unsuffixed denom's)
+	// is its genesis month.
+	base := gs.BaseVintage
+	if base == 0 {
+		base = k.currentVintage(ctx)
+	}
+	if err := k.BaseVintage.Set(ctx, base); err != nil {
+		return err
+	}
+	for _, vs := range gs.VintageSupplies {
+		if _, err := k.valAddr(vs.Validator); err != nil {
+			return fmt.Errorf("genesis vintage supply: %w", err)
+		}
+		if err := k.VintageSupplies.Set(ctx, collections.Join(vs.Validator, vs.Vintage), vs.Supply); err != nil {
+			return err
+		}
+	}
+	held := map[uint64]bool{}
+	for _, rv := range gs.RetiredVintages {
+		if _, err := k.valAddr(rv.Validator); err != nil {
+			return fmt.Errorf("genesis retired vintage: %w", err)
+		}
+		if err := k.RetiredVintages.Set(ctx, collections.Join(rv.Validator, rv.Vintage), rv); err != nil {
+			return err
+		}
+		if rv.RemainingValue.IsPositive() {
+			held[rv.PayoutId] = true
+		}
+	}
 	for _, r := range gs.UnbondRecords {
 		key := collections.Join(r.Validator, r.Epoch)
 		if err := k.UnbondRecords.Set(ctx, key, r); err != nil {
@@ -83,6 +112,9 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	for _, p := range gs.UnbondPayouts {
 		if err := k.UnbondPayouts.Set(ctx, p.Id, p); err != nil {
 			return err
+		}
+		if held[p.Id] {
+			continue // a retired vintage's: queued nowhere
 		}
 		if p.RetryAt > 0 {
 			if err := k.PayoutRetries.Set(ctx, collections.Join(p.RetryAt, p.Id)); err != nil {
@@ -200,10 +232,15 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 // checkUnbondingEntries refuses params under which an epoch's undelegation
 // could hit x/staking's max_entries for the module's delegation to one
 // validator (audit F8): one entry per epoch over the unbonding time, plus
-// one for a sweep under way.
+// one for a sweep under way. It also refuses an unbonding_time above
+// types.MaxUnbondingSeconds (stake vintages: a label window must close
+// before the credit's vintage can retire).
 func (k Keeper) checkUnbondingEntries(ctx context.Context, p types.Params) error {
 	ut, err := k.staking.UnbondingTime(ctx)
 	if err != nil {
+		return err
+	}
+	if err := CheckUnbondingTime(ut); err != nil {
 		return err
 	}
 	maxEntries, err := k.staking.MaxEntries(ctx)
@@ -239,6 +276,16 @@ func (k Keeper) checkGenesisValidators(_ context.Context, gs types.GenesisState)
 	}
 	for _, v := range gs.Positions {
 		if err := check("groundworks vote", v.Validator); err != nil {
+			return err
+		}
+	}
+	for _, v := range gs.VintageSupplies {
+		if err := check("vintage supply", v.Validator); err != nil {
+			return err
+		}
+	}
+	for _, v := range gs.RetiredVintages {
+		if err := check("retired vintage", v.Validator); err != nil {
 			return err
 		}
 	}
@@ -582,7 +629,36 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	} else if !errors.Is(err, collections.ErrNotFound) {
 		return nil, err
 	}
+	if gs.BaseVintage, err = k.baseVintage(ctx); err != nil {
+		return nil, err
+	}
+	if err := k.VintageSupplies.Walk(ctx, nil, func(key collections.Pair[string, uint32], s math.Int) (bool, error) {
+		gs.VintageSupplies = append(gs.VintageSupplies, types.VintageSupply{Validator: key.K1(), Vintage: key.K2(), Supply: s})
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := k.RetiredVintages.Walk(ctx, nil, func(_ collections.Pair[string, uint32], rv types.RetiredVintage) (bool, error) {
+		gs.RetiredVintages = append(gs.RetiredVintages, rv)
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
 	return gs, nil
+}
+
+// CheckUnbondingTime refuses an x/staking unbonding_time above
+// types.MaxUnbondingSeconds: a redelegation's label window (unbonding_time
+// + MoveTimeSlackSeconds) must close before the credit's stake vintage can
+// retire (at least 365 days after the credit). Applied to x/staking's
+// MsgUpdateParams on every route that executes it (app/operator_router.go),
+// at genesis and by the epoch end's report.
+func CheckUnbondingTime(ut time.Duration) error {
+	if ut > types.MaxUnbondingSeconds*time.Second {
+		return types.ErrInvalidMsg.Wrapf("x/staking unbonding_time %s exceeds %ds: a slash label would outlive its stake vintage",
+			ut, types.MaxUnbondingSeconds)
+	}
+	return nil
 }
 
 // checkGenesisDelegations enforces the delegation rule on what x/staking
@@ -818,6 +894,9 @@ func (k Keeper) initMoves(ctx context.Context, gs types.GenesisState) error {
 		}
 	}
 	if gs.MaxUnbondingSeconds > 0 {
+		if err := CheckUnbondingTime(time.Duration(gs.MaxUnbondingSeconds) * time.Second); err != nil {
+			return fmt.Errorf("genesis max_unbonding_seconds: %w", err)
+		}
 		if err := k.MaxUnbonding.Set(ctx, gs.MaxUnbondingSeconds); err != nil {
 			return err
 		}

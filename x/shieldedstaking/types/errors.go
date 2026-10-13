@@ -24,4 +24,10 @@ var (
 	ErrVestingOperator     = errors.Register(ModuleName, 1118, "a vesting account cannot operate a validator: compounding its rewards would unlock its vesting coins")
 	ErrRedelegation        = errors.Register(ModuleName, 1120, "redelegation refused")
 	ErrOperatorRewardClaim = errors.Register(ModuleName, 1117, "validator rewards and commission auto-compound into self-bond and cannot be withdrawn: to take them out, undelegate the self-bond (the unbonding period applies)")
+	// ErrRetiredVintage: the msg's stake vintage has retired; the only msg
+	// its notes take is MsgUndelegate withdrawing them (v1.3.0).
+	ErrRetiredVintage = errors.Register(ModuleName, 1121, "stake vintage retired: its notes can only be withdrawn (MsgUndelegate with no groundworks split)")
+	// ErrVintage: a vintage that is not one, not live for the msg, or not the
+	// one the msg must name (v1.3.0).
+	ErrVintage = errors.Register(ModuleName, 1122, "invalid stake vintage")
 )

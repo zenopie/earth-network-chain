@@ -128,6 +128,10 @@ message Move {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+  // vintage is the stake vintage (YYYYMM) the credit landed in at dst (its
+  // current vintage at the move): a slash's debt comes off that vintage's
+  // supply. 0 (moves made before v1.3.0) is the base vintage.
+  uint32 vintage = 11;
 }
 
 // DebtRow is one row of the slash debt tree: a slashed move's key and what
@@ -288,10 +292,8 @@ message GroundworksVote {
   // cast in. A governance reset bumps that epoch, and a split from an older
   // one no longer counts (the owner votes again).
   uint64 split_epoch = 10;
-  // split_expires_at is when the split stops counting (unix seconds): cast
-  // + x/allocation groundworks_lease_seconds. At that time the vote is
-  // dropped from its validator's totals (the stream settled to the expiry
-  // first); the owner re-casts with any stake msg naming a split.
+  // split_expires_at was the vote's lease end (unix seconds). Stake votes
+  // carry no lease since v1.3.0 (they end with their vintage): always 0.
   int64 split_expires_at = 11;
   // tag is the note's Groundworks tag (32 bytes).
   bytes tag = 12;
@@ -311,6 +313,9 @@ message GroundworksVote {
   bytes pending_key = 14;
   uint64 pending_move_time = 15;
   int64 matures_at = 16;
+  // vintage is the voting note's stake vintage (YYYYMM). The vote counts
+  // while its vintage is live and ends with it (ORCHARD_DESIGN.md 8.9).
+  uint32 vintage = 17;
 }
 
 // StakeRoot is a stake-tree root recorded at the end of a block that changed
@@ -349,6 +354,10 @@ message ProposalSnapshot {
   // stake vote proves its note unspent against it (circuits/vote).
   bytes nf_root = 8;
   uint64 nf_size = 9;
+  // vintage is the current stake vintage (YYYYMM) when the snapshot was
+  // taken: a note of a later vintage cannot be under its root, and is
+  // refused. 0 for snapshots taken before v1.3.0.
+  uint32 vintage = 10;
 }
 
 // ValidatorSnapshot is one validator's derth supply and rate at a snapshot.
@@ -418,4 +427,75 @@ message VoteTally {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+}
+
+// VintageSupply is the derth of one stake vintage at one validator: S_{v,m}.
+// A validator's derth_supply is the sum over its stored vintages (all live
+// once the month's retirement sweep has run).
+message VintageSupply {
+  string validator = 1;
+  // vintage is the month (YYYYMM, UTC) the stake was last checked in.
+  uint32 vintage = 2;
+  string supply = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// RetiredVintage is a stake vintage that reached 00:00 UTC on the 1st of
+// its month + 13: its supply left the validator's book at the live rate as
+// one held private undelegation (payout_id, no pc), which its notes withdraw
+// from pro rata (MsgUndelegate on the retired asset).
+message RetiredVintage {
+  string validator = 1;
+  uint32 vintage = 2;
+  // supply is the derth that retired; value its ERTH value then,
+  // floor(supply x B_v / S_v).
+  string supply = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string value = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // payout_id is the held UnbondPayout (no pc, never paid by itself) whose
+  // value is remaining_value, while remaining_value is positive (payout ids
+  // start at 0: payout_id means nothing once remaining_value is 0). epoch is
+  // its unbond record's.
+  uint64 payout_id = 5;
+  uint64 epoch = 6;
+  // remaining_supply and remaining_value are what the vintage's notes have
+  // not yet withdrawn.
+  string remaining_supply = 7 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string remaining_value = 8 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // retired_at is the block time (unix seconds) the retirement was booked.
+  int64 retired_at = 9;
+}
+
+// VintageSweep is the monthly retirement sweep over the validator books:
+// month is the month the books are being brought up to (every vintage
+// older than month - 12 retires), cursor the last book done while active.
+// retry_at (unix seconds): a pass that failed a book runs again then.
+message VintageSweep {
+  uint32 month = 1;
+  string cursor = 2;
+  bool active = 3;
+  int64 retry_at = 4;
 }

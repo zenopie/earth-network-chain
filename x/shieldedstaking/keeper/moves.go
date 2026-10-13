@@ -644,7 +644,12 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 			}
 		}
 	}
-	booked := math.ZeroInt()
+	base, err := k.baseVintage(ctx)
+	if err != nil {
+		return err
+	}
+	byVintage := map[uint32]math.Int{}
+	var vintages []uint32
 	for i, o := range moves {
 		mv := o.mv
 		d := debts[i]
@@ -652,7 +657,16 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 			continue
 		}
 		mv.Retained = mv.Retained.Sub(d)
-		booked = booked.Add(d)
+		vin := mv.Vintage
+		if vin == 0 {
+			vin = base
+		}
+		if cur, ok := byVintage[vin]; ok {
+			byVintage[vin] = cur.Add(d)
+		} else {
+			byVintage[vin] = d
+			vintages = append(vintages, vin)
+		}
 		if err := k.Moves.Set(ctx, mv.Key, mv); err != nil {
 			return err
 		}
@@ -667,6 +681,29 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 			sdk.NewAttribute(types.AttributeKeyRetained, mv.Retained.String()),
 		))
 	}
+	// The debt comes off the supply of the vintage each move's credit
+	// landed in, at most what it holds. A vintage that holds none has
+	// retired (only an x/staking entry merged into later ones keeps a move
+	// slashable past its label window, and the window closes before the
+	// credit's vintage can retire: types.MaxUnbondingSeconds): its debt is
+	// not booked and the destination's live holders absorb the cut, as for
+	// a label already cleared.
+	sort.Slice(vintages, func(i, j int) bool { return vintages[i] < vintages[j] })
+	booked := math.ZeroInt()
+	for _, vin := range vintages {
+		sv, err := k.VintageSupply(ctx, dstoper, vin)
+		if err != nil {
+			return err
+		}
+		take := math.MinInt(byVintage[vin], sv)
+		if !take.IsPositive() {
+			continue
+		}
+		if err := k.addVintageSupply(ctx, dstoper, vin, take.Neg()); err != nil {
+			return err
+		}
+		booked = booked.Add(take)
+	}
 	vs, err := k.ValidatorState(ctx, dstoper)
 	if err != nil {
 		return err
@@ -675,7 +712,7 @@ func (k Keeper) settleSlash(ctx context.Context, src, dstoper string, before mat
 		return err
 	}
 	if booked.GT(vs.DerthSupply) {
-		booked = vs.DerthSupply
+		return types.ErrInvariant.Wrapf("%s: slash debt %s above its supply %s", dstoper, booked, vs.DerthSupply)
 	}
 	vs.DerthSupply = vs.DerthSupply.Sub(booked)
 	vs.SlashDebt = vs.SlashDebt.Add(booked)

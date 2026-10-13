@@ -51,6 +51,13 @@ const (
 	EventTypeSlashDebt   = "shieldedstaking_slash_debt"
 	EventTypeMoveSlashed = "shieldedstaking_move_slashed"
 	EventTypeDebtRow     = "shieldedstaking_debt_row"
+	// Stake vintages (v1.3.0): a vintage retired at a validator (its supply
+	// booked as a held undelegation), a retired vintage's note withdrawn
+	// (its share split off the held payout), and a check-in moving derth
+	// into the current vintage.
+	EventTypeVintageRetired    = "shieldedstaking_vintage_retired"
+	EventTypeRetiredWithdrawal = "shieldedstaking_retired_withdrawal"
+	EventTypeCheckIn           = "shieldedstaking_check_in"
 
 	AttributeKeyValidator   = "validator"
 	AttributeKeyAmount      = "amount"
@@ -69,8 +76,17 @@ const (
 	AttributeKeyProposal    = "proposal_id"
 	AttributeKeyWeight      = "weight"
 	// AttributeKeySplitExpiresAt: a Groundworks vote's lease end (unix
-	// seconds).
+	// seconds); always 0 since v1.3.0 (stake votes end with their vintage).
 	AttributeKeySplitExpiresAt = "split_expires_at"
+	// AttributeKeyVintage: the stake vintage (YYYYMM) a msg's notes or a
+	// vote belong to; AttributeKeyFromVintage/ToVintage a check-in's;
+	// AttributeKeyDstVintage the vintage a redelegation's credit lands in.
+	AttributeKeyVintage         = "vintage"
+	AttributeKeyFromVintage     = "from_vintage"
+	AttributeKeyToVintage       = "to_vintage"
+	AttributeKeyDstVintage      = "dst_vintage"
+	AttributeKeyRemainingSupply = "remaining_supply"
+	AttributeKeyRemainingValue  = "remaining_value"
 	// AttributeKeyPending: a Groundworks vote's pending exposure (derth, not
 	// yet counted); AttributeKeyMaturesAt: when it is due to count.
 	AttributeKeyPending   = "pending"

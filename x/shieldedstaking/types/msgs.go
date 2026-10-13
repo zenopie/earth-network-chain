@@ -22,6 +22,7 @@ const (
 	TypeMsgUndelegate = "/earth.shieldedstaking.v1.MsgUndelegate"
 	TypeMsgStakeVote  = "/earth.shieldedstaking.v1.MsgStakeVote"
 	TypeMsgRedelegate = "/earth.shieldedstaking.v1.MsgRedelegate"
+	TypeMsgCheckIn    = "/earth.shieldedstaking.v1.MsgCheckIn"
 )
 
 var (
@@ -30,6 +31,7 @@ var (
 	_ shieldedtypes.PrivateMsg = (*MsgUndelegate)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgStakeVote)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgRedelegate)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgCheckIn)(nil)
 )
 
 // ---- field encodings the sighashes bind -----------------------------------
@@ -400,15 +402,19 @@ func (p *StakeProof) PublicInputs(l StakeLanes, sighash fr.Element) [][]byte {
 }
 
 // StakeMsg is a staking msg with a stake proof and what the chain supplies
-// to it, and the Groundworks split its voting outputs carry: lane A's at
-// Validators' first, the credit lane's at its second ("" when it credits no
-// second asset).
+// to it (StakeLanes, given the base vintage and the current month), and the
+// Groundworks split its voting outputs carry: lane A's at Validators' first
+// in vintage LaneVintages' first, the credit lane's at their second ("" and
+// 0 when it credits no second asset).
 type StakeMsg interface {
 	shieldedtypes.PrivateMsg
 	StakeProofOf() *StakeProof
-	StakeLanes() StakeLanes
+	StakeLanes(vc VintageCtx) StakeLanes
 	GroundworksSplitOf() []allocationtypes.AllocationWeight
 	Validators() (laneA, credit string)
+	LaneVintages(vc VintageCtx) (laneA, credit uint32)
+	// HasCreditLane: the msg credits a second asset (lane B).
+	HasCreditLane() bool
 }
 
 var (
@@ -416,7 +422,37 @@ var (
 	_ StakeMsg = (*MsgRestake)(nil)
 	_ StakeMsg = (*MsgUndelegate)(nil)
 	_ StakeMsg = (*MsgRedelegate)(nil)
+	_ StakeMsg = (*MsgCheckIn)(nil)
 )
+
+func (m *MsgDelegate) HasCreditLane() bool   { return false }
+func (m *MsgRestake) HasCreditLane() bool    { return false }
+func (m *MsgUndelegate) HasCreditLane() bool { return false }
+func (m *MsgRedelegate) HasCreditLane() bool { return true }
+func (m *MsgCheckIn) HasCreditLane() bool    { return true }
+
+func (m *MsgDelegate) LaneVintages(vc VintageCtx) (uint32, uint32) { return vc.Resolve(m.Vintage), 0 }
+func (m *MsgRestake) LaneVintages(vc VintageCtx) (uint32, uint32)  { return vc.Resolve(m.Vintage), 0 }
+func (m *MsgUndelegate) LaneVintages(vc VintageCtx) (uint32, uint32) {
+	return vc.Resolve(m.Vintage), 0
+}
+func (m *MsgRedelegate) LaneVintages(vc VintageCtx) (uint32, uint32) {
+	return vc.Resolve(m.Vintage), vc.Current
+}
+func (m *MsgCheckIn) LaneVintages(vc VintageCtx) (uint32, uint32) {
+	return m.FromVintage, vc.Current
+}
+
+// withVintage appends U64(vintage) to a pre-v1.3.0 msg's sighash fields when
+// the msg names a vintage: a msg with vintage 0 (the base vintage) hashes as
+// before, so a wallet that predates vintages still signs it, and the two
+// encodings of the base vintage never share a sighash.
+func withVintage(fields []fr.Element, vintage uint32) []fr.Element {
+	if vintage == 0 {
+		return fields
+	}
+	return append(fields, privacy.U64(uint64(vintage)))
+}
 
 func (m *MsgDelegate) GroundworksSplitOf() []allocationtypes.AllocationWeight {
 	return m.GroundworksSplit
@@ -430,10 +466,14 @@ func (m *MsgUndelegate) GroundworksSplitOf() []allocationtypes.AllocationWeight 
 func (m *MsgRedelegate) GroundworksSplitOf() []allocationtypes.AllocationWeight {
 	return m.GroundworksSplit
 }
+func (m *MsgCheckIn) GroundworksSplitOf() []allocationtypes.AllocationWeight {
+	return m.GroundworksSplit
+}
 func (m *MsgDelegate) Validators() (string, string)   { return m.Validator, "" }
 func (m *MsgRestake) Validators() (string, string)    { return m.Validator, "" }
 func (m *MsgUndelegate) Validators() (string, string) { return m.Validator, "" }
 func (m *MsgRedelegate) Validators() (string, string) { return m.SrcValidator, m.DstValidator }
+func (m *MsgCheckIn) Validators() (string, string)    { return m.Validator, m.Validator }
 
 func withStake(p *StakeProof, fields ...fr.Element) []fr.Element {
 	return append(p.StakeFields(), fields...)
@@ -482,9 +522,10 @@ func (m *MsgDelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&
 func (m *MsgDelegate) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, m.Amount) }
 func (m *MsgDelegate) StakeProofOf() *StakeProof               { return &m.Stake }
 
-// StakeLanes: derth/<validator>, crediting derth.
-func (m *MsgDelegate) StakeLanes() StakeLanes {
-	return StakeLanes{Denom: DerthDenom(m.Validator), VIn: m.Derth}
+// StakeLanes: the vintage's derth/<validator> asset (the chain refuses any
+// vintage but the current one), crediting derth.
+func (m *MsgDelegate) StakeLanes(vc VintageCtx) StakeLanes {
+	return StakeLanes{Denom: vc.Denom(m.Validator, m.Vintage), VIn: m.Derth}
 }
 
 // Delegated is the uerth delegated: what the bundle releases beyond the fee
@@ -492,10 +533,10 @@ func (m *MsgDelegate) StakeLanes() StakeLanes {
 func (m *MsgDelegate) Delegated() uint64 { return released(m, BondDenom) }
 
 // SighashFields: StakeFields, Bytes(validator), amount, derth,
-// Bytes(SplitsBytes(groundworks_split)).
+// Bytes(SplitsBytes(groundworks_split)), then U64(vintage) when non-zero.
 func (m *MsgDelegate) SighashFields(address.Codec) ([]fr.Element, error) {
-	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount), privacy.U64(m.Derth),
-		privacy.Bytes(SplitsBytes(m.GroundworksSplit))), nil
+	return withVintage(withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount), privacy.U64(m.Derth),
+		privacy.Bytes(SplitsBytes(m.GroundworksSplit))), m.Vintage), nil
 }
 
 // ValidateBasic: a positive amount released by the bundle, a positive derth,
@@ -508,6 +549,9 @@ func (m *MsgDelegate) ValidateBasic() error {
 		return err
 	}
 	if err := positive("derth", m.Derth); err != nil {
+		return err
+	}
+	if err := checkMsgVintage(m.Vintage); err != nil {
 		return err
 	}
 	if err := checkMoves(m, BondDenom); err != nil {
@@ -525,17 +569,22 @@ func (m *MsgRestake) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m
 func (m *MsgRestake) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgRestake) StakeProofOf() *StakeProof               { return &m.Stake }
 
-// StakeLanes: derth/<validator>, nothing in or out.
-func (m *MsgRestake) StakeLanes() StakeLanes { return StakeLanes{Denom: DerthDenom(m.Validator)} }
+// StakeLanes: the vintage's derth/<validator> asset, nothing in or out.
+func (m *MsgRestake) StakeLanes(vc VintageCtx) StakeLanes {
+	return StakeLanes{Denom: vc.Denom(m.Validator, m.Vintage)}
+}
 
 // SighashFields: StakeFields, Bytes(validator),
-// Bytes(SplitsBytes(groundworks_split)).
+// Bytes(SplitsBytes(groundworks_split)), then U64(vintage) when non-zero.
 func (m *MsgRestake) SighashFields(address.Codec) ([]fr.Element, error) {
-	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), nil
+	return withVintage(withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), m.Vintage), nil
 }
 
 func (m *MsgRestake) ValidateBasic() error {
 	if err := checkValidator(m.Validator); err != nil {
+		return err
+	}
+	if err := checkMsgVintage(m.Vintage); err != nil {
 		return err
 	}
 	if err := checkMoves(m, ""); err != nil {
@@ -550,20 +599,21 @@ func (m *MsgUndelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle
 func (m *MsgUndelegate) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgUndelegate) StakeProofOf() *StakeProof               { return &m.Stake }
 
-// StakeLanes: derth/<validator>, amount leaving.
-func (m *MsgUndelegate) StakeLanes() StakeLanes {
-	return StakeLanes{Denom: DerthDenom(m.Validator), VOut: m.Amount}
+// StakeLanes: the vintage's derth/<validator> asset, amount leaving.
+func (m *MsgUndelegate) StakeLanes(vc VintageCtx) StakeLanes {
+	return StakeLanes{Denom: vc.Denom(m.Validator, m.Vintage), VOut: m.Amount}
 }
 
 // SighashFields: StakeFields, Bytes(validator), amount, pc,
-// Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)).
+// Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)), then
+// U64(vintage) when non-zero.
 func (m *MsgUndelegate) SighashFields(address.Codec) ([]fr.Element, error) {
 	pc, err := field("pc", m.Pc)
 	if err != nil {
 		return nil, err
 	}
-	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount), pc,
-		privacy.Bytes(m.Ciphertext), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), nil
+	return withVintage(withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(m.Amount), pc,
+		privacy.Bytes(m.Ciphertext), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), m.Vintage), nil
 }
 
 // ValidateBasic: the proof spends derth and creates the change (or a zero
@@ -573,6 +623,9 @@ func (m *MsgUndelegate) ValidateBasic() error {
 		return err
 	}
 	if err := positive("amount", m.Amount); err != nil {
+		return err
+	}
+	if err := checkMsgVintage(m.Vintage); err != nil {
 		return err
 	}
 	if err := checkMoves(m, ""); err != nil {
@@ -590,21 +643,23 @@ func (m *MsgRedelegate) PrivateBundles() []*shieldedtypes.Bundle { return bundle
 func (m *MsgRedelegate) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 func (m *MsgRedelegate) StakeProofOf() *StakeProof               { return &m.Stake }
 
-// StakeLanes: derth/<src>, amount leaving; the credit lane derth/<dst>,
-// crediting dst_derth labelled with move_time.
-func (m *MsgRedelegate) StakeLanes() StakeLanes {
-	return StakeLanes{Denom: DerthDenom(m.SrcValidator), VOut: m.Amount,
-		CreditDenom: DerthDenom(m.DstValidator), CreditIn: m.DstDerth, CreditMoveTime: m.MoveTime}
+// StakeLanes: the vintage's derth/<src> asset, amount leaving; the credit
+// lane dst's current vintage's asset, crediting dst_derth labelled with
+// move_time.
+func (m *MsgRedelegate) StakeLanes(vc VintageCtx) StakeLanes {
+	return StakeLanes{Denom: vc.Denom(m.SrcValidator, m.Vintage), VOut: m.Amount,
+		CreditDenom: VintageDenom(m.DstValidator, vc.Current, vc.Base), CreditIn: m.DstDerth, CreditMoveTime: m.MoveTime}
 }
 
 // MoveKey is the move's key: its credit nullifier (the label's move_key).
 func (m *MsgRedelegate) MoveKey() []byte { return m.Stake.CreditNullifier }
 
 // SighashFields: StakeFields, Bytes(src_validator), Bytes(dst_validator),
-// amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)).
+// amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)), then
+// U64(vintage) when non-zero.
 func (m *MsgRedelegate) SighashFields(address.Codec) ([]fr.Element, error) {
-	return withStake(&m.Stake, privacy.Bytes([]byte(m.SrcValidator)), privacy.Bytes([]byte(m.DstValidator)),
-		privacy.U64(m.Amount), privacy.U64(m.DstDerth), privacy.U64(m.MoveTime), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), nil
+	return withVintage(withStake(&m.Stake, privacy.Bytes([]byte(m.SrcValidator)), privacy.Bytes([]byte(m.DstValidator)),
+		privacy.U64(m.Amount), privacy.U64(m.DstDerth), privacy.U64(m.MoveTime), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), m.Vintage), nil
 }
 
 // ValidateBasic: two different canonical validators; the proof spends
@@ -629,6 +684,48 @@ func (m *MsgRedelegate) ValidateBasic() error {
 	if err := positive("move_time", m.MoveTime); err != nil {
 		return err
 	}
+	if err := checkMsgVintage(m.Vintage); err != nil {
+		return err
+	}
+	if err := checkMoves(m, ""); err != nil {
+		return err
+	}
+	return m.Stake.shape(true, len(m.GroundworksSplit) > 0)
+}
+
+// ---- MsgCheckIn -----------------------------------------------------------
+
+func (m *MsgCheckIn) PrivateBundles() []*shieldedtypes.Bundle { return bundle(&m.Bundle) }
+func (m *MsgCheckIn) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
+func (m *MsgCheckIn) StakeProofOf() *StakeProof               { return &m.Stake }
+
+// StakeLanes: from_vintage's derth/<validator> asset, amount leaving; the
+// credit lane the current vintage's asset, crediting amount, unlabelled
+// (cr_move_time 0).
+func (m *MsgCheckIn) StakeLanes(vc VintageCtx) StakeLanes {
+	return StakeLanes{Denom: VintageDenom(m.Validator, m.FromVintage, vc.Base), VOut: m.Amount,
+		CreditDenom: VintageDenom(m.Validator, vc.Current, vc.Base), CreditIn: m.Amount}
+}
+
+// SighashFields: StakeFields, Bytes(validator), U64(from_vintage),
+// U64(amount), Bytes(SplitsBytes(groundworks_split)).
+func (m *MsgCheckIn) SighashFields(address.Codec) ([]fr.Element, error) {
+	return withStake(&m.Stake, privacy.Bytes([]byte(m.Validator)), privacy.U64(uint64(m.FromVintage)),
+		privacy.U64(m.Amount), privacy.Bytes(SplitsBytes(m.GroundworksSplit))), nil
+}
+
+// ValidateBasic: a canonical validator, a vintage (never 0), a positive
+// amount; the proof spends in lane A and merges the credit in lane B.
+func (m *MsgCheckIn) ValidateBasic() error {
+	if err := checkValidator(m.Validator); err != nil {
+		return err
+	}
+	if err := ValidateVintage(m.FromVintage); err != nil {
+		return err
+	}
+	if err := positive("amount", m.Amount); err != nil {
+		return err
+	}
 	if err := checkMoves(m, ""); err != nil {
 		return err
 	}
@@ -647,7 +744,8 @@ func (m *MsgStakeVote) PrivateBundles() []*shieldedtypes.Bundle { return bundle(
 func (m *MsgStakeVote) PrivateFee() uint64                      { return shieldedtypes.FeeAfter(m, 0) }
 
 // SighashFields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
-// weight, vote_nullifiers[0..MaxVoteNotes-1], debt_root.
+// weight, vote_nullifiers[0..MaxVoteNotes-1], debt_root, then U64(vintage)
+// when non-zero.
 func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
 	if len(m.VoteNullifiers) != MaxVoteNotes {
 		return nil, errorsmod.Wrapf(ErrInvalidMsg, "a stake vote carries exactly %d vote nullifiers", MaxVoteNotes)
@@ -665,7 +763,7 @@ func (m *MsgStakeVote) SighashFields(address.Codec) ([]fr.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(out, root), nil
+	return withVintage(append(out, root), m.Vintage), nil
 }
 
 // ValidateBasic: exactly MaxVoteNotes vote nullifiers, canonical, non-zero
@@ -679,6 +777,9 @@ func (m *MsgStakeVote) ValidateBasic() error {
 		return err
 	}
 	if err := CheckVoteWeight(m.Weight); err != nil {
+		return err
+	}
+	if err := checkMsgVintage(m.Vintage); err != nil {
 		return err
 	}
 	if err := checkMoves(m, ""); err != nil {
@@ -722,12 +823,12 @@ func CheckVoteNullifiers(vnfs [][]byte) error {
 
 // VotePublicInputs lays out the vote circuit's public inputs: note_root,
 // nf_root (the proposal's snapshot roots), debt_root (the msg's, checked to
-// be the current one), asset = AssetID(derth/<validator>), weight,
-// proposal_id, vote_nullifiers[0..MaxVoteNotes-1], sighash. Call after
-// ValidateBasic.
-func (m *MsgStakeVote) VotePublicInputs(noteRoot, nfRoot []byte, sighash fr.Element) [][]byte {
+// be the current one), asset = AssetID of the vintage's derth/<validator>
+// denom, weight, proposal_id, vote_nullifiers[0..MaxVoteNotes-1], sighash.
+// Call after ValidateBasic.
+func (m *MsgStakeVote) VotePublicInputs(vc VintageCtx, noteRoot, nfRoot []byte, sighash fr.Element) [][]byte {
 	out := [][]byte{
-		noteRoot, nfRoot, m.DebtRoot, privacy.FieldBytes(privacy.AssetID(DerthDenom(m.Validator))),
+		noteRoot, nfRoot, m.DebtRoot, privacy.FieldBytes(privacy.AssetID(vc.Denom(m.Validator, m.Vintage))),
 		privacy.FieldBytes(privacy.U64(m.Weight)), privacy.FieldBytes(privacy.U64(m.ProposalId)),
 	}
 	out = append(out, m.VoteNullifiers...)

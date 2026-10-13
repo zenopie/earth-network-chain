@@ -43,6 +43,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "key"}},
 				},
 				{
+					RpcMethod: "Vintages", Use: "vintages [valoper]",
+					Short:          "Show a validator's stake vintages: live ones with supply and retirement time, retired ones with their held payout",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "validator"}},
+				},
+				{
 					RpcMethod: "Snapshot", Use: "snapshot [proposal-id]", Short: "Show a proposal's stake-vote snapshot",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "proposal_id"}},
 				},
@@ -57,6 +62,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{RpcMethod: "Undelegate", Skip: true},
 				{RpcMethod: "StakeVote", Skip: true},
 				{RpcMethod: "Redelegate", Skip: true},
+				{RpcMethod: "CheckIn", Skip: true},
 			},
 		},
 	}

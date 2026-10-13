@@ -120,17 +120,28 @@ type Keeper struct {
 
 	// EpochSweep is the epoch-end book sweep's progress (epoch.go).
 	EpochSweep collections.Item[types.EpochSweep]
-	// GwTotals is, per (validator, option), the sum of derth x percent over
-	// the validator's live votes (groundworks.go); GwEpoch the Groundworks
-	// allocation epoch each validator's totals belong to.
-	GwTotals collections.Map[collections.Pair[string, uint64], math.Int]
+	// GwTotals is, per (validator, vintage, option), the sum of derth x
+	// percent over the vintage's live votes at the validator
+	// (groundworks.go); GwEpoch the Groundworks allocation epoch each
+	// validator's totals belong to.
+	GwTotals collections.Map[collections.Triple[string, uint32, uint64], math.Int]
 	GwEpoch  collections.Map[string, uint64]
-	// GwLapses: (split_expires_at, vote id) for every vote (groundworks.go,
-	// the Groundworks Lapser).
-	GwLapses collections.KeySet[collections.Pair[int64, uint64]]
 	// GwMatures: (matures_at, vote id) for every vote with a pending
 	// exposure (groundworks.go, matureVotes in BeginBlock).
 	GwMatures collections.KeySet[collections.Pair[int64, uint64]]
+	// GwVotesByVintage indexes the votes by (vintage, validator, id): a
+	// retired vintage's are deleted by it (vintages.go, sweepDeadVotes).
+	GwVotesByVintage collections.KeySet[collections.Triple[uint32, string, uint64]]
+	// GwResync: validators whose voter EndBlock re-files (vintages.go).
+	GwResync collections.KeySet[string]
+
+	// Stake vintages (vintages.go): S_{v,m} per (validator, vintage), the
+	// retired vintages not fully withdrawn, the base vintage (the unsuffixed
+	// denom's) and the monthly retirement sweep.
+	VintageSupplies collections.Map[collections.Pair[string, uint32], math.Int]
+	RetiredVintages collections.Map[collections.Pair[string, uint32], types.RetiredVintage]
+	BaseVintage     collections.Item[uint32]
+	VintageSweep    collections.Item[types.VintageSweep]
 	// RetiringEscrows: (release time ns, validator) for operators that
 	// removed their whole self-bond; PendingReleases: removed validators
 	// whose escrow release failed and is retried (escrow.go).
@@ -262,13 +273,20 @@ func NewKeeper(
 		SnapshotsBySeq: collections.NewKeySet(sb, types.SnapshotsBySeqKey, "snapshots_by_seq",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key)),
 		EpochSweep: collections.NewItem(sb, types.EpochSweepKey, "epoch_sweep", codec.CollValue[types.EpochSweep](cdc)),
-		GwTotals: collections.NewMap(sb, types.GwTotalsKey, "gw_totals",
-			collections.PairKeyCodec(collections.StringKey, collections.Uint64Key), sdk.IntValue),
+		GwTotals: collections.NewMap(sb, types.GwVintageTotalsKey, "gw_vintage_totals",
+			collections.TripleKeyCodec(collections.StringKey, collections.Uint32Key, collections.Uint64Key), sdk.IntValue),
 		GwEpoch: collections.NewMap(sb, types.GwEpochKey, "gw_epoch", collections.StringKey, collections.Uint64Value),
-		GwLapses: collections.NewKeySet(sb, types.GwLapsesKey, "gw_lapses",
-			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
 		GwMatures: collections.NewKeySet(sb, types.GwMaturesKey, "gw_matures",
 			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
+		GwVotesByVintage: collections.NewKeySet(sb, types.GwVotesByVintageKey, "gw_votes_by_vintage",
+			collections.TripleKeyCodec(collections.Uint32Key, collections.StringKey, collections.Uint64Key)),
+		GwResync: collections.NewKeySet(sb, types.GwResyncKey, "gw_resync", collections.StringKey),
+		VintageSupplies: collections.NewMap(sb, types.VintageSuppliesKey, "vintage_supplies",
+			collections.PairKeyCodec(collections.StringKey, collections.Uint32Key), sdk.IntValue),
+		RetiredVintages: collections.NewMap(sb, types.RetiredVintagesKey, "retired_vintages",
+			collections.PairKeyCodec(collections.StringKey, collections.Uint32Key), codec.CollValue[types.RetiredVintage](cdc)),
+		BaseVintage:  collections.NewItem(sb, types.BaseVintageKey, "base_vintage", collections.Uint32Value),
+		VintageSweep: collections.NewItem(sb, types.VintageSweepKey, "vintage_sweep", codec.CollValue[types.VintageSweep](cdc)),
 		RetiringEscrows: collections.NewKeySet(sb, types.RetiringEscrowsKey, "retiring_escrows",
 			collections.PairKeyCodec(collections.Int64Key, collections.BytesKey)),
 		PendingReleases: collections.NewKeySet(sb, types.PendingReleasesKey, "pending_releases", collections.BytesKey),

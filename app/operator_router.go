@@ -7,8 +7,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	shieldedstakingante "github.com/earth-network/earth/x/shieldedstaking/ante"
+	sskeeper "github.com/earth-network/earth/x/shieldedstaking/keeper"
 	sstypes "github.com/earth-network/earth/x/shieldedstaking/types"
 )
 
@@ -30,6 +32,9 @@ import (
 //
 // The keeper is set after depinject builds it (SetChecker); until then the
 // two msgs are refused (fail closed) and every other msg passes.
+//
+// It also refuses x/staking's MsgUpdateParams raising unbonding_time above
+// sstypes.MaxUnbondingSeconds (stake vintages, v1.3.0).
 type OperatorRewardsRouter struct {
 	inner *baseapp.MsgServiceRouter
 	ac    address.Codec
@@ -60,6 +65,15 @@ func (r *OperatorRewardsRouter) wrap(h baseapp.MsgServiceHandler) baseapp.MsgSer
 		return nil
 	}
 	return func(ctx sdk.Context, msg sdk.Msg) (*sdk.Result, error) {
+		// Stake vintages: x/staking's unbonding_time stays below a year, so
+		// a redelegation's slash label closes before its vintage can retire
+		// (sstypes.MaxUnbondingSeconds). Only governance sets x/staking's
+		// params, and its proposals execute through this router.
+		if m, ok := msg.(*stakingtypes.MsgUpdateParams); ok {
+			if err := sskeeper.CheckUnbondingTime(m.Params.UnbondingTime); err != nil {
+				return nil, err
+			}
+		}
 		if r.k == nil {
 			switch msg.(type) {
 			case *distrtypes.MsgSetWithdrawAddress, *distrtypes.MsgWithdrawDelegatorReward,

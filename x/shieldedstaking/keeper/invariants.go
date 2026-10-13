@@ -54,6 +54,13 @@ import (
 //     completion) holding exactly its moves' shares (checkRedelegationRecord,
 //     as at genesis); no unbonding delegation is left set aside
 //     (ShelteredUnbondings is empty outside BeginBlock).
+//  11. Stake vintages: every book's derth_supply is the sum of its stored
+//     vintage supplies (each positive, none without a book) and, once the
+//     month's retirement sweep is done, every stored vintage is live; a
+//     vintage's live Groundworks votes weigh at most its supply; every
+//     retired vintage holds 0 < remaining_supply <= supply and
+//     remaining_value <= value, with a held payout (no pc, in no queue) of
+//     exactly remaining_value when that is positive.
 //  10. Slash debt: every unmatured move is one an unmatured entry of its
 //     (src, dst) holds, at its height with its completion (counted from the
 //     records' side in 9: each record is decoded once); its retained is its
@@ -88,7 +95,73 @@ func (k Keeper) AssertInvariants(ctx context.Context) error {
 	if err := k.assertDebt(ctx); err != nil {
 		return err
 	}
+	if err := k.assertVintages(ctx); err != nil {
+		return err
+	}
 	return k.assertEscrows(ctx)
+}
+
+// assertVintages is invariant 11.
+func (k Keeper) assertVintages(ctx context.Context) error {
+	cur := k.currentVintage(ctx)
+	sweep, err := k.VintageSweep.Get(ctx)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	swept := err == nil && sweep.Month == cur && !sweep.Active && sweep.RetryAt == 0
+	sums := map[string]math.Int{}
+	if err := k.VintageSupplies.Walk(ctx, nil, func(key collections.Pair[string, uint32], s math.Int) (bool, error) {
+		if !s.IsPositive() {
+			return true, types.ErrInvariant.Wrapf("vintage %d at %s holds %s", key.K2(), key.K1(), s)
+		}
+		if swept && !types.VintageLive(key.K2(), cur) {
+			return true, types.ErrInvariant.Wrapf("vintage %d at %s holds supply after the month's retirement sweep", key.K2(), key.K1())
+		}
+		if c, ok := sums[key.K1()]; ok {
+			sums[key.K1()] = c.Add(s)
+		} else {
+			sums[key.K1()] = s
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	books := map[string]bool{}
+	if err := k.Validators.Walk(ctx, nil, func(v string, vs types.ValidatorState) (bool, error) {
+		books[v] = true
+		got, ok := sums[v]
+		if !ok {
+			got = math.ZeroInt()
+		}
+		if !got.Equal(vs.DerthSupply) {
+			return true, types.ErrInvariant.Wrapf("%s: derth_supply %s, its vintages hold %s", v, vs.DerthSupply, got)
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	for v := range sums {
+		if !books[v] {
+			return types.ErrInvariant.Wrapf("vintage supply at %s, which has no book", v)
+		}
+	}
+	return k.RetiredVintages.Walk(ctx, nil, func(key collections.Pair[string, uint32], rv types.RetiredVintage) (bool, error) {
+		if rv.Validator != key.K1() || rv.Vintage != key.K2() || !rv.RemainingSupply.IsPositive() ||
+			rv.RemainingSupply.GT(rv.Supply) || rv.RemainingValue.IsNegative() || rv.RemainingValue.GT(rv.Value) {
+			return true, types.ErrInvariant.Wrapf("retired vintage %s/%d is inconsistent", key.K1(), key.K2())
+		}
+		if !rv.RemainingValue.IsPositive() {
+			return false, nil // nothing held (payout_id means nothing)
+		}
+		p, err := k.UnbondPayouts.Get(ctx, rv.PayoutId)
+		if err != nil {
+			return true, types.ErrInvariant.Wrapf("retired vintage %s/%d: held payout %d: %v", key.K1(), key.K2(), rv.PayoutId, err)
+		}
+		if len(p.Pc) != 0 || p.Validator != rv.Validator || p.Epoch != rv.Epoch || !p.Value.Equal(rv.RemainingValue) {
+			return true, types.ErrInvariant.Wrapf("retired vintage %s/%d: held payout %d is not its remaining value", key.K1(), key.K2(), rv.PayoutId)
+		}
+		return false, nil
+	})
 }
 
 func (k Keeper) assertDebt(ctx context.Context) error {
@@ -308,10 +381,19 @@ func (k Keeper) assertDenoms(ctx context.Context) error {
 		}
 	}
 	// Every unit of derth is in one unspent note and a note votes once, so a
-	// validator's Groundworks votes, pending exposures included (at their
-	// worth after any slash), weigh at most its supply.
-	voted := map[string]math.Int{}
+	// vintage's live Groundworks votes, pending exposures included (at their
+	// worth after any slash), weigh at most its supply (a retired vintage's
+	// votes count for nothing and are being deleted).
+	cur := k.currentVintage(ctx)
+	type vk struct {
+		val     string
+		vintage uint32
+	}
+	voted := map[vk]math.Int{}
 	if err := k.GwVotes.Walk(ctx, nil, func(_ uint64, v types.GroundworksVote) (bool, error) {
+		if !types.VintageLive(v.Vintage, cur) {
+			return false, nil
+		}
 		d := v.Derth
 		if hasPending(v) {
 			// At what it is worth now: a slash's debt row cut it from the supply.
@@ -321,18 +403,23 @@ func (k Keeper) assertDenoms(ctx context.Context) error {
 			}
 			d = d.Add(w)
 		}
-		if cur, ok := voted[v.Validator]; ok {
-			voted[v.Validator] = cur.Add(d)
+		key := vk{v.Validator, v.Vintage}
+		if c, ok := voted[key]; ok {
+			voted[key] = c.Add(d)
 		} else {
-			voted[v.Validator] = d
+			voted[key] = d
 		}
 		return false, nil
 	}); err != nil {
 		return err
 	}
-	for v, d := range voted {
-		if s := k.Supply(ctx, v); d.GT(s) {
-			return types.ErrInvariant.Wrapf("groundworks votes weigh %s derth/%s, more than its supply %s", d, v, s)
+	for key, d := range voted {
+		s, err := k.VintageSupply(ctx, key.val, key.vintage)
+		if err != nil {
+			return err
+		}
+		if d.GT(s) {
+			return types.ErrInvariant.Wrapf("groundworks votes weigh %s derth of vintage %d at %s, more than its supply %s", d, key.vintage, key.val, s)
 		}
 	}
 	return nil
@@ -439,12 +526,26 @@ func (k Keeper) assertRates(ctx context.Context) error {
 func (k Keeper) assertPayouts(ctx context.Context) error {
 	// Keyed by validator/epoch: collections.Pair holds pointers.
 	owed := map[string]math.Int{}
+	held := 0
 	if err := k.UnbondPayouts.Walk(ctx, nil, func(id uint64, p types.UnbondPayout) (bool, error) {
 		rec := fmt.Sprintf("%s/%d", p.Validator, p.Epoch)
 		if cur, ok := owed[rec]; ok {
 			owed[rec] = cur.Add(p.Value)
 		} else {
 			owed[rec] = p.Value
+		}
+		if len(p.Pc) == 0 {
+			// A retired vintage's held payout (invariant 11 ties it to its
+			// vintage): queued nowhere.
+			held++
+			first, err := k.PayoutsByRecord.Has(ctx, collections.Join3(p.Validator, p.Epoch, id))
+			if err != nil {
+				return true, err
+			}
+			if first || p.RetryAt != 0 {
+				return true, types.ErrInvariant.Wrapf("held payout %d is queued", id)
+			}
+			return false, nil
 		}
 		first, err := k.PayoutsByRecord.Has(ctx, collections.Join3(p.Validator, p.Epoch, id))
 		if err != nil {
@@ -491,8 +592,8 @@ func (k Keeper) assertPayouts(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	if n != total {
-		return types.ErrInvariant.Wrapf("%d payout queue entries for %d payouts", n, total)
+	if n+held != total {
+		return types.ErrInvariant.Wrapf("%d payout queue entries for %d payouts (%d held)", n, total, held)
 	}
 	return k.UnbondRecords.Walk(ctx, nil, func(key collections.Pair[string, uint64], r types.UnbondRecord) (bool, error) {
 		o, ok := owed[fmt.Sprintf("%s/%d", key.K1(), key.K2())]

@@ -49,6 +49,10 @@ service Msg {
   // gap: derth/<src> notes are spent, derth/<dst> is merged into their
   // owner's derth/<dst> note.
   rpc Redelegate(MsgRedelegate) returns (MsgRedelegateResponse);
+  // CheckIn moves derth of an older live vintage at a validator into the
+  // current vintage there (v1.3.0): the stake earns and votes for another
+  // year.
+  rpc CheckIn(MsgCheckIn) returns (MsgCheckInResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -190,6 +194,11 @@ message MsgDelegate {
   // groundworks_split is the Groundworks split the output votes with
   // (StakeProof.vote_tag); empty when it does not vote.
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 7 [(gogoproto.nullable) = false];
+  // vintage is the stake vintage (YYYYMM, UTC) of the credited note: always the current vintage: its asset is
+  // derth/<validator>/<vintage>, or derth/<validator> for the base vintage
+  // (Query/Vintages). 0 names the base vintage (wallets before v1.3.0). A
+  // non-zero vintage is appended to the sighash as U64(vintage).
+  uint32 vintage = 8;
 }
 
 // MsgDelegateResponse returns the derth credited and the merged stake note's
@@ -218,6 +227,11 @@ message MsgRestake {
   StakeProof stake = 4 [(gogoproto.nullable) = false];
   // groundworks_split: as MsgDelegate's.
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 5 [(gogoproto.nullable) = false];
+  // vintage is the stake vintage (YYYYMM, UTC) of the notes merged (a live vintage): its asset is
+  // derth/<validator>/<vintage>, or derth/<validator> for the base vintage
+  // (Query/Vintages). 0 names the base vintage (wallets before v1.3.0). A
+  // non-zero vintage is appended to the sighash as U64(vintage).
+  uint32 vintage = 6;
 }
 
 // MsgRestakeResponse returns the merged note's position (one entry).
@@ -255,6 +269,12 @@ message MsgUndelegate {
   bytes ciphertext = 7;
   // groundworks_split: as MsgDelegate's (the change votes).
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 8 [(gogoproto.nullable) = false];
+  // vintage is the stake vintage (YYYYMM, UTC) of the notes spent: a live vintage, or a retired one (a withdrawal:
+  // no split, its share of the vintage's held value paid to pc): its asset is
+  // derth/<validator>/<vintage>, or derth/<validator> for the base vintage
+  // (Query/Vintages). 0 names the base vintage (wallets before v1.3.0). A
+  // non-zero vintage is appended to the sighash as U64(vintage).
+  uint32 vintage = 9;
 }
 
 // MsgUndelegateResponse returns the ERTH value booked and the payout's id
@@ -325,6 +345,12 @@ message MsgStakeVote {
   // debt_root is the current slash debt tree root (32 bytes): a labelled
   // note votes its amount less what slashes have cut from its exposure.
   bytes debt_root = 11;
+  // vintage is the stake vintage (YYYYMM, UTC) of the notes voted: live, and not after the proposal's snapshot
+  // vintage: its asset is
+  // derth/<validator>/<vintage>, or derth/<validator> for the base vintage
+  // (Query/Vintages). 0 names the base vintage (wallets before v1.3.0). A
+  // non-zero vintage is appended to the sighash as U64(vintage).
+  uint32 vintage = 12;
 }
 
 // MsgStakeVoteResponse is empty (nothing is minted).
@@ -382,6 +408,12 @@ message MsgRedelegate {
   // groundworks_split: as MsgDelegate's, for both outputs that vote (the
   // source's change and the destination's merged note).
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 8 [(gogoproto.nullable) = false];
+  // vintage is the stake vintage (YYYYMM, UTC) of the derth/<src_validator> notes spent (a live vintage;
+  // the credit lands in dst's current vintage): its asset is
+  // derth/<validator>/<vintage>, or derth/<validator> for the base vintage
+  // (Query/Vintages). 0 names the base vintage (wallets before v1.3.0). A
+  // non-zero vintage is appended to the sighash as U64(vintage).
+  uint32 vintage = 9;
 }
 
 // MsgRedelegateResponse: the ERTH value moved, the derth/<dst_validator>
@@ -393,4 +425,39 @@ message MsgRedelegateResponse {
   uint64 derth = 2;
   uint64 position = 3;
   int64 completion_time = 4;
+}
+
+// MsgCheckIn moves amount of the owner's derth at validator from vintage
+// from_vintage (live, older than the current month) into the current
+// vintage, so it earns and votes for another 12 to 13 months. Nothing moves
+// in x/staking and the rate does not change: the chain moves amount from
+// S_{v,from} to S_{v,now}. The proof's lane A (asset of from_vintage, v_in
+// 0, v_out = amount) spends the old notes, any change (and a kept label's
+// exposure) staying in from_vintage; its credit lane (asset of the current
+// vintage, cr_v_in = amount, cr_move_time = 0: unlabelled) spends the
+// owner's unlabelled current-vintage note (or pads) and creates the merged
+// note. Every input's Groundworks vote is cancelled; the outputs may vote
+// with groundworks_split. bundle pays the fee only.
+//
+// sighash fields: StakeFields(stake), Bytes(validator), U64(from_vintage),
+// U64(amount), Bytes(SplitsBytes(groundworks_split)).
+message MsgCheckIn {
+  earth.shielded.v1.Bundle bundle = 1 [(gogoproto.nullable) = false];
+  string validator = 2;
+  // from_vintage is the vintage (YYYYMM) the notes are spent from: never
+  // 0 (the base vintage is named by its month).
+  uint32 from_vintage = 3;
+  // amount is the derth checked in (v_out of from_vintage, cr_v_in of the
+  // current vintage): public, once per position per year.
+  uint64 amount = 4;
+  StakeProof stake = 5 [(gogoproto.nullable) = false];
+  // groundworks_split: as MsgDelegate's, for both outputs that vote.
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 6 [(gogoproto.nullable) = false];
+}
+
+// MsgCheckInResponse: the vintage the stake now belongs to and the merged
+// note's position.
+message MsgCheckInResponse {
+  uint32 vintage = 1;
+  uint64 position = 2;
 }

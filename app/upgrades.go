@@ -52,6 +52,7 @@ type Upgrade struct {
 var Upgrades = []Upgrade{
 	{Name: UpgradeV1_2_1, CreateHandler: v1_2_1Handler},
 	{Name: UpgradeV1_2_2, CreateHandler: v1_2_2Handler},
+	{Name: UpgradeV1_3_0, CreateHandler: v1_3_0Handler},
 }
 
 // setupUpgrades registers the upgrade handlers and, if the node is restarting

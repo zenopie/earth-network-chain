@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/math"
 
 	"github.com/earth-network/earth/x/shieldedstaking/types"
 )
@@ -362,5 +363,66 @@ func (q queryServer) Move(ctx context.Context, req *types.QueryMoveRequest) (*ty
 	} else if !errors.Is(err, collections.ErrNotFound) {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	return res, nil
+}
+
+// MaxVintagesPage is Query/Vintages' largest page of retired vintages.
+const MaxVintagesPage = 100
+
+// Vintages is one validator's stake vintages: the current and base
+// vintage, the live ones holding supply (with denom and retirement time),
+// and one page of its retired vintages not yet fully withdrawn, each with
+// its held payout's record.
+func (q queryServer) Vintages(ctx context.Context, req *types.QueryVintagesRequest) (*types.QueryVintagesResponse, error) {
+	if req == nil || req.Validator == "" {
+		return nil, status.Error(codes.InvalidArgument, "validator required")
+	}
+	if _, err := q.k.valAddr(req.Validator); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	vc, err := q.k.vintageCtx(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	res := &types.QueryVintagesResponse{
+		CurrentVintage: vc.Current, BaseVintage: vc.Base,
+		NextRetirement: types.VintageStart(types.AddMonths(vc.Current, 1)).Unix(),
+	}
+	rng := collections.NewPrefixedPairRange[string, uint32](req.Validator).StartInclusive(types.OldestLiveVintage(vc.Current))
+	if err := q.k.VintageSupplies.Walk(ctx, rng, func(key collections.Pair[string, uint32], s math.Int) (bool, error) {
+		m := key.K2()
+		if !types.VintageLive(m, vc.Current) {
+			return true, nil
+		}
+		res.Live = append(res.Live, types.LiveVintage{Vintage: m, Denom: types.VintageDenom(req.Validator, m, vc.Base),
+			Supply: s, RetiresAt: types.VintageRetiresAt(m).Unix()})
+		return false, nil
+	}); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	page := &query.PageRequest{}
+	if req.Pagination != nil {
+		p := *req.Pagination
+		page = &p
+	}
+	if page.Limit == 0 || page.Limit > MaxVintagesPage {
+		page.Limit = MaxVintagesPage
+	}
+	retired, pr, err := query.CollectionPaginate(ctx, q.k.RetiredVintages, page,
+		func(_ collections.Pair[string, uint32], rv types.RetiredVintage) (types.RetiredVintageState, error) {
+			out := types.RetiredVintageState{Vintage: rv, Denom: types.VintageDenom(rv.Validator, rv.Vintage, vc.Base)}
+			if rv.RemainingValue.IsPositive() {
+				r, err := q.k.UnbondRecords.Get(ctx, collections.Join(rv.Validator, rv.Epoch))
+				if err != nil {
+					return out, err
+				}
+				out.Record = &r
+			}
+			return out, nil
+		}, query.WithCollectionPaginationPairPrefix[string, uint32](req.Validator))
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	res.Retired, res.Pagination = retired, pr
 	return res, nil
 }

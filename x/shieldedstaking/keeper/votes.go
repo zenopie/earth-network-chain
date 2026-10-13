@@ -242,7 +242,8 @@ func (k Keeper) snapshotProposal(ctx context.Context, proposalID uint64) error {
 		return nil
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	snap := types.ProposalSnapshot{ProposalId: proposalID, Height: sdkCtx.BlockHeight(), VotingEnd: prop.VotingEndTime.UnixNano()}
+	snap := types.ProposalSnapshot{ProposalId: proposalID, Height: sdkCtx.BlockHeight(), VotingEnd: prop.VotingEndTime.UnixNano(),
+		Vintage: k.currentVintage(ctx)}
 	// The latest recorded roots are the end of the last block only if that
 	// block's recording succeeded. If it failed, the snapshot takes no roots
 	// and no note votes on this proposal: roots of different blocks are

@@ -60,6 +60,7 @@ const (
 type preparedVote struct {
 	sighash          fr.Element
 	noteRoot, nfRoot []byte
+	vc               types.VintageCtx
 }
 
 // prepared is what Check derived: the sighash the stake proof binds and
@@ -81,7 +82,7 @@ func NewActionHandler(k Keeper) ActionHandler { return ActionHandler{k: k} }
 func RegisterPrivateActions(register func(string, shieldedtypes.PrivateActionHandler), h ActionHandler) {
 	for _, t := range []string{
 		types.TypeMsgDelegate, types.TypeMsgRestake, types.TypeMsgUndelegate,
-		types.TypeMsgStakeVote, types.TypeMsgRedelegate,
+		types.TypeMsgStakeVote, types.TypeMsgRedelegate, types.TypeMsgCheckIn,
 	} {
 		register(t, h)
 	}
@@ -118,7 +119,7 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	// a second asset. An undelegation adds one for its queued payout (which
 	// mints its pool note later, for free).
 	nfSlots, cmSlots := uint64(2), uint64(1)
-	if sm.StakeLanes().CreditDenom != "" {
+	if sm.HasCreditLane() {
 		nfSlots, cmSlots = nfSlots+1, cmSlots+1
 	}
 	writes := 2*nfSlots + cmSlots
@@ -129,7 +130,9 @@ func (h ActionHandler) PrivateActionGas(ctx context.Context, msg shieldedtypes.P
 	switch msg.(type) {
 	case *types.MsgDelegate:
 		base = gasDelegate
-	case *types.MsgRestake:
+	case *types.MsgRestake, *types.MsgCheckIn:
+		// A check-in moves no value: a restake's work over two lanes (the
+		// credit lane's slots are counted above).
 		base = gasRestake
 	case *types.MsgUndelegate:
 		base = gasUndelegate
@@ -156,23 +159,35 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 		if err != nil {
 			return nil, err
 		}
-		return preparedVote{sighash: sighash, noteRoot: snap.Root, nfRoot: snap.NfRoot}, nil
+		vc, err := k.vintageCtx(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return preparedVote{sighash: sighash, noteRoot: snap.Root, nfRoot: snap.NfRoot, vc: vc}, nil
 	}
 	sm, ok := msg.(types.StakeMsg)
 	if !ok {
 		return nil, errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
-	var err error
-	lanes := sm.StakeLanes()
+	lanes, err := k.StakeLanes(ctx, sm)
+	if err != nil {
+		return nil, err
+	}
 	switch m := msg.(type) {
 	case *types.MsgDelegate:
 		err = k.checkDelegate(ctx, m)
 	case *types.MsgRestake:
-		_, err = k.valAddr(m.Validator)
+		if _, err = k.valAddr(m.Validator); err == nil {
+			_, err = k.checkLaneVintage(ctx, m)
+		}
 	case *types.MsgUndelegate:
 		_, err = k.checkUndelegate(ctx, m)
 	case *types.MsgRedelegate:
 		_, err = k.checkRedelegate(ctx, m)
+	case *types.MsgCheckIn:
+		err = k.checkCheckIn(ctx, m)
+	default:
+		err = errorsmod.Wrapf(types.ErrInvalidMsg, "no private action for %T", msg)
 	}
 	if err != nil {
 		return nil, err
@@ -211,7 +226,7 @@ func (h ActionHandler) CheckPrivateAction(ctx context.Context, msg shieldedtypes
 func (h ActionHandler) VerifyPrivateAction(ctx context.Context, msg shieldedtypes.PrivateMsg, pr any) error {
 	if m, ok := msg.(*types.MsgStakeVote); ok {
 		p := pr.(preparedVote)
-		if err := h.k.shielded.VerifyCircuit(ctx, shieldedtypes.CircuitVote, m.Proof, m.VotePublicInputs(p.noteRoot, p.nfRoot, p.sighash)); err != nil {
+		if err := h.k.shielded.VerifyCircuit(ctx, shieldedtypes.CircuitVote, m.Proof, m.VotePublicInputs(p.vc, p.noteRoot, p.nfRoot, p.sighash)); err != nil {
 			return errorsmod.Wrap(types.ErrInvalidStakeProof, err.Error())
 		}
 		return nil
@@ -250,6 +265,14 @@ func fitsNote(v math.Int) error {
 func (k Keeper) checkDelegate(ctx context.Context, m *types.MsgDelegate) error {
 	if err := k.checkDelegatable(ctx, m.Validator); err != nil {
 		return err
+	}
+	// A delegation always credits the current vintage.
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return err
+	}
+	if v := vc.Resolve(m.Vintage); v != vc.Current {
+		return types.ErrVintage.Wrapf("a delegation credits the current vintage %d, not %d", vc.Current, v)
 	}
 	params, err := k.Params.Get(ctx)
 	if err != nil {
@@ -299,10 +322,32 @@ func checkCredit(what string, credit, buys, min math.Int, rate math.LegacyDec) e
 	return fitsNote(credit)
 }
 
-// checkUndelegate returns the undelegation's ERTH value.
+// checkUndelegate returns the undelegation's ERTH value: at the live rate
+// for a live vintage, the note's share of the held value for a retired one
+// (a withdrawal, checkWithdrawRetired).
 func (k Keeper) checkUndelegate(ctx context.Context, m *types.MsgUndelegate) (math.Int, error) {
 	if _, err := k.valAddr(m.Validator); err != nil {
 		return math.Int{}, err
+	}
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return math.Int{}, err
+	}
+	vin := vc.Resolve(m.Vintage)
+	if err := types.ValidateVintage(vin); err != nil {
+		return math.Int{}, err
+	}
+	if types.VintageRetired(vin, vc.Current) {
+		_, w, err := k.checkWithdrawRetired(ctx, m, vin)
+		return w, err
+	}
+	if err := checkLive(vin, vc.Current); err != nil {
+		return math.Int{}, err
+	}
+	if sv, err := k.VintageSupply(ctx, m.Validator, vin); err != nil {
+		return math.Int{}, err
+	} else if math.NewIntFromUint64(m.Amount).GT(sv) {
+		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "vintage %d at %s holds %s derth", vin, m.Validator, sv)
 	}
 	b, s, err := k.Backing(ctx, m.Validator)
 	if err != nil {
@@ -348,6 +393,21 @@ func (k Keeper) checkStakeVote(ctx context.Context, m *types.MsgStakeVote) (type
 	snap, supply, err := k.openSnapshot(ctx, m.ProposalId, m.Validator)
 	if err != nil {
 		return snap, math.Int{}, err
+	}
+	// The notes' vintage is live now (a retired vintage's value has left
+	// the validator) and was not after the snapshot's month (a later
+	// vintage's notes are not under its root). A vote cast before its
+	// vintage retired keeps counting until the proposal ends.
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return snap, math.Int{}, err
+	}
+	vin := vc.Resolve(m.Vintage)
+	if err := checkLive(vin, vc.Current); err != nil {
+		return snap, math.Int{}, err
+	}
+	if snap.Vintage != 0 && types.VintageIndex(vin) > types.VintageIndex(snap.Vintage) {
+		return snap, math.Int{}, types.ErrVintage.Wrapf("vintage %d is after proposal %d's snapshot (%d)", vin, m.ProposalId, snap.Vintage)
 	}
 	if len(snap.NfRoot) == 0 {
 		return snap, math.Int{}, types.ErrNoVoting.Wrapf("proposal %d's snapshot has no stake nullifier root", m.ProposalId)

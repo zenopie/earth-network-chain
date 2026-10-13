@@ -79,6 +79,10 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
+	cur := k.currentVintage(ctx)
+	if err := k.addVintageSupply(ctx, m.Validator, cur, d); err != nil {
+		return nil, err
+	}
 	pos, err := k.applyStake(ctx, m)
 	if err != nil {
 		return nil, err
@@ -88,6 +92,7 @@ func (k msgServer) Delegate(goCtx context.Context, m *types.MsgDelegate) (*types
 		sdk.NewAttribute(types.AttributeKeyAmount, paid.Amount.String()),
 		sdk.NewAttribute(types.AttributeKeyDerth, d.String()),
 		sdk.NewAttribute(types.AttributeKeyDelegated, strconv.FormatBool(bonded)),
+		sdk.NewAttribute(types.AttributeKeyVintage, strconv.FormatUint(uint64(cur), 10)),
 	))
 	return &types.MsgDelegateResponse{Derth: m.Derth, Position: firstPosition(pos)}, nil
 }
@@ -130,6 +135,9 @@ func (k msgServer) Restake(goCtx context.Context, m *types.MsgRestake) (*types.M
 	if err != nil {
 		return nil, err
 	}
+	if _, err := k.checkLaneVintage(ctx, m); err != nil {
+		return nil, err
+	}
 	pos, err := k.applyStake(ctx, m)
 	if err != nil {
 		return nil, err
@@ -149,6 +157,23 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	u, err := k.checkUndelegate(ctx, m)
 	if err != nil {
 		return nil, err
+	}
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	vin := vc.Resolve(m.Vintage)
+	if types.VintageRetired(vin, vc.Current) {
+		// A retired note's withdrawal: its share of the vintage's held value.
+		w, id, err := k.withdrawRetired(ctx, m, vin)
+		if err != nil {
+			return nil, err
+		}
+		value := uint64(0)
+		if w.IsUint64() {
+			value = w.Uint64()
+		}
+		return &types.MsgUndelegateResponse{Value: value, PayoutId: id}, nil
 	}
 	epoch, err := k.Epoch.Get(ctx)
 	if err != nil {
@@ -190,6 +215,9 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 	if err := k.Validators.Set(ctx, m.Validator, vs); err != nil {
 		return nil, err
 	}
+	if err := k.addVintageSupply(ctx, m.Validator, vin, d.Neg()); err != nil {
+		return nil, err
+	}
 	id, err := k.queuePayout(ctx, m.Validator, epoch.Number, u, m.Pc, m.Ciphertext)
 	if err != nil {
 		return nil, err
@@ -200,6 +228,7 @@ func (k msgServer) Undelegate(goCtx context.Context, m *types.MsgUndelegate) (*t
 		sdk.NewAttribute(types.AttributeKeyValue, u.String()),
 		sdk.NewAttribute(types.AttributeKeyEpoch, strconv.FormatUint(epoch.Number, 10)),
 		sdk.NewAttribute(types.AttributeKeyPayoutID, strconv.FormatUint(id, 10)),
+		sdk.NewAttribute(types.AttributeKeyVintage, strconv.FormatUint(uint64(vin), 10)),
 	))
 	return &types.MsgUndelegateResponse{Value: u.Uint64(), PayoutId: id}, nil
 }

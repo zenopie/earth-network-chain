@@ -57,6 +57,9 @@ func (gs GenesisState) Validate() error {
 	if err := gs.validateMoves(); err != nil {
 		return err
 	}
+	if err := gs.validateVintages(); err != nil {
+		return err
+	}
 	recs := map[string]bool{}
 	for _, r := range gs.UnbondRecords {
 		key := fmt.Sprintf("%s/%d", r.Validator, r.Epoch)
@@ -115,9 +118,13 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("groundworks vote %d: tag repeated", v.Id)
 		}
 		tags[string(v.Tag)] = true
-		// A vote is cast with a split and leased.
-		if len(v.Splits) == 0 || v.SplitExpiresAt <= 0 {
-			return fmt.Errorf("groundworks vote %d: a vote has a split and a lease", v.Id)
+		// A vote is cast with a split, carries no lease (v1.3.0: it ends with
+		// its vintage) and names its vintage.
+		if len(v.Splits) == 0 || v.SplitExpiresAt != 0 {
+			return fmt.Errorf("groundworks vote %d: a vote has a split and no lease", v.Id)
+		}
+		if err := ValidateVintage(v.Vintage); err != nil {
+			return fmt.Errorf("groundworks vote %d: %w", v.Id, err)
 		}
 	}
 	snaps := map[uint64]bool{}
@@ -239,9 +246,10 @@ func (gs GenesisState) Validate() error {
 
 // validatePayouts checks the queued undelegation payouts: unique ids below
 // next_unbond_payout_id, each against an existing record that has
-// undelegations (not an orphan), a value of 1..2^63-1 (what an undelegation
-// books), a pc and a blind ciphertext, retry_at set exactly when it failed
-// before; and per record, the unpaid payouts sum to its outstanding.
+// undelegations (not an orphan), a positive value, a pc and a blind
+// ciphertext (none for a retired vintage's held payout), retry_at set
+// exactly when it failed before; and per record, the unpaid payouts sum to
+// its outstanding.
 func (gs GenesisState) validatePayouts() error {
 	records := map[string]UnbondRecord{}
 	for _, r := range gs.UnbondRecords {
@@ -249,6 +257,12 @@ func (gs GenesisState) validatePayouts() error {
 	}
 	ids := map[uint64]bool{}
 	owed := map[string]math.Int{}
+	held := map[uint64]bool{}
+	for _, rv := range gs.RetiredVintages {
+		if rv.RemainingValue.IsPositive() {
+			held[rv.PayoutId] = true
+		}
+	}
 	for _, p := range gs.UnbondPayouts {
 		if ids[p.Id] || p.Id >= gs.NextUnbondPayoutId {
 			return fmt.Errorf("unbond payout %d duplicated or not below next_unbond_payout_id", p.Id)
@@ -259,14 +273,23 @@ func (gs GenesisState) validatePayouts() error {
 		if !ok || !r.Requested.IsPositive() {
 			return fmt.Errorf("unbond payout %d: no unbond record %s with undelegations", p.Id, key)
 		}
-		if p.Value.IsNil() || !shieldedtypes.FitsNote(p.Value) {
-			return fmt.Errorf("unbond payout %d: value must be 1..2^63-1", p.Id)
+		// Positive: a payout above 2^63-1 (a retired vintage's, or a
+		// withdrawal's share of one) is minted as several notes.
+		if p.Value.IsNil() || !p.Value.IsPositive() {
+			return fmt.Errorf("unbond payout %d: value must be positive", p.Id)
 		}
-		if _, err := privacy.FieldFromBytes(p.Pc); err != nil {
-			return fmt.Errorf("unbond payout %d pc: %w", p.Id, err)
-		}
-		if err := shieldedtypes.CheckBlindCiphertext("ciphertext", p.Ciphertext); err != nil {
-			return fmt.Errorf("unbond payout %d: %w", p.Id, err)
+		if held[p.Id] {
+			// A retired vintage's held payout: no pc, never paid by itself.
+			if len(p.Pc) != 0 || len(p.Ciphertext) != 0 || p.RetryAt != 0 || p.PayoutAttempts != 0 {
+				return fmt.Errorf("unbond payout %d is held for a retired vintage: no pc, ciphertext or retry", p.Id)
+			}
+		} else {
+			if _, err := privacy.FieldFromBytes(p.Pc); err != nil {
+				return fmt.Errorf("unbond payout %d pc: %w", p.Id, err)
+			}
+			if err := shieldedtypes.CheckBlindCiphertext("ciphertext", p.Ciphertext); err != nil {
+				return fmt.Errorf("unbond payout %d: %w", p.Id, err)
+			}
 		}
 		if p.RetryAt < 0 || (p.RetryAt > 0) != (p.PayoutAttempts > 0) {
 			return fmt.Errorf("unbond payout %d: retry_at %d with %d attempts", p.Id, p.RetryAt, p.PayoutAttempts)
@@ -376,6 +399,112 @@ func (gs GenesisState) validateMoves() error {
 			return fmt.Errorf("move %X: retained %s, its debt row %d", mv.Key, mv.Retained, r)
 		} else if !ok && !mv.Retained.Equal(mv.Credited) {
 			return fmt.Errorf("move %X: a cut exposure without a debt row", mv.Key)
+		}
+	}
+	return nil
+}
+
+// validateVintages: the base vintage is 0 (a new chain: InitGenesis takes
+// the genesis month) or a vintage; every vintage supply names a canonical
+// validator with a book, a vintage and a positive supply, once, and a book's
+// vintage supplies sum to its derth_supply; every move names 0 (the base) or
+// a vintage; every retired vintage names a canonical validator and a
+// vintage, once, with 0 < remaining_supply <= supply, remaining_value <=
+// value, and a held payout (no pc) of exactly remaining_value when that is
+// positive (payout_id is meaningless otherwise), each held payout serving
+// one vintage.
+func (gs GenesisState) validateVintages() error {
+	if gs.BaseVintage != 0 {
+		if err := ValidateVintage(gs.BaseVintage); err != nil {
+			return fmt.Errorf("base_vintage: %w", err)
+		}
+	}
+	supply := map[string]math.Int{}
+	seen := map[string]bool{}
+	for _, vs := range gs.VintageSupplies {
+		key := fmt.Sprintf("%s/%d", vs.Validator, vs.Vintage)
+		if seen[key] {
+			return fmt.Errorf("vintage supply %s repeated", key)
+		}
+		seen[key] = true
+		if err := CanonicalValoper(vs.Validator); err != nil {
+			return fmt.Errorf("vintage supply: %w", err)
+		}
+		if err := ValidateVintage(vs.Vintage); err != nil {
+			return fmt.Errorf("vintage supply %s: %w", key, err)
+		}
+		if vs.Supply.IsNil() || !vs.Supply.IsPositive() {
+			return fmt.Errorf("vintage supply %s must be positive", key)
+		}
+		if cur, ok := supply[vs.Validator]; ok {
+			supply[vs.Validator] = cur.Add(vs.Supply)
+		} else {
+			supply[vs.Validator] = vs.Supply
+		}
+	}
+	books := map[string]bool{}
+	for _, v := range gs.Validators {
+		books[v.Validator] = true
+		got, ok := supply[v.Validator]
+		if !ok {
+			got = math.ZeroInt()
+		}
+		if !got.Equal(v.DerthSupply) {
+			return fmt.Errorf("%s: derth_supply %s, its vintages hold %s", v.Validator, v.DerthSupply, got)
+		}
+	}
+	for v := range supply {
+		if !books[v] {
+			return fmt.Errorf("vintage supply at %s, which has no book", v)
+		}
+	}
+	for _, mv := range gs.Moves {
+		if mv.Vintage != 0 {
+			if err := ValidateVintage(mv.Vintage); err != nil {
+				return fmt.Errorf("move %X: %w", mv.Key, err)
+			}
+		}
+	}
+	payouts := map[uint64]UnbondPayout{}
+	for _, p := range gs.UnbondPayouts {
+		payouts[p.Id] = p
+	}
+	retired := map[string]bool{}
+	heldBy := map[uint64]bool{}
+	for _, rv := range gs.RetiredVintages {
+		key := fmt.Sprintf("%s/%d", rv.Validator, rv.Vintage)
+		if retired[key] {
+			return fmt.Errorf("retired vintage %s repeated", key)
+		}
+		retired[key] = true
+		if err := CanonicalValoper(rv.Validator); err != nil {
+			return fmt.Errorf("retired vintage: %w", err)
+		}
+		if err := ValidateVintage(rv.Vintage); err != nil {
+			return fmt.Errorf("retired vintage %s: %w", key, err)
+		}
+		for what, x := range map[string]math.Int{"supply": rv.Supply, "value": rv.Value,
+			"remaining_supply": rv.RemainingSupply, "remaining_value": rv.RemainingValue} {
+			if err := nonNeg("retired vintage "+key+" "+what, x); err != nil {
+				return err
+			}
+		}
+		if !rv.RemainingSupply.IsPositive() || rv.RemainingSupply.GT(rv.Supply) || rv.RemainingValue.GT(rv.Value) {
+			return fmt.Errorf("retired vintage %s: remaining %s of %s derth, %s of %s value", key,
+				rv.RemainingSupply, rv.Supply, rv.RemainingValue, rv.Value)
+		}
+		if !rv.RemainingValue.IsPositive() {
+			continue // nothing held: payout_id means nothing
+		}
+		p, ok := payouts[rv.PayoutId]
+		if !ok || heldBy[rv.PayoutId] || p.Validator != rv.Validator || p.Epoch != rv.Epoch || !p.Value.Equal(rv.RemainingValue) {
+			return fmt.Errorf("retired vintage %s: held payout %d missing, shared or not its remaining value", key, rv.PayoutId)
+		}
+		heldBy[rv.PayoutId] = true
+	}
+	for _, p := range gs.UnbondPayouts {
+		if len(p.Pc) == 0 && !heldBy[p.Id] {
+			return fmt.Errorf("unbond payout %d has no pc and no retired vintage holds it", p.Id)
 		}
 	}
 	return nil

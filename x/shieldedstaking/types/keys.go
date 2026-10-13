@@ -5,7 +5,6 @@
 package types
 
 import (
-	"strings"
 	"time"
 
 	"cosmossdk.io/collections"
@@ -133,9 +132,9 @@ var (
 	// PendingReleasesKey holds removed validators whose release failed.
 	RetiringEscrowsKey = collections.NewPrefix(27)
 	PendingReleasesKey = collections.NewPrefix(28)
-	// Groundworks totals (groundworks.go): per (validator, option) the sum of
-	// derth x percent over the validator's live votes, and per validator
-	// the Groundworks allocation epoch those totals belong to.
+	// Groundworks totals before v1.3.0 (per (validator, option); cleared by
+	// MigrateV1_3_0, now GwVintageTotalsKey), and per validator the
+	// Groundworks allocation epoch its totals belong to.
 	GwTotalsKey = collections.NewPrefix(29)
 	GwEpochKey  = collections.NewPrefix(30)
 	// PendingReleaseCursorKey is the last PendingReleases entry the epoch
@@ -200,8 +199,9 @@ var (
 	WatchSrcKey    = collections.NewPrefix(55)
 	WatchSharesKey = collections.NewPrefix(56)
 	WatchCallsKey  = collections.NewPrefix(57)
-	// GwLapsesKey orders the Groundworks votes' leases by when they lapse:
-	// (split_expires_at, vote id).
+	// GwLapsesKey ordered the Groundworks votes' leases by when they lapsed:
+	// (split_expires_at, vote id). Stake votes carry no lease since v1.3.0
+	// (MigrateV1_3_0 cleared it); never reuse 58.
 	GwLapsesKey = collections.NewPrefix(58)
 	// GwVotesByTagKey maps a Groundworks vote's note tag to its id: what a
 	// stake proof's input tags cancel.
@@ -209,6 +209,44 @@ var (
 	// GwMaturesKey orders the Groundworks votes holding a pending exposure
 	// by when it is due to count: (matures_at, vote id).
 	GwMaturesKey = collections.NewPrefix(60)
+
+	// Stake vintages (vintages.go, v1.3.0). 29 (GwTotalsKey) held the
+	// per-(validator, option) Groundworks totals before vintages; v1.3.0
+	// moved them under 61, per vintage, and cleared 29.
+	//
+	// GwVintageTotalsKey: per (validator, vintage, option) the sum of derth
+	// x percent over the vintage's live votes at the validator.
+	GwVintageTotalsKey = collections.NewPrefix(61)
+	// VintageSuppliesKey: (validator, vintage) -> the vintage's derth supply
+	// S_{v,m}; a book's derth_supply is their sum.
+	VintageSuppliesKey = collections.NewPrefix(62)
+	// RetiredVintagesKey: (validator, vintage) -> RetiredVintage, until its
+	// notes have withdrawn it all.
+	RetiredVintagesKey = collections.NewPrefix(63)
+	// BaseVintageKey: the vintage whose denom is the unsuffixed
+	// derth/<valoper>.
+	BaseVintageKey = collections.NewPrefix(64)
+	// VintageSweepKey: the monthly retirement sweep's state.
+	VintageSweepKey = collections.NewPrefix(65)
+	// GwVotesByVintageKey indexes the Groundworks votes by (vintage,
+	// validator, id): the votes of a retired vintage are found and deleted
+	// by it (sweepDeadVotes).
+	GwVotesByVintageKey = collections.NewPrefix(66)
+	// GwResyncKey: validators whose Groundworks voter EndBlock re-files (a
+	// retirement in BeginBlock dropped totals). Emptied every EndBlock.
+	GwResyncKey = collections.NewPrefix(67)
+)
+
+// VintageRetireLimit caps the books one block's retirement sweep processes
+// (each retires all its due vintages: at most one a month, more after a
+// halt). DeadVoteSweepLimit caps the dead votes (of retired vintages) one
+// block deletes.
+const (
+	VintageRetireLimit = 200
+	DeadVoteSweepLimit = 200
+	// VintageRetryDelay is how long after a pass that failed a book the
+	// sweep runs again.
+	VintageRetryDelay = 24 * 3600
 )
 
 // MoveTimeSlackSeconds is how far a redelegation's block time may be after
@@ -258,14 +296,9 @@ func UnbondPayoutRetryDelay(attempts uint32) int64 {
 	return int64(UnbondPayoutRetryBaseSeconds) << shift
 }
 
-// DerthDenom is validator's delegation token.
+// DerthDenom is the unsuffixed derth/<valoper>: the base vintage's denom
+// (VintageDenom), every note's before v1.3.0.
 func DerthDenom(valoper string) string { return DerthPrefix + valoper }
-
-// ParseDerthDenom returns the validator of a derth denom.
-func ParseDerthDenom(denom string) (string, bool) {
-	v, ok := strings.CutPrefix(denom, DerthPrefix)
-	return v, ok && v != "" && !strings.Contains(v, "/")
-}
 
 // ValidatorVoterKey is the Groundworks voter key under which x/allocation
 // weighs all of validator's votes together: "gwpos/" (kept from the retired

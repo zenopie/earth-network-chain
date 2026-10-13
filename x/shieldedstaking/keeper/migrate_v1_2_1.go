@@ -34,6 +34,17 @@ func (k Keeper) MigrateV1_2_1(ctx context.Context) (int, error) {
 	}
 	// Positions decode as votes (fields 1-4 and 7 kept their numbers).
 	retired := map[string]math.Int{}
+	// Their vintage (0 for a real position: the base), for a chain that
+	// has stake vintages (v1.3.0) when this runs.
+	type vk struct {
+		val     string
+		vintage uint32
+	}
+	byVintage := map[vk]math.Int{}
+	base, err := k.baseVintage(ctx)
+	if err != nil {
+		return 0, err
+	}
 	if err := k.GwVotes.Walk(ctx, nil, func(_ uint64, p types.GroundworksVote) (bool, error) {
 		if !p.Derth.IsNil() && p.Derth.IsPositive() {
 			d, ok := retired[p.Validator]
@@ -41,6 +52,15 @@ func (k Keeper) MigrateV1_2_1(ctx context.Context) (int, error) {
 				d = math.ZeroInt()
 			}
 			retired[p.Validator] = d.Add(p.Derth)
+			key := vk{p.Validator, p.Vintage}
+			if key.vintage == 0 {
+				key.vintage = base
+			}
+			if c, ok := byVintage[key]; ok {
+				byVintage[key] = c.Add(p.Derth)
+			} else {
+				byVintage[key] = p.Derth
+			}
 		}
 		return false, nil
 	}); err != nil {
@@ -69,6 +89,20 @@ func (k Keeper) MigrateV1_2_1(ctx context.Context) (int, error) {
 		vs.DerthSupply = vs.DerthSupply.Sub(d)
 		if err := k.Validators.Set(ctx, v, vs); err != nil {
 			return 0, err
+		}
+		for key, dv := range byVintage {
+			if key.val != v {
+				continue
+			}
+			sv, err := k.VintageSupply(ctx, v, key.vintage)
+			if err != nil {
+				return 0, err
+			}
+			if take := math.MinInt(dv, sv); take.IsPositive() {
+				if err := k.addVintageSupply(ctx, v, key.vintage, take.Neg()); err != nil {
+					return 0, err
+				}
+			}
 		}
 	}
 	n, err := k.clearPrefix(ctx, types.GwVotesKey)

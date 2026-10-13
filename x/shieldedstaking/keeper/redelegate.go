@@ -171,6 +171,17 @@ func (k Keeper) checkRedelegate(ctx context.Context, m *types.MsgRedelegate) (ma
 	if d.GT(sA) {
 		return math.Int{}, errorsmod.Wrap(types.ErrAmount, "more derth than exists")
 	}
+	// The source notes' vintage is live and holds the derth; the credit
+	// lands in dst's current vintage.
+	vin, err := k.checkLaneVintage(ctx, m)
+	if err != nil {
+		return math.Int{}, err
+	}
+	if sv, err := k.VintageSupply(ctx, m.SrcValidator, vin); err != nil {
+		return math.Int{}, err
+	} else if d.GT(sv) {
+		return math.Int{}, errorsmod.Wrapf(types.ErrAmount, "vintage %d at %s holds %s derth", vin, m.SrcValidator, sv)
+	}
 	u := valueOf(d, bA, sA)
 	// At least min_delegation, worth and minted: the rounding loss is then
 	// at most 1/min_delegation of it, as for a delegation (audit F4). At
@@ -321,6 +332,14 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 	if err := k.Validators.Set(ctx, m.SrcValidator, vsA); err != nil {
 		return nil, err
 	}
+	vc, err := k.vintageCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	srcVintage := vc.Resolve(m.Vintage)
+	if err := k.addVintageSupply(ctx, m.SrcValidator, srcVintage, d.Neg()); err != nil {
+		return nil, err
+	}
 	vsB, err := k.ValidatorState(ctx, m.DstValidator)
 	if err != nil {
 		return nil, err
@@ -368,7 +387,7 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 		mv := types.Move{
 			Key: m.MoveKey(), SrcValidator: m.SrcValidator, DstValidator: m.DstValidator,
 			Height: ctx.BlockHeight(), MoveTime: m.MoveTime, Credited: credited, Shares: shares,
-			EntryHeight: entryHeight, Completion: completion, Retained: credited,
+			EntryHeight: entryHeight, Completion: completion, Retained: credited, Vintage: vc.Current,
 		}
 		if err := k.putMove(ctx, mv); err != nil {
 			return nil, err
@@ -389,6 +408,8 @@ func (k Keeper) executeRedelegate(ctx sdk.Context, m *types.MsgRedelegate) (*typ
 		sdk.NewAttribute(types.AttributeKeyCompletion, completionAttr),
 		sdk.NewAttribute(types.AttributeKeyMoveKey, hex.EncodeToString(m.MoveKey())),
 		sdk.NewAttribute(types.AttributeKeyMoveTime, strconv.FormatUint(m.MoveTime, 10)),
+		sdk.NewAttribute(types.AttributeKeyVintage, strconv.FormatUint(uint64(srcVintage), 10)),
+		sdk.NewAttribute(types.AttributeKeyDstVintage, strconv.FormatUint(uint64(vc.Current), 10)),
 	))
 	return &types.MsgRedelegateResponse{Value: u.Uint64(), Derth: credited.Uint64(), Position: pos, CompletionTime: completion}, nil
 }
@@ -423,6 +444,10 @@ func (k Keeper) creditDst(ctx sdk.Context, m *types.MsgRedelegate, bB0, sB0, bB1
 	}
 	vsB.DerthSupply = vsB.DerthSupply.Add(credited)
 	if err := k.Validators.Set(ctx, m.DstValidator, vsB); err != nil {
+		return math.Int{}, err
+	}
+	// The credit lands in dst's current vintage.
+	if err := k.addVintageSupply(ctx, m.DstValidator, k.currentVintage(ctx), credited); err != nil {
 		return math.Int{}, err
 	}
 	return credited, nil
@@ -576,6 +601,10 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	k.restoreSheltered(ctx)
 	// After the slash settles: a debt row this block writes is seen.
 	k.matureVotes(ctx)
+	// Stake vintages retired by now leave their books (vintages.go), and
+	// their dead Groundworks votes are deleted, a bounded number a block.
+	k.retireVintages(ctx)
+	k.sweepDeadVotes(ctx)
 	return nil
 }
 

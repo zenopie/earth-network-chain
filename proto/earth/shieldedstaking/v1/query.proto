@@ -86,6 +86,13 @@ service Query {
   rpc Move(QueryMoveRequest) returns (QueryMoveResponse) {
     option (google.api.http).get = "/earth/shieldedstaking/v1/moves/{key}";
   }
+  // Vintages is one validator's stake vintages (v1.3.0): the current month,
+  // the base vintage, each live vintage with its supply, asset denom and
+  // retirement time, and (paged, oldest first) its retired vintages not yet
+  // fully withdrawn, with their held payout's state.
+  rpc Vintages(QueryVintagesRequest) returns (QueryVintagesResponse) {
+    option (google.api.http).get = "/earth/shieldedstaking/v1/vintages/{validator}";
+  }
 }
 
 // QueryParamsRequest is the request type for Query/Params.
@@ -357,4 +364,57 @@ message QueryMoveResponse {
   bool found = 2;
   bool slashed = 3;
   uint64 retained = 4;
+}
+
+// QueryVintagesRequest: pagination pages the retired vintages (by month;
+// at most 100 a page).
+message QueryVintagesRequest {
+  string validator = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+
+// QueryVintagesResponse is a validator's vintages as of the block read.
+message QueryVintagesResponse {
+  // current_vintage is the vintage a delegation or check-in credits now
+  // (the block time's UTC month, YYYYMM); base_vintage the one whose asset
+  // is the unsuffixed derth/<validator>.
+  uint32 current_vintage = 1;
+  uint32 base_vintage = 2;
+  // live is every live vintage (current_vintage and the 12 before it) that
+  // holds supply, oldest first.
+  repeated LiveVintage live = 3 [(gogoproto.nullable) = false];
+  // retired is one page of the retired vintages not fully withdrawn.
+  repeated RetiredVintageState retired = 4 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 5;
+  // next_retirement is when the oldest live vintage retires (unix seconds):
+  // 00:00 UTC on the 1st of current_vintage + 1.
+  int64 next_retirement = 6;
+}
+
+// LiveVintage is one live vintage at a validator.
+message LiveVintage {
+  uint32 vintage = 1;
+  // denom is its stake asset's denom (zk/privacy.AssetID of it is the
+  // circuit's asset).
+  string denom = 2;
+  string supply = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  // retires_at is 00:00 UTC on the 1st of vintage + 13 (unix seconds); a
+  // check-in before then moves the stake into the current vintage.
+  int64 retires_at = 4;
+}
+
+// RetiredVintageState is a retired vintage, its asset and its held payout's
+// unbond record (status, completion, payout once matured).
+message RetiredVintageState {
+  RetiredVintage vintage = 1 [(gogoproto.nullable) = false];
+  string denom = 2;
+  // record is the held payout's unbond record (absent when nothing is
+  // held); withdrawals before its maturity are paid at maturity, after it
+  // in the next block.
+  UnbondRecord record = 3;
 }

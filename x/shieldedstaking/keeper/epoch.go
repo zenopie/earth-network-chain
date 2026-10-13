@@ -81,6 +81,8 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		k.failure(ctx, "stake_roots_stale", "", err)
 	}
 	k.reweighSlashed(ctx)
+	// Voters whose totals this block's retirement dropped (BeginBlock).
+	k.resyncRetired(ctx)
 	k.sweepPayouts(ctx)
 	k.matureRecords(ctx)
 	epoch, err := k.Epoch.Get(ctx)

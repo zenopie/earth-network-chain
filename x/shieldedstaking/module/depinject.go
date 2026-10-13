@@ -30,7 +30,7 @@ func init() {
 		&types.Module{},
 		appconfig.Provide(ProvideModule,
 			types.ProvideDelegateGetSigners, types.ProvideRestakeGetSigners, types.ProvideUndelegateGetSigners,
-			types.ProvideStakeVoteGetSigners, types.ProvideRedelegateGetSigners),
+			types.ProvideStakeVoteGetSigners, types.ProvideRedelegateGetSigners, types.ProvideCheckInGetSigners),
 	)
 }
 
@@ -88,8 +88,10 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// Groundworks weight: each validator's stake note votes as one voter
 	// (derth x epoch rate), and an operator's self-bond while its validator
 	// is Bonded; this module's own delegations carry none.
+	// Stake votes carry no lease since v1.3.0 (they end with their stake
+	// vintage, vintages.go): no Lapser is registered. Operators' splits keep
+	// x/allocation's own lease.
 	in.AllocationKeeper.RegisterWeightSource(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewGroundworksWeightSource(k))
-	in.AllocationKeeper.RegisterLapser(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewGroundworksLapser(k))
 
 	return ModuleOutputs{
 		ShieldedStakingKeeper: k,
