@@ -84,8 +84,6 @@ type Keeper struct {
 	// by every copy.
 	weightSources      map[types.StreamId]types.WeightSource
 	integratedHandlers map[string]integratedHandler
-	// lapsers retire other modules' leased weight per stream (see lease.go).
-	lapsers map[types.StreamId][]types.Lapser
 
 	// chamber holds the address x/assembly registers itself under. A pointer
 	// because the keeper is passed by value and RegisterChamber is called after
@@ -153,7 +151,6 @@ func NewKeeper(
 
 		weightSources:      map[types.StreamId]types.WeightSource{},
 		integratedHandlers: map[string]integratedHandler{},
-		lapsers:            map[types.StreamId][]types.Lapser{},
 		chamber:            &chamberRef{},
 		residueSink:        &residueSink{},
 	}
@@ -190,12 +187,6 @@ type chamberRef struct{ addr []byte }
 // module wiring, by whichever module owns the notion of weight for that stream.
 func (k Keeper) RegisterWeightSource(stream types.StreamId, src types.WeightSource) {
 	k.weightSources[stream] = src
-}
-
-// RegisterLapser attaches a module's leased weight in stream (see Lapser).
-// Called once, from module wiring.
-func (k Keeper) RegisterLapser(stream types.StreamId, l types.Lapser) {
-	k.lapsers[stream] = append(k.lapsers[stream], l)
 }
 
 // RegisterIntegratedHandler registers an INTEGRATED handler for one stream.

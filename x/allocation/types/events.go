@@ -20,7 +20,9 @@ const (
 	// backlog of a halt in one block. Exact, but a slow block; informational.
 	EventTypeLeaseBacklogDrained = "lease_backlog_drained"
 
-	AttributeKeyStream       = "stream"
+	AttributeKeyStream = "stream"
+	// AttributeKeyLapser names the lease queue: always "account" (operators'
+	// splits), kept for indexers.
 	AttributeKeyLapser       = "lapser"
 	AttributeKeyKey          = "key"
 	AttributeKeyExpiresAt    = "expires_at"

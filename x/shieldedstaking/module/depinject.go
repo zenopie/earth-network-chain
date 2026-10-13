@@ -89,8 +89,8 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// (derth x epoch rate), and an operator's self-bond while its validator
 	// is Bonded; this module's own delegations carry none.
 	// Stake votes carry no lease since v1.3.0 (they end with their stake
-	// vintage, vintages.go): no Lapser is registered. Operators' splits keep
-	// x/allocation's own lease.
+	// vintage, vintages.go). Operators' splits keep x/allocation's own
+	// lease, its only lease queue.
 	in.AllocationKeeper.RegisterWeightSource(allocationtypes.STREAM_ID_GROUNDWORKS, keeper.NewGroundworksWeightSource(k))
 
 	return ModuleOutputs{

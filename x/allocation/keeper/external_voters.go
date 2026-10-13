@@ -213,7 +213,8 @@ func (k Keeper) SetWeightedVoter(ctx context.Context, stream types.StreamId, key
 
 // SetWeightedVoterSettled is SetWeightedVoter for a caller that has settled
 // the stream to the moment the weights change: it does not settle to the
-// block time first. For a Lapser (the stream is settled to the lapse time).
+// block time first (x/shieldedstaking's EndBlock re-file of a validator
+// voter, after this module's BeginBlock settled the stream).
 func (k Keeper) SetWeightedVoterSettled(ctx context.Context, stream types.StreamId, key []byte, weights []types.OptionWeight) error {
 	if err := ValidateStream(stream); err != nil {
 		return err

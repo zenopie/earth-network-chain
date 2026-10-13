@@ -67,7 +67,7 @@ func TestLeaseSweepDrainsBacklogExactly(t *testing.T) {
 	require.ErrorIs(t, err, collections.ErrNotFound, "a lapsed")
 	_, err = k.Voters.Get(late, voterKey(gw, b))
 	require.NoError(t, err)
-	left, found, err := k.nextLapse(late, k.lapsersOf(gw), t0+6000)
+	left, found, err := k.nextLapse(late, gw, t0+6000)
 	require.NoError(t, err)
 	require.False(t, found, "nothing due after the sweep (next at %d)", left)
 	last, err = k.getLastUpkeep(late, gw)
