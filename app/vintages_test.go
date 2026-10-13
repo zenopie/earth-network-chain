@@ -965,3 +965,41 @@ func TestVintageSupplyProperty(t *testing.T) {
 		})
 	}
 }
+
+// A slash of a redelegation's source books its debt on the vintage the
+// move's credit landed in at the destination (dst's current month at the
+// move), not on the destination's other vintages.
+func TestVintageSlashDebtPerVintage(t *testing.T) {
+	e := initStakeEnv(t)
+	e.fundPoolDirect(50_000 * ssErth)
+	vA, _ := e.createValidator(1000 * ssErth)
+	vB, _ := e.createValidator(1000 * ssErth)
+	e.next(5 * time.Second)
+	jan := e.month()
+	e.fakeDelegate(vA, uint64(4_000*ssErth), "a")
+	e.fakeDelegate(vB, uint64(2_000*ssErth), "b")
+	feb := sstypes.AddMonths(jan, 1)
+	e.toTime(sstypes.VintageStart(feb).Add(time.Hour))
+	e.next(5 * time.Second)
+	e.next(5 * time.Second)
+	infraction := e.height
+	e.next(5 * time.Second)
+	// January's notes at A move to B: the credit lands in B's February.
+	r, err := e.tryFakeRedelegateFrom(vA, vB, jan, uint64(1_000*ssErth), "ab")
+	require.NoError(t, err)
+	mv, ok := e.move(fakeMoveKey("ab"))
+	require.True(t, ok)
+	require.Equal(t, feb, mv.Vintage)
+	require.Equal(t, math.NewIntFromUint64(r.Derth), e.vsupply(vB, feb))
+	e.next(5 * time.Second)
+	janB, febB := e.vsupply(vB, jan), e.vsupply(vB, feb)
+
+	res := e.doubleSign(vA, infraction)
+	evs := eventsOf(res.Events, sstypes.EventTypeSlashDebt)
+	require.Len(t, evs, 1)
+	debt := evInt(t, evs[0], "debt")
+	require.True(t, debt.IsPositive())
+	require.Equal(t, febB.Sub(debt), e.vsupply(vB, feb), "February's vintage owes the debt")
+	require.Equal(t, janB, e.vsupply(vB, jan), "January's is untouched")
+	e.requireVintageBooks()
+}
