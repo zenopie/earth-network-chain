@@ -34,7 +34,9 @@ the backend indexer must update (below). UPGRADE_PLAN.md item 4.
   catching up after a halt, retried a day later if a book failed), and at
   the next epoch end its supply leaves the validator's book at the live
   rate (floored toward the pool) as one held undelegation, undelegated in
-  that same step (then the usual slash haircuts and maturity). Until that
+  that same step (then the usual slash haircuts and maturity); if the
+  undelegation fails, the booking rolls back and waits for the next epoch
+  end. Until that
   epoch end it earns for its own holders; afterwards it earns nothing and
   no longer votes. The supply is kept per vintage (`derth_supply` = the
   sum of the stored vintages'); the rate stays one per validator.
@@ -51,7 +53,7 @@ the backend indexer must update (below). UPGRADE_PLAN.md item 4.
   (`/earth/shieldedstaking/v1/vintage_books`, paged by key): every
   validator's vintages (live, retiring, retired with the held payout's
   record and `expected_completion`) in one list, so wallets never name
-  their validators. `Query/Vintages`
+  their validators (`offset`, `reverse` and `count_total` are refused). `Query/Vintages`
   (`/earth/shieldedstaking/v1/vintages/{validator}`, for explorers): one
   validator's, with its retiring vintages.
 - Events `shieldedstaking_vintage_retired`, `shieldedstaking_retired_withdrawal`,
@@ -82,7 +84,7 @@ the backend indexer must update (below). UPGRADE_PLAN.md item 4.
 - **Late slash debt**: a slash reaching a redelegation after its label
   window closed (an x/staking entry kept slashable by merges) charges no
   note and no vintage; the destination's rate bears it. Genesis gains
-  `max_clear_before` (25).
+  `max_clear_before` (25), refused above genesis time less 600 s.
 - **Gov stake votes** name their vintage; a retired vintage, or one after
   the proposal's snapshot month, is refused. A snapshot's supply counts
   live vintages (and a retiring one until the epoch end books it); votes

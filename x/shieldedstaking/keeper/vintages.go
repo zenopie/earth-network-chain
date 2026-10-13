@@ -402,7 +402,10 @@ func (k Keeper) resyncRetired(ctx context.Context) {
 // removal fails is reported (event shieldedstaking_epoch_failure, stage
 // dead_votes, its validator, "vote <id> parked" in the error) and parked: its index entry is dropped so the
 // sweep moves past it, and the vote itself stays, counting for nothing,
-// until its note is withdrawn (or a genesis import re-indexes it).
+// until its note is withdrawn (or a genesis import re-indexes it). The
+// withdrawal removes it with the same removeVote (store operations only),
+// so that fails only on the same store fault, and then the whole
+// withdrawal is refused, never half-applied (audit 2, I5).
 func (k Keeper) sweepDeadVotes(ctx context.Context) {
 	oldest := types.OldestLiveVintage(k.currentVintage(ctx))
 	rng := new(collections.Range[collections.Triple[uint32, string, uint64]]).

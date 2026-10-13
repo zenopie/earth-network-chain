@@ -505,6 +505,12 @@ func (q queryServer) VintageBooks(ctx context.Context, req *types.QueryVintageBo
 		if p.Offset != 0 {
 			return nil, status.Error(codes.InvalidArgument, "offset is not supported: page with next_key")
 		}
+		if p.Reverse {
+			return nil, status.Error(codes.InvalidArgument, "reverse is not supported: pages are in (validator, vintage) order")
+		}
+		if p.CountTotal {
+			return nil, status.Error(codes.InvalidArgument, "count_total is not supported: page with next_key to the end")
+		}
 		if p.Limit != 0 && p.Limit < limit {
 			limit = p.Limit
 		}

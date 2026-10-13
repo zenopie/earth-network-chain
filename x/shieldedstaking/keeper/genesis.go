@@ -907,6 +907,18 @@ func (k Keeper) initMoves(ctx context.Context, gs types.GenesisState) error {
 		}
 	}
 	if gs.MaxClearBefore > 0 {
+		// A proof's clear_before is at most its block time less the label
+		// window, and the window is at least MoveTimeSlackSeconds: a value
+		// above genesis time less that was never named, and would class
+		// in-window moves as late (audit 2, I2). The tighter
+		// ClearBefore(genesis time) is not a bound: a window lengthened by
+		// governance since the proof leaves ClearBefore(now) below a value
+		// legitimately named.
+		now := sdk.UnwrapSDKContext(ctx).BlockTime().Unix()
+		if now <= types.MoveTimeSlackSeconds || gs.MaxClearBefore > uint64(now)-types.MoveTimeSlackSeconds {
+			return fmt.Errorf("genesis max_clear_before %d: above genesis time %d less the minimum label window (%ds)",
+				gs.MaxClearBefore, now, types.MoveTimeSlackSeconds)
+		}
 		if err := k.MaxClearBefore.Set(ctx, gs.MaxClearBefore); err != nil {
 			return err
 		}

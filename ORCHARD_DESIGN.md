@@ -1558,8 +1558,11 @@ still valid and nothing older. A Delegate names it in `vintage`;
 Redelegate and CheckIn in `credit_vintage` (0: the current month; a
 non-zero one is appended to the sighash, and a Redelegate's requires a
 non-zero `vintage`, so no two encodings share a sighash). The ante and the
-handler apply one rule (`VintageCtx.CheckCredit`), so CheckTx never admits
-what DeliverTx would refuse for it.
+handler apply one rule (`VintageCtx.CheckCredit`) at their own block time.
+CheckTx checks against the last committed block's time, so a tx naming the
+previous month admitted in the grace's last seconds can still be refused in
+the first block past 3600 s (as any time-bound check can be; such a proof's
+clear_before is at the end of its slack too). Liveness only.
 
 Lanes must match their assets as the circuit already enforces (one asset
 per lane), so a restake, a merge or a Groundworks re-vote happens within
@@ -1604,7 +1607,11 @@ leave its supply. Per (v, m) with S_{v,m} > 0:
                     remaining_supply = supply, remaining_value = V, retired_at}   (prefix 63)
 
 and `processValidator` undelegates the record in the same step, so the
-record is UNBONDING at once. Until that epoch end the retiring supply stays
+record is UNBONDING at once. The booking and the undelegation are one
+guarded unit: if the undelegation fails, the booking rolls back with it
+(the book's other records then go out in `processValidator` alone), so
+booked value is never left bonded, earning for the live holders (audit 2,
+L1). Until that epoch end the retiring supply stays
 in S_v and earns at the rate for its own holders: V includes the rewards
 from the boundary to the epoch end, and no one can time a delegation to
 take them (audit 1, L3: valued at the boundary and undelegated up to an
@@ -1613,8 +1620,10 @@ fresh delegator to a wholly retired book included). A slash before the
 epoch end lowers the rate and so V; a slash of the SDK entry cuts its
 balance; maturity reads the entry. Once booked, retired value earns
 nothing. Event `shieldedstaking_vintage_retired {validator, vintage,
-supply, value, epoch, payout_id}`. A booking that fails
-(`shieldedstaking_epoch_failure` stage `retire_vintage`), or one x/staking
+supply, value, epoch, payout_id}`. A booking that fails, or whose undelegation fails
+(`shieldedstaking_epoch_failure` stage `retire_vintage`; stage `validator`
+when `processValidator` then fails alone too, the whole book deferred), or
+one x/staking
 would defer (`max_entries`), or one whose record of that epoch is no
 longer pending, is left in the book, earning, for the next epoch end (a
 day). Between the boundary and the booking the vintage is **retiring**:

@@ -217,13 +217,32 @@ func (k Keeper) sweepBooks(ctx context.Context, sweep types.EpochSweep, maxEpoch
 	}
 	for _, v := range vals {
 		// Stake vintages retired by now leave the book first, into the
-		// records processValidator undelegates (vintages.go). One that fails
-		// stays in the book, earning, until the next epoch end.
-		if err := k.guarded(ctx, func(cc context.Context) error { return k.retireDue(cc, v, maxEpoch) }); err != nil {
+		// records processValidator undelegates (vintages.go), in one guarded
+		// unit: a booking is committed only with the undelegation that takes
+		// its value out of the bond (audit 2, L1). If either fails, the
+		// booking rolls back and the vintage stays in the book, earning for
+		// its own holders, until the next epoch end retries it; the book's
+		// other records still go out, in processValidator alone.
+		stage := "retire_vintage"
+		err := k.guarded(ctx, func(cc context.Context) error {
+			if err := k.retireDue(cc, v, maxEpoch); err != nil {
+				return err
+			}
+			stage = "validator"
+			return k.processValidator(cc, v, maxEpoch)
+		})
+		if err == nil {
+			continue
+		}
+		perr := k.guarded(ctx, func(cc context.Context) error { return k.processValidator(cc, v, maxEpoch) })
+		if stage == "retire_vintage" || perr == nil {
+			// The booking failed, or failed only together with the
+			// undelegation: it alone is deferred. (If processValidator
+			// fails alone too, its "validator" failure covers the book.)
 			k.failure(ctx, "retire_vintage", v, err)
 		}
-		if err := k.guarded(ctx, func(cc context.Context) error { return k.processValidator(cc, v, maxEpoch) }); err != nil {
-			k.failure(ctx, "validator", v, err)
+		if perr != nil {
+			k.failure(ctx, "validator", v, perr)
 		}
 	}
 	if len(vals) < types.EpochValidatorLimit {

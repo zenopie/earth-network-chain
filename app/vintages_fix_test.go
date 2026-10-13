@@ -597,4 +597,9 @@ func TestVintageBooksQuery(t *testing.T) {
 	require.Equal(t, all.Entries, paged)
 	_, err = q.VintageBooks(e.ctx(), &sstypes.QueryVintageBooksRequest{Pagination: &query.PageRequest{Offset: 1}})
 	require.Error(t, err)
+	// reverse and count_total are refused too, not ignored (audit 2, I4).
+	_, err = q.VintageBooks(e.ctx(), &sstypes.QueryVintageBooksRequest{Pagination: &query.PageRequest{Reverse: true}})
+	require.ErrorContains(t, err, "reverse is not supported")
+	_, err = q.VintageBooks(e.ctx(), &sstypes.QueryVintageBooksRequest{Pagination: &query.PageRequest{CountTotal: true}})
+	require.ErrorContains(t, err, "count_total is not supported")
 }
