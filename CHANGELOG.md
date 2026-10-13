@@ -14,8 +14,10 @@ like, because nodes running different versions cannot agree.
 ## [v1.3.0]
 
 Consensus-breaking. Goes through governance as a `MsgSoftwareUpgrade` named
-`v1.3.0`; never applied in place. State migration in the upgrade handler
-(never fails the upgrade). No circuit or verifying-key change. Wallets and
+`v1.3.0`; never applied in place. State migration in the upgrade handler:
+its vintage accounting fails the upgrade (the chain halts at the upgrade
+height) rather than run without it; the rest is best-effort. No circuit or
+verifying-key change. Wallets and
 the backend indexer must update (below). UPGRADE_PLAN.md item 4.
 
 ### Added
@@ -24,14 +26,18 @@ the backend indexer must update (below). UPGRADE_PLAN.md item 4.
   stake was last checked in: `derth/<valoper>/<YYYYMM>`. The unsuffixed
   `derth/<valoper>` that every existing note carries is the upgrade month's
   vintage (the *base vintage*). A delegation, a redelegation's credit and a
-  check-in land in the current month. A vintage is live in its month and
-  the 12 after it and **retires at 00:00 UTC on the 1st of month + 13**: in
-  that block's BeginBlock (bounded, catching up after a halt) its supply
-  leaves the validator's book at the live rate (floored toward the pool) as
-  one held undelegation through the usual pipeline (epoch-end
-  undelegation, slash haircuts, maturity). Retired stake earns nothing and
-  no longer votes. The supply is kept per vintage (`derth_supply` = the sum
-  of the live vintages'); the rate stays one per validator.
+  check-in land in the current month (or, in a month's first hour, the
+  previous one: a proof built before the boundary still lands). A vintage
+  is live in its month and the 12 after it and **retires at 00:00 UTC on
+  the 1st of month + 13**: from then it takes no msg but a withdrawal, its
+  Groundworks totals are dropped in the next block's BeginBlock (bounded,
+  catching up after a halt, retried a day later if a book failed), and at
+  the next epoch end its supply leaves the validator's book at the live
+  rate (floored toward the pool) as one held undelegation, undelegated in
+  that same step (then the usual slash haircuts and maturity). Until that
+  epoch end it earns for its own holders; afterwards it earns nothing and
+  no longer votes. The supply is kept per vintage (`derth_supply` = the
+  sum of the stored vintages'); the rate stays one per validator.
 - **`MsgCheckIn`** (`/earth.shieldedstaking.v1.MsgCheckIn`): moves derth of
   an older live vintage into the current one at the same validator; no
   value moves, the rate does not change, the amount is public. Gas as a
@@ -40,13 +46,19 @@ the backend indexer must update (below). UPGRADE_PLAN.md item 4.
   (no Groundworks split) is paid its pro rata share of the vintage's held
   value at the record's maturity (in the next block once matured). Every
   other msg on a retired asset is refused (code 1121).
-- `Query/Vintages` (`/earth/shieldedstaking/v1/vintages/{validator}`):
-  current and base vintage, live vintages with supply and retirement time,
-  retired vintages (paged) with their held payout's record.
+- `Query/VintageInfo` (`/earth/shieldedstaking/v1/vintage_info`): current
+  and base vintage, next retirement. `Query/VintageBooks`
+  (`/earth/shieldedstaking/v1/vintage_books`, paged by key): every
+  validator's vintages (live, retiring, retired with the held payout's
+  record and `expected_completion`) in one list, so wallets never name
+  their validators. `Query/Vintages`
+  (`/earth/shieldedstaking/v1/vintages/{validator}`, for explorers): one
+  validator's, with its retiring vintages.
 - Events `shieldedstaking_vintage_retired`, `shieldedstaking_retired_withdrawal`,
   `shieldedstaking_check_in`; `vintage` attribute on delegate, undelegate,
   redelegate (`vintage`, `dst_vintage`) and Groundworks vote events;
-  Groundworks vote action `retired` (a dead vote deleted).
+  Groundworks vote action `retired` (a dead vote deleted); `late_moves` on
+  `shieldedstaking_slash_debt`.
 - Errors 1121 (retired vintage) and 1122 (invalid vintage).
 
 ### Changed
@@ -54,16 +66,27 @@ the backend indexer must update (below). UPGRADE_PLAN.md item 4.
 - A `vintage` field on `MsgDelegate` (8), `MsgRestake` (6), `MsgUndelegate`
   (9), `MsgRedelegate` (9) and `MsgStakeVote` (12). 0 names the base
   vintage and leaves the sighash as before; a non-zero vintage is appended
-  to the sighash as `U64(vintage)`. Wallets older than v1.3.0 keep working
+  to the sighash as `U64(vintage)`. `credit_vintage` on `MsgRedelegate`
+  (10, needs a non-zero `vintage`) and `MsgCheckIn` (7): the credit lane's
+  month, 0 = the current one; non-zero, appended to the sighash after. Wallets older than v1.3.0 keep working
   on base-vintage notes, but their delegations fail from the month after
   the upgrade (a delegation credits the current month only).
 - **Groundworks stake votes have no lease**: they end with their vintage
-  (totals kept per vintage, dropped at retirement; dead votes deleted).
-  `split_expires_at` is always 0; x/shieldedstaking registers no lease
-  queue with x/allocation. Operators' splits keep their lease.
+  (totals kept per vintage, dropped at retirement; dead votes deleted, a
+  vote that cannot be removed parked with an event).
+  `GroundworksVote.split_expires_at` (field 11) is removed and reserved,
+  and the vote event no longer carries a `split_expires_at` attribute;
+  x/allocation's plug-in lease-queue registry is gone (operators' splits
+  keep their lease; the `lease_retire_failed` event's `lapser` is always
+  `account`).
+- **Late slash debt**: a slash reaching a redelegation after its label
+  window closed (an x/staking entry kept slashable by merges) charges no
+  note and no vintage; the destination's rate bears it. Genesis gains
+  `max_clear_before` (25).
 - **Gov stake votes** name their vintage; a retired vintage, or one after
   the proposal's snapshot month, is refused. A snapshot's supply counts
-  live vintages only; votes already cast keep counting.
+  live vintages (and a retiring one until the epoch end books it); votes
+  already cast keep counting.
 - x/staking's `unbonding_time` is capped at 364 days (refused on a
   governance `MsgUpdateParams` and at genesis), so a redelegation's slash
   label closes before its vintage can retire.
@@ -77,9 +100,12 @@ the backend indexer must update (below). UPGRADE_PLAN.md item 4.
 `MigrateV1_3_0`: the upgrade block's month becomes the base vintage holding
 every book's supply; Groundworks votes join it without a lease (lease queue
 and old totals cleared, totals rebuilt per vintage: every voter weighs what
-it did); open moves' credits are in it. A failing step is logged and
-evented (`shieldedstaking_epoch_failure`, stage `upgrade_v1_3_0/<step>`) and
-the chain goes on.
+it did); open moves' credits are in it. The base vintage and the books'
+supplies (and a check that `unbonding_time` is at most 364 days) fail the
+upgrade if they fail: **the chain halts at the upgrade height** and needs a
+fixed binary. A failing Groundworks, moves or voter step is logged and
+evented (`shieldedstaking_epoch_failure`, stage `upgrade_v1_3_0/<step>`)
+and the chain goes on.
 
 ## [v1.2.2]
 

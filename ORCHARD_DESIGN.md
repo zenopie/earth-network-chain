@@ -1083,10 +1083,12 @@ Every staking msg: `bundle` (fee: whole uerth balance, except MsgDelegate),
 | Delegate {bundle 1, validator 2, stake 4, amount 5, derth 6, groundworks_split 7, vintage 8} | derth/<v>/<now> | v_in = derth | – | spend + create | Bytes(validator), amount, derth, Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
 | Restake {bundle 1, validator 2, stake 4, groundworks_split 5, vintage 6} | derth/<v>/<vintage> (live) | – | – | spend + create | Bytes(validator), Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
 | Undelegate {bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7, groundworks_split 8, vintage 9} | derth/<v>/<vintage> (live, or retired: a withdrawal, 8.9) | v_out = amount | – | spend + create | Bytes(validator), amount, pc, Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
-| Redelegate {bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7, groundworks_split 8, vintage 9} | derth/<src>/<vintage> (live) | v_out = amount | derth/<dst>/<now>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes | Bytes(src), Bytes(dst), amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
-| CheckIn {bundle 1, validator 2, from_vintage 3, amount 4, stake 5, groundworks_split 6} | derth/<v>/<from_vintage> (live, before now) | v_out = amount | derth/<v>/<now>, cr_v_in = amount, cr_move_time = 0 | spend + create, both lanes | Bytes(validator), U64(from_vintage), U64(amount), Bytes(SplitsBytes(groundworks_split)) |
+| Redelegate {bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7, groundworks_split 8, vintage 9, credit_vintage 10} | derth/<src>/<vintage> (live) | v_out = amount | derth/<dst>/<credit>, cr_v_in = dst_derth, cr_move_time = move_time | spend + create, both lanes | Bytes(src), Bytes(dst), amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] [, U64(credit_vintage)] |
+| CheckIn {bundle 1, validator 2, from_vintage 3, amount 4, stake 5, groundworks_split 6, credit_vintage 7} | derth/<v>/<from_vintage> (live, before credit) | v_out = amount | derth/<v>/<credit>, cr_v_in = amount, cr_move_time = 0 | spend + create, both lanes | Bytes(validator), U64(from_vintage), U64(amount), Bytes(SplitsBytes(groundworks_split)) [, U64(credit_vintage)] |
 
-`<vintage>` and `<now>` are YYYYMM months (8.9), and the base vintage's
+`<vintage>`, `<now>` and `<credit>` are YYYYMM months (8.9; `<credit>` is
+`credit_vintage`, 0 meaning `<now>`: the current month, or the previous one
+in a month's first `VintageGraceSeconds`, 8.9), and the base vintage's
 denom is the unsuffixed `derth/<v>`. A pre-v1.3.0 msg's `vintage` field 0
 names the base vintage; a non-zero `vintage` is appended to its sighash as
 `U64(vintage)` (the bracketed field), so a wallet that predates vintages
@@ -1266,7 +1268,7 @@ A stake note votes in Groundworks in place, keyed by its Groundworks tag
   output's unexposed derth, proven by the circuit. Stored as
   `GroundworksVote {id 1, validator 2, derth 3, splits 4, created_height 7,
   weight 8 (not stored: derth × epoch rate, filled by queries), split_epoch
-  10, split_expires_at 11 (0 since v1.3.0), tag 12, pending 13, pending_key
+  10, 11 reserved (split_expires_at, removed in v1.3.0), tag 12, pending 13, pending_key
   14, pending_move_time 15, matures_at 16, vintage 17}` (5, 6, 9 reserved:
   the positions' pubkey, nonce, owner_tag). A vote is in its output's
   vintage: lane A's the msg's, the credit lane's the current month (a
@@ -1307,9 +1309,11 @@ A stake note votes in Groundworks in place, keyed by its Groundworks tag
   onto itself with the split. "Stop voting": a restake with no split.
 - **No lease (v1.3.0).** A stake note's vote ends with its vintage (8.9):
   at the vintage's retirement its totals are dropped and the voter
-  re-filed (EndBlock of the retirement block), and its record is deleted by
-  the note's withdrawal (its tag cancels it) or by the dead-vote sweep
-  (BeginBlock, `DeadVoteSweepLimit` 200 a block, event action `retired`). A
+  re-filed (EndBlock of the block after the boundary), and its record is
+  deleted by the note's withdrawal (its tag cancels it) or by the dead-vote
+  sweep (BeginBlock, `DeadVoteSweepLimit` 200 a block, event action
+  `retired`; an orphaned index entry is dropped and a vote that cannot be
+  removed is parked with an event, so the sweep never stalls). A
   check-in re-casts it in the current vintage. (Before v1.3.0 each vote
   carried `split_expires_at` = cast + `groundworks_lease_seconds` and lapsed
   through x/allocation's lease sweep; operators' splits keep that lease.)
@@ -1342,7 +1346,8 @@ paginated; a wallet finds its own by its notes' tags) and
 `Query/GroundworksVote {id}` (`/earth/shieldedstaking/v1/groundworks_votes/{id}`).
 Event `shieldedstaking_groundworks_vote {action (cast, cancelled, matured,
 retired; lapsed before v1.3.0), vote_id, tag, validator, derth, weight,
-options, split_expires_at (0), vintage, pending, matures_at}`.
+options, vintage, pending, matures_at}` (`split_expires_at` was dropped in
+v1.3.0; `GroundworksVote` field 11 is reserved).
 
 **Privacy (accepted).** Per vote, the validator, the weight (about the
 voting note's derth) and the split are public; the owner is not. A vote
@@ -1448,14 +1453,19 @@ burns exactly the fall of the module's shares at dst is the slash. Then
     debt  = floor(value × S / (B + value))          (B, S after the burn)
 
 comes off dst's derth_supply (`ValidatorState.slash_debt` += debt), each
-move's part off its vintage's supply (at most what the vintage holds; a
-vintage with no supply left books none, its holders' cut falls on dst's
-live holders as for a cleared label: 8.9): dst's rate is unchanged for every
+move's part off its vintage's supply: dst's rate is unchanged for every
 honest holder. Each move of a slashed entry owes
 debt pro rata to its share of what the slash took from its entry: retained −=
-its part, and its debt row is written. With no matching replay, an event is
+its part, and its debt row is written. A **late** move, one whose
+move_time is below the highest clear_before a proof has named
+(`MaxClearBefore`, prefix 68, genesis `max_clear_before`) or the current
+ClearBefore, may have cleared its label already (only a merged entry,
+`mergeOldEntries`, keeps a move slashable past its window): it owes
+nothing, no row is written and no supply comes off for it, so its share of
+the burn stays with dst's rate, borne once by dst's live holders (audit 1,
+L2; see 8.9). With no matching replay, an event is
 emitted and dst's book absorbs it. Events `shieldedstaking_slash_debt
-{src_validator, dst_validator, value, debt, entries}`,
+{src_validator, dst_validator, value, debt, entries, late_moves}`,
 `shieldedstaking_move_slashed {move_key, src_validator, dst_validator, debt,
 retained}`, `shieldedstaking_debt_row {move_key, retained, index, root}`.
 
@@ -1531,54 +1541,85 @@ Which msg may use which vintage:
 
 | msg | lane A vintage | credit lane |
 | --- | --- | --- |
-| Delegate | the current month only (1122 otherwise) | – |
-| Restake, Redelegate (src) | live (1121 retired, 1122 not begun) | Redelegate: dst's current month |
+| Delegate | the credit month (1122 otherwise) | – |
+| Restake, Redelegate (src) | live (1121 retired, 1122 not begun) | Redelegate: dst's credit month (`credit_vintage`) |
 | Undelegate | live; or retired: a withdrawal (below) | – |
-| CheckIn | live and before the current month | the current month |
+| CheckIn | live and before the credit month | the credit month (`credit_vintage`) |
 | StakeVote | live and not after the snapshot's month | – |
+
+The **credit month** is the current month, or (`VintageGraceSeconds` =
+`ClearBeforeSlackSeconds`, 3600 s) the previous one during the first hour
+of a month: a delegation, redelegation credit or check-in proven against a
+block before 00:00 UTC on the 1st and included after it still lands, in
+the previous month's vintage (live for 12 more months). The hour is how
+long any stake proof stays valid anyway (its clear_before must be within
+3600 s of the current), so the grace accepts every proof that is otherwise
+still valid and nothing older. A Delegate names it in `vintage`;
+Redelegate and CheckIn in `credit_vintage` (0: the current month; a
+non-zero one is appended to the sighash, and a Redelegate's requires a
+non-zero `vintage`, so no two encodings share a sighash). The ante and the
+handler apply one rule (`VintageCtx.CheckCredit`), so CheckTx never admits
+what DeliverTx would refuse for it.
 
 Lanes must match their assets as the circuit already enforces (one asset
 per lane), so a restake, a merge or a Groundworks re-vote happens within
 one vintage.
 
 **Supply per vintage.** `VintageSupplies[(v, m)]` = S_{v,m} (prefix 62);
-`derth_supply_v` = Σ over v's stored vintages (all live once the month's
-sweep ran: invariant 11). Every creation and destruction of derth has a
-public amount and is booked to its vintage: a delegation (+derth, now), an
-undelegation (−amount, its vintage), a redelegation (−amount at src's
-vintage, +dst_derth at dst's current), a check-in (−amount from_vintage,
-+amount now), a slash debt (−each move's part at the vintage its credit
-landed in, `Move.vintage`), a retirement (−S_{v,m}). One pot per validator:
+`derth_supply_v` = Σ over v's stored vintages (live, or retiring until the
+epoch end books them; never also retired: invariant 11). Every creation and destruction of derth has a
+public amount and is booked to its vintage: a delegation (+derth, the credit
+month), an undelegation (−amount, its vintage), a redelegation (−amount at
+src's vintage, +dst_derth at dst's credit month), a check-in (−amount
+from_vintage, +amount the credit month), a slash debt (−each in-window
+move's part at the vintage its credit landed in, `Move.vintage`; a late
+move's part is not booked, 8.7), a retirement (−S_{v,m}). One pot per validator:
 the rate stays `B_v / S_v` over every live vintage.
 
-**Retirement** (`retireVintages`, BeginBlock, after the slash watch and
-`matureVotes`). In the first block of a new UTC month (or the first after a
-halt) a sweep walks every book, `VintageRetireLimit` (200) a block from a
-persistent cursor (`VintageSweep {month, cursor, active, retry_at}`, prefix
-65); each book retires every vintage older than `month − 12`, oldest first
-(all a halt skipped). Per (v, m) with S_{v,m} > 0:
+**Retirement.** From 00:00 UTC on the 1st of m + 13, vintage m takes no
+msg but a withdrawal (by block time). Two steps follow.
 
-    V = floor(S_{v,m} × B_v / S_v)        (B, S live, before; floored toward the pool)
+*At the boundary* (`retireVintages`, BeginBlock, after the slash watch and
+`matureVotes`): in the first block of a new UTC month (or the first after a
+halt) a pass walks every book, `VintageRetireLimit` (200) a block from a
+persistent cursor (`VintageSweep {month, cursor, active, retry_at,
+failed}`, prefix 65), dropping the Groundworks totals `T[v][m]` of every
+retired vintage and re-filing the voter once per validator at the end of
+the block (`GwResync`, prefix 67, after x/allocation's BeginBlock settled
+the stream): a retired vintage stops voting at its boundary. A pass during
+which any of its blocks failed a book (`shieldedstaking_epoch_failure`
+stage `vintage_totals`) runs again a day later: `failed` carries a failure
+across the pass's blocks (audit 1, L1).
+
+*At the epoch end* (`retireDue`, in the epoch sweep right before
+`processValidator`, which undelegates the book's records of the epoch that
+ended): each book's retired vintages, oldest first (all a halt skipped),
+leave its supply. Per (v, m) with S_{v,m} > 0:
+
+    V = floor(S_{v,m} × B_v / S_v)        (B, S live, at the epoch end; floored toward the pool)
     S_v −= S_{v,m}; S_{v,m} removed (the supply is checkpointed first: snapshots keep theirs)
-    record (v, current epoch): requested, target, outstanding += V; pending_undelegation += V
+    record (v, epoch that ended): requested, target, outstanding += V; pending_undelegation += V
     UnbondPayout {id, v, epoch, value V, no pc, no ciphertext}   (held: in no queue, never paid by itself)
     RetiredVintage {validator, vintage, supply, value V, payout_id, epoch,
                     remaining_supply = supply, remaining_value = V, retired_at}   (prefix 63)
 
-The held undelegation goes through the ordinary pipeline: the epoch end
-undelegates the record's target from x/staking, a slash while pending cuts
-the target (BeforeValidatorSlashed) and a slash of the SDK entry cuts its
-balance, and maturity reads the entry. Retired value earns nothing (it is
-out of B_v); the rewards it no longer takes go to the live holders, and
-Groundworks' fixed emission spreads over the votes left. The vintage's
-Groundworks totals `T[v][m]` are dropped in the same pass and the voter is
-re-filed once per validator at the end of the block (`GwResync`, prefix 67,
-after x/allocation's BeginBlock settled the stream). Event
-`shieldedstaking_vintage_retired {validator, vintage, supply, value, epoch,
-payout_id}`. A pass that failed a book (logged, `shieldedstaking_epoch_failure`
-stage `retire_vintage`) runs again a day later; between the boundary and its
-book's turn a retired-by-time vintage takes no msg, and its supply still
-earns (at most the blocks the sweep takes).
+and `processValidator` undelegates the record in the same step, so the
+record is UNBONDING at once. Until that epoch end the retiring supply stays
+in S_v and earns at the rate for its own holders: V includes the rewards
+from the boundary to the epoch end, and no one can time a delegation to
+take them (audit 1, L3: valued at the boundary and undelegated up to an
+epoch later, its tail went to whoever held live derth at the epoch end, a
+fresh delegator to a wholly retired book included). A slash before the
+epoch end lowers the rate and so V; a slash of the SDK entry cuts its
+balance; maturity reads the entry. Once booked, retired value earns
+nothing. Event `shieldedstaking_vintage_retired {validator, vintage,
+supply, value, epoch, payout_id}`. A booking that fails
+(`shieldedstaking_epoch_failure` stage `retire_vintage`), or one x/staking
+would defer (`max_entries`), or one whose record of that epoch is no
+longer pending, is left in the book, earning, for the next epoch end (a
+day). Between the boundary and the booking the vintage is **retiring**:
+`Query/Vintages.retiring`, `Query/VintageBooks` state `retiring`, with an
+`expected_completion` estimate (the epoch end plus unbonding_time).
 
 **Withdrawal of a retired note** (`MsgUndelegate` on the retired asset):
 `v_out = d` public, the note spent in lane A, the output a zero note that
@@ -1595,8 +1636,9 @@ the same record: paid at the record's maturity like every payout
 sweep when the record has matured already. remaining_supply −= d,
 remaining_value −= w; the held payout's value is always remaining_value and
 is deleted with the last withdrawal (as is the RetiredVintage). Refused
-(1121) before the retirement is booked (the sweep has not reached the book
-yet) and once nothing remains; d above remaining_supply: 1103. Event
+(1121) before the retirement is booked (until the next epoch end) and once
+nothing remains; d above remaining_supply: 1103; a share w above one
+note's worth: 1103 (withdraw in parts). Event
 `shieldedstaking_retired_withdrawal {validator, vintage, derth, value,
 epoch, payout_id, remaining_supply, remaining_value}`. The input's tag
 cancels its (dead) Groundworks vote. A labelled retired note withdraws by
@@ -1610,21 +1652,48 @@ at genesis (and `max_unbonding_seconds`), and reported by the epoch end.
 A credit lands in its vintage at the block time and retires at least 12
 calendar months (≥ 365 days) later, so its label window (unbonding_time +
 600 s) has closed by then: every retired note can clear, and no slash debt
-reaches a retired vintage through an open label. The one exception is an
-x/staking entry kept slashable past its window by `mergeOldEntries` (8.7:
-merged entries take the later completion) under sustained entry-cap
-traffic; a debt then owed by a vintage with no supply left is not booked,
-and the destination's live holders absorb the cut as for a cleared label
-(the retired note clears at the lower retained, and that remainder stays in
-the held payout).
+reaches a retired vintage through an open label.
+
+**Late slash debt** (audit 1, L2). x/staking's merged entries
+(`mergeOldEntries`, 8.7: the merged entry takes the later completion) keep
+a move slashable past its own label window, and merges chain: each merge
+of the oldest pair pulls its moves' completion forward by up to an
+unbonding_time, for as long as the merged entry holds at most
+`MaxMergeMoves` (128) moves and someone keeps the pair at the 1024-entry
+cap. So no fixed label window covers it: the bound is about 128 ×
+unbonding_time, beyond any vintage's life. Widening clear_before to it
+would leave labelled notes unable to clear before retirement, and capping
+merges so no move outlives its window would push moves into the
+join-the-latest-entry fallback (whose missed slashes fall on the source's
+holders, which audit C-2 removed). The chain instead never charges a debt
+it cannot place: at a slash, a move whose move_time is below the highest
+clear_before any proof has named (`MaxClearBefore`, prefix 68, recorded by
+every stake msg and exported as genesis `max_clear_before`; or the current
+ClearBefore if higher) may already have cleared at its full exposure, so
+it is **late**: no debt row, no supply off its vintage. Its share of the
+burn stays with dst's rate (B fell, S did not), borne once by dst's live
+holders; the note that cleared, or clears later, holds exactly what dst's
+supply counts for it. Before this, the debt came off the credit's vintage
+while the note kept its derth: that vintage's last holders could not leave
+(at 21 days' unbonding, a live vintage), or, past ~182.5 days' unbonding
+(2 × unbonding_time + 600 s > 365 days), the retired vintage's
+remaining_supply exceeded its notes and that share of its held payout was
+stranded while the rate bore the burn too. An in-window move's labelled
+note is in its credit vintage (a check-in's credit lane is unlabelled), and
+the vintage is live, so it always holds the debt (less is an invariant
+failure: the whole slash then stays with the rate). The cost is the
+griefing bound it always was: at most slash_fraction × the move's credit,
+on dst's live holders, and only with 1024 entries in one pair and a slash
+of the source; no one profits.
 
 **Check-in** (`MsgCheckIn`, 8.3): lane A spends notes of `from_vintage`
-(live, before the current month), `v_in` 0, `v_out = amount` (a kept
+(live, before the credit month), `v_in` 0, `v_out = amount` (a kept
 label's exposure and any change stay in from_vintage); lane B credits
-`amount` to the current vintage's note, unlabelled (`cr_move_time` 0; its
-input an unlabelled note of the current vintage or padding). The chain
-checks the validator, that from_vintage is live and older than now, and
-amount ≤ S_{v,from}; it moves amount from S_{v,from} to S_{v,now}: no
+`amount` to the credit month's note, unlabelled (`cr_move_time` 0; its
+input an unlabelled note of that vintage or padding). The chain checks the
+validator, the credit month (`credit_vintage`), that from_vintage is live
+and older than it, and amount ≤ S_{v,from}; it moves amount from
+S_{v,from} to S_{v,credit}: no
 x/staking action, no value moves, the rate does not change. Inputs' tags
 cancel their votes; the outputs may vote with the split (lane A's in
 from_vintage, lane B's in the current one). Gas: a restake's base over two
@@ -1635,22 +1704,43 @@ to_vintage, derth}`.
 totals are kept per vintage (`T[v][m][o]`) and the voter is Σ over the live
 vintages; at retirement `T[v][m]` is dropped. Votes have no lease. Dead
 votes (of retired vintages) are deleted by the note's withdrawal or the
-dead-vote sweep (`GwVotesByVintage` (vintage, validator, id), prefix 66).
+dead-vote sweep (`GwVotesByVintage` (vintage, validator, id), prefix 66; orphaned entries
+dropped, a vote that cannot be removed parked with an event: audit 1, L4).
 Pending exposure maturity, the minimum vote and ResetAllocations' epoch
 behave as before.
 
 **Gov** (8.5): a stake vote names its vintage, refused when retired or
 after the snapshot's month; the snapshot supply is derth_supply (live
-vintages only); a vote already cast keeps counting when its vintage retires
-mid-vote.
+vintages, and a retiring one until the epoch end books it: its value is
+still bonded in the module's delegation then); a vote already cast keeps
+counting when its vintage retires mid-vote.
 
-**Queries.** `Query/Vintages {validator, pagination}`
-(`/earth/shieldedstaking/v1/vintages/{validator}`): `current_vintage`,
-`base_vintage`, `next_retirement` (unix s), `live` (each live vintage with
-supply: vintage, denom, supply, retires_at), `retired` (paged by month, at
-most 100: each RetiredVintage with its denom and, while value is held, its
-unbond record: status, completion_time, payout). `Query/UnbondPayout {id}`
-serves a withdrawal's payout. No lookup by tag or owner.
+**Queries.** Wallets never name a validator:
+
+- `Query/VintageInfo {}` (`/earth/shieldedstaking/v1/vintage_info`):
+  `current_vintage`, `base_vintage`, `next_retirement` (unix s).
+- `Query/VintageBooks {pagination}` (`/earth/shieldedstaking/v1/vintage_books`):
+  the clock as above, and one page (by (validator, vintage) key, at most
+  100, `next_key` only) of every validator's vintages: `VintageBookEntry
+  {validator, vintage, denom, state (live | retiring | retired), supply
+  (live, retiring), retires_at, retired (RetiredVintage), record (while
+  value is held), expected_completion}`. A wallet reads it whole and picks
+  its own.
+- `Query/Vintages {validator, pagination}`
+  (`/earth/shieldedstaking/v1/vintages/{validator}`, for explorers):
+  the clock, `live` (vintage, denom, supply, retires_at), `retiring` (the
+  same, with `expected_completion`), `retired` (paged by month, at most 100:
+  each RetiredVintage with its denom, `expected_completion` and, while value
+  is held, its unbond record: status, completion_time, payout).
+
+`expected_completion` (unix s) is when a held value's unbonding completes:
+the record's completion while UNBONDING (exact; the normal case, since the
+epoch end undelegates what it books), an estimate while the record is
+PENDING or the vintage retiring (the current epoch's end plus
+unbonding_time: unknown until an epoch end undelegates it, later if
+x/staking's max_entries defers it), 0 once MATURED (withdrawals are paid in
+the next block) or nothing is held. `Query/UnbondPayout {id}` serves a
+withdrawal's payout. No lookup by tag or owner.
 
 **Privacy.** Every stake action now publishes its notes' vintage (the
 month of their last check-in): a note's age bucket, and which vintage
@@ -1664,14 +1754,20 @@ young, and need not check in more than once a year. Within a vintage
 nothing new is revealed. A retired vintage's total supply and value are
 public (they were part of public books already).
 
-**Upgrade (MigrateV1_3_0, never errors).** The upgrade month becomes the
-base vintage; every book's derth_supply becomes its base vintage supply;
-every Groundworks vote joins the base vintage with `split_expires_at` 0; the
-lease queue (prefix 58) and the per-(validator, option) totals (prefix 29)
-are cleared and the totals rebuilt per vintage (voters unchanged, re-filed
-at the end of the block); every open move's credit is in the base vintage.
-A failed step is logged and evented (stage `upgrade_v1_3_0/<step>`), never
-returned.
+**Upgrade (MigrateV1_3_0).** The upgrade month becomes the base vintage
+and every book's derth_supply becomes its base vintage supply: these two,
+and a check that x/staking's unbonding_time is at most
+`MaxUnbondingSeconds`, run first in one cache, and if any fails the
+migration writes nothing and returns the error, so the upgrade handler
+fails and the chain halts at the upgrade height for a fixed binary (audit
+1, L5: carrying on would leave the base vintage unset, and the base vintage
+never falls back to the current month: it is an error when unset). Then,
+best-effort (a failed step is logged and evented, stage
+`upgrade_v1_3_0/<step>`, and left as it was): every Groundworks vote joins
+the base vintage (its lease, field 11, now reserved, is dropped); the lease
+queue (prefix 58) and the per-(validator, option) totals (prefix 29) are
+cleared and the totals rebuilt per vintage (voters unchanged, re-filed at
+the end of the block); every open move's credit is in the base vintage.
 
 ---
 
@@ -1693,13 +1789,13 @@ returned.
   Casting again renews the lease (from that block); a resync at a new
   weight keeps it. Genesis refuses an account's Groundworks split with no
   `expires_at`. Stake notes' votes carry no lease since v1.3.0: they end
-  with their stake vintage (8.6, 8.9); x/shieldedstaking registers no
-  `Lapser` (its `GwLapses` queue, prefix 58, was cleared by the upgrade),
-  and genesis refuses a Groundworks vote with a `split_expires_at`.
+  with their stake vintage (8.6, 8.9); the `GwLapses` queue (prefix 58)
+  was cleared by the upgrade and the field is reserved. x/allocation has
+  no plug-in lease queues since v1.3.0: operators' splits are the only
+  leased weight.
   - **Where a lease retires: only x/allocation's BeginBlock sweep**
     (`SweepLapses`, from the BeginBlocker's settle of each stream). It walks
-    every lease due by the block time in time order (`VoterLapses` here,
-    and any registered `Lapser`'s queue: none since v1.3.0), settles
+    every lease due by the block time in time order (`VoterLapses`), settles
     the index to each lapse time and retires that weight there
     (`SetWeightedVoterSettled` / `writeVoter`, no further settle), then
     settles to the block time: the emission after a lapse is never shared
@@ -1739,7 +1835,7 @@ returned.
 
     | event | attributes | meaning | alert |
     | --- | --- | --- | --- |
-    | `lease_retire_failed` | `stream`, `lapser` (`account` / `groundworks_votes`), `key` (voter / valoper), `expires_at`, `retry_at`, `error` | a due lease could not be retired; it counts until `retry_at` and retries daily for ever | any occurrence (page) |
+    | `lease_retire_failed` | `stream`, `lapser` (`account`; `groundworks_votes` before v1.3.0), `key` (voter; valoper before v1.3.0), `expires_at`, `retry_at`, `error` | a due lease could not be retired; it counts until `retry_at` and retries daily for ever | any occurrence (page) |
     | `lease_settle_held` | `stream`, `expires_at` | a settle other than the sweep met a due lease and held the index there; should never happen | any occurrence (page) |
     | `lease_backlog_drained` | `stream`, `lapse_seconds` | one sweep walked more than 1000 lapse seconds (a halt's backlog), exact but slow | informational |
 

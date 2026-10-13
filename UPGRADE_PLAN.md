@@ -201,9 +201,10 @@ names the UTC month its stake was last checked in
 (`derth/<valoper>/<YYYYMM>`; the unsuffixed `derth/<valoper>`, baked into
 every existing note, is the upgrade month's vintage). A vintage is live for
 its month and the 12 after it; at 00:00 UTC on the 1st of month + 13 it
-retires: its supply leaves the validator's book at the live rate as one
-held private undelegation (the existing pipeline: epoch-end undelegation,
-slash haircuts, maturity), which its notes withdraw from pro rata
+retires: at the next epoch end its supply leaves the validator's book at
+the live rate as one held private undelegation, undelegated in that step
+(then the existing pipeline: slash haircuts, maturity), which its notes
+withdraw from pro rata
 (`MsgUndelegate` on the retired asset). Retired stake earns nothing and
 stops voting (its Groundworks totals dropped, its gov votes refused). A new
 `MsgCheckIn` moves a live vintage's derth into the current month; one per
@@ -220,7 +221,8 @@ month; a check-in publishes its amount once per position per year; a
 vintage's holders are a smaller anonymity set than the validator's.
 Details: ORCHARD_DESIGN.md 8.9.
 
-**Upgrade.** `v1.3.0` handler, `MigrateV1_3_0` (never errors): the upgrade
+**Upgrade.** `v1.3.0` handler, `MigrateV1_3_0` (its vintage accounting
+halts the upgrade if it fails; the rest is best-effort): the upgrade
 month becomes the base vintage holding every book's supply; Groundworks
 votes join it without a lease (lease queue and old totals cleared, totals
 rebuilt per vintage, voters unchanged); open moves' credits are in it.
@@ -230,11 +232,14 @@ genesis), so a slash label always closes before its vintage can retire.
 **Wallets and backend.** New msg `MsgCheckIn`; a `vintage` field on
 Delegate (8), Restake (6), Undelegate (9), Redelegate (9), StakeVote (12),
 appended to the sighash when non-zero (0 keeps the old sighash for the base
-vintage); `Query/Vintages`; new events. Old wallets keep working for the
+vintage); `credit_vintage` on Redelegate (10) and CheckIn (7) for the
+month-boundary grace; `Query/VintageInfo` and `Query/VintageBooks` (whole
+list: wallets never name a validator), `Query/Vintages` (explorers); new
+events; `GroundworksVote.split_expires_at` removed. Old wallets keep working for the
 base vintage only: delegations (current month only) fail from the month
 after the upgrade. Full wire changes: the audit report
 `stake-vintages-chain.md`.
 
 **Touches.** x/shieldedstaking (types, keeper, genesis, invariants,
-queries, proto), x/allocation (no stake lapser), app (v1.3.0 handler,
+queries, proto), x/allocation (the plug-in lapser registry removed), app (v1.3.0 handler,
 router guard), tests and fixtures, docs.
