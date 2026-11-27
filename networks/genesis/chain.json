@@ -50,8 +50,8 @@
     "the git commit — the file would otherwise change every time anyone rebuilt it."
   ],
 
-  "chain_id": "earth-1",
-  "genesis_time": "2026-10-07T13:00:00Z",
+  "chain_id": "earth-2",
+  "genesis_time": "2026-11-27T05:00:00Z",
   "initial_height": 1,
   "app_version": "1",
 

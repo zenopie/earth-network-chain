@@ -38,6 +38,7 @@ export PATH="$WORK/bin:$PATH"
 GEN="$WORK/genesis.json"
 cp "$REPO/networks/genesis.json" "$GEN"
 cp "$REPO/networks/genesis.json.sha256" "$GEN.sha256"
+CHAIN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["chain_id"])' "$REPO/networks/genesis/chain.json")"
 
 run() { # run <home> [args...]: entrypoint output in $LOG, earthd calls in $EARTHD_LOG
   local home="$1"; shift
@@ -52,7 +53,7 @@ if run "$H"; then
   cmp -s "$GEN" "$H/config/genesis.json" \
     && ok "first start: installs the release genesis unmodified" \
     || bad "first start: genesis differs from the release"
-  grep -q "^earthd init earth-node --chain-id earth-1 --home $H$" "$EARTHD_LOG" \
+  grep -q "^earthd init earth-node --chain-id $CHAIN_ID --home $H$" "$EARTHD_LOG" \
     && ok "first start: inits with the genesis's chain id" \
     || bad "first start: wrong init" "$(grep '^earthd init' "$EARTHD_LOG")"
   grep -q "keys add\|gentx\|collect-gentxs" "$EARTHD_LOG" \
