@@ -17,9 +17,8 @@ import (
 //
 //	derth/<valoper>/<YYYYMM>
 //
-// except for the base vintage (the v1.3.0 upgrade month on earth-1; a new
-// chain's genesis month), whose denom is the unsuffixed derth/<valoper> that
-// every note made before v1.3.0 carries in its commitment. Exactly one denom
+// except for the base vintage (the chain's genesis month), whose denom is
+// the unsuffixed derth/<valoper>. Exactly one denom
 // per (validator, vintage): VintageDenom is the only spelling the chain
 // supplies to a proof.
 //

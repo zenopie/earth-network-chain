@@ -193,32 +193,11 @@ func TestResidueReachesTheCommunityPoolWithoutVotes(t *testing.T) {
 	e := newTestEnv(t)
 	e.k.RegisterResidueSink(ResidueSink(e.k, e.pool))
 
-	voter, _ := e.addr("voter")
-	e.humans.add(voter)
-	id := addCaretakerOption(t, e)
-
-	// A weight that does not divide the emission evenly, so the index truncates
-	// and leaves something behind.
-	start := time.Unix(1_700_000_000, 0).UTC()
-	e.ctx = e.ctx.WithBlockTime(start)
-	if err := e.k.AdvanceIndex(e.ctx, types.STREAM_ID_CARETAKER); err != nil {
-		t.Fatalf("AdvanceIndex: %v", err)
-	}
-	if err := e.k.resyncVoter(e.ctx, types.STREAM_ID_CARETAKER, voter,
-		[]types.AllocationWeight{{OptionId: id, Percent: 100}}, math.NewInt(3)); err != nil {
-		t.Fatalf("resyncVoter: %v", err)
-	}
-	e.ctx = e.ctx.WithBlockTime(start.Add(time.Second))
-	if err := e.k.AdvanceIndex(e.ctx, types.STREAM_ID_CARETAKER); err != nil {
-		t.Fatalf("AdvanceIndex: %v", err)
-	}
-
-	residue, err := e.k.GetResidue(e.ctx)
-	if err != nil {
-		t.Fatalf("GetResidue: %v", err)
-	}
-	if !residue.IsPositive() {
-		t.Skip("no truncation at this weight; nothing to sweep")
+	// The residue the index's truncation books (mintEmission). The sweep is
+	// what is under test, so it is seeded: this env's weights never truncate.
+	residue := math.NewInt(7)
+	if err := e.k.Residue.Set(e.ctx, residue); err != nil {
+		t.Fatalf("Residue.Set: %v", err)
 	}
 
 	// Nobody has voted for the emergency fund, so its handler never runs.

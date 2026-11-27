@@ -60,13 +60,13 @@ func (k Keeper) vintageCtx(ctx context.Context) (types.VintageCtx, error) {
 }
 
 // baseVintage is the vintage whose denom is the unsuffixed derth/<valoper>,
-// set once by InitGenesis or the v1.3.0 upgrade. Unset is an error, never a
+// set once by InitGenesis (the genesis month). Unset is an error, never a
 // fallback (audit 1, L5: falling back to the current month would rename
-// every pre-v1.3.0 note's vintage each month, so it never retired).
+// every base-vintage note's vintage each month, so it never retired).
 func (k Keeper) baseVintage(ctx context.Context) (uint32, error) {
 	b, err := k.BaseVintage.Get(ctx)
 	if errors.Is(err, collections.ErrNotFound) {
-		return 0, types.ErrInvariant.Wrap("the base vintage is unset (InitGenesis or the v1.3.0 upgrade sets it)")
+		return 0, types.ErrInvariant.Wrap("the base vintage is unset (InitGenesis sets it)")
 	}
 	return b, err
 }

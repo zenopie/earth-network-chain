@@ -35,7 +35,7 @@ type Params struct {
 	// Groundworks vote may carry. Votes are weighed per validator (one
 	// Groundworks voter each), so no epoch work grows with their number; this
 	// only keeps dust out. (Named for the retired positions it once bounded:
-	// the name is kept so earth-1's launch genesis still reads.)
+	// the name is kept so the launch genesis still reads.)
 	MinPosition cosmossdk_io_math.Int `protobuf:"bytes,2,opt,name=min_position,json=minPosition,proto3,customtype=cosmossdk.io/math.Int" json:"min_position"`
 	// stake_root_window_seconds is how long a superseded stake-tree root stays
 	// an anchor (the latest never expires; a vote's snapshot root is accepted

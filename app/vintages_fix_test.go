@@ -9,7 +9,6 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/stretchr/testify/require"
@@ -385,32 +384,14 @@ func TestVintageDeadVoteSweepNoStall(t *testing.T) {
 	g.requireVintageBooks()
 }
 
-// L5. The base vintage never falls back to the current month, and the
-// upgrade fails (halting at its height) rather than run without its
-// vintage accounting: here, an unbonding_time above the cap.
-func TestVintageBaseStrictAndUpgradeFailsClosed(t *testing.T) {
+// L5. The base vintage never falls back to the current month.
+func TestVintageBaseStrict(t *testing.T) {
 	g := initGwEnv(t)
 	k := g.app.ShieldedStakingKeeper
 	ctx, _ := g.ctx().CacheContext()
 	require.NoError(t, k.BaseVintage.Remove(ctx))
 	_, err := k.VintageContext(ctx)
 	require.ErrorIs(t, err, sstypes.ErrInvariant, "unset: an error, not the current month")
-
-	ctx, _ = g.ctx().CacheContext()
-	require.NoError(t, k.BaseVintage.Remove(ctx))
-	require.NoError(t, k.VintageSupplies.Clear(ctx, nil))
-	params, err := g.app.StakingKeeper.GetParams(ctx)
-	require.NoError(t, err)
-	params.UnbondingTime = (sstypes.MaxUnbondingSeconds + 1) * time.Second
-	require.NoError(t, g.app.StakingKeeper.SetParams(ctx, params))
-	_, err = v1_3_0Handler(g.app)(ctx, upgradetypes.Plan{Name: UpgradeV1_3_0}, g.app.ModuleManager.GetVersionMap())
-	require.ErrorIs(t, err, sstypes.ErrInvariant)
-	has, err := k.BaseVintage.Has(ctx)
-	require.NoError(t, err)
-	require.False(t, has, "nothing written")
-	n := 0
-	require.NoError(t, k.VintageSupplies.Walk(ctx, nil, func(collections.Pair[string, uint32], math.Int) (bool, error) { n++; return false, nil }))
-	require.Zero(t, n)
 }
 
 // L6. A vintage both supplied and retired is refused at genesis.

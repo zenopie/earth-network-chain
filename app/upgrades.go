@@ -47,13 +47,9 @@ type Upgrade struct {
 //	    StoreUpgrades: storetypes.StoreUpgrades{Added: []string{"newmodule"}},
 //	}
 //
-// The privacy relaunch (shielded ERTH and ANML, private personhood) was a
-// fresh genesis; every earlier upgrade belongs to the chain it replaced.
-var Upgrades = []Upgrade{
-	{Name: UpgradeV1_2_1, CreateHandler: v1_2_1Handler},
-	{Name: UpgradeV1_2_2, CreateHandler: v1_2_2Handler},
-	{Name: UpgradeV1_3_0, CreateHandler: v1_3_0Handler},
-}
+// earth-2 launched from a fresh genesis on v1.3.1; every earlier upgrade
+// belongs to the chains it replaced.
+var Upgrades = []Upgrade{}
 
 // setupUpgrades registers the upgrade handlers and, if the node is restarting
 // into a pending upgrade, installs the store loader that applies its

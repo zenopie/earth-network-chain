@@ -80,8 +80,8 @@ jobs:
       #
       # It rebuilds networks/genesis.json from networks/genesis/ and demands a
       # byte-identical result. That is a pre-launch check: it proves the artifact
-      # you are about to ship matches its inputs. earth-1 launched from that file
-      # on 2026-08-28 and it is now frozen history, so the check answers a
+      # you are about to ship matches its inputs. the live chain launched from that
+      # file and it is now frozen history, so the check answers a
       # question nobody can act on — any field added to any module's genesis
       # proto breaks it, and the only way to satisfy it would be regenerating the
       # launch genesis, which changes the hash RESET_ON_GENESIS_MISMATCH is keyed

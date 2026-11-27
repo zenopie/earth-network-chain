@@ -11,6 +11,25 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
+## [Unreleased]
+
+Not consensus-relevant on earth-2: the removed handlers are for upgrades
+earth-2 never schedules.
+
+### Removed
+
+- The earth-1 upgrade handlers `v1.2.1`, `v1.2.2` and `v1.3.0`, their state
+  migrations (`MigrateV1_2_1`, `MigrateV1_3_0`), the embedded v1.2.1 stake
+  verifying key, and their tests. `Upgrades` is empty; `defaultUpgradeHandler`
+  stays for the next one. Store prefixes 29 and 58 are reserved.
+
+## [v1.3.1]
+
+A new chain, **earth-2**, from a fresh genesis (sha256 `ac972635…`,
+genesis_time 2026-11-27T05:00:00Z). earth-1 ended on 2026-11-22: its only
+lease ran out of funds and its state went with the volume. The code is
+v1.3.0's. The genesis stake verifying key is the one v1.2.1 installed.
+
 ## [v1.3.0]
 
 Consensus-breaking. Goes through governance as a `MsgSoftwareUpgrade` named

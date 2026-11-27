@@ -20,7 +20,7 @@ message GenesisState {
   repeated ValidatorState validators = 3 [(gogoproto.nullable) = false];
   repeated UnbondRecord unbond_records = 4 [(gogoproto.nullable) = false];
   // positions (5) are the Groundworks votes and next_position_id (6) the
-  // next vote id: named for the retired positions, kept so earth-1's launch
+  // next vote id: named for the retired positions, kept so the launch
   // genesis still reads.
   repeated GroundworksVote positions = 5 [(gogoproto.nullable) = false];
   uint64 next_position_id = 6;

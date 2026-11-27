@@ -20,7 +20,7 @@ message Params {
   // Groundworks vote may carry. Votes are weighed per validator (one
   // Groundworks voter each), so no epoch work grows with their number; this
   // only keeps dust out. (Named for the retired positions it once bounded:
-  // the name is kept so earth-1's launch genesis still reads.)
+  // the name is kept so the launch genesis still reads.)
   string min_position = 2 [
     (cosmos_proto.scalar) = "cosmos.Int",
     (gogoproto.customtype) = "cosmossdk.io/math.Int",

@@ -73,7 +73,7 @@ func (am AppModule) DefaultGenesis(codec.JSONCodec) json.RawMessage {
 //
 // An absent section is valid and means an empty chamber. This module was added
 // to a chain that already had a genesis file, and that file is hash-pinned —
-// earth-1's identity is its genesis hash, so it cannot be edited to add a
+// a chain's identity is its genesis hash, so it cannot be edited to add a
 // section for a module invented later. The module manager already understands
 // this on the way in: InitGenesis skips a module with no genesis data
 // (types/module/module.go, `if genesisData[moduleName] == nil { continue }`),

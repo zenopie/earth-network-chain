@@ -5,7 +5,6 @@ package app
 // test says it proves.
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -17,7 +16,6 @@ import (
 	corestore "cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
@@ -802,112 +800,6 @@ func TestVintageGenesisRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, has, "a held payout is queued nowhere after import")
 	require.NoError(t, fk.AssertInvariants(fctx))
-}
-
-// The v1.3.0 handler on pre-vintage state (votes with leases, the lease
-// queue, per-(validator, option) totals, no vintage supplies, moves without
-// a vintage): the upgrade month becomes the base vintage holding every
-// book's supply, votes join it without a lease, totals move per vintage
-// with the voters unchanged, and the chain goes on.
-func TestUpgradeV1_3_0(t *testing.T) {
-	g := initGwEnv(t)
-	k := g.app.ShieldedStakingKeeper
-	vB, _ := g.createValidator(1000 * ssErth)
-	g.next(5 * time.Second)
-	a := g.castGw(g.v, 1_000*gwE, g.split(60, 40))
-	b := g.castGw(g.v, 500*gwE, g.split(0, 0, 100))
-	// The upgrade lands in a later month than the chain's first, with a move
-	// still open.
-	g.toTime(sstypes.VintageStart(sstypes.AddMonths(g.month(), 2)).Add(3 * time.Hour))
-	_, err := g.fakeRedelegate(g.v, vB, uint64(1_000*gwE), "upgrade")
-	require.NoError(t, err)
-	g.next(5 * time.Second)
-	voters := g.voter(g.v)
-	require.NotEmpty(t, voters)
-
-	// Rewind the store to v1.2.2's shape.
-	ctx := g.ctx()
-	sb := collections.NewSchemaBuilder(runtimeKV(g.app))
-	lapses := collections.NewKeySet(sb, sstypes.GwLapsesKey, "gw_lapses", collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key))
-	oldTotals := collections.NewMap(sb, sstypes.GwTotalsKey, "gw_totals",
-		collections.PairKeyCodec(collections.StringKey, collections.Uint64Key), sdk.IntValue)
-	var votes []sstypes.GroundworksVote
-	require.NoError(t, k.GwVotes.Walk(ctx, nil, func(_ uint64, v sstypes.GroundworksVote) (bool, error) {
-		votes = append(votes, v)
-		return false, nil
-	}))
-	// Stored as v1.2.2 wrote them: no vintage, a lease in field 11 (now
-	// reserved, so appended by hand: tag 11<<3|varint).
-	rawVotes := collections.NewMap(sb, sstypes.GwVotesKey, "gw_votes_raw", collections.Uint64Key, collections.BytesValue)
-	for _, v := range votes {
-		v.Vintage = 0
-		bz, err := v.Marshal()
-		require.NoError(t, err)
-		lease := g.now.Unix() + 86400
-		bz = binary.AppendUvarint(append(bz, 11<<3), uint64(lease))
-		require.NoError(t, rawVotes.Set(ctx, v.Id, bz))
-		require.NoError(t, lapses.Set(ctx, collections.Join(lease, v.Id)))
-	}
-	require.NoError(t, k.GwVotesByVintage.Clear(ctx, nil))
-	require.NoError(t, k.GwTotals.Walk(ctx, nil, func(key collections.Triple[string, uint32, uint64], t0 math.Int) (bool, error) {
-		cur, err := oldTotals.Get(ctx, collections.Join(key.K1(), key.K3()))
-		if err != nil {
-			cur = math.ZeroInt()
-		}
-		return false, oldTotals.Set(ctx, collections.Join(key.K1(), key.K3()), cur.Add(t0))
-	}))
-	require.NoError(t, k.GwTotals.Clear(ctx, nil))
-	require.NoError(t, k.VintageSupplies.Clear(ctx, nil))
-	require.NoError(t, k.BaseVintage.Remove(ctx))
-	require.NoError(t, k.VintageSweep.Remove(ctx))
-	var moves []sstypes.Move
-	require.NoError(t, k.Moves.Walk(ctx, nil, func(_ []byte, mv sstypes.Move) (bool, error) {
-		moves = append(moves, mv)
-		return false, nil
-	}))
-	require.NotEmpty(t, moves)
-	for _, mv := range moves {
-		mv.Vintage = 0
-		require.NoError(t, k.Moves.Set(ctx, mv.Key, mv))
-	}
-
-	_, err = v1_3_0Handler(g.app)(ctx, upgradetypes.Plan{Name: UpgradeV1_3_0}, g.app.ModuleManager.GetVersionMap())
-	require.NoError(t, err)
-
-	up := sstypes.MonthOf(g.now)
-	base, err := k.BaseVintage.Get(g.ctx())
-	require.NoError(t, err)
-	require.Equal(t, up, base, "the base vintage is the upgrade month")
-	for _, v := range []sdk.ValAddress{g.v, vB} {
-		require.Equal(t, g.state(v).DerthSupply, g.vsupply(v, up), "every book's supply is the base vintage's")
-	}
-	for _, id := range []uint64{a.id, b.id} {
-		v := g.storedVote(id)
-		require.Equal(t, up, v.Vintage)
-	}
-	n := 0
-	require.NoError(t, lapses.Walk(g.ctx(), nil, func(collections.Pair[int64, uint64]) (bool, error) { n++; return false, nil }))
-	require.Zero(t, n, "the lease queue is gone")
-	require.NoError(t, oldTotals.Walk(g.ctx(), nil, func(collections.Pair[string, uint64], math.Int) (bool, error) { n++; return false, nil }))
-	require.Zero(t, n, "the old totals are gone")
-	for _, mv := range moves {
-		got, ok := g.move(mv.Key)
-		require.True(t, ok)
-		require.Equal(t, up, got.Vintage)
-	}
-
-	g.next(5 * time.Second)
-	require.Equal(t, voters, g.voter(g.v), "the voter weighs what it did")
-	g.requireEquivalent(g.v, 2)
-	g.requireVintageBooks()
-	// The chain goes on: an epoch, a vote, the legacy asset is the current
-	// vintage's (the base) and retires 13 months on.
-	g.days(1)
-	g.castGw(g.v, 700*gwE, g.split(100))
-	g.toTime(sstypes.VintageRetiresAt(up).Add(time.Minute))
-	_, ok := g.retiredVintage(g.v, up)
-	require.True(t, ok)
-	g.requireVintageBooks()
 }
 
 // x/staking's unbonding_time stays at most a year less a day: a gov

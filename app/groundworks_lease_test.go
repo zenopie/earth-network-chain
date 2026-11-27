@@ -7,7 +7,6 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/log"
-	"cosmossdk.io/math"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
@@ -43,15 +42,6 @@ func (e *stakeEnv) atUnix(t int64) {
 	e.t.Helper()
 	require.Greater(e.t, t, e.now.Unix())
 	e.next(time.Unix(t, 0).Sub(e.now))
-}
-
-func (e *stakeEnv) gwIndex() (math.Int, math.Int) {
-	e.t.Helper()
-	idx, err := e.app.AllocationKeeper.RewardIndex.Get(e.ctx(), uint32(allocationtypes.STREAM_ID_GROUNDWORKS))
-	require.NoError(e.t, err)
-	total, err := e.app.AllocationKeeper.TotalWeight.Get(e.ctx(), uint32(allocationtypes.STREAM_ID_GROUNDWORKS))
-	require.NoError(e.t, err)
-	return idx, total
 }
 
 // A stake note's Groundworks vote carries no lease (v1.3.0): it lives with

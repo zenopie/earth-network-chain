@@ -63,7 +63,7 @@ for n in "${SIZES[@]}"; do
     cmp -s "$a/mt/public_inputs" "$a/public_inputs.expected" \
       || { echo "error: action $i public inputs differ from Go's" >&2; exit 1; }
     mkdir -p "$dst/action_$i"
-    cp "$a/mt/proof" "$a/mt/public_inputs" "$dst/action_$i/"
+    cp "$a/mt/proof" "$dst/action_$i/"   # public inputs: recomputed from bundle.json
   done
   echo "    public inputs == Go for all $n actions"
   echo "    witness (nargo execute) total: ${tw}s"
@@ -102,7 +102,7 @@ for i in 0 1; do
   if [ "$i" = 0 ] && [ "$ok" = 1 ]; then echo "error: a proof of an output of 2^63 verifies" >&2; exit 1; fi
   if [ "$i" = 1 ] && [ "$ok" = 0 ]; then echo "error: the twin's honest witness does not fit the real circuit" >&2; exit 1; fi
   mkdir -p "$dst/action_$i"
-  cp "$a/p/proof" "$a/p/public_inputs" "$dst/action_$i/"
+  cp "$a/p/proof" "$dst/action_$i/"
 done
 echo "    action 0 (output 2^63): proof refused; action 1 (honest, twin witness): verifies"
 echo "done"

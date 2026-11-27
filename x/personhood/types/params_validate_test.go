@@ -16,8 +16,8 @@ func TestParamsValidateBoundsValidity(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*types.Params){
-		"zero validity":       func(p *types.Params) { p.RegistrationValiditySeconds = 0 },
-		"unbounded validity":  func(p *types.Params) { p.RegistrationValiditySeconds = 1 << 63 },
+		"zero validity":      func(p *types.Params) { p.RegistrationValiditySeconds = 0 },
+		"unbounded validity": func(p *types.Params) { p.RegistrationValiditySeconds = 1 << 63 },
 	} {
 		p := live
 		mutate(&p)

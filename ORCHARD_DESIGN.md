@@ -324,8 +324,8 @@ move proof shows one is in the tree without saying which.
 
 The stake denom names the validator and the note's **stake vintage** (the UTC
 month its stake was last checked in, 8.9): `derth/<valoper>/<YYYYMM>`, or the
-unsuffixed `derth/<valoper>` for the base vintage (earth-1's v1.3.0 upgrade
-month; every note made before it carries that asset). Every `derth/` denom,
+unsuffixed `derth/<valoper>` for the base vintage (the chain's genesis
+month). Every `derth/` denom,
 either form, is not a coin and not a pool asset (`ExcludeAssetPrefix`:
 shielded-only for every transparent path; the dex refuses it). Stake notes are
 **owner-locked**: the stake circuit outputs only stake pcs of the spender's
@@ -1525,9 +1525,8 @@ a check-in, while amounts stay private except at the check-in.
 **Vintage.** A stake note's asset names its validator and its vintage: the
 UTC month (YYYYMM) its stake was last checked in. Denom
 `derth/<valoper>/<YYYYMM>` (`types.VintageDenom`), except the **base
-vintage** (`Query/Vintages.base_vintage`; earth-1: the v1.3.0 upgrade
-month; a new chain: its genesis month), whose denom is the unsuffixed
-`derth/<valoper>` every note made before v1.3.0 carries in its commitment:
+vintage** (`Query/Vintages.base_vintage`: the genesis month), whose denom
+is the unsuffixed `derth/<valoper>`:
 exactly one denom per (validator, vintage). `ParseDerthDenom` reads both
 forms (the unsuffixed one as month 0 = the base). A msg names its lane A
 vintage in its `vintage` field (0: the base vintage); the chain supplies
@@ -1763,7 +1762,7 @@ young, and need not check in more than once a year. Within a vintage
 nothing new is revealed. A retired vintage's total supply and value are
 public (they were part of public books already).
 
-**Upgrade (MigrateV1_3_0).** The upgrade month becomes the base vintage
+**Upgrade (MigrateV1_3_0, earth-1 only; removed after the earth-2 launch).** The upgrade month becomes the base vintage
 and every book's derth_supply becomes its base vintage supply: these two,
 and a check that x/staking's unbonding_time is at most
 `MaxUnbondingSeconds`, run first in one cache, and if any fails the

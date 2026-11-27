@@ -33,7 +33,7 @@ type GenesisState struct {
 	Validators    []ValidatorState `protobuf:"bytes,3,rep,name=validators,proto3" json:"validators"`
 	UnbondRecords []UnbondRecord   `protobuf:"bytes,4,rep,name=unbond_records,json=unbondRecords,proto3" json:"unbond_records"`
 	// positions (5) are the Groundworks votes and next_position_id (6) the
-	// next vote id: named for the retired positions, kept so earth-1's launch
+	// next vote id: named for the retired positions, kept so the launch
 	// genesis still reads.
 	Positions      []GroundworksVote  `protobuf:"bytes,5,rep,name=positions,proto3" json:"positions"`
 	NextPositionId uint64             `protobuf:"varint,6,opt,name=next_position_id,json=nextPositionId,proto3" json:"next_position_id,omitempty"`

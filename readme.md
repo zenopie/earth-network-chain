@@ -204,7 +204,7 @@ scripts/testnet-3val.sh up      # three validators, from networks/genesis.json
 scripts/testnet-3val.sh down
 ```
 
-That builds genesis from the same file earth-1 launched with, so the local chain
+That builds genesis from the same file the live chain launched with, so the local chain
 carries the real trust store, verifying keys and pools rather than an
 approximation. `GOV_VOTING_PERIOD=30s` shortens governance if you want to drive a
 proposal through by hand.
@@ -431,7 +431,7 @@ voting come to the same arithmetic.
 ```
 # an operator votes 100% of its self-bond weight to volume-weighted LP rewards
 earthd tx allocation set-allocations groundworks --percentages '{"option_id":1,"percent":100}' \
-  --from validator --keyring-backend test --chain-id earth-1 --gas auto --gas-adjustment 1.5 -y
+  --from validator --keyring-backend test --chain-id earth-2 --gas auto --gas-adjustment 1.5 -y
 earthd q allocation option groundworks 1
 ```
 

@@ -132,11 +132,10 @@ var (
 	// PendingReleasesKey holds removed validators whose release failed.
 	RetiringEscrowsKey = collections.NewPrefix(27)
 	PendingReleasesKey = collections.NewPrefix(28)
-	// Groundworks totals before v1.3.0 (per (validator, option); cleared by
-	// MigrateV1_3_0, now GwVintageTotalsKey), and per validator the
-	// Groundworks allocation epoch its totals belong to.
-	GwTotalsKey = collections.NewPrefix(29)
-	GwEpochKey  = collections.NewPrefix(30)
+	// 29 is reserved (was the pre-vintage Groundworks totals).
+	// GwEpochKey: per validator, the Groundworks allocation epoch its totals
+	// belong to.
+	GwEpochKey = collections.NewPrefix(30)
 	// PendingReleaseCursorKey is the last PendingReleases entry the epoch
 	// end retried: retries rotate through the set, so entries that keep
 	// failing cannot starve the rest of the per-epoch budget.
@@ -199,11 +198,7 @@ var (
 	WatchSrcKey    = collections.NewPrefix(55)
 	WatchSharesKey = collections.NewPrefix(56)
 	WatchCallsKey  = collections.NewPrefix(57)
-	// GwLapsesKey ordered the Groundworks votes' leases by when they lapsed:
-	// (split_expires_at, vote id). Stake votes carry no lease since v1.3.0:
-	// kept only so the migrations (MigrateV1_2_1, MigrateV1_3_0) clear old
-	// data under it; nothing else reads or writes it. Never reuse 58.
-	GwLapsesKey = collections.NewPrefix(58)
+	// 58 is reserved (was the Groundworks vote leases).
 	// GwVotesByTagKey maps a Groundworks vote's note tag to its id: what a
 	// stake proof's input tags cancel.
 	GwVotesByTagKey = collections.NewPrefix(59)
@@ -211,9 +206,7 @@ var (
 	// by when it is due to count: (matures_at, vote id).
 	GwMaturesKey = collections.NewPrefix(60)
 
-	// Stake vintages (vintages.go, v1.3.0). 29 (GwTotalsKey) held the
-	// per-(validator, option) Groundworks totals before vintages; v1.3.0
-	// moved them under 61, per vintage, and cleared 29.
+	// Stake vintages (vintages.go).
 	//
 	// GwVintageTotalsKey: per (validator, vintage, option) the sum of derth
 	// x percent over the vintage's live votes at the validator.

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,12 @@ func loadPassport(t *testing.T, name string) passport {
 	require.True(t, ok)
 	p.nf = make([]byte, 32)
 	n.FillBytes(p.nf)
+	// The fixture's own record of what the circuit computed: the proof's
+	// signals [current_date, binding, nullifier, dsc_key, idc] must hold it.
+	require.Len(t, p.signals, 5, name)
+	for i, f := range map[int]string{2: "expected_nullifier", 3: "expected_dsc_key", 4: "expected_idc"} {
+		require.Equal(t, strings.TrimSpace(string(rd(f))), p.signals[i], "%s %s", name, f)
+	}
 	return p
 }
 

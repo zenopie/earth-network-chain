@@ -1,6 +1,6 @@
 """Turn the launch genesis into a throwaway local one.
 
-networks/genesis.json is earth-1's, and it is hash-pinned: its hash is the
+networks/genesis.json is the live chain's, and it is hash-pinned: its hash is the
 chain's identity, so it is never edited. This copies it and changes only what a
 local network cannot inherit, leaving everything that makes the chain itself —
 the CSCA trust store, the verifying keys, the pre-mine, the pool reserves — as
@@ -41,7 +41,7 @@ def main() -> None:
     g["genesis_time"] = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
-    # The launch gentx is signed for earth-1 by a key this machine does not hold.
+    # The launch gentx is signed for the live chain by a key this machine does not hold.
     # collect-gentxs puts a locally signed one in its place.
     g["app_state"]["genutil"]["gen_txs"] = []
 

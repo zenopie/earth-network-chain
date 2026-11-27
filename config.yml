@@ -447,7 +447,7 @@ genesis:
           addresses: []
         instantiate_default_permission: Everybody
     # What an interchain account may do. The SDK default is "*"; this is the
-    # list upgradeV092 set on earth-1, carried into genesis since the relaunch.
+    # list the launch genesis carries.
     interchainaccounts:
       host_genesis_state:
         params:

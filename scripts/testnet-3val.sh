@@ -6,7 +6,7 @@
 #   ./scripts/testnet-3val.sh down    # stop everything and clean up
 #
 # Node 0 is the genesis validator, built from networks/genesis.json — the same
-# file earth-1 launched with, so it carries the real CSCAs, verifying keys and
+# file the live chain launched with, so it carries the real CSCAs, verifying keys and
 # ANML/ERTH pool rather than an approximation of them. Nodes 1 and 2 sync, then
 # join the validator set with MsgCreateValidator — the same path a real operator
 # takes, which also exercises validator-set changes at runtime rather than only
@@ -22,7 +22,7 @@ set -euo pipefail
 
 CHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EARTHD="${EARTHD:-$HOME/go/bin/earthd}"
-# Deliberately NOT earth-1, even though the genesis it is built from carries that
+# Deliberately NOT the live chain id, even though the genesis it is built from carries that
 # id. This is a throwaway local network, and sharing the mainnet chain id would
 # make a transaction signed here replayable there.
 #

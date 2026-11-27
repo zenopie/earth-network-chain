@@ -137,15 +137,10 @@ done
 REG="$CHAIN_DIR/networks/genesis/verifying-keys"
 
 GEN="$CHAIN_DIR/networks/genesis/shielded-verifying-keys"
-# Where each circuit's current key lives: the launch genesis source until an
-# upgrade replaced the key, then that upgrade's directory (embedded in the
-# binary, installed by its handler). networks/genesis stays as earth-1
-# launched (make genesis-check pins it).
+# Where each circuit's current key lives: the genesis source. An upgrade
+# that replaces a key adds a case here naming its embedded directory.
 current_dir() {
-  case "$1" in
-    stake) echo "$CHAIN_DIR/app/upgrades/v1_2_1" ;;
-    *) echo "$GEN" ;;
-  esac
+  echo "$GEN"
 }
 raw_targets() {
   echo "action $CHAIN_DIR/x/shielded/testdata/action.vk"
