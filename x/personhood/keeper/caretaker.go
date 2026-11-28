@@ -163,15 +163,18 @@ func (k Keeper) sweepCaretakerVotes(ctx context.Context, budget int) (int, error
 	return len(lapsed), k.CaretakerCount.Set(ctx, count)
 }
 
-// pruneClaimNullifiers drops claim nullifiers of days before yesterday: a
-// claim is only ever for today, so nothing reads them.
+// pruneClaimNullifiers drops claim nullifiers of days before the claim
+// window's day before: no claim reaches them (a MsgClaimAnmlDays run starts
+// at most ClaimWindowDays-1 days back), so nothing reads them. The day's
+// margin is the one the two-day prune kept: the window's edge is never the
+// prune's.
 func (k Keeper) pruneClaimNullifiers(ctx context.Context, limit int) error {
-	today := uint64(sdk.UnwrapSDKContext(ctx).BlockTime().Unix()) / types.SecondsPerDay
-	if today < 2 {
+	today := dayOf(sdk.UnwrapSDKContext(ctx).BlockTime().Unix())
+	if today < types.ClaimWindowDays {
 		return nil
 	}
 	var doomed []collections.Pair[uint64, []byte]
-	rng := new(collections.Range[collections.Pair[uint64, []byte]]).EndExclusive(collections.PairPrefix[uint64, []byte](today - 1))
+	rng := new(collections.Range[collections.Pair[uint64, []byte]]).EndExclusive(collections.PairPrefix[uint64, []byte](today - types.ClaimWindowDays))
 	if err := k.ClaimNullifiers.Walk(ctx, rng, func(key collections.Pair[uint64, []byte]) (bool, error) {
 		doomed = append(doomed, key)
 		return len(doomed) >= limit, nil

@@ -49,7 +49,9 @@ type Upgrade struct {
 //
 // earth-2 launched from a fresh genesis on v1.3.1; every earlier upgrade
 // belongs to the chains it replaced.
-var Upgrades = []Upgrade{}
+var Upgrades = []Upgrade{
+	{Name: UpgradeV1_4_0, CreateHandler: v1_4_0Handler},
+}
 
 // setupUpgrades registers the upgrade handlers and, if the node is restarting
 // into a pending upgrade, installs the store loader that applies its

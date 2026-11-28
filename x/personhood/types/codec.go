@@ -13,6 +13,7 @@ func RegisterInterfaces(registrar codectypes.InterfaceRegistry) {
 	registrar.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgRegister{},
 		&MsgClaimAnml{},
+		&MsgClaimAnmlDays{},
 		&MsgSetCaretaker{},
 		&MsgBindHandle{},
 		&MsgMoveHandle{},
@@ -39,6 +40,10 @@ func ProvideRegisterGetSigners() signing.CustomGetSigner {
 
 func ProvideClaimAnmlGetSigners() signing.CustomGetSigner {
 	return noSigners("earth.personhood.v1.MsgClaimAnml")
+}
+
+func ProvideClaimAnmlDaysGetSigners() signing.CustomGetSigner {
+	return noSigners("earth.personhood.v1.MsgClaimAnmlDays")
 }
 
 func ProvideSetCaretakerGetSigners() signing.CustomGetSigner {

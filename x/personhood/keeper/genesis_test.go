@@ -101,3 +101,31 @@ func TestGenesisDoesNotCarryTheBuybackClock(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, got.LastBuyback)
 }
+
+// A genesis without a claim floor (an export from before v1.4.0, or a new
+// chain) gets the day before genesis; one it carries holds, unless it is
+// past genesis.
+func TestGenesisClaimFloor(t *testing.T) {
+	at := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	fixture := func() *fixture {
+		f := initFixture(t)
+		f.ctx = sdk.UnwrapSDKContext(f.ctx).WithBlockTime(at)
+		return f
+	}
+	f := fixture()
+	day := uint64(at.Unix()) / types.SecondsPerDay
+	require.NoError(t, f.keeper.InitGenesis(f.ctx, types.GenesisState{Params: types.DefaultParams()}))
+	got, err := f.keeper.ClaimFloorDay.Get(f.ctx)
+	require.NoError(t, err)
+	require.Equal(t, day-1, got)
+
+	f = fixture()
+	require.NoError(t, f.keeper.InitGenesis(f.ctx, types.GenesisState{Params: types.DefaultParams(), ClaimFloorDay: day - 30}))
+	got, err = f.keeper.ClaimFloorDay.Get(f.ctx)
+	require.NoError(t, err)
+	require.Equal(t, day-30, got, "a carried floor holds")
+
+	f = fixture()
+	require.ErrorContains(t, f.keeper.InitGenesis(f.ctx, types.GenesisState{Params: types.DefaultParams(), ClaimFloorDay: day + 1}),
+		"after the genesis day")
+}

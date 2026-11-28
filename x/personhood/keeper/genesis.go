@@ -122,6 +122,21 @@ func (k Keeper) InitGenesis(ctx context.Context, genState types.GenesisState) er
 			return err
 		}
 	}
+	// A state with no claim floor was exported by a binary that kept claim
+	// nullifiers two days (before v1.4.0), or is a new chain: the floor is
+	// the day before genesis. A floor it carries holds, as do the claim
+	// nullifiers it carries for the window.
+	if genState.ClaimFloorDay != 0 {
+		// A floor past genesis would refuse every run until that day.
+		if genState.ClaimFloorDay > dayOf(genesisTime) {
+			return fmt.Errorf("claim_floor_day %d is after the genesis day %d", genState.ClaimFloorDay, dayOf(genesisTime))
+		}
+		if err := k.ClaimFloorDay.Set(ctx, genState.ClaimFloorDay); err != nil {
+			return err
+		}
+	} else if err := k.RaiseClaimFloor(ctx, genesisTime); err != nil {
+		return err
+	}
 	for _, v := range genState.CaretakerVotes {
 		if err := k.CaretakerVotes.Set(ctx, v.Nullifier, v.ExpiresAt); err != nil {
 			return err
@@ -288,6 +303,12 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		genesis.ClaimNullifiers = append(genesis.ClaimNullifiers, types.ClaimNullifier{Day: key.K1(), Nullifier: key.K2()})
 		return false, nil
 	}); err != nil {
+		return nil, err
+	}
+	switch floor, err := k.ClaimFloorDay.Get(ctx); {
+	case err == nil:
+		genesis.ClaimFloorDay = floor
+	case !errors.Is(err, collections.ErrNotFound):
 		return nil, err
 	}
 	if err := k.CaretakerVotes.Walk(ctx, nil, func(nf []byte, expiresAt int64) (bool, error) {

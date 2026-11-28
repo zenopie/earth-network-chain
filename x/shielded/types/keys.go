@@ -35,6 +35,9 @@ const (
 	// split passes from an identity to its successor under the same
 	// passport.
 	CircuitMove = "move"
+	// CircuitClaim is x/personhood's claim circuit: one identity's
+	// nullifiers in up to seven scopes (an ANML claim for a run of days).
+	CircuitClaim = "claim"
 
 	// MinActionsPerBundle is the padding rule: every bundle carries at least
 	// two actions, so a one-note spend (the commonest shape) is not told

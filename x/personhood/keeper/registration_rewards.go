@@ -121,7 +121,12 @@ func (k Keeper) payRegistrationReward(ctx context.Context, registrant rewardNote
 
 // mintAnmlNote mints one ANML and deposits it as a note to pc.
 func (k Keeper) mintAnmlNote(ctx context.Context, pc, ciphertext []byte) (uint64, error) {
-	anml := sdk.NewInt64Coin(types.AnmlDenom, types.OneAnml)
+	return k.mintAnmlNoteOf(ctx, 1, pc, ciphertext)
+}
+
+// mintAnmlNoteOf mints days ANML (one per day claimed) as one note.
+func (k Keeper) mintAnmlNoteOf(ctx context.Context, days uint64, pc, ciphertext []byte) (uint64, error) {
+	anml := sdk.NewInt64Coin(types.AnmlDenom, int64(days)*types.OneAnml)
 	if err := k.bankKeeper.MintCoins(ctx, types.ModuleName, sdk.NewCoins(anml)); err != nil {
 		return 0, err
 	}

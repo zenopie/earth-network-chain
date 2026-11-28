@@ -11,17 +11,37 @@ This project follows [semantic versioning](https://semver.org). For a chain that
 means: **any consensus-affecting change is breaking**, whatever the diff looks
 like, because nodes running different versions cannot agree.
 
-## [Unreleased]
+## [v1.4.0]
 
-Not consensus-relevant on earth-2: the removed handlers are for upgrades
-earth-2 never schedules.
+Consensus-breaking: governance upgrade `v1.4.0` (handler in `app/upgrades.go`).
+Wallets must update before the upgrade height.
 
-### Removed
+### Added
+
+- **MsgClaimAnmlDays**: claim up to a week of unclaimed ANML days (a run
+  ending today) in one private tx, with one proof of the new claim circuit
+  (`circuits/claim`, verifying key `claim` in x/shielded params). One ANML
+  per day, minted as one note; one `claim_anml` event per day. Error
+  `ErrDayClaimed` (1131) names the last claimed day of a refused run.
+- **MsgClaimAnml is retired**: refused with `ErrClaimRetired` (1132) before
+  anything is charged. Its type still decodes (the claims made before). A
+  day's claim is a run of one, so wallets must update before the upgrade
+  height: an older app cannot claim after it.
+- The claim circuit refuses a leaf without a Document Signer, as the
+  membership circuit's claim statement did.
+- The first claim's delay is unchanged: a run is bounded by its first day's
+  activation bound.
+- Claim nullifiers are kept 8 days instead of 2 (`ClaimWindowDays` 7, plus
+  a day).
+- The `v1.4.0` handler installs the claim key and sets `claim_floor_day`
+  (personhood genesis field 24) to the day before the upgrade: earlier days'
+  nullifiers were already pruned, so no run reaches them.
+
+### Removed (not consensus-relevant on earth-2: the handlers are for upgrades earth-2 never schedules)
 
 - The earth-1 upgrade handlers `v1.2.1`, `v1.2.2` and `v1.3.0`, their state
   migrations (`MigrateV1_2_1`, `MigrateV1_3_0`), the embedded v1.2.1 stake
-  verifying key, and their tests. `Upgrades` is empty; `defaultUpgradeHandler`
-  stays for the next one. Store prefixes 29 and 58 are reserved.
+  verifying key, and their tests. `defaultUpgradeHandler` stays. Store prefixes 29 and 58 are reserved.
 
 ## [v1.3.1]
 

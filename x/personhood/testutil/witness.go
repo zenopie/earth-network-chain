@@ -18,6 +18,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 
+	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/privacy"
 )
@@ -118,4 +119,48 @@ func (m Move) Witness() (string, []fr.Element) {
 	fmt.Fprintf(&b, "root = %s\nscope = %s\nold_nullifier = %s\nnew_nullifier = %s\nsignal = %s\n",
 		q(m.Root), q(m.Scope), q(onf), q(nnf), q(m.Signal))
 	return b.String(), []fr.Element{m.Root, m.Scope, onf, nnf, m.Signal}
+}
+
+// Claim is one claim proof's witness and public inputs (circuits/claim):
+// the identity behind IDSecret, live at LeafIndex under Root, with its
+// nullifier in each of Scopes (at most 7; the slots after them are 0).
+type Claim struct {
+	IDSecret      fr.Element
+	DscKey        fr.Element
+	Country       fr.Element
+	ActivatedAt   uint64
+	PredecessorAt uint64
+	LeafIndex     uint64
+	Root          fr.Element
+	Siblings      [merkle.Depth]fr.Element
+	Scopes        []fr.Element
+	Signal        fr.Element
+	MaxActivation uint64
+}
+
+// Nullifiers are the proof's nullifiers, one per scope.
+func (c Claim) Nullifiers() []fr.Element {
+	out := make([]fr.Element, len(c.Scopes))
+	for i, s := range c.Scopes {
+		out[i] = privacy.ScopeNullifier(c.IDSecret, s)
+	}
+	return out
+}
+
+// Witness is the Prover.toml and public inputs in ABI order: root,
+// scopes[7], nullifiers[7], signal, max_activation.
+func (c Claim) Witness() (string, []fr.Element) {
+	scopes := make([]fr.Element, personhoodtypes.ClaimSlots)
+	nfs := make([]fr.Element, personhoodtypes.ClaimSlots)
+	copy(scopes, c.Scopes)
+	copy(nfs, c.Nullifiers())
+	var b strings.Builder
+	fmt.Fprintf(&b, "id_secret = %s\ndsc_key = %s\ncountry = %s\nactivated_at = \"%d\"\npredecessor_at = \"%d\"\nleaf_index = \"%d\"\n",
+		q(c.IDSecret), q(c.DscKey), q(c.Country), c.ActivatedAt, c.PredecessorAt, c.LeafIndex)
+	fmt.Fprintf(&b, "siblings = %s\n", arr(c.Siblings[:]))
+	fmt.Fprintf(&b, "root = %s\nscopes = %s\nnullifiers = %s\nsignal = %s\nmax_activation = \"%d\"\n",
+		q(c.Root), arr(scopes), arr(nfs), q(c.Signal), c.MaxActivation)
+	pub := append([]fr.Element{c.Root}, scopes...)
+	pub = append(pub, nfs...)
+	return b.String(), append(pub, c.Signal, privacy.U64(c.MaxActivation))
 }

@@ -454,7 +454,8 @@ specific, CSCA-verified signer, and what lets governance revoke one. The passpor
 register circuits (33 `lean_poa_*` variants, one per DSC key type, signature scheme and
 hash profile) live in `earth-network-mobile/circuits`.
 
-- **ANML token** (`uanml`, 1 ANML = 1e6 uanml) — minted 1/day per registered human.
+- **ANML token** (`uanml`, 1 ANML = 1e6 uanml) — minted 1/day per registered human; a
+  day left unclaimed can be claimed for a week (`MsgClaimAnmlDays`).
 - **Buyback-and-burn (1 ERTH/sec)** — `BeginBlock` mints ERTH, swaps it for ANML on the
   dex (`dexKeeper.SwapExactInForModule`), and burns the ANML (deflationary for ANML).
 - **The caretaker allocation stream (1 ERTH/sec)** — the collective half of the axis —
@@ -462,7 +463,9 @@ hash profile) live in `earth-network-mobile/circuits`.
   supplies its weight source (one live registration = one vote), clears a lapsed human's
   vote, and draws down the registration-reward pool.
 
-**Messages**: `MsgRegister` (naming a referrer by `affiliate_handle`), `MsgClaimAnml`,
+**Messages**: `MsgRegister` (naming a referrer by `affiliate_handle`),
+`MsgClaimAnmlDays` (every unclaimed day up to a week, ending today, with one claim proof;
+v1.4.0 retired the one-day `MsgClaimAnml`),
 `MsgSetCaretaker` and the handle msgs are private msgs that wallets build; there are no CLI
 commands for them. **Queries** (`earthd q personhood ...`): `registration [passport-nullifier-hex]`,
 `registration-count`, `identity-tree`, `identity-leaves`, `caretaker-voter-count`,

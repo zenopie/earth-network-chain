@@ -15,7 +15,7 @@ option go_package = "github.com/earth-network/earth/x/personhood/types";
 
 // Msg defines the Msg service.
 //
-// Register, ClaimAnml, SetCaretaker, MoveCaretaker, BindHandle and MoveHandle are
+// Register, ClaimAnml, ClaimAnmlDays, SetCaretaker, MoveCaretaker, BindHandle and MoveHandle are
 // private msgs:
 // unsigned, carried
 // alone in a tx, their fee paid from the shielded pool by the earth.shielded
@@ -35,8 +35,13 @@ service Msg {
   // Register registers a passport and writes its holder's identity leaf.
   rpc Register(MsgRegister) returns (MsgRegisterResponse);
 
-  // ClaimAnml mints a registered human's daily ANML to a note.
+  // ClaimAnml is retired (v1.4.0): refused with ErrClaimRetired. Kept so the
+  // claims made before it decode; ClaimAnmlDays claims one day or more.
   rpc ClaimAnml(MsgClaimAnml) returns (MsgClaimAnmlResponse);
+
+  // ClaimAnmlDays mints a registered human's ANML for a run of unclaimed
+  // days ending today, with one proof.
+  rpc ClaimAnmlDays(MsgClaimAnmlDays) returns (MsgClaimAnmlDaysResponse);
 
   // SetCaretaker casts or refreshes a registered human's caretaker split.
   rpc SetCaretaker(MsgSetCaretaker) returns (MsgSetCaretakerResponse);
@@ -155,7 +160,9 @@ message MsgRegisterResponse {
   uint64 leaf_index = 3;
 }
 
-// MsgClaimAnml mints 1 ANML to pc, once per person per UTC day.
+// MsgClaimAnml (retired by v1.4.0, refused with ErrClaimRetired) minted 1
+// ANML to pc, once per person per UTC day. Kept so the claims made before
+// v1.4.0 decode.
 //
 // membership is proven with scope zk/privacy.ClaimScope(day), excluded_dsc and
 // excluded_country 0
@@ -173,6 +180,34 @@ message MsgClaimAnml {
 
 // MsgClaimAnmlResponse returns the ANML note's position.
 message MsgClaimAnmlResponse {
+  uint64 position = 1;
+}
+
+// MsgClaimAnmlDays mints one ANML per day for the consecutive UTC days
+// first_day..day, in one note to pc: the days a wallet left unclaimed, up to
+// a week. day must be today, first_day at most six days before it (and not
+// before the claim floor), and none of the days claimed yet (by this msg or,
+// before v1.4.0, MsgClaimAnml: the two share each day's nullifier). A day's
+// claim is a run of one.
+//
+// claim is proven (circuits/claim) with scopes[i] = zk/privacy.ClaimScope(
+// first_day + i) for each day and 0 for the slots after the last, and
+// max_activation the start of the UTC day before first_day: the bound a
+// MsgClaimAnml for first_day carries, which bounds every later day too.
+//
+// sighash fields: first_day, day, pc, Bytes(ciphertext).
+message MsgClaimAnmlDays {
+  earth.shielded.v1.Bundle fee = 1 [(gogoproto.nullable) = false];
+  ClaimProof claim = 2 [(gogoproto.nullable) = false];
+  uint64 first_day = 3;
+  uint64 day = 4;
+  bytes pc = 5;
+  // ciphertext is the ANML note's amount-blind v2 ciphertext, 177 bytes.
+  bytes ciphertext = 6;
+}
+
+// MsgClaimAnmlDaysResponse returns the ANML note's position.
+message MsgClaimAnmlDaysResponse {
   uint64 position = 1;
 }
 

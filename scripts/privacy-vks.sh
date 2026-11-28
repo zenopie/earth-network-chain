@@ -3,13 +3,14 @@
 # The privacy circuits' and the passport register circuits' verifying keys,
 # regenerated from the circuits.
 #
-# x/shielded verifies every private tx against five UltraHonk keys: action
+# x/shielded verifies every private tx against six UltraHonk keys: action
 # (every action of every shielded bundle: spends, outputs, fees), membership
 # (personhood's claims, caretaker splits and handles, and the assembly's
 # votes), stake (x/shieldedstaking's owner-locked stake notes) and vote (up
 # to two stake notes' vote on a proposal, without spending them) and move (a
-# handle or caretaker split passing to the same passport's next identity).
-# With one missing from
+# handle or caretaker split passing to the same passport's next identity)
+# and claim (an ANML claim for a run of up to seven days, added by v1.4.0:
+# not in earth-2's launch genesis). With one missing from
 # genesis the msgs needing it are refused. This script compiles the circuits
 # from the mobile repo and writes each key everywhere the chain reads it:
 #
@@ -23,6 +24,8 @@
 #   x/shieldedstaking/testdata/stake.vk                           tests (raw)
 #   x/shieldedstaking/testdata/vote.vk                            tests (raw)
 #   x/personhood/testdata/app/move.vk                             tests (raw)
+#   x/personhood/testdata/app/claim.vk                            tests (raw)
+#   app/upgrades/v1_4_0/claim.vk.b64                              the v1.4.0 upgrade
 #
 # and every passport register circuit in circuits/variants.json (one per DSC
 # key type, signature scheme and hash profile; PASSPORT_COVERAGE.md):
@@ -47,7 +50,7 @@ export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 for bin in nargo bb; do
   command -v "$bin" >/dev/null || { echo "error: $bin not on PATH" >&2; exit 1; }
 done
-for c in action membership stake vote move; do
+for c in action membership stake vote move claim; do
   [ -d "$CIRCUITS_SRC/$c" ] || { echo "error: no $c circuit under $CIRCUITS_SRC" >&2; exit 1; }
 done
 
@@ -124,7 +127,7 @@ if fail:
              'review it (constrain the hint, or justify and update the site, its count and its circuits)')
 print(f'Brillig warnings: {sum(len(v) for v in seen.values())} at {len(seen)} allowlisted sites, counts and callers as pinned', file=sys.stderr)
 PY
-for c in action membership stake vote move; do
+for c in action membership stake vote move claim; do
   bb write_vk -b "$WORK/circuits/target/$c.json" -o "$WORK/vk-$c" -t noir-recursive >/dev/null 2>&1
   base64 < "$WORK/vk-$c/vk" | tr -d '\n' > "$WORK/$c.vk.b64"
 done
@@ -140,7 +143,10 @@ GEN="$CHAIN_DIR/networks/genesis/shielded-verifying-keys"
 # Where each circuit's current key lives: the genesis source. An upgrade
 # that replaces a key adds a case here naming its embedded directory.
 current_dir() {
-  echo "$GEN"
+  case "$1" in
+    claim) echo "$CHAIN_DIR/app/upgrades/v1_4_0" ;;
+    *) echo "$GEN" ;;
+  esac
 }
 raw_targets() {
   echo "action $CHAIN_DIR/x/shielded/testdata/action.vk"
@@ -148,11 +154,12 @@ raw_targets() {
   echo "stake $CHAIN_DIR/x/shieldedstaking/testdata/stake.vk"
   echo "vote $CHAIN_DIR/x/shieldedstaking/testdata/vote.vk"
   echo "move $CHAIN_DIR/x/personhood/testdata/app/move.vk"
+  echo "claim $CHAIN_DIR/x/personhood/testdata/app/claim.vk"
 }
 
 if [ "$CHECK" -eq 1 ]; then
   fail=0
-  for c in action membership stake vote move; do
+  for c in action membership stake vote move claim; do
     d="$(current_dir "$c")"
     cmp -s "$WORK/$c.vk.b64" "$d/$c.vk.b64" || { echo "stale: $d/$c.vk.b64" >&2; fail=1; }
   done
@@ -163,7 +170,7 @@ if [ "$CHECK" -eq 1 ]; then
 import sys, yaml
 cfg = yaml.safe_load(open(sys.argv[1]))
 vks = cfg['genesis']['app_state']['shielded']['params']['verifying_keys']
-bad = [c for c in ('action', 'membership', 'stake', 'vote', 'move') if vks.get(c) != open(f'{sys.argv[2]}/{c}.vk.b64').read()]
+bad = [c for c in ('action', 'membership', 'stake', 'vote', 'move', 'claim') if vks.get(c) != open(f'{sys.argv[2]}/{c}.vk.b64').read()]
 if bad:
     sys.exit('stale: config.yml shielded verifying_keys: ' + ', '.join(bad))
 PY
@@ -187,7 +194,7 @@ PY
   exit 0
 fi
 
-for c in action membership stake vote move; do
+for c in action membership stake vote move claim; do
   d="$(current_dir "$c")"
   mkdir -p "$d"
   cp "$WORK/$c.vk.b64" "$d/$c.vk.b64"
@@ -197,7 +204,7 @@ python3 - "$CHAIN_DIR/config.yml" "$WORK" <<'PY'
 import re, sys
 path, work = sys.argv[1], sys.argv[2]
 s = open(path).read()
-keys = {c: open(f'{work}/{c}.vk.b64').read() for c in ('action', 'membership', 'stake', 'vote', 'move')}
+keys = {c: open(f'{work}/{c}.vk.b64').read() for c in ('action', 'membership', 'stake', 'vote', 'move', 'claim')}
 block = ('    # x/shielded verifies every private tx against these (bb v5.0.0\n'
          '    # UltraHonk, noir-recursive), written by scripts/privacy-vks.sh from the\n'
          '    # circuits. Without them every private msg is refused.\n'

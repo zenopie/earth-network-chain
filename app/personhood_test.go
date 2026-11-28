@@ -127,6 +127,8 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 	require.NoError(t, err)
 	moveVK, err := prover.VK("move")
 	require.NoError(t, err)
+	claimVK, err := prover.VK("claim")
+	require.NoError(t, err)
 	leanVK, err := os.ReadFile(filepath.Join(passports, "lean_poa_p256_sha256.vk"))
 	require.NoError(t, err)
 
@@ -139,7 +141,7 @@ func initPersonhoodEnv(t *testing.T) *phEnv {
 			require.NoError(t, cdc.UnmarshalJSON(st[shieldedtypes.ModuleName], &sh))
 			sh.Params.VerifyingKeys = map[string][]byte{
 				shieldedtypes.CircuitAction: actionVK, shieldedtypes.CircuitMembership: membershipVK,
-				shieldedtypes.CircuitMove: moveVK,
+				shieldedtypes.CircuitMove: moveVK, shieldedtypes.CircuitClaim: claimVK,
 			}
 			st[shieldedtypes.ModuleName] = cdc.MustMarshalJSON(&sh)
 
@@ -295,8 +297,6 @@ func (e *phEnv) prove(name string, msg shieldedtypes.PrivateMsg, f *shieldedtest
 	nf := w.Nullifier()
 	mem := personhoodtypes.Membership{Proof: mproof, Root: privacy.FieldBytes(root), Nullifier: privacy.FieldBytes(nf)}
 	switch x := msg.(type) {
-	case *personhoodtypes.MsgClaimAnml:
-		x.Membership = mem
 	case *personhoodtypes.MsgSetCaretaker:
 		x.Membership = mem
 	case *personhoodtypes.MsgBindHandle:
@@ -373,20 +373,6 @@ func (e *phEnv) register(name string) *personhoodtypes.MsgRegister {
 func claimPC(name string) personhoodtest.Note {
 	return personhoodtest.Note{NK: personhoodtest.WalletNK("claims"), Denom: "uanml", Value: 1_000_000,
 		Rho: personhoodtest.Det(name+"/rho", 0), Rcm: personhoodtest.Det(name+"/rcm", 0)}
-}
-
-// claim builds a claim for day by registration reg. maxAct < 0 proves the
-// chain's own bound.
-func (e *phEnv) claim(name, reg string, day int64, maxAct int64) *personhoodtypes.MsgClaimAnml {
-	e.t.Helper()
-	f := e.feeFor("claim/" + name)
-	msg := &personhoodtypes.MsgClaimAnml{Fee: e.bundle(f), Day: uint64(day),
-		Pc: privacy.FieldBytes(claimPC(name).PC()), Ciphertext: ct(name, 20)}
-	if maxAct < 0 {
-		maxAct = (day - 1) * phDay
-	}
-	e.prove("claim/"+name, msg, f, &member{reg: reg, scope: privacy.ClaimScope(uint64(day)), maxAct: maxAct, maxPred: noBound})
-	return msg
 }
 
 // caretaker casts split as registration reg, proving max_predecessor maxPred.
@@ -814,17 +800,18 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Error(t, err, "cleared from the stream")
 
 	// ---------------------------------------------------------------- claims
-	// Day 2: A claims. A second claim the same day (same nullifier) is refused.
+	// Day 2: A claims (a run of one day). A second claim the same day (same
+	// nullifier) is refused.
 	d2 := phDay0 + 2
 	e.at(dayStart(d2).Add(30 * time.Minute))
-	c := e.claim("A-d2", "A1", d2, -1)
+	c := e.claimDays("A-d2", "A1", d2, d2, -1, true)
 	fb = e.mustDeliver(c)
 	require.True(t, hasCommitment(fb.TxResults[0], claimPC("A-d2").CM()), "1 ANML to the claim's pc")
-	res = e.checkTx(e.tx(e.claim("A-d2-again", "A1", d2, -1)))
-	require.Equal(t, personhoodtypes.ErrClaimTooSoon.ABCICode(), res.Code, res.Log)
+	res = e.checkTx(e.tx(e.claimDays("A-d2-again", "A1", d2, d2, -1, false)))
+	require.Equal(t, personhoodtypes.ErrDayClaimed.ABCICode(), res.Code, res.Log)
 	// A claim for another day is refused before any proof is checked.
 	wrong := *c
-	wrong.Day = uint64(d2 + 1)
+	wrong.FirstDay, wrong.Day = uint64(d2+1), uint64(d2+1)
 	wrong.Fee = e.unverified(e.feeFor("wrong-day"))
 	res = e.checkTx(e.tx(&wrong))
 	require.Equal(t, personhoodtypes.ErrWrongDay.ABCICode(), res.Code, res.Log)
@@ -841,7 +828,7 @@ func TestPrivatePersonhood(t *testing.T) {
 	require.Equal(t, assemblytypes.Tally{Yes: 1}, ballots.Ballots[0].Tally)
 	// A1 proves tomorrow's claim now, before switching away.
 	e.at(dayStart(d2).Add(40 * time.Minute))
-	a1Tomorrow := e.claim("A1-d3", "A1", d2+1, -1)
+	a1Tomorrow := e.claimDays("A1-d3", "A1", d2+1, d2+1, -1, true)
 	// Naming a handle nobody holds ("amy", before A1 takes it below) is
 	// refused before the passport proof.
 	res = e.checkTx(e.tx(e.register("D1")))
@@ -970,13 +957,13 @@ func TestPrivatePersonhood(t *testing.T) {
 	e.at(dayStart(d3).Add(30 * time.Minute))
 	res = e.checkTx(e.tx(a1Tomorrow))
 	require.Equal(t, personhoodtypes.ErrUnknownIdentityRoot.ABCICode(), res.Code, res.Log)
-	res = e.checkTx(e.tx(e.claim("A2-d3", "A2", d3, a2.ActivatedAt)))
+	res = e.checkTx(e.tx(e.claimDays("A2-d3", "A2", d3, d3, a2.ActivatedAt, true)))
 	require.Equal(t, personhoodtypes.ErrInvalidMembership.ABCICode(), res.Code, res.Log)
 
 	// Day 4: A2 claims.
 	d4 := phDay0 + 4
 	e.at(dayStart(d4).Add(30 * time.Minute))
-	e.mustDeliver(e.claim("A2-d4", "A2", d4, -1))
+	e.mustDeliver(e.claimDays("A2-d4", "A2", d4, d4, -1, true))
 
 	// ---------------------------------------------------------------- expiry
 	// C1 (and the purged B) were registered four days ago: C1 lapses and its
@@ -1095,7 +1082,12 @@ func TestPrivatePersonhoodBypassRefused(t *testing.T) {
 		h := e.app.MsgServiceRouter().Handler(msg)
 		require.NotNil(t, h, "%T", msg)
 		_, err := h(e.ctx(), msg)
-		require.ErrorIs(t, err, shieldedtypes.ErrUnauthorized, "%T", msg)
+		if _, retired := msg.(*personhoodtypes.MsgClaimAnml); retired {
+			// Retired (v1.4.0): its ValidateBasic refuses it before anything.
+			require.ErrorIs(t, err, personhoodtypes.ErrClaimRetired)
+		} else {
+			require.ErrorIs(t, err, shieldedtypes.ErrUnauthorized, "%T", msg)
+		}
 		res := e.checkTx(e.signedTx(phGas, e.fee(50_000), msg))
 		require.NotEqual(t, uint32(0), res.Code, "%T", msg)
 	}

@@ -58,5 +58,10 @@ func (q queryServer) LeaseBounds(ctx context.Context, req *types.QueryLeaseBound
 	} else if err != nil && !errors.Is(err, collections.ErrNotFound) {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	earliest, err := q.k.ClaimEarliestDay(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	res.ClaimEarliestDay = earliest
 	return res, nil
 }

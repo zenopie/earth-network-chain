@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -190,38 +191,89 @@ func TestCaretakerPredecessorBound(t *testing.T) {
 func TestClaimChecksAndPrune(t *testing.T) {
 	k, _, ctx := caretakerKeepers(t)
 	today := uint64(ctx.BlockTime().Unix() / types.SecondsPerDay)
-	// Record a root so the anchor check can pass.
+	require.NoError(t, k.ClaimNullifiers.Set(ctx, collections.Join(today, privacy.FieldBytes(privacy.U64(3)))))
+
+	// MsgClaimAnml is retired: refused before anything is checked.
+	m := &types.MsgClaimAnml{Fee: feeStub(), Day: today, Pc: privacy.FieldBytes(privacy.U64(9)),
+		Membership: types.Membership{Proof: make([]byte, shieldedtypes.ProofBytes), Root: privacy.FieldBytes(privacy.U64(1)), Nullifier: privacy.FieldBytes(privacy.U64(4))}}
+	_, err := claimAction{k}.CheckPrivateAction(ctx, m)
+	require.ErrorIs(t, err, types.ErrClaimRetired)
+
+	// Today's claim nullifier is kept while a MsgClaimAnmlDays could still
+	// reach today (the window) and a day more, then pruned.
+	key := collections.Join(today, privacy.FieldBytes(privacy.U64(3)))
+	kept := ctx.WithBlockTime(ctx.BlockTime().Add(types.ClaimWindowDays * 24 * time.Hour))
+	require.NoError(t, k.pruneClaimNullifiers(kept, 100))
+	has, err := k.ClaimNullifiers.Has(kept, key)
+	require.NoError(t, err)
+	require.True(t, has)
+	later := ctx.WithBlockTime(ctx.BlockTime().Add((types.ClaimWindowDays + 1) * 24 * time.Hour))
+	require.NoError(t, k.pruneClaimNullifiers(later, 100))
+	has, err = k.ClaimNullifiers.Has(later, key)
+	require.NoError(t, err)
+	require.False(t, has)
+}
+
+// A MsgClaimAnmlDays run: it must end today and start no earlier than the
+// claim floor, and none of its days may be claimed; its statement is every
+// day's claim scope and its first day's activation bound.
+func TestClaimDaysChecks(t *testing.T) {
+	k, _, ctx := caretakerKeepers(t)
+	today := uint64(ctx.BlockTime().Unix() / types.SecondsPerDay)
 	require.NoError(t, k.recordIdentityRoot(ctx))
 	root, err := k.CurrentIdentityRoot(ctx)
 	require.NoError(t, err)
-	m := &types.MsgClaimAnml{Fee: feeStub(), Day: today, Pc: privacy.FieldBytes(privacy.U64(9)),
-		Membership: types.Membership{Proof: make([]byte, shieldedtypes.ProofBytes), Root: root, Nullifier: privacy.FieldBytes(privacy.U64(3))}}
-	st, err := k.checkClaim(ctx, m)
+	nf := func(i uint64) []byte { return privacy.FieldBytes(privacy.U64(100 + i)) }
+	m := &types.MsgClaimAnmlDays{Fee: feeStub(), FirstDay: today - 3, Day: today, Pc: privacy.FieldBytes(privacy.U64(9)),
+		Claim: types.ClaimProof{Proof: make([]byte, shieldedtypes.ProofBytes), Root: root, Nullifiers: [][]byte{nf(0), nf(1), nf(2), nf(3)}}}
+	st, err := k.checkClaimDays(ctx, m)
 	require.NoError(t, err)
-	require.Equal(t, int64(today-1)*types.SecondsPerDay, st.MaxActivation)
-	require.Equal(t, privacy.ClaimScope(today), st.Scope)
+	require.Equal(t, int64(today-4)*types.SecondsPerDay, st.MaxActivation, "the first day's bound")
+	require.Len(t, st.Scopes, 4)
+	for i, s := range st.Scopes {
+		require.Equal(t, privacy.ClaimScope(today-3+uint64(i)), s)
+	}
 
-	m.Day = today - 1
-	_, err = k.checkClaim(ctx, m)
+	m.Day, m.FirstDay = today-1, today-4
+	_, err = k.checkClaimDays(ctx, m)
 	require.ErrorIs(t, err, types.ErrWrongDay)
-	m.Day = today
+	m.Day, m.FirstDay = today, today-3
 
-	require.NoError(t, k.ClaimNullifiers.Set(ctx, collections.Join(today, m.Membership.Nullifier)))
-	_, err = k.checkClaim(ctx, m)
-	require.ErrorIs(t, err, types.ErrClaimTooSoon)
+	// A day claimed by MsgClaimAnml (the same key) refuses the run, which
+	// names the last claimed day.
+	require.NoError(t, k.ClaimNullifiers.Set(ctx, collections.Join(today-3, nf(0))))
+	require.NoError(t, k.ClaimNullifiers.Set(ctx, collections.Join(today-1, nf(2))))
+	_, err = k.checkClaimDays(ctx, m)
+	require.ErrorIs(t, err, types.ErrDayClaimed)
+	require.ErrorContains(t, err, fmt.Sprintf("day %d:", today-1))
+	require.NoError(t, k.ClaimNullifiers.Remove(ctx, collections.Join(today-3, nf(0))))
+	require.NoError(t, k.ClaimNullifiers.Remove(ctx, collections.Join(today-1, nf(2))))
 
-	// An unknown root is refused.
-	m.Membership.Nullifier = privacy.FieldBytes(privacy.U64(4))
-	m.Membership.Root = privacy.FieldBytes(privacy.U64(12345))
-	_, err = k.checkClaim(ctx, m)
-	require.ErrorIs(t, err, types.ErrUnknownIdentityRoot)
+	// A nullifier count that is not the run's is refused whatever the path.
+	short := *m
+	short.Claim.Nullifiers = m.Claim.Nullifiers[:3]
+	_, err = k.checkClaimDays(ctx, &short)
+	require.ErrorIs(t, err, types.ErrInvalidMsg)
 
-	// Two days on, today's claim nullifier is pruned.
-	later := ctx.WithBlockTime(ctx.BlockTime().Add(48 * time.Hour))
-	require.NoError(t, k.pruneClaimNullifiers(later, 100))
-	has, err := k.ClaimNullifiers.Has(later, collections.Join(today, privacy.FieldBytes(privacy.U64(3))))
+	// The floor, which LeaseBounds reports as the earliest day once it is
+	// later than the window's start.
+	e, err := k.ClaimEarliestDay(ctx)
 	require.NoError(t, err)
-	require.False(t, has)
+	require.Equal(t, today-(types.ClaimWindowDays-1), e)
+	require.NoError(t, k.ClaimFloorDay.Set(ctx, today-2))
+	lb, err := NewQueryServerImpl(k).LeaseBounds(ctx, &types.QueryLeaseBoundsRequest{})
+	require.NoError(t, err)
+	require.Equal(t, today-2, lb.ClaimEarliestDay)
+	_, err = k.checkClaimDays(ctx, m)
+	require.ErrorIs(t, err, types.ErrWrongDay)
+	m.FirstDay = today - 2
+	m.Claim.Nullifiers = m.Claim.Nullifiers[:3]
+	_, err = k.checkClaimDays(ctx, m)
+	require.NoError(t, err)
+
+	m.Claim.Root = privacy.FieldBytes(privacy.U64(12345))
+	_, err = k.checkClaimDays(ctx, m)
+	require.ErrorIs(t, err, types.ErrUnknownIdentityRoot)
 }
 
 // A superseded identity root anchors for the window after its block, the

@@ -33,7 +33,7 @@ export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 for bin in nargo bb; do
   command -v "$bin" >/dev/null || { echo "error: $bin not on PATH" >&2; exit 1; }
 done
-for c in lean_poa_p256_sha256 membership action; do
+for c in lean_poa_p256_sha256 membership claim action; do
   [ -d "$CIRCUITS_SRC/$c" ] || { echo "error: no $c circuit under $CIRCUITS_SRC" >&2; exit 1; }
 done
 
@@ -73,6 +73,6 @@ if [ "$WHAT" = all ] || [ "$WHAT" = app ]; then
   rm -f "$CHAIN_DIR"/x/personhood/testdata/app/*.proof
   rm -rf "$CHAIN_DIR"/x/personhood/testdata/app/actions
   ( cd "$CHAIN_DIR" && EARTH_PROVE_CIRCUITS="$CIRCUITS_SRC" EARTH_CIRCUITS="$CIRCUITS_SRC" \
-      go test ./app -run 'TestPrivatePersonhood' -count=1 -timeout 60m )
+      go test ./app -run 'TestPrivatePersonhood|TestClaimAnmlDays' -count=1 -timeout 60m )
 fi
 echo done

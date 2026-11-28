@@ -63,6 +63,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				// CLI cannot build them. Wallets build the raw tx and broadcast it.
 				{RpcMethod: "Register", Skip: true},
 				{RpcMethod: "ClaimAnml", Skip: true},
+				{RpcMethod: "ClaimAnmlDays", Skip: true},
 				{RpcMethod: "SetCaretaker", Skip: true},
 				{RpcMethod: "MoveCaretaker", Skip: true},
 				{RpcMethod: "BindHandle", Skip: true},

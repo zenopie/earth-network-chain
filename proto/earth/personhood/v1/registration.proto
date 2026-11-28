@@ -95,6 +95,20 @@ message Membership {
   bytes nullifier = 3;
 }
 
+// ClaimProof is a claim circuit proof (circuits/claim, bb v5.0.0
+// UltraHonk): one live identity leaf's nullifiers in up to seven scopes.
+// Public inputs, in order: root, the seven scopes, the seven nullifiers
+// (nullifiers here, then 0 for each unused slot), signal (the msg's
+// sighash), max_activation.
+message ClaimProof {
+  bytes proof = 1;
+  // root is the identity-tree anchor the proof was made against.
+  bytes root = 2;
+  // nullifiers are H(TAG_SN, id_secret, scope), one per scope in use, in
+  // slot order.
+  repeated bytes nullifiers = 3;
+}
+
 // MoveProof is a move circuit proof (circuits/move, bb v5.0.0 UltraHonk): its
 // prover knows the identity secrets of an identity and of the identity that
 // succeeded it under the same passport (the chain's succession leaf

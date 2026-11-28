@@ -12,7 +12,9 @@ var (
 	ErrNoVerifyingKey  = errors.Register(ModuleName, 1101, "no registration verifying key configured")
 	ErrInvalidProof    = errors.Register(ModuleName, 1102, "invalid registration proof")
 	ErrBadPublicInputs = errors.Register(ModuleName, 1103, "proof public inputs do not match")
-	ErrClaimTooSoon    = errors.Register(ModuleName, 1107, "already claimed today; the next claim opens at 00:00 UTC")
+	// ErrClaimTooSoon: MsgClaimAnml's repeat of a day, before v1.4.0
+	// (ErrDayClaimed since). Kept registered for history; never reuse it.
+	ErrClaimTooSoon = errors.Register(ModuleName, 1107, "already claimed today; the next claim opens at 00:00 UTC")
 	// ErrRegistrationRateLimited is a deferral, not a rejection of the proof:
 	// the registration is valid and the holder may retry once the day rolls.
 	ErrRegistrationRateLimited = errors.Register(ModuleName, 1113, "daily registration limit reached for this document signer or country")
@@ -51,4 +53,10 @@ var (
 	// registered before, by this passport or any other (audit R2-B1, R2-B2).
 	// Every registration, switch and re-entry uses a fresh identity.
 	ErrIdcUsed = errors.Register(ModuleName, 1130, "identity commitment has been registered before; register a fresh identity")
+	// ErrDayClaimed: a day of a MsgClaimAnmlDays run has been claimed already.
+	ErrDayClaimed = errors.Register(ModuleName, 1131, "a day in this claim has already been claimed")
+	// ErrClaimRetired: MsgClaimAnml, retired by v1.4.0. Every claim is a
+	// MsgClaimAnmlDays run (one day or more), so no claim stands apart from
+	// the rest by its msg.
+	ErrClaimRetired = errors.Register(ModuleName, 1132, "MsgClaimAnml is retired: claim with MsgClaimAnmlDays")
 )

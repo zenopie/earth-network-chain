@@ -40,7 +40,7 @@ message GenesisState {
   repeated IdentityRoot identity_roots = 5 [(gogoproto.nullable) = false];
 
   // claim_nullifiers are the ANML claims of the days still refused a second
-  // claim (today and yesterday).
+  // claim (the claim window, ClaimWindowDays, and a day's margin).
   repeated ClaimNullifier claim_nullifiers = 6 [(gogoproto.nullable) = false];
 
   // caretaker_votes are the live caretaker splits' leases.
@@ -105,6 +105,13 @@ message GenesisState {
   // passport: a registration to one of them is refused (audit R2-B1,
   // R2-B2). Holds every registration's, passport's and succession's idc.
   repeated bytes used_idcs = 23;
+
+  // claim_floor_day is the earliest day MsgClaimAnmlDays may claim: the day
+  // before the upgrade that added it. Claim nullifiers of earlier days were
+  // pruned under the old two-day window, so a claim for one of them would
+  // not be recognised as a repeat. 0 (an export from before v1.4.0, or a
+  // new chain): the day before genesis.
+  uint64 claim_floor_day = 24;
 }
 
 // DscRateCounter is one Document Signer's rate counter.

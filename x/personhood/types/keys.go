@@ -232,6 +232,15 @@ const (
 	// SecondsPerDay is the UTC day the ANML claim is keyed by.
 	SecondsPerDay = 86400
 
+	// ClaimWindowDays is how many days one MsgClaimAnmlDays may claim: today
+	// and the six before it. Claim nullifiers are kept a day longer than the
+	// window reaches. At most ClaimSlots.
+	ClaimWindowDays = 7
+
+	// ClaimSlots is circuits/claim's SLOTS: the scope and nullifier slots of
+	// its public inputs. Fixed by the circuit and its verifying key.
+	ClaimSlots = 7
+
 	// IdentityRootPruneLimit caps how many expired identity roots EndBlock
 	// deletes per block. At most one root is recorded per block.
 	IdentityRootPruneLimit = 20
@@ -325,9 +334,13 @@ var (
 	LatestIdentityRootKey  = collections.NewPrefix("latest_identity_root")
 
 	// ClaimNullifiersKey is (day, membership nullifier) for every ANML claim
-	// of the last two days. Older days are pruned: a claim for them is
-	// refused by its day anyway.
+	// of the claim window and the day before it. Older days are pruned: a
+	// claim for them is refused by its day anyway.
 	ClaimNullifiersKey = collections.NewPrefix("claim_nullifiers")
+
+	// ClaimFloorDayKey: the earliest day MsgClaimAnmlDays may claim (genesis
+	// claim_floor_day).
+	ClaimFloorDayKey = collections.NewPrefix("claim_floor_day")
 
 	// CaretakerVotesKey maps a caretaker nullifier to when its split lapses;
 	// CaretakerExpiryKey orders them by that for the sweep; CaretakerCountKey
@@ -400,3 +413,6 @@ const MaxCurrentDateMaxSkewSeconds = 365 * SecondsPerDay
 // root never outlives the margin). The window parameter itself only governs
 // how long a superseded root stays an anchor.
 const ActivationMarginSeconds = SecondsPerDay
+
+// A run the window allows must fit the claim circuit's slots.
+var _ = [ClaimSlots - ClaimWindowDays]struct{}{}

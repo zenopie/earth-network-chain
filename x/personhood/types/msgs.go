@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"math/big"
 
 	"cosmossdk.io/core/address"
@@ -16,6 +17,7 @@ import (
 var (
 	_ shieldedtypes.PrivateMsg = (*MsgRegister)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgClaimAnml)(nil)
+	_ shieldedtypes.PrivateMsg = (*MsgClaimAnmlDays)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgSetCaretaker)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgBindHandle)(nil)
 	_ shieldedtypes.PrivateMsg = (*MsgMoveHandle)(nil)
@@ -23,6 +25,7 @@ var (
 
 	_ sdk.HasValidateBasic = (*MsgRegister)(nil)
 	_ sdk.HasValidateBasic = (*MsgClaimAnml)(nil)
+	_ sdk.HasValidateBasic = (*MsgClaimAnmlDays)(nil)
 	_ sdk.HasValidateBasic = (*MsgSetCaretaker)(nil)
 	_ sdk.HasValidateBasic = (*MsgBindHandle)(nil)
 	_ sdk.HasValidateBasic = (*MsgMoveHandle)(nil)
@@ -262,17 +265,110 @@ func (m *MsgClaimAnml) SighashFields(address.Codec) ([]fr.Element, error) {
 }
 
 // ValidateBasic checks everything that needs no state.
+// MsgClaimAnml is retired (v1.4.0): refused first, so an older wallet always
+// learns why.
 func (m *MsgClaimAnml) ValidateBasic() error {
+	return ErrClaimRetired
+}
+
+// --- MsgClaimAnmlDays ----------------------------------------------------
+
+// PrivateBundles implements PrivateMsg: the fee bundle.
+func (m *MsgClaimAnmlDays) PrivateBundles() []*shieldedtypes.Bundle {
+	return []*shieldedtypes.Bundle{&m.Fee}
+}
+
+// PrivateFee implements PrivateMsg: the fee bundle's uerth balance.
+func (m *MsgClaimAnmlDays) PrivateFee() uint64 { return shieldedtypes.FeeBundleFee(&m.Fee) }
+
+// SighashFields implements PrivateMsg: first_day, day, pc, Bytes(ciphertext).
+func (m *MsgClaimAnmlDays) SighashFields(address.Codec) ([]fr.Element, error) {
+	pc, err := Field("pc", m.Pc)
+	if err != nil {
+		return nil, err
+	}
+	return []fr.Element{privacy.U64(m.FirstDay), privacy.U64(m.Day), pc, privacy.Bytes(m.Ciphertext)}, nil
+}
+
+// Days is how many days the msg claims: first_day..day. 0 when first_day is
+// after day.
+func (m *MsgClaimAnmlDays) Days() uint64 {
+	if m.FirstDay > m.Day {
+		return 0
+	}
+	return m.Day - m.FirstDay + 1
+}
+
+// ValidateBasic checks everything that needs no state: a run of 1 to
+// ClaimWindowDays days with a nullifier for each, distinct.
+func (m *MsgClaimAnmlDays) ValidateBasic() error {
 	if err := shieldedtypes.ValidateFeeOnly(m); err != nil {
 		return err
 	}
-	if err := m.Membership.ValidateBasic(); err != nil {
+	n := m.Days()
+	if n == 0 || n > ClaimWindowDays {
+		return errorsmod.Wrapf(ErrInvalidMsg, "first_day %d to day %d is not a run of 1 to %d days", m.FirstDay, m.Day, ClaimWindowDays)
+	}
+	if err := m.Claim.ValidateBasic(int(n)); err != nil {
 		return err
 	}
 	if _, err := Field("pc", m.Pc); err != nil {
 		return err
 	}
 	return checkCiphertext("ciphertext", m.Ciphertext)
+}
+
+// ValidateBasic checks the proof's length and that it carries days distinct
+// canonical, nonzero nullifiers (0 marks an unused slot in the circuit).
+func (c ClaimProof) ValidateBasic(days int) error {
+	if err := shieldedtypes.CheckProofLength(c.Proof); err != nil {
+		return errorsmod.Wrap(ErrInvalidMembership, err.Error())
+	}
+	if _, err := Field("claim root", c.Root); err != nil {
+		return err
+	}
+	if len(c.Nullifiers) != days {
+		return errorsmod.Wrapf(ErrInvalidMsg, "%d nullifiers for %d days", len(c.Nullifiers), days)
+	}
+	seen := make(map[string]struct{}, days)
+	for i, nf := range c.Nullifiers {
+		e, err := Field(fmt.Sprintf("claim nullifier %d", i), nf)
+		if err != nil {
+			return err
+		}
+		if e.IsZero() {
+			return errorsmod.Wrapf(ErrInvalidMsg, "claim nullifier %d is 0", i)
+		}
+		if _, dup := seen[string(nf)]; dup {
+			return errorsmod.Wrapf(ErrInvalidMsg, "claim nullifier %d repeats an earlier one", i)
+		}
+		seen[string(nf)] = struct{}{}
+	}
+	return nil
+}
+
+// ClaimPublicInputs lays out the claim circuit's public inputs: root,
+// scopes[ClaimSlots], nullifiers[ClaimSlots], signal, max_activation. scopes holds one scope per nullifier; the slots after
+// them are 0 in both.
+func ClaimPublicInputs(c ClaimProof, scopes []fr.Element, signal fr.Element, maxActivation uint64) [][]byte {
+	var zero fr.Element
+	out := make([][]byte, 0, 3+2*ClaimSlots)
+	out = append(out, c.Root)
+	for i := 0; i < ClaimSlots; i++ {
+		s := zero
+		if i < len(scopes) {
+			s = scopes[i]
+		}
+		out = append(out, privacy.FieldBytes(s))
+	}
+	for i := 0; i < ClaimSlots; i++ {
+		if i < len(c.Nullifiers) {
+			out = append(out, c.Nullifiers[i])
+		} else {
+			out = append(out, privacy.FieldBytes(zero))
+		}
+	}
+	return append(out, privacy.FieldBytes(signal), privacy.FieldBytes(privacy.U64(maxActivation)))
 }
 
 // --- MsgSetCaretaker -----------------------------------------------------

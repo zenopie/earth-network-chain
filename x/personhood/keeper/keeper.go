@@ -73,8 +73,11 @@ type Keeper struct {
 	IdentityRootsByTime collections.KeySet[collections.Pair[int64, []byte]]
 	LatestIdentityRoot  collections.Item[[]byte]
 
-	// ClaimNullifiers is (day, nullifier) for the last two days' ANML claims.
+	// ClaimNullifiers is (day, nullifier) for the ANML claims of the claim
+	// window and the day before it.
 	ClaimNullifiers collections.KeySet[collections.Pair[uint64, []byte]]
+	// ClaimFloorDay is the earliest day MsgClaimAnmlDays may claim.
+	ClaimFloorDay collections.Item[uint64]
 
 	// Caretaker split leases: nullifier -> expires_at, the expiry order, and
 	// the live count.
@@ -188,6 +191,7 @@ func NewKeeper(
 
 		ClaimNullifiers: collections.NewKeySet(sb, types.ClaimNullifiersKey, "claim_nullifiers",
 			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey)),
+		ClaimFloorDay: collections.NewItem(sb, types.ClaimFloorDayKey, "claim_floor_day", collections.Uint64Value),
 
 		CaretakerVotes:  collections.NewMap(sb, types.CaretakerVotesKey, "caretaker_votes", collections.BytesKey, collections.Int64Value),
 		CaretakerExpiry: collections.NewKeySet(sb, types.CaretakerExpiryKey, "caretaker_expiry", timeBytes),

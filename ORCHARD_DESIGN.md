@@ -496,7 +496,7 @@ Scopes (`H(TAG_SCOPE, Bytes(kind), args…)`):
 
 | Scope | Args | Used by |
 | --- | --- | --- |
-| `claim` | UTC day | MsgClaimAnml |
+| `claim` | UTC day | MsgClaimAnmlDays (claim proof, one scope per day, 6.7); MsgClaimAnml before v1.4.0 |
 | `caretaker` | — | MsgSetCaretaker, MsgMoveCaretaker (move proof) |
 | `handle` | — | MsgBindHandle, MsgMoveHandle (move proof) |
 | `proposal` | proposal_id, round (0, or 1 after the chamber demoted an expedited proposal) | MsgVoteProposal |
@@ -693,7 +693,8 @@ excluded (`ExcludeAssetPrefix`).
 All personhood private msgs carry `Bundle fee = 1` (its only balance is the
 uerth fee) and, except MsgRegister, a membership proof whose signal is the
 sighash. Gas: `proof_verification_gas + writes × note_gas` with writes:
-MsgClaimAnml 2, MsgSetCaretaker 4, MsgMoveCaretaker 6, MsgBindHandle 9,
+MsgClaimAnml 2, MsgClaimAnmlDays 1 + days (a claim proof, priced as one),
+MsgSetCaretaker 4, MsgMoveCaretaker 6, MsgBindHandle 9,
 MsgMoveHandle 4 (the two moves carry a move proof instead, priced the same);
 MsgRegister: passport proof gas + DSC verification gas + 6 × note_gas (one
 for a succession leaf).
@@ -702,6 +703,7 @@ for a succession leaf).
 | --- | --- |
 | MsgRegister | idc, pc_anml, Bytes(ciphertext_anml), pc_erth, Bytes(ciphertext_erth), affiliate, Bytes(signature_algorithm), every public signal in order |
 | MsgClaimAnml | day, pc, Bytes(ciphertext) |
+| MsgClaimAnmlDays | first_day, day, pc, Bytes(ciphertext) |
 | MsgSetCaretaker | (option_id, percent) per entry |
 | MsgBindHandle | Bytes(handle), owner_pk, Bytes(ek_pub) (Bytes of nothing for a release) |
 | MsgMoveCaretaker | (none) |
@@ -969,6 +971,50 @@ one step of a chain, and refusals for another passport's identity,
 backwards, skipping a successor, a zeroed successor, a succession leaf
 passed off as the identity leaf, wrong old or new secret, another scope,
 a recipient nullifier not the successor's, and a wrong root.
+
+### 6.7 Claims for a run of days (circuits/claim, v1.4.0)
+
+MsgClaimAnmlDays claims the consecutive UTC days `first_day..day` at once:
+`day` is today, at most `ClaimWindowDays` (7) days, and one ANML per day
+minted as one note. The chain fills the claim circuit's seven scope slots
+with `ClaimScope(first_day + i)` and zeros, and checks each day's
+`(day, nullifier)` is unrecorded: MsgClaimAnml records the same key, so a
+day is claimed once whichever msg claims it.
+
+Private witness: as membership (4.3). Public, in order: `root,
+scopes[7], nullifiers[7], signal, max_activation`. Constraints:
+
+    H(TAG_LEAF, H(TAG_ID, id_secret), dsc_key, country, activated_at, predecessor_at)  in the tree at root
+    nullifiers[i] = H(TAG_SN, id_secret, scopes[i]), or 0 where scopes[i] = 0
+    dsc_key != 0
+    activated_at <= max_activation
+    signal bound (the msg's sighash)
+
+`max_activation` is `(first_day - 1) × 86400`, MsgClaimAnml's bound for
+`first_day`. Each later day's bound is later, so the one bound is each day's
+own: a fresh registration still first claims on the day after next, and a
+switch's new identity still cannot claim a day its predecessor could have
+(4.3's reason for the bound) in a run any more than alone. dsc_key != 0 is
+the membership circuit's dsc_key != excluded_dsc with the 0 a claim names:
+a leaf without a Document Signer claims by neither msg. The country and the
+predecessor are not bounded, as for a claim.
+
+Consecutive by design: a wallet tracks only its last claimed day, and a
+claim is everything owed since. A run links its days' nullifiers to one
+person, and the one note's amount says how many days it waited: a claiming
+habit, never who. Nothing else links (registration, handle, votes and
+balances are other scopes). A wallet that does not know a day was claimed
+(restored, a second device) learns it from the node's refusal of the
+simulate, so that node alone can link that earlier claim to this one.
+
+Claim nullifiers are kept for the window and a day (pruned below
+`today - ClaimWindowDays`). Before v1.4.0 they were kept two days, so the
+upgrade sets `claim_floor_day` (genesis 24) to the day before it ran, the
+oldest day still recorded, and no run starts earlier. nargo tests (11).
+
+MsgClaimAnml is retired by v1.4.0 (ErrClaimRetired, 1132; the type still
+decodes, for the claims made before): a day's claim is a run of one, so no
+claim stands apart by its msg from those that batch.
 
 ---
 

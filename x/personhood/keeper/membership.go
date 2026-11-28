@@ -29,6 +29,16 @@ func (k Keeper) VerifyMembership(ctx context.Context, m types.Membership, st Mem
 	return nil
 }
 
+// VerifyClaimDays verifies c against st with the pool's claim key
+// (circuits/claim).
+func (k Keeper) VerifyClaimDays(ctx context.Context, c types.ClaimProof, st ClaimDaysStatement) error {
+	pub := types.ClaimPublicInputs(c, st.Scopes, st.Signal, types.BoundInput(st.MaxActivation))
+	if err := k.shieldedKeeper.VerifyCircuit(ctx, shieldedtypes.CircuitClaim, c.Proof, pub); err != nil {
+		return errorsmod.Wrap(types.ErrInvalidMembership, err.Error())
+	}
+	return nil
+}
+
 // MoveStatement is what a move proof is verified against: the scope its msg
 // fixes and the msg's sighash.
 type MoveStatement struct {

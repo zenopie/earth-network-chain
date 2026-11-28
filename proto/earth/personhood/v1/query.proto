@@ -122,6 +122,11 @@ message QueryLeaseBoundsResponse {
   // caretaker_lease_hold_until: when the held longer lease stops counting
   // (0 when none is held).
   int64 caretaker_lease_hold_until = 7;
+  // claim_earliest_day is the earliest UTC day a MsgClaimAnmlDays run may
+  // start at this block: six days before today, or the claim floor if later
+  // (the day before v1.4.0 ran, or before genesis). Never 0 from a binary
+  // that has the msg; a binary before v1.4.0 has no such field (0).
+  uint64 claim_earliest_day = 8;
 }
 
 // QueryRegistrationRequest names a passport nullifier, hex-encoded.
